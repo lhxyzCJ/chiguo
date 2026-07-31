@@ -57,20 +57,17 @@ def check_env() -> dict:
             "severity": "ok" if ok else "critical", "detail": detail}
 
 
-def check_openclaw(home: Path = None) -> dict:
-    """OpenClaw 本体 + skill 目录。本体缺失 → critical;skill 文件缺 → warn。"""
-    home = home or Path.home()
-    oc = home / ".openclaw"
-    if not oc.is_dir():
+def check_openclaw(personality_dir: Path) -> dict:
+    """personality_source 目录(来自 toml)。目录缺失 → critical;skill 文件缺 → warn。"""
+    if not personality_dir.is_dir():
         return {"name": "openclaw", "ok": False, "severity": "critical",
-                "detail": f"{oc} 不存在 → OpenClaw 未安装(消息生成/发送端缺失)"}
-    skill = oc / "workspace" / "skills" / "chiguo"
-    missing = [n for n in ("SUN2.md", "SKILL.md") if not (skill / n).is_file()]
+                "detail": f"{personality_dir} 不存在 → OpenClaw 未安装或 personality_source 配置错误(消息生成端缺失)"}
+    missing = [n for n in ("SUN2.md", "SKILL.md") if not (personality_dir / n).is_file()]
     if missing:
         return {"name": "openclaw", "ok": False, "severity": "warn",
-                "detail": f"{skill} 缺少 {', '.join(missing)} → 人格设定缺失,OpenClaw 仍可发消息"}
+                "detail": f"{personality_dir} 缺少 {', '.join(missing)} → 人格设定缺失,OpenClaw 仍可发消息"}
     return {"name": "openclaw", "ok": True, "severity": "ok",
-            "detail": f"OpenClaw OK ({skill} 含 SUN2.md/SKILL.md)"}
+            "detail": f"OpenClaw skill OK ({personality_dir} 含 SUN2.md/SKILL.md)"}
 
 
 def check_lancedb(db_path: Path) -> dict:
@@ -136,9 +133,6 @@ def run_checks(home: Path = None, base_dir: Path = None) -> dict:
     """按序执行 5 组检查。返回完整报告 dict。单项失败不中断。"""
     base = base_dir or _BASE_DIR
     cfg = _load_config(base)
-    oc_cfg = cfg.get("openclaw", {})
-    mem_cfg = cfg.get("memory", {})
-    sched_cfg = cfg.get("schedule", {})
     lancedb_path = _cfg_path(cfg, "memory", "lancedb_path",
                              "~/.openclaw/memory/lancedb-pro", base)
     personality = _cfg_path(cfg, "openclaw", "personality_source",
@@ -148,7 +142,7 @@ def run_checks(home: Path = None, base_dir: Path = None) -> dict:
     api_base = os.environ.get("NETEASE_API_BASE", "http://localhost:3000")
     checks = [
         check_env(),
-        check_openclaw(home),
+        check_openclaw(personality),
         check_lancedb(lancedb_path),
         check_netease(api_base, base / "netease_cookie.txt", base / "netease_health.json"),
         check_data(xlsx, mem),
