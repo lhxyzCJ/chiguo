@@ -27,3 +27,6 @@ netease_cache.json
 netease_cookie.txt
 
 *.lock
+
+# Git worktrees
+.worktrees/
