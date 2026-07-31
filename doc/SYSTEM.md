@@ -678,7 +678,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_watchdog.py` | 零依赖独立看门狗（cron 集成）（v4） | 无 |
-| `chiguo_envcheck.py` | 环境就绪检查（v10.1）：5 组只读检查（Python/uv、OpenClaw skill、LanceDB、网易云、数据文件），JSON → stdout，退出码 0=就绪/1=警告/2=严重（与 watchdog 一致），路径单一事实来源为 `chiguo_proactive.toml`；测试 `test_envcheck.py` | 无 |
+| `chiguo_envcheck.py` | 环境就绪检查（v10.1）：5 组只读检查（Python/uv、OpenClaw skill、LanceDB、网易云、数据文件），网易云检查仅 HTTP 200 计 API 可达（不可达 → warn，含 cookie 存在时），JSON → stdout，退出码 0=就绪/1=警告/2=严重（与 watchdog 一致），路径单一事实来源为 `chiguo_proactive.toml`；测试 `test_envcheck.py` | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
 | `chiguo_state.json` | 运行时状态（STATE_VERSION=8，首次运行后生成） | 无 |
@@ -709,7 +709,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `test_followup.py` | 接话茬单元测试（14 用例：pending 管理/钟形权重/多话题/记忆兜底/FakeBridge） | chiguo_state, chiguo_trigger, memory_bridge |
 | `test_netease_proof.py` | 听歌反证单元测试（31 用例：fetch_recent_play 解析/缓存/降级 + `_api_get` 重试策略与每日推荐 schema 过滤 + 非 dict 响应降级 + 窗口内反证 sleeping 压制/按播放时刻分桶/逃生阀放行 + netease 跨触发注入规则） | netease_bridge, chiguo_daemon |
 | `test_netease_service.py` | 网易云策略层单元测试（30 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题绕过门控+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | chiguo_netease, netease_bridge |
-| `test_envcheck.py` | 环境检查单元测试（10 用例：env 版本/uv、openclaw 目录缺失 critical/skill 缺 warn/正常、lancedb 缺失 warn、netease 无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩） | chiguo_envcheck |
+| `test_envcheck.py` | 环境检查单元测试（10 用例：env 版本/uv、openclaw 目录缺失 critical/skill 缺 warn/正常、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 
 共计 **348** 个测试用例（19 个测试文件）。
