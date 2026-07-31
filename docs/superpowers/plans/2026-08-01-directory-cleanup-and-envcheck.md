@@ -351,8 +351,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import chiguo_envcheck as ec
 
 
-def _mk(tmp: Path, **files) -> Path:
-    """在临时目录下创建文件树,返回根目录。"""
+def _mk(tmp: Path, files: dict) -> Path:
+    """在临时目录下创建文件树(files: {相对路径: 内容}),返回根目录。"""
     for rel, content in files.items():
         p = tmp / rel
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -369,7 +369,7 @@ def test_check_env():
 
 def test_check_openclaw_missing_dir_critical():
     with tempfile.TemporaryDirectory() as td:
-        r = ec.check_openclaw(home=Path(td))
+        r = ec.check_openclaw(personality_dir=Path(td) / "no_such_skill_dir")
         assert r["severity"] == "critical" and not r["ok"]
         assert "不存在" in r["detail"]
     print("  OK test_check_openclaw_missing_dir_critical")
@@ -377,8 +377,8 @@ def test_check_openclaw_missing_dir_critical():
 
 def test_check_openclaw_skill_missing_warn():
     with tempfile.TemporaryDirectory() as td:
-        _mk(Path(td), ".openclaw/workspace/skills/chiguo/empty.txt": "x")
-        r = ec.check_openclaw(home=Path(td))
+        _mk(Path(td), {".openclaw/workspace/skills/chiguo/empty.txt": "x"})
+        r = ec.check_openclaw(personality_dir=Path(td))
         assert r["severity"] == "warn" and not r["ok"]
         assert "SUN2.md" in r["detail"] and "SKILL.md" in r["detail"]
     print("  OK test_check_openclaw_skill_missing_warn")
@@ -386,9 +386,9 @@ def test_check_openclaw_skill_missing_warn():
 
 def test_check_openclaw_ok():
     with tempfile.TemporaryDirectory() as td:
-        _mk(Path(td), ".openclaw/workspace/skills/chiguo/SUN2.md": "s",
-                       ".openclaw/workspace/skills/chiguo/SKILL.md": "k")
-        r = ec.check_openclaw(home=Path(td))
+        _mk(Path(td), {".openclaw/workspace/skills/chiguo/SUN2.md": "s",
+                       ".openclaw/workspace/skills/chiguo/SKILL.md": "k"})
+        r = ec.check_openclaw(personality_dir=Path(td))
         assert r["severity"] == "ok" and r["ok"]
     print("  OK test_check_openclaw_ok")
 
@@ -419,7 +419,7 @@ def test_check_data_missing_warn():
 
 def test_check_data_ok():
     with tempfile.TemporaryDirectory() as td:
-        _mk(Path(td), "xskb.xlsx": "x", "mem.json": "{}")
+        _mk(Path(td), {"xskb.xlsx": "x", "mem.json": "{}"})
         r = ec.check_data(Path(td) / "xskb.xlsx", Path(td) / "mem.json")
         assert r["severity"] == "ok" and r["ok"]
     print("  OK test_check_data_ok")
@@ -442,7 +442,7 @@ def test_run_checks_never_crashes():
         cfg.write_text(re.sub(r"(?m)^lancedb_path\s*=.*$",
                               f'lancedb_path = "{td / "no_lancedb"}"',
                               cfg.read_text()))
-        report = ec.run_checks(home=td, base_dir=td)
+        report = ec.run_checks(base_dir=td)
         assert len(report["checks"]) == 5
         assert report["summary"]["ok"] + report["summary"]["warn"] + report["summary"]["critical"] == 5
         # netease 检查会尝试连 localhost:3000 —— 只要求不崩(超时 5s 内失败 → warn)
