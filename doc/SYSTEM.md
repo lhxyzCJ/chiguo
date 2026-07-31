@@ -474,14 +474,14 @@ is_school_day = 非节假日 AND (工作日 OR 调休上班日)
 ### 3.3 课表解析
 
 ```
-xskb.xlsx（替换即更新）
+data/xskb.xlsx（替换即更新）
   → mtime 检测 → openpyxl 读取
   → 解析格式: "课程名-教师【周数】教室"
   → schedule_cache.json（加速 + 可序列化）
   → query(now) → {in_class, current_course, class_load, ...}
 ```
 
-xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂移不会静默空课表）。解析失败（xlsx 损坏等）降级空课表但**不覆盖已有有效缓存**：`_parse()` 返回 bool，仅成功才 `_save_cache()`。
+xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂移不会静默空课表）。v10.1 起数据文件统一收进 `data/` 子目录：课表源文件 `data/xskb.xlsx`、手动记忆 `data/chiguo_memories.json`、网易云二维码 `data/netease_qr.png`；toml 中的相对路径（如 `xlsx_path = "data/xskb.xlsx"`、`manual_path = "data/chiguo_memories.json"`）与代码默认值均经 `_anchored`（`_base_dir` + 相对路径拼接，绝对路径原样保留）解析为项目根下路径，与 cwd 无关。解析失败（xlsx 损坏等）降级空课表但**不覆盖已有有效缓存**：`_parse()` 返回 bool，仅成功才 `_save_cache()`。
 
 缓存带 `cache_version=2`：旧版本缓存（含合并单元格吞课的脏数据）启动时强制重解析（`_parsed_at=0`）；`_parse_cell` 按 2+ 连续空白拆分课程段，合并课存 `alternates`，`_parse_weeks` 支持后缀单双周。
 
@@ -495,7 +495,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
 
 ```
 三层记忆:
-  ① JSON 手动（chiguo_memories.json）
+  ① JSON 手动（data/chiguo_memories.json，v10.1 起收进 data/，相对路径经 `_anchored` 解析）
      类型: reminder（定时）/ habit（习惯窗口）
      → daemon 直接读取，不用 OpenClaw
 
@@ -678,8 +678,9 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_watchdog.py` | 零依赖独立看门狗（cron 集成）（v4） | 无 |
+| `chiguo_envcheck.py` | 环境就绪检查（v10.1）：5 组只读检查（Python/uv、OpenClaw skill、LanceDB、网易云、数据文件），JSON → stdout，退出码 0=就绪/1=警告/2=严重（与 watchdog 一致），路径单一事实来源为 `chiguo_proactive.toml`；测试 `test_envcheck.py` | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
-| `chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
+| `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
 | `chiguo_state.json` | 运行时状态（STATE_VERSION=8，首次运行后生成） | 无 |
 | `chiguo_decisions.jsonl` | 决策日志（首次运行后生成） | 无 |
 | `recent_play_cache.json` | 最近播放记录缓存（v8，netease fetch_recent_play 原子写，TTL 15 分钟） | 无 |
@@ -688,7 +689,8 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `anniversaries.json` | 纪念日数据（首次运行后生成） | 无 |
 | `break_state.json` | 假期覆盖状态（首次 --break 后生成） | 无 |
 | `.gitignore` | 忽略运行时产物 | 无 |
-| `xskb.xlsx` | 课表源文件（替换即更新） | 无 |
+| `data/xskb.xlsx` | 课表源文件（替换即更新） | 无 |
+| `data/netease_qr.png` | 网易云登录二维码（--login 生成） | 无 |
 | `test_chiguo_math.py` | 数学库单元测试（26 用例，含 sigmoid/负权重/负半衰期边界） | chiguo_math |
 | `test_holiday_parser.py` | 节假日单元测试（7 用例） | holiday_parser |
 | `test_integration.py` | 集成测试（17 用例，test_1/test_8 已从纯 print 强化为真断言） | chiguo_daemon |
@@ -707,9 +709,10 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `test_followup.py` | 接话茬单元测试（14 用例：pending 管理/钟形权重/多话题/记忆兜底/FakeBridge） | chiguo_state, chiguo_trigger, memory_bridge |
 | `test_netease_proof.py` | 听歌反证单元测试（31 用例：fetch_recent_play 解析/缓存/降级 + `_api_get` 重试策略与每日推荐 schema 过滤 + 非 dict 响应降级 + 窗口内反证 sleeping 压制/按播放时刻分桶/逃生阀放行 + netease 跨触发注入规则） | netease_bridge, chiguo_daemon |
 | `test_netease_service.py` | 网易云策略层单元测试（30 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题绕过门控+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | chiguo_netease, netease_bridge |
+| `test_envcheck.py` | 环境检查单元测试（10 用例：env 版本/uv、openclaw 目录缺失 critical/skill 缺 warn/正常、lancedb 缺失 warn、netease 无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 
-共计 **338** 个测试用例（18 个测试文件）。
+共计 **348** 个测试用例（19 个测试文件）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `test_holiday_parser.py` 7/7 用例通过。
@@ -952,7 +955,7 @@ identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
 [memory]
 lancedb_path = "~/.openclaw/memory/lancedb-pro"  # LanceDB 路径（~ 展开为 $HOME）
 lancedb_table = "memories"              # 表名
-manual_path = "data/chiguo_memories.json"    # 手动记忆文件
+manual_path = "data/chiguo_memories.json"  # 手动记忆文件
 ebbinghaus_strength = 168               # 记忆强度 S（小时），168h=7天（v4）
 ebbinghaus_min_weight = 0.1             # 最低权重，不彻底遗忘（v4）
 
@@ -1078,7 +1081,7 @@ morning_end = 10
 night_start = 20
 night_end = 21
 special_dates = ["05-11", "11-03"]     # 菓菓生日, 主人生日
-xlsx_path = "data/xskb.xlsx"               # 课表文件
+xlsx_path = "data/xskb.xlsx"              # 课表文件
 semester_start = "2026-02-23"          # 学期起始日
 semester_end = "2026-07-04"            # 学期结束日，之后自动视为假期
 exam_weeks = []                        # 考试周日期范围，如 ["2026-06-22,2026-07-03"]
@@ -1165,7 +1168,7 @@ memory_warn_mb = 500                   # 进程 RSS 大于此 → warn
 memory_critical_mb = 1000              # 进程 RSS 大于此 → critical
 
 [memories]
-path = "data/chiguo_memories.json"          # 手动记忆文件
+path = "data/chiguo_memories.json"        # 手动记忆文件
 ```
 
 ---
