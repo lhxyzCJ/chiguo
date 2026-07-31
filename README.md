@@ -27,7 +27,7 @@
 需要 **Python 3.14+**(通过 uv 安装:`uv python install 3.14`)。
 
 ```bash
-cd character_test
+cd <仓库根目录>
 
 # 查看当前状态
 python3 chiguo_daemon.py --status
@@ -51,6 +51,17 @@ uv run python test_netease_proof.py && uv run python test_netease_service.py
 ```
 
 > 注意:集成测试需要当前目录存在 `chiguo_proactive.toml`,请始终从项目根目录运行。
+
+## 部署到其他机器
+
+项目已做多机解耦:运行时文件全部 gitignore;路径基于 config 所在目录/`~` 解析(与 cwd、用户无关);机器相关配置集中在 `chiguo_proactive.toml`。新机器上:
+
+```bash
+git clone <仓库地址> && cd <仓库目录>
+bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量 18 测试 → 环境检查(OpenClaw skill/网易云登录) → cron 提示
+```
+
+部署脚本会检查:OpenClaw skill 目录(`~/.openclaw/workspace/skills/chiguo/`)、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。定时任务经 `openclaw cron` 注册,见 `doc/OPENCLAW_INTEGRATION.md`。
 
 ## 架构
 

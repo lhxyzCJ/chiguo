@@ -696,7 +696,7 @@ class DecisionEngine:
         emo = self.state.emotion
         silent_h = self.state.cooldown.silent_hours(now)
         oc_cfg = self.config.get("openclaw", {})
-        personality_dir = oc_cfg.get("personality_source", "/root/.openclaw/workspace/skills/chiguo")
+        personality_dir = os.path.expanduser(oc_cfg.get("personality_source", "~/.openclaw/workspace/skills/chiguo"))
 
         # 按人格层映射语气指引
         layer_guidance = {
@@ -1219,10 +1219,17 @@ def main():
         print(json.dumps(r, ensure_ascii=False))
         return
 
-    # ── v5: 对话查询 & 导出 ──
+    # ── v5: 对话查询 & 导出（v10: 锚定 base_dir，从任意 cwd 运行都读写项目文件）──
     if args.conversation or args.conversation_days or args.export:
         from chiguo_monitor import ChiguoMonitor
-        mon = ChiguoMonitor()
+        engine = DecisionEngine()
+        mon = ChiguoMonitor(
+            log_path=str(engine._base_dir / "chiguo_decisions.jsonl"),
+            state_path=str(engine._base_dir / "chiguo_state.json"),
+            break_state_path=str(engine._base_dir / "break_state.json"),
+            config_path=str(engine._base_dir / "chiguo_proactive.toml"),
+            messages_log_path=str(engine._base_dir / "chiguo_messages.jsonl"),
+        )
         if args.export:
             result = mon.export(format=args.export)
             print(result)
@@ -1404,12 +1411,19 @@ def main():
             }, ensure_ascii=False, indent=2))
         return
 
-    # ── 监控系统（stats / alerts / monitor）──
+    # ── 监控系统（stats / alerts / monitor）（v10: 锚定 base_dir，从任意 cwd 运行都读写项目文件）──
     if args.stats is not None or args.alerts or args.monitor:
         from chiguo_monitor import ChiguoMonitor, AlertManager
-        mon = ChiguoMonitor()
+        engine = DecisionEngine()
+        mon = ChiguoMonitor(
+            log_path=str(engine._base_dir / "chiguo_decisions.jsonl"),
+            state_path=str(engine._base_dir / "chiguo_state.json"),
+            break_state_path=str(engine._base_dir / "break_state.json"),
+            config_path=str(engine._base_dir / "chiguo_proactive.toml"),
+            messages_log_path=str(engine._base_dir / "chiguo_messages.jsonl"),
+        )
         if args.alerts:
-            am = AlertManager()
+            am = AlertManager(state_path=str(engine._base_dir / "chiguo_alerts.json"))
             # --ack ALERT_ID
             if args.ack:
                 ok = am.acknowledge(args.ack)

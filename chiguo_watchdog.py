@@ -200,12 +200,12 @@ def check_disk_space(path: Path, warn_mb: int = 500, critical_mb: int = 100) -> 
     return result
 
 
-def check_lancedb(db_path: str = "/root/.openclaw/memory/lancedb-pro") -> dict:
+def check_lancedb(db_path: str = "~/.openclaw/memory/lancedb-pro") -> dict:
     """检查 LanceDB 连通性。"""
     result = {"ok": True, "detail": ""}
     try:
         import lancedb
-        db = lancedb.connect(db_path)
+        db = lancedb.connect(os.path.expanduser(db_path))
         try:
             table = db.open_table("memories")
             _ = table.schema  # 只读 schema，不触发 embedding 加载

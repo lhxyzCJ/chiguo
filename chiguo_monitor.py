@@ -55,7 +55,7 @@ class ChiguoMonitor:
             "disk_critical_mb": 100,
             "memory_warn_mb": 500,
             "memory_critical_mb": 1000,
-            "lancedb_path": "/root/.openclaw/memory/lancedb-pro",
+            "lancedb_path": "~/.openclaw/memory/lancedb-pro",
         }
         candidates = [config_path]
         if not config_path.is_absolute():
@@ -66,14 +66,18 @@ class ChiguoMonitor:
                     cfg = tomllib.load(f)
                 monitor = cfg.get("monitor", {})
                 defaults.update(monitor)
+                # [monitor] 未定义 lancedb_path 时回退 [memory] 段（与 toml 注释约定一致）
+                if "lancedb_path" not in monitor:
+                    defaults["lancedb_path"] = (cfg.get("memory", {}).get("lancedb_path")
+                                                or defaults["lancedb_path"])
                 break
             except Exception:
                 continue
         return defaults
 
     def _lancedb_path(self) -> str:
-        """LanceDB 数据库路径。优先级：[monitor] > 硬编码默认。"""
-        return self._monitor_config.get("lancedb_path", "/root/.openclaw/memory/lancedb-pro")
+        """LanceDB 数据库路径。优先级：[monitor] > [memory] > 硬编码默认。~ 展开为 $HOME。"""
+        return os.path.expanduser(self._monitor_config.get("lancedb_path", "~/.openclaw/memory/lancedb-pro"))
 
     # ═══════════════════════════════════════════════════════════
     # 内部：流式解析

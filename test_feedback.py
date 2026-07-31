@@ -22,7 +22,11 @@ def _make_engine(temp_dir: str) -> DecisionEngine:
     """构造临时目录中的 DecisionEngine（不碰真实 state/log 文件）。"""
     td = Path(temp_dir)
     # 复制 toml 到临时目录（_base_dir 锚定到此）
+    import re
     src = Path("chiguo_proactive.toml").read_text()
+    # 隔离:lancedb_path 改写为临时目录,防止新机器上连到生产记忆库
+    src = re.sub(r"(?m)^lancedb_path\s*=.*$",
+                 f'lancedb_path = "{td / "no_lancedb"}"', src)
     cfg_path = td / "chiguo_proactive.toml"
     cfg_path.write_text(src)
     log_path = td / "chiguo_decisions.jsonl"
