@@ -232,7 +232,7 @@ class ChiguoState:
 
         # 课表解析器（v6.1: xlsx/cache 路径锚定 _base_dir，不依赖 cwd）
         sched = config.get("schedule", {})
-        xlsx_path = sched.get("xlsx_path", "xskb.xlsx")
+        xlsx_path = sched.get("xlsx_path", "data/xskb.xlsx")
         sem_start_str = sched.get("semester_start", "2026-02-23")
         sem_end_str = sched.get("semester_end", "")
         try:
@@ -319,7 +319,7 @@ class ChiguoState:
 
     @property
     def memories_path(self) -> Path:
-        mp = self.config.get("memory", {}).get("manual_path", "chiguo_memories.json")
+        mp = self.config.get("memory", {}).get("manual_path", "data/chiguo_memories.json")
         # 绝对路径（测试/用户指定）原样保留；相对路径锚定到 base_dir
         p = Path(mp)
         if p.is_absolute():

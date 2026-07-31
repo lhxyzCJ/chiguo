@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-08-01 — v10.1 最终审查修复 I-1：check_netease 退出码纳入 API 可达性
+
+**问题**：`check_netease` 的 `ok = cookie_path.is_file()`——cookie 存在但 API 宕机时仍报 ok、退出码 0、deploy.sh 打印「环境就绪 ✓」，与 spec §4.2（API 不可达 → warn）冲突。
+
+- **修复**：新增 `api_ok` 追踪（仅 HTTP 200 算可达），`ok = api_ok and cookie_path.is_file()`；issues 文案（API OK(200)/API HTTP xxx/API 不可达: xxx）与返回结构 `{"name","ok","severity","detail"}` 不变，其余 4 组检查项不动
+- **验证**：`test_envcheck.py` 10/10 通过（test_check_netease_no_cookie_warn 用 127.0.0.1:1，API 必败 + 无 cookie → warn，断言不受影响，无需改测试）；模拟：API 200 + cookie → ok True；API 宕 + cookie 存在 → warn False
+
+## 2026-08-01 — v10.1 目录整理（data/）+ 环境就绪检查（chiguo_envcheck，5 tasks）
+
+**背景**：项目根数据/资源文件与代码混放，新机部署缺统一环境就绪检查（OpenClaw/网易云登录缺失只能靠运行时报错发现）。
+
+- **Task 1 数据收进 data/**：课表 `xskb.xlsx`、手动记忆 `chiguo_memories.json`、网易云二维码 `netease_qr.png` 移入 `data/`；代码默认值（schedule_parser:36、chiguo_state:235/322、netease_bridge:172）与 toml 同步；相对路径经 `_anchored` 解析（绝对路径原样保留），cwd 无关；运行时文件（schedule_cache.json 等）仍留项目根
+- **Task 2 chiguo_envcheck.py 新增**：5 组只读检查（env：Python≥3.14+uv / openclaw：toml personality_source 目录+SUN2.md/SKILL.md / lancedb：可导入+只读连接 / netease：API 轻量健康请求+cookie+health / data：课表+手动记忆）；JSON → stdout，退出码 0=就绪 1=warn 2=critical（与 watchdog 一致）；路径单一事实来源 `chiguo_proactive.toml`；只读：不建目录、不写缓存、不启动服务
+- **Task 3 test_envcheck.py 新增**：10 用例（home=/db_path=/base_dir= 注入隔离，不触碰真实 `~/.openclaw`）
+- **Task 4 deploy.sh 集成**：新增环境就绪检查步骤（退出码 0/1/2 分支处理），替代散装 OpenClaw/网易云检查
+- **Task 5 文档同步**：AGENTS.md 测试链 18→19（含 test_envcheck）；README/doc README 补 `data/` 文件结构与 envcheck CLI；doc/SYSTEM.md 模块表加 chiguo_envcheck.py/test_envcheck.py、路径说明补 data/ 前缀；MEMORY.md 记录
+- **顺带修复（Task 1 遗留，纯外观）**：doc/SYSTEM.md 3 处 toml 示例注释对齐偏移（data/ 路径改写后列位不齐）
+
+| # | 文件 | 改动 |
+|---|------|------|
+| 1 | `chiguo_state.py` / `schedule_parser.py` | 课表/手动记忆默认路径 `data/` 前缀 |
+| 2 | `netease_bridge.py` | 二维码输出路径 `data/netease_qr.png` |
+| 3 | `chiguo_envcheck.py`（新） | 环境就绪检查（5 组 + JSON + 退出码 0/1/2） |
+| 4 | `test_envcheck.py`（新） | 环境检查 10 用例 |
+| 5 | `deploy.sh` | 环境就绪检查步骤（替代散装检查）+ 自检数组补 test_envcheck（18→19 个测试） |
+| 6 | `AGENTS.md` / `README.md` / `doc/README.md` / `doc/SYSTEM.md` | 测试链 19 文件 / data/ 说明 / envcheck 模块表 + CLI |
+| 7 | `MEMORY.md` / `doc/IMPROVE.md` | v10.1 记录 |
+
+**验证**：19 个 runner 全量回归通过（348 tests）；`chiguo_envcheck.py` 本机退出码 2（无 `~/.openclaw`）；`chiguo_daemon.py` 单次决策输出 JSON；git status 无未跟踪杂项。
+
 ## 2026-08-01 — v10 多机可移植性修复（GitHub 化：路径解耦 + deploy.sh + 测试隔离）
 
 **背景**：项目从本地搬到 GitHub private 仓库，实际运行机为另一台（pull 后运行）。审计发现 5 处硬编码 `/root/.openclaw/...` 与若干 cwd 依赖。

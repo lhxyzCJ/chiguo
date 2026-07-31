@@ -97,7 +97,8 @@ anniversary_manager.py   # 纪念日/倒计时 CRUD（无参构造锚定项目�
 chiguo_monitor.py        # 结构化监控（stats / alerts / health；alerts 对 state:null 等脏数据归一化不崩）
 chiguo_watchdog.py       # 独立看门狗（tick_seq 回退=重启不误报，相等>3h 才告警停滞）
 chiguo_demo.py           # 演示模式（v2 架构，非生产行为）
-test_*.py                # 测试（338 tests: 26+7+17+42+10+19+18+10+8+8+15+10+16+23+34+14+31+30，18 个文件，含 test_circadian/test_followup/test_netease_proof/test_netease_service）
+test_*.py                # 测试（19 个文件，含 test_circadian/test_followup/test_netease_proof/test_netease_service/test_envcheck）
+data/                    # 数据文件：课表 xskb.xlsx、手动记忆 chiguo_memories.json、网易云二维码 netease_qr.png
 ```
 
 ## CLI 参考
@@ -141,6 +142,9 @@ python3 chiguo_monitor.py --summary        # 人类可读摘要
 python3 chiguo_watchdog.py               # 独立看门狗（JSON）
 python3 chiguo_watchdog.py --quiet       # 仅异常输出（退出码驱动）
 python3 chiguo_watchdog.py --notify      # stderr 告警摘要
+
+# 环境就绪检查（只读）
+python3 chiguo_envcheck.py               # 检查 Python/OpenClaw/LanceDB/网易云/数据，退出码 0=就绪 1=警告 2=严重
 ```
 
 ## 文档
