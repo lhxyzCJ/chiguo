@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-08-01 — v10.1 最终审查修复 I-1：check_netease 退出码纳入 API 可达性
+
+**问题**：`check_netease` 的 `ok = cookie_path.is_file()`——cookie 存在但 API 宕机时仍报 ok、退出码 0、deploy.sh 打印「环境就绪 ✓」，与 spec §4.2（API 不可达 → warn）冲突。
+
+- **修复**：新增 `api_ok` 追踪（仅 HTTP 200 算可达），`ok = api_ok and cookie_path.is_file()`；issues 文案（API OK(200)/API HTTP xxx/API 不可达: xxx）与返回结构 `{"name","ok","severity","detail"}` 不变，其余 4 组检查项不动
+- **验证**：`test_envcheck.py` 10/10 通过（test_check_netease_no_cookie_warn 用 127.0.0.1:1，API 必败 + 无 cookie → warn，断言不受影响，无需改测试）；模拟：API 200 + cookie → ok True；API 宕 + cookie 存在 → warn False
+
 ## 2026-08-01 — v10.1 目录整理（data/）+ 环境就绪检查（chiguo_envcheck，5 tasks）
 
 **背景**：项目根数据/资源文件与代码混放，新机部署缺统一环境就绪检查（OpenClaw/网易云登录缺失只能靠运行时报错发现）。

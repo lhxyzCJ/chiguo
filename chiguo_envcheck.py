@@ -94,12 +94,17 @@ def check_lancedb(db_path: Path) -> dict:
 def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
     """网易云 API 可达 + 登录态。任一缺失 → warn(话题源降级,不影响主流程)。"""
     issues = []
+    api_ok = False
     try:
         req = urllib.request.Request(f"{api_base}/login/status",
                                      headers={"User-Agent": "chiguo-envcheck"})
         with urllib.request.urlopen(req, timeout=5) as resp:
             status = resp.status
-        issues.append(f"API OK({status})") if status == 200 else issues.append(f"API HTTP {status}")
+        if status == 200:
+            api_ok = True
+            issues.append(f"API OK({status})")
+        else:
+            issues.append(f"API HTTP {status}")
     except Exception as e:
         issues.append(f"API 不可达: {e}")
     if cookie_path.is_file():
@@ -110,7 +115,7 @@ def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
         issues.append("netease_health.json 存在")
     else:
         issues.append("netease_health.json 缺失(daemon 运行后自动生成)")
-    ok = cookie_path.is_file()
+    ok = api_ok and cookie_path.is_file()
     return {"name": "netease", "ok": ok, "severity": "ok" if ok else "warn",
             "detail": "; ".join(issues)}
 
