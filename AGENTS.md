@@ -23,13 +23,15 @@ uv run python test_ebbinghaus.py && uv run python test_longing.py && \
 uv run python test_escape_valve.py && uv run python test_feedback.py && \
 uv run python test_trigger.py && uv run python test_topics.py && \
 uv run python test_circadian.py && uv run python test_followup.py && \
-uv run python test_netease_proof.py && uv run python test_netease_service.py   # full suite (18 files)
+uv run python test_netease_proof.py && uv run python test_netease_service.py && \
+uv run python test_envcheck.py   # full suite (19 files)
 
 uv run python test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout
 uv run python chiguo_daemon.py --stats --alerts --monitor
 uv run python chiguo_monitor.py --summary --health
 uv run python chiguo_watchdog.py                 # standalone health, exit 0/1/2
+uv run python chiguo_envcheck.py                 # env readiness, exit 0/1/2 (read-only)
 uv run python chiguo_demo.py                     # interactive demo, templates only
 ```
 
@@ -52,6 +54,6 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 
 ## After any code change
 
-1. Run affected test files; full 18-file suite if touching math/state/daemon.
+1. Run affected test files; full 19-file suite if touching math/state/daemon.
 2. Update affected sections of `doc/SYSTEM.md`, `doc/IMPROVE.md`, `doc/README.md`.
 3. Log the change in `MEMORY.md` (date, files modified, description).
