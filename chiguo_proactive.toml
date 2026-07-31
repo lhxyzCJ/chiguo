@@ -16,7 +16,7 @@ llm_model = "qwen3:14b"
 lancedb_path = "~/.openclaw/memory/lancedb-pro"
 lancedb_table = "memories"
 # 手动记忆文件（始终生效，作为补充）
-manual_path = "chiguo_memories.json"
+manual_path = "data/chiguo_memories.json"
 # ── v4: Ebbinghaus 遗忘参数 ──
 ebbinghaus_strength = 168    # 记忆强度 S（小时），越大遗忘越慢，168h=7天
 ebbinghaus_min_weight = 0.1  # 最低权重（不会彻底遗忘）
@@ -168,7 +168,7 @@ night_end = 21
 special_dates = ["05-11", "11-03"]
 
 # ── 课表 ──
-xlsx_path = "xskb.xlsx"              # 课表文件，直接替换即可更新
+xlsx_path = "data/xskb.xlsx"              # 课表文件，直接替换即可更新
 semester_start = "2026-02-23"         # 学期起始日期，换学期改此行
 semester_end = "2026-07-04"           # 学期结束日期，之后自动视为假期
 exam_weeks = []                       # 考试周日期范围，如 ["2026-06-22,2026-07-03"]

@@ -952,7 +952,7 @@ identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
 [memory]
 lancedb_path = "~/.openclaw/memory/lancedb-pro"  # LanceDB 路径（~ 展开为 $HOME）
 lancedb_table = "memories"              # 表名
-manual_path = "chiguo_memories.json"    # 手动记忆文件
+manual_path = "data/chiguo_memories.json"    # 手动记忆文件
 ebbinghaus_strength = 168               # 记忆强度 S（小时），168h=7天（v4）
 ebbinghaus_min_weight = 0.1             # 最低权重，不彻底遗忘（v4）
 
@@ -1078,7 +1078,7 @@ morning_end = 10
 night_start = 20
 night_end = 21
 special_dates = ["05-11", "11-03"]     # 菓菓生日, 主人生日
-xlsx_path = "xskb.xlsx"               # 课表文件
+xlsx_path = "data/xskb.xlsx"               # 课表文件
 semester_start = "2026-02-23"          # 学期起始日
 semester_end = "2026-07-04"            # 学期结束日，之后自动视为假期
 exam_weeks = []                        # 考试周日期范围，如 ["2026-06-22,2026-07-03"]
@@ -1165,7 +1165,7 @@ memory_warn_mb = 500                   # 进程 RSS 大于此 → warn
 memory_critical_mb = 1000              # 进程 RSS 大于此 → critical
 
 [memories]
-path = "chiguo_memories.json"          # 手动记忆文件
+path = "data/chiguo_memories.json"          # 手动记忆文件
 ```
 
 ---
