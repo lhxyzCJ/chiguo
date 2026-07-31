@@ -7,7 +7,7 @@
 - **数据收进 data/**：课表 `data/xskb.xlsx`、手动记忆 `data/chiguo_memories.json`、网易云二维码 `data/netease_qr.png` 统一移入 `data/` 子目录；代码默认值（schedule_parser.py:36、chiguo_state.py:235/322、netease_bridge.py:172）与 toml 同步；相对路径经 `_anchored` 解析（绝对路径原样保留），与 cwd 无关；`schedule_cache.json` 等运行时文件仍留项目根
 - **chiguo_envcheck.py 新增**：5 组只读检查——env（Python≥3.14 + uv）、openclaw（toml personality_source 目录 + SUN2.md/SKILL.md）、lancedb（可导入 + 只读连接）、netease（API 轻量健康请求 + cookie + health 文件）、data（课表 + 手动记忆存在可读）；JSON → stdout，退出码 0=就绪 / 1=warn / 2=critical（与 watchdog 一致）；路径单一事实来源为 `chiguo_proactive.toml`（与 daemon 相同读取点）；只读：不建目录、不写缓存、不启动服务
 - **test_envcheck.py 新增**：10 用例（home=/db_path=/base_dir= 注入隔离，不触碰真实 `~/.openclaw`）
-- **deploy.sh 集成**：新增「环境就绪检查」步骤（退出码 0/1/2 分支），替代散装 OpenClaw/网易云检查
+- **deploy.sh 集成**：新增「环境就绪检查」步骤（退出码 0/1/2 分支），替代散装 OpenClaw/网易云检查；自检数组补 test_envcheck（18→19 个测试）
 - **文档同步**：AGENTS.md 测试链 18→19 文件（含 test_envcheck）；README/doc README 补 `data/` 文件结构与 envcheck CLI；doc/SYSTEM.md 模块表加 chiguo_envcheck.py/test_envcheck.py、路径说明补 data/ 前缀；MEMORY/IMPROVE 记录
 - 文件：`chiguo_state.py`、`schedule_parser.py`、`netease_bridge.py`、`chiguo_envcheck.py`（新）、`test_envcheck.py`（新）、`deploy.sh`、`AGENTS.md`、`README.md`、`doc/README.md`、`doc/SYSTEM.md`、`MEMORY.md`、`doc/IMPROVE.md`
 - 验证：19 文件全量回归（348 tests）通过；`chiguo_envcheck.py` 本机退出码 2（无 `~/.openclaw`）；`chiguo_daemon.py` 单次决策输出 JSON 正常；git status 无杂项（运行时文件已 gitignore）

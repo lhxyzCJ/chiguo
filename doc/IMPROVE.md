@@ -21,7 +21,7 @@
 | 2 | `netease_bridge.py` | 二维码输出路径 `data/netease_qr.png` |
 | 3 | `chiguo_envcheck.py`（新） | 环境就绪检查（5 组 + JSON + 退出码 0/1/2） |
 | 4 | `test_envcheck.py`（新） | 环境检查 10 用例 |
-| 5 | `deploy.sh` | 环境就绪检查步骤（替代散装检查） |
+| 5 | `deploy.sh` | 环境就绪检查步骤（替代散装检查）+ 自检数组补 test_envcheck（18→19 个测试） |
 | 6 | `AGENTS.md` / `README.md` / `doc/README.md` / `doc/SYSTEM.md` | 测试链 19 文件 / data/ 说明 / envcheck 模块表 + CLI |
 | 7 | `MEMORY.md` / `doc/IMPROVE.md` | v10.1 记录 |
 
