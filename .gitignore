@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.python-version
+
+# Runtime state files (auto-generated)
+chiguo_state.json
+chiguo_state.json.bak
+chiguo_state.json.tmp
+chiguo_decisions.jsonl
+chiguo_messages.jsonl
+chiguo_state_audit.jsonl
+chiguo_message_log.json
+chiguo_alerts.json
+chiguo_watchdog_state.json
+chiguo_loop.pid
+anniversaries.json
+state.json
+schedule_cache.json
+break_state.json
+holidays.json
+solar_terms.json
+
+# Netease music bridge (auto-generated)
+netease_cache.json
+netease_cookie.txt
+
+*.lock

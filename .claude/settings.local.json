@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 chiguo_daemon.py)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 chiguo_daemon.py --status)",
+      "Bash(python3 test_chiguo_math.py)",
+      "Bash(python3 test_holiday_parser.py)",
+      "Bash(python3 test_integration.py)",
+      "Bash(claude plugin *)",
+      "Bash(python3 test_monitor.py)",
+      "mcp__plugin_claude-mem_mcp-search__observation_add",
+      "mcp__plugin_claude-mem_mcp-search__memory_add",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "Bash(python3 test_composer.py)",
+      "Bash(python3 test_eventbus.py)",
+      "Bash(python3 test_personality.py)",
+      "Bash(python3 test_bayesian.py)",
+      "Bash(python3 test_ebbinghaus.py)",
+      "Bash(python3 test_longing.py)",
+      "Bash(python3 -c \"import sys,json; [print\\(json.dumps\\(json.loads\\(l\\), indent=2, ensure_ascii=False\\)[:2000]\\) for l in sys.stdin]\")",
+      "WebSearch",
+      "Bash(pkill -f 'worker-service.cjs')"
+    ]
+  }
+}
