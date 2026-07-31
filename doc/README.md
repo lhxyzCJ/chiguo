@@ -7,13 +7,13 @@
 ## 快速开始
 
 ```bash
-cd /root/character_test
+cd <仓库根目录>
 
 # 查看当前状态
-/root/.local/bin/python3.14 chiguo_daemon.py --status
+uv run python chiguo_daemon.py --status
 
 # 单次决策（输出 JSON）
-python3 chiguo_daemon.py
+uv run python chiguo_daemon.py
 
 # 交互式 Demo
 python3 chiguo_demo.py

@@ -398,7 +398,11 @@ def _toml_variant(factor=None):
 def _make_engine(tmp, factor=None):
     """临时目录 + 真实 toml 副本 → DecisionEngine,固定测试静默窗口 0-8"""
     cfg_path = Path(tmp) / "chiguo_proactive.toml"
-    cfg_path.write_text(_toml_variant(factor))
+    txt = _toml_variant(factor)
+    # 隔离:lancedb_path 改写为临时目录,防止新机器上连到生产记忆库
+    txt = re.sub(r"(?m)^lancedb_path\s*=.*$",
+                 f'lancedb_path = "{Path(tmp) / "no_lancedb"}"', txt)
+    cfg_path.write_text(txt)
     engine = chiguo_daemon.DecisionEngine(str(cfg_path), str(Path(tmp) / "decisions.jsonl"))
     engine.state.cooldown.set_quiet_window(0, 8)  # 固定测试窗口,不受 circadian 学习影响
     return engine

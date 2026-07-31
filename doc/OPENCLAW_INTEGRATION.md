@@ -32,7 +32,7 @@ openclaw cron add \
   --wake now \
   --exact \
   --timeout-seconds 120 \
-  --system-event "运行 python3 /root/character_test/chiguo_daemon.py。解析 stdout JSON。若 action=idle，回复 NO_REPLY。若 action=send，读取 context 字段，按 SUN2.md 人格生成 1-3 句微信消息，通过 openclaw-weixin 通道发给 owner@im.wechat。遵守 context.layer_guidance 的语气指引和 context.instruction 的格式约束。若 layer_guidance 含【安全阀】标记，语气务必温和克制。"
+  --system-event "运行 python3 <仓库目录>/chiguo_daemon.py。解析 stdout JSON。若 action=idle，回复 NO_REPLY。若 action=send，读取 context 字段，按 SUN2.md 人格生成 1-3 句微信消息，通过 openclaw-weixin 通道发给 owner@im.wechat。遵守 context.layer_guidance 的语气指引和 context.instruction 的格式约束。若 layer_guidance 含【安全阀】标记，语气务必温和克制。"
 ```
 
 ### 参数说明（来自 `openclaw cron add --help`）
@@ -82,7 +82,7 @@ openclaw cron rm chiguo-check       # 删除
         "hooks": [
           {
             "type": "command",
-            "command": "/root/.openclaw/workspace/skills/chiguo/scripts/on-user-msg.sh"
+            "command": "~/.openclaw/workspace/skills/chiguo/scripts/on-user-msg.sh"
           }
         ]
       }
@@ -124,7 +124,7 @@ suppress_hours: 检测到忙碌/结束对话时设置("在开会"→4,"晚安睡
 
 更新 daemon：
 ```bash
-python3 /root/character_test/chiguo_daemon.py \
+python3 <仓库目录>/chiguo_daemon.py \
   --user-msg "<消息原文>" \
   --analysis '<LLM输出的JSON>'
 ```
@@ -135,11 +135,11 @@ python3 /root/character_test/chiguo_daemon.py \
 
 | 主人说 | 执行 CLI |
 |--------|---------|
-| "记住X月X日是XX" | `python3 /root/character_test/chiguo_daemon.py --anniversary "add anniversary MM-DD <名称>"` |
-| "X月X日要XX" | `python3 /root/character_test/chiguo_daemon.py --anniversary "add countdown YYYY-MM-DD <名称>"` |
-| "有哪些纪念日" | `python3 /root/character_test/chiguo_daemon.py --anniversary list` |
-| "放暑假了"/"放假了" | `python3 /root/character_test/chiguo_daemon.py --break on` |
-| "开学了" | `python3 /root/character_test/chiguo_daemon.py --break off` |
+| "记住X月X日是XX" | `python3 <仓库目录>/chiguo_daemon.py --anniversary "add anniversary MM-DD <名称>"` |
+| "X月X日要XX" | `python3 <仓库目录>/chiguo_daemon.py --anniversary "add countdown YYYY-MM-DD <名称>"` |
+| "有哪些纪念日" | `python3 <仓库目录>/chiguo_daemon.py --anniversary list` |
+| "放暑假了"/"放假了" | `python3 <仓库目录>/chiguo_daemon.py --break on` |
+| "开学了" | `python3 <仓库目录>/chiguo_daemon.py --break off` |
 
 ---
 
@@ -186,18 +186,18 @@ lonely_low / lonely_mid / lonely_high / anxiety / longing / morning / night / me
 
 ```bash
 # 手动决策
-python3 /root/character_test/chiguo_daemon.py
+python3 <仓库目录>/chiguo_daemon.py
 
 # 模拟主人消息
-python3 /root/character_test/chiguo_daemon.py --user-msg "我回来了" --analysis '{"warmth":0.5,"effort":0.4,"attention":0.7}'
+python3 <仓库目录>/chiguo_daemon.py --user-msg "我回来了" --analysis '{"warmth":0.5,"effort":0.4,"attention":0.7}'
 
 # 状态 + 健康
-python3 /root/character_test/chiguo_daemon.py --status
-python3 /root/character_test/chiguo_daemon.py --health
+python3 <仓库目录>/chiguo_daemon.py --status
+python3 <仓库目录>/chiguo_daemon.py --health
 
 # 统计 + 告警
-python3 /root/character_test/chiguo_daemon.py --stats 7
-python3 /root/character_test/chiguo_daemon.py --alerts
+python3 <仓库目录>/chiguo_daemon.py --stats 7
+python3 <仓库目录>/chiguo_daemon.py --alerts
 
 # 手动触发 cron
 openclaw cron run chiguo-check
@@ -211,12 +211,12 @@ openclaw cron runs chiguo-check
 ## 七、文件清单
 
 ```
-/root/character_test/
+<仓库目录>/
 ├── chiguo_daemon.py               # 决策引擎
 ├── chiguo_proactive.toml          # 全部配置
 ├── doc/OPENCLAW_INTEGRATION.md    # 本文档
 
-/root/.openclaw/workspace/skills/chiguo/
+~/.openclaw/workspace/skills/chiguo/
 ├── SKILL.md                       # agent 指令集
 ├── SUN2.md                        # 迟菓人格
 ├── scripts/

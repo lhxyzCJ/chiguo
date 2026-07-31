@@ -6,14 +6,14 @@
 [openclaw]
 wechat_channel = "openclaw-weixin"
 wechat_recipient = "owner@im.wechat"
-personality_source = "/root/.openclaw/workspace/skills/chiguo"  # SUN2.md 目录
+personality_source = "~/.openclaw/workspace/skills/chiguo"  # SUN2.md 目录（~ = $HOME，运行用户需有 OpenClaw skill）
 llm_base_url = "http://localhost:11434/v1"
 llm_model = "qwen3:14b"
 
 [memory]
 # ── OpenClaw LanceDB 记忆系统（只读，不写）──
 # 如果 LanceDB 不可用，自动降级到 JSON 模式
-lancedb_path = "/root/.openclaw/memory/lancedb-pro"
+lancedb_path = "~/.openclaw/memory/lancedb-pro"
 lancedb_table = "memories"
 # 手动记忆文件（始终生效，作为补充）
 manual_path = "chiguo_memories.json"

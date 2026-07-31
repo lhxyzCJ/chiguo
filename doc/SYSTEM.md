@@ -500,7 +500,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
      → daemon 直接读取，不用 OpenClaw
 
   ② LanceDB 只读（OpenClaw 记忆系统）
-     路径: /root/.openclaw/memory/lancedb-pro/memories.lance
+     路径: ~/.openclaw/memory/lancedb-pro/memories.lance（~ 展开为 $HOME，v10 起多机可移植）
      访问: memory_bridge.py（FTS BM25 关键词搜索 + Ebbinghaus 加权）
      表结构: id, text, vector(1024d), category, scope, importance, timestamp, metadata
      降级: LanceDB 不可用 → available=False → 自动跳过，JSON 兜底
@@ -856,7 +856,7 @@ python3 chiguo_watchdog.py --notify     # 异常时 stderr 输出告警摘要
 
 ```
 # crontab: 每30分钟检查一次
-*/30 * * * * cd /root/character_test && python3 chiguo_watchdog.py --notify 2>&1 | logger -t chiguo_watchdog
+*/30 * * * * cd <仓库根目录> && .venv/bin/python chiguo_watchdog.py --notify 2>&1 | logger -t chiguo_watchdog
 ```
 
 ---
@@ -872,7 +872,7 @@ python3 chiguo_watchdog.py --notify     # 异常时 stderr 输出告警摘要
   "intensity": "medium",
   "context": {
     "character": "迟菓",
-    "personality_source": "/root/.openclaw/workspace/skills/chiguo/SUN2.md",
+    "personality_source": "~/.openclaw/workspace/skills/chiguo/SUN2.md",
     "situation": "主人已经12小时没发消息了。菓菓开始焦虑不安。用嘴硬的方式联系……",
     "schedule_hint": "主人正在上工程测量实训（到14:45）。不要在上课时发消息。",
     "layer": "middle",
@@ -942,7 +942,7 @@ idle reason 枚举：
 [openclaw]
 wechat_channel = "openclaw-weixin"      # 微信通道名
 wechat_recipient = "..."                 # 接收者 ID
-personality_source = "/root/.openclaw/workspace/skills/chiguo"  # SUN2.md 目录
+personality_source = "~/.openclaw/workspace/skills/chiguo"  # SUN2.md 目录（~ 展开为 $HOME）
 
 [character]
 name = "迟菓"
@@ -950,7 +950,7 @@ age = 16
 identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
 
 [memory]
-lancedb_path = "/root/.openclaw/memory/lancedb-pro"  # LanceDB 路径
+lancedb_path = "~/.openclaw/memory/lancedb-pro"  # LanceDB 路径（~ 展开为 $HOME）
 lancedb_table = "memories"              # 表名
 manual_path = "chiguo_memories.json"    # 手动记忆文件
 ebbinghaus_strength = 168               # 记忆强度 S（小时），168h=7天（v4）
@@ -1256,7 +1256,7 @@ python3 chiguo_monitor.py --health
 - **优雅降级** — 文件缺失 → 空统计，不抛异常
 - **防御式解析** — `state=None` / `emotion=None` / `cooldown=None` / 损坏行 → 自动规范化（`_normalize_entry`，stats() 与 alerts() 共用同一归一化，保证口径一致），不崩溃
 - **回复率口径** — 相邻 send 的 `messages_without_reply` 双方均为数值才比较，None/非数值视为未知不计为回复变化（stats 与 alerts B5 一致）
-- **配置回退** — `[monitor]` 配置相对路径在当前 cwd 找不到时回退模块目录，避免从其他 cwd 运行阈值静默回落默认值（与 health() 的 config 检测一致）
+- **配置回退** — `[monitor]` 配置相对路径在当前 cwd 找不到时回退模块目录，避免从其他 cwd 运行阈值静默回落默认值（与 health() 的 config 检测一致）；`lancedb_path` 优先 `[monitor]`，未定义时回退 `[memory]`（v10 统一，原代码只读 `[monitor]` 与 toml 注释约定不符）；路径值一律 `expanduser`（`~` 展开，v10）
 - **独立可运行** — `python3 chiguo_monitor.py` / `python3 chiguo_watchdog.py`
 
 ### 10.7 对话日志与归档 (v5)
@@ -1565,12 +1565,12 @@ holidays.json 格式：
 
 ### 查看决策日志
 ```bash
-tail -50 /root/character_test/chiguo_decisions.jsonl
+tail -50 <仓库根目录>/chiguo_decisions.jsonl
 ```
 
 ### 重置状态
 ```bash
-rm /root/character_test/chiguo_state.json
+rm <仓库根目录>/chiguo_state.json
 # 下次 daemon 启动自动重建，情绪回到初始值
 ```
 

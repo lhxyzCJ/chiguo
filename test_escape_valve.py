@@ -2,6 +2,7 @@
 """test_escape_valve.py — 溢出逃生阀单元测试 v6"""
 
 import sys, os
+import re
 import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -229,6 +230,14 @@ def test_can_send_daily_limit_blocks_when_not_eligible():
         print("  OK test_can_send_daily_limit_blocks_when_not_eligible")
 
 
+def _isolated_toml(cfg_path: Path, tmp: Path) -> None:
+    """真实 toml 副本隔离:lancedb_path 改写为临时目录,防止新机器上连到生产记忆库"""
+    txt = cfg_path.read_text()
+    txt = re.sub(r"(?m)^lancedb_path\s*=.*$",
+                 f'lancedb_path = "{tmp / "no_lancedb"}"', txt)
+    cfg_path.write_text(txt)
+
+
 def test_end_to_end_escape_valve_send():
     """端到端: 死锁态 → evaluate() 出 send 决策, trigger=longing, context 含【破防】"""
     from chiguo_daemon import DecisionEngine
@@ -236,6 +245,7 @@ def test_end_to_end_escape_valve_send():
         td_path = Path(td)
         cfg_path = td_path / "chiguo_proactive.toml"
         cfg_path.write_text(Path("chiguo_proactive.toml").read_text())
+        _isolated_toml(cfg_path, td_path)
         engine = DecisionEngine(str(cfg_path), str(td_path / "decisions.jsonl"))
         # 消除时段敏感：quiet 窗口设为空
         engine.config["schedule"]["quiet_start"] = 0
@@ -274,6 +284,7 @@ def test_escape_valve_bypasses_bayesian_sleeping():
         td_path = Path(td)
         cfg_path = td_path / "chiguo_proactive.toml"
         cfg_path.write_text(Path("chiguo_proactive.toml").read_text())
+        _isolated_toml(cfg_path, td_path)
         engine = DecisionEngine(str(cfg_path), str(td_path / "decisions.jsonl"))
         engine.config["schedule"]["quiet_start"] = 0
         engine.config["schedule"]["quiet_end"] = 0
@@ -306,6 +317,7 @@ def test_sleeping_guard_blocks_escape_valve_at_high_confidence():
         td_path = Path(td)
         cfg_path = td_path / "chiguo_proactive.toml"
         cfg_path.write_text(Path("chiguo_proactive.toml").read_text())
+        _isolated_toml(cfg_path, td_path)
         engine = DecisionEngine(str(cfg_path), str(td_path / "decisions.jsonl"))
         engine.config["schedule"]["quiet_start"] = 0
         engine.config["schedule"]["quiet_end"] = 0
@@ -342,6 +354,7 @@ def test_escape_valve_sends_when_sleeping_confidence_below_block():
         td_path = Path(td)
         cfg_path = td_path / "chiguo_proactive.toml"
         cfg_path.write_text(Path("chiguo_proactive.toml").read_text())
+        _isolated_toml(cfg_path, td_path)
         engine = DecisionEngine(str(cfg_path), str(td_path / "decisions.jsonl"))
         engine.config["schedule"]["quiet_start"] = 0
         engine.config["schedule"]["quiet_end"] = 0

@@ -342,7 +342,7 @@ Note: `.gitignore` currently only covers 7 of 17 runtime files. The 10 missing e
 3. **TOML types**: `rate_energy_min = 5.0` must be float. Comments must match values.
 4. **LanceDB optional**: All memory queries gracefully degrade to `[]`. Tests mock or skip.
 5. **xskb.xlsx missing**: Schedule fallback → availability=0.85 (treated as free time).
-6. **Test order**: Integration tests need `chiguo_proactive.toml` in CWD. Run from `/root/character_test/`.
+6. **Test order**: Integration tests need `chiguo_proactive.toml` in CWD. Run from the repo root.
 7. **Ritual weight scale**: `evaluate_triggers()` multiplies all ritual weights by `ritual_weight_scale`. Set to 0.3 to balance with emotion weights.
 8. **character_rules ⑦ vs condensed**: Full rules (guidance variable) missing 喵/嘻嘻. Condensed version (context dict) has them. Both now fixed (2026-07-02).
 9. **EventBus return type**: `publish()` returns `list[Any]` — backward compatible. Failed handlers get `None` appended (not silently dropped).

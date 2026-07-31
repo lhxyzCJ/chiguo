@@ -243,7 +243,7 @@ def _print_qr_terminal(unikey):
                         console.log(str);
                     }});
             """],
-            cwd="/opt/netease-api",
+            cwd=os.environ.get("NETEASE_QR_CWD", "/opt/netease-api"),
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0 and result.stdout:

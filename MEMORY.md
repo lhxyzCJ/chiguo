@@ -1,5 +1,20 @@
 # MEMORY.md
 
+## 2026-08-01 — v10 多机可移植性修复（GitHub 化：路径解耦 + deploy.sh + 测试隔离）
+
+**背景**：项目搬到 GitHub private 仓库，实际运行机为另一台（pull 后运行）。审计（探索子代理）发现 5 处硬编码 `/root/.openclaw/...` + 若干 cwd 依赖；无测试断言默认路径，改默认值安全。
+
+- **路径解耦（~ 化 + expanduser）**：toml `personality_source`/`lancedb_path` 与 4 处代码默认值（memory_bridge:44、watchdog:203、monitor:58/76、daemon:699）全部改 `~/.openclaw/...`；5 个读取点统一 `os.path.expanduser`（daemon personality_dir、MemoryBridge、monitor `_lancedb_path`、watchdog connect 前）——换机/换用户零代码改动
+- **monitor lancedb 配置不一致**：原只读 `[monitor]` 段（toml 注释却声称读主配置，实际永远硬编码默认）→ 未定义时回退 `[memory]` 段
+- **daemon 子命令 cwd 锚定**：`--conversation/--export`、`--stats/--alerts/--monitor` 分支原无参 `ChiguoMonitor()`/`AlertManager()`（cwd 相对）→ 先建 engine 以 `_base_dir` 锚定全部路径，从任意 cwd 运行读写项目文件
+- **netease QR cwd 可配**：`/opt/netease-api` → `NETEASE_QR_CWD` 环境变量（仅终端二维码增强，失败被吞）
+- **Python pin**：`.python-version`（3.14）提交进仓库（3.14-only 语法，防新机器 uv 装错版本）
+- **清理**：`schedule_cache.json.v1.bak`（过时产物）git rm，`.gitignore` 改 `schedule_cache.json*`
+- **测试隔离加固**：4 处复制真实 toml 的用例（test_integration setup、test_escape_valve 4×、test_netease_proof `_make_engine`）写入前把 `lancedb_path` 替换为临时目录——防新机器 `~/.openclaw/memory/lancedb-pro` 真实存在时测试连生产记忆库（random_memory 漂移断言）；test_followup 既有隔离不动
+- **deploy.sh 新增**：目标机一键部署/自检——uv+Python 3.14+venv、lancedb 可选检查、18 测试全量自检（任一失败中止）、OpenClaw skill 目录/网易云 cookie/state 迁移提示、openclaw cron 注册指引
+- 文件：`chiguo_proactive.toml`、`memory_bridge.py`、`chiguo_watchdog.py`、`chiguo_monitor.py`、`chiguo_daemon.py`、`netease_bridge.py`、`.python-version`（新）、`.gitignore`、`deploy.sh`（新，uv/venv 幂等）、`test_integration.py`、`test_escape_valve.py`、`test_netease_proof.py`、`test_feedback.py`、`doc/SYSTEM.md`、`doc/README.md`、`doc/IMPROVE.md`、`doc/OPENCLAW_INTEGRATION.md`、`AGENTS.md`、`CLAUDE_CODE_RULES.md`
+- 验证：18 文件全量回归（338 tests，退出码 0）；`bash deploy.sh` 本机两轮跑通（含幂等重跑）；从 /tmp 运行 `--stats --alerts --conversation` 正确读写项目文件；自审计子代理复核（3 MAJOR 文档/脚本问题已修：deploy.sh heredoc 展开 + 系统 python3→venv python、doc/README 与 SYSTEM.md 残留旧路径、test_feedback 第 5 处 toml 副本隔离）
+
 ## 2026-08-01 — v9 网易云渠道增强全面审计修复轮（F-1..F-5，含套件 GREEN 恢复）
 
 **18/18 测试文件全过（338 tests：26+7+17+42+10+19+18+10+8+8+15+10+16+23+34+14+31+30，uv run python, Python 3.14，退出码 0）**

@@ -3,7 +3,6 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
-.python-version
 
 # Runtime state files (auto-generated)
 chiguo_state.json
@@ -18,7 +17,7 @@ chiguo_watchdog_state.json
 chiguo_loop.pid
 anniversaries.json
 state.json
-schedule_cache.json
+schedule_cache.json*
 break_state.json
 holidays.json
 solar_terms.json

@@ -7,6 +7,7 @@
 
 import json
 import math
+import os
 import random
 import time as _time_module
 from datetime import datetime, timezone, timedelta
@@ -41,7 +42,7 @@ class MemoryBridge:
 
     def __init__(self, db_path: str = None, table_name: str = "memories",
                  strength: float = None, min_weight: float = None):
-        self.db_path = db_path or "/root/.openclaw/memory/lancedb-pro"
+        self.db_path = os.path.expanduser(db_path or "~/.openclaw/memory/lancedb-pro")
         self.table_name = table_name
         self._strength = strength or DEFAULT_EBBINGHAUS_STRENGTH
         self._min_weight = min_weight or DEFAULT_EBBINGHAUS_MIN_WEIGHT

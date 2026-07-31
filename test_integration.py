@@ -29,10 +29,14 @@ TMP_TOML: Path | None = None
 
 def setup():
     """在临时目录中复制配置，注入 _base_dir 锚定，可覆盖测试值"""
+    import re
     import shutil
     global TMP_DIR, TMP_TOML
     TMP_DIR = Path(tempfile.mkdtemp(prefix="chiguo_test_integration_"))
     src = Path("chiguo_proactive.toml").read_text()
+    # 隔离:lancedb_path 改写为临时目录,防止新机器上连到生产记忆库
+    src = re.sub(r"(?m)^lancedb_path\s*=.*$",
+                 f'lancedb_path = "{TMP_DIR / "no_lancedb"}"', src)
     TMP_TOML = TMP_DIR / "chiguo_proactive_test.toml"
     TMP_TOML.write_text(src)
     with open(TMP_TOML, "rb") as f:

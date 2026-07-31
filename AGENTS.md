@@ -1,6 +1,6 @@
 # AGENTS.md
 
-迟菓主动消息系统 (Chiguo proactive message system) — a zero-LLM math engine (`chiguo_daemon.py`) that decides when/what to send as JSON; OpenClaw reads that JSON, generates the WeChat message, and sends it. Project root: `/root/character_test` (NOT a git repo). Always run commands from this directory.
+迟菓主动消息系统 (Chiguo proactive message system) — a zero-LLM math engine (`chiguo_daemon.py`) that decides when/what to send as JSON; OpenClaw reads that JSON, generates the WeChat message, and sends it. Project root: the repo checkout directory (this repo is on GitHub; clone it anywhere, e.g. `/root/chiguo` on the dev machine). Always run commands from the repo root. Machine-specific paths (`~/.openclaw/...`) live in `chiguo_proactive.toml`; `deploy.sh` bootstraps a fresh machine.
 
 Existing instruction sources to read before editing: `CLAUDE.md` (setup + architecture), `CLAUDE_CODE_RULES.md` (detailed module map, decision schema, known design decisions), `doc/SYSTEM.md`, `doc/IMPROVE.md` (fix log), `MEMORY.md` (change history, newest first).
 

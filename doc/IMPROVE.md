@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-08-01 — v10 多机可移植性修复（GitHub 化：路径解耦 + deploy.sh + 测试隔离）
+
+**背景**：项目从本地搬到 GitHub private 仓库，实际运行机为另一台（pull 后运行）。审计发现 5 处硬编码 `/root/.openclaw/...` 与若干 cwd 依赖。
+
+- **路径解耦**：`chiguo_proactive.toml` 的 `personality_source`/`lancedb_path` 与 4 处代码默认值（memory_bridge:44、chiguo_watchdog:203、chiguo_monitor:58/76、chiguo_daemon:699）全部从 `/root/...` 改为 `~/.openclaw/...`，并在读取点统一 `os.path.expanduser`（daemon personality_dir、MemoryBridge 构造、monitor `_lancedb_path`、watchdog `check_lancedb`）——换机器/换用户无需改代码，只改 toml 或直接继承默认
+- **monitor lancedb 配置不一致修复**：`_load_monitor_config` 原只读 `[monitor]` 段（toml:272 注释却声称读主配置）；现 `[monitor]` 未定义 `lancedb_path` 时回退 `[memory]` 段
+- **daemon 子命令 cwd 锚定**：`--conversation/--export` 与 `--stats/--alerts/--monitor` 分支原 `ChiguoMonitor()`/`AlertManager()` 无参构造（cwd 相对）→ 现先建 `DecisionEngine()` 并以 `engine._base_dir` 锚定全部路径，从任意 cwd 运行读写项目文件
+- **netease_bridge QR cwd 可配**：`/opt/netease-api` → `os.environ.get("NETEASE_QR_CWD", "/opt/netease-api")`（仅终端 ASCII 二维码增强，失败被吞）
+- **Python 版本 pin 进仓库**：`.python-version`（3.14）取消 gitignore 并提交——3.14-only 语法，新机器 uv 据此装对版本
+- **清理 stale 产物**：`schedule_cache.json.v1.bak` 出仓（git rm + `schedule_cache.json*` ignore）
+- **测试隔离加固**：4 处复制真实 toml 的用例（test_integration setup / test_escape_valve 4× / test_netease_proof `_make_engine`）在写入前把 `lancedb_path` 替换为临时目录——防止新机器上 `~/.openclaw/memory/lancedb-pro` 真实存在时测试连到生产记忆库（只读但 random_memory 会漂移断言）；test_followup 已隔离无需改
+- **deploy.sh 新增**：目标机一键部署——uv+Python 3.14+venv、lancedb 可选检查、18 测试全量自检、OpenClaw skill 目录/网易云 cookie/状态文件迁移提示、openclaw cron 注册指引
+
+**验证**：18 文件全量回归通过（338 tests）；`bash deploy.sh` 在本机跑通（Python 3.14.6）；`chiguo_daemon.py --stats --alerts --monitor` 从 /tmp 运行正确读写项目文件。
+
+| # | 文件 | 改动 |
+|---|------|------|
+| 1 | `chiguo_proactive.toml` | :9/:16 路径 `~/.openclaw/...` |
+| 2 | `memory_bridge.py` | +import os；默认路径 `~` + expanduser |
+| 3 | `chiguo_watchdog.py` | check_lancedb 默认 `~` + connect 前 expanduser |
+| 4 | `chiguo_monitor.py` | 默认 `~`；`_lancedb_path` expanduser；`[monitor]`→`[memory]` 回退 |
+| 5 | `chiguo_daemon.py` | :699 expanduser；--conversation/--stats/--alerts 分支 base_dir 锚定 |
+| 6 | `netease_bridge.py` | QR cwd 环境变量 NETEASE_QR_CWD |
+| 7 | `.python-version`（新） | pin 3.14，移出 gitignore |
+| 8 | `.gitignore` | 去 `.python-version`；`schedule_cache.json*` |
+| 9 | `schedule_cache.json.v1.bak` | git rm（过时产物） |
+| 10 | `test_integration.py` / `test_escape_valve.py` / `test_netease_proof.py` / `test_feedback.py` | toml 副本注入 lancedb_path 隔离（共 5 处复制点全覆盖） |
+| 11 | `deploy.sh`（新） | 目标机一键部署/自检 |
+| 12 | `doc/SYSTEM.md`/`doc/README.md`/`doc/OPENCLAW_INTEGRATION.md`/`AGENTS.md`/`CLAUDE_CODE_RULES.md` | 路径说明/部署章节/`<仓库目录>` 化 |
+
 ## 2026-08-01 — v9 网易云渠道增强全面审计修复轮（F-1..F-5）
 
 **18/18 测试文件全过（338 tests：+4，uv run python, Python 3.14，退出码 0；测试后项目根无 recent_play_cache.json/netease_health.json 残留）**
