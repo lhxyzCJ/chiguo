@@ -1,0 +1,277 @@
+# ============================================================
+# 迟菓主动消息系统 — 配置 v4
+# 数学驱动：Poisson + Sigmoid + 半衰期
+# ============================================================
+
+[openclaw]
+wechat_channel = "openclaw-weixin"
+wechat_recipient = "owner@im.wechat"
+personality_source = "/root/.openclaw/workspace/skills/chiguo"  # SUN2.md 目录
+llm_base_url = "http://localhost:11434/v1"
+llm_model = "qwen3:14b"
+
+[memory]
+# ── OpenClaw LanceDB 记忆系统（只读，不写）──
+# 如果 LanceDB 不可用，自动降级到 JSON 模式
+lancedb_path = "/root/.openclaw/memory/lancedb-pro"
+lancedb_table = "memories"
+# 手动记忆文件（始终生效，作为补充）
+manual_path = "chiguo_memories.json"
+# ── v4: Ebbinghaus 遗忘参数 ──
+ebbinghaus_strength = 168    # 记忆强度 S（小时），越大遗忘越慢，168h=7天
+ebbinghaus_min_weight = 0.1  # 最低权重（不会彻底遗忘）
+
+[character]
+name = "迟菓"
+# 人设元数据：供 OpenClaw agent 读取生成消息，代码引擎不使用
+age = 16
+# 人设元数据：供 OpenClaw agent 读取生成消息，代码引擎不使用
+identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
+# 人格: SUN2.md 三层结构 (外壳→中层→内核)
+
+[emotion]
+# ── 初始值 ──
+loneliness = 15.0       # 孤独值 0-100
+affection = 55.0        # 好感度 0-100
+anxiety = 40.0          # 不安值 0-100
+energy = 85.0           # 元气值 0-100
+
+# ── 半衰期（小时）──
+# 价值减半所需时间。越小衰减越快。
+loneliness_gain_half_life = 40.0     # 孤独自然增长：40h 走到中点位（原线性2.5/h）
+anxiety_gain_half_life = 30.0        # 不安增长：30h 走到中点位
+affection_loss_half_life = 500.0     # 好感衰减：极慢，几乎不变
+energy_regen_half_life = 8.0         # 元气恢复：8h 恢复一半空缺
+
+# ── 事件半衰期（小时）──
+# 收到/发出消息时的情绪骤降速度。越小降得越猛。
+loneliness_decay_on_reply = 0.35     # 主人回复：孤独 0.35h 减半（~21分钟）
+anxiety_decay_on_reply = 0.5         # 主人回复：不安 0.5h 减半（~30分钟）
+loneliness_decay_on_send = 2.0       # 自己发消息：孤独 2h 减半（表达欲满足，缓慢）
+anxiety_gain_on_send = 2.0           # 自己发消息：不安小幅上升
+energy_cost_per_message = 20.0       # 发一条消耗元气
+energy_bonus_on_reply = 10.0         # 收到回复元气奖励
+
+# ── 变化率对 λ 的影响系数 ──
+lambda_lo_rate_factor = 0.4    # 孤独暴涨时 λ 放大（Δ/h > 1 的部分 × 0.4）
+lambda_anx_rate_factor = 0.3   # 不安暴涨时 λ 放大（Δ/h > 1 的部分 × 0.3）
+
+# ── 好感变化 ──
+affection_gain_per_interaction = 0.8
+
+# ── LLM 内容分析微调系数（配合 --analysis 使用）──
+# 温暖度 → 好感系数
+affection_warmth_factor = 1.5
+# 温暖度 → 元气系数
+energy_warmth_factor = 4.0
+# 负温暖 → 不安回升系数（冷淡回复部分抵消 decay）
+anxiety_warmth_recovery = 3.0
+# 用心度 → 好感系数
+affection_effort_factor = 1.0
+# 用心度 → 傲娇软化系数（越用心越融化）
+tsundere_effort_factor = 2.0
+# 关注度 → 元气系数
+energy_attention_factor = 4.0
+# 低关注 → 不安系数（被忽视时不安上升）
+anxiety_ignore_factor = 2.0
+
+# ── 回复速度分级（小时）──
+# 秒回 vs 几小时后回 → 好感/元气/傲娇变化量不同
+reply_fast_threshold = 0.0833      # ≤5分钟 = 秒回
+reply_slow_threshold = 1.0         # ≤1小时 = 正常
+reply_very_slow_threshold = 6.0    # ≤6小时 = 隔了一段时间 (>6h = 很久才回)
+reply_fast_affection_mult = 1.5    # 秒回 → 好感倍率
+reply_fast_energy_extra = 5.0      # 秒回 → 元气额外奖励
+reply_fast_tsundere_extra = 2.0    # 秒回 → 傲娇额外软化
+reply_slow_affection_mult = 0.7    # 隔了一段时间 → 好感倍率
+reply_very_slow_affection_mult = 0.4  # 很久才回 → 好感倍率
+reply_very_slow_anxiety_rebound = 3.0 # 很久才回 → 不安回升
+
+# ── 变化率能量覆盖（孤独暴涨时允许低元气发送）──
+rate_energy_override = true     # 是否允许覆盖
+rate_energy_threshold = 5.0     # 孤独变化率阈值 (Δ/h)
+rate_energy_min = 5.0           # 最低允许元气值
+
+# ── 紧迫通知阈值 ──
+urgency_rate_threshold = 3.0    # 孤独变化率大于此 → _build_context 添加紧迫注解
+urgency_anx_threshold = 2.0     # 不安变化率大于此 → 添加紧迫注解
+
+[sigmoid]
+# ── 触发概率的 sigmoid 参数 ──
+# P(触发) = 1 / (1 + e^(-k * (loneliness - midpoint)))
+
+loneliness_low_k = 0.20      # 低度试探：柔和过渡
+loneliness_low_mid = 38
+
+loneliness_mid_k = 0.18      # 中度嘴硬：略缓（嘴硬需要更多积累）
+loneliness_mid_mid = 55
+
+loneliness_high_k = 0.15     # 高度崩溃：最缓（防线不会瞬间垮）
+loneliness_high_mid = 78
+
+anxiety_k = 0.12
+anxiety_mid = 58
+
+[trigger]
+# ── v7: anxiety 触发候选归一化（与孤独三级同款 "不触发基线" softmax 模式）──
+# w = raw / (raw + anxiety_baseline)，归一化权重 > anxiety_min_weight 才成为候选。
+# 修复：默认态 anxiety=40 时 raw≈0.103 → 归一化≈0.171 < 0.3 → 不成为候选，
+# 沉默期不再确定性发满每日上限的 anxiety 消息；约 anxiety≥48 起激活，58(中点) 竞争权重 0.5。
+anxiety_baseline = 0.5
+anxiety_min_weight = 0.3
+
+# ── v7: 接话茬(follow_up)参数 ──
+follow_up_weight = 0.35         # 基础权重(乘年龄钟形调制)
+follow_up_min_age_hours = 2.0   # 话题最早可接续年龄(小时)
+follow_up_max_age_hours = 48.0  # 超过此年龄过期清理(小时)
+follow_up_peak_hours = 4.0      # 钟形权重峰值年龄(小时)
+follow_up_sigma_hours = 3.0     # 钟形宽度(小时)
+follow_up_min_weight = 0.03     # 低于此权重不成为候选
+
+[poisson]
+# ── Poisson 过程参数 ──
+# λ = base_lambda × sigmoid(loneliness) × sigmoid(anxiety)
+
+base_lambda = 0.25           # 基础事件率（次/小时），孤独=0不安=0时
+lambda_loneliness_mid = 50   # 孤独 sigmoid 中点
+lambda_loneliness_k = 0.08
+lambda_anxiety_mid = 45      # 不安 sigmoid 中点
+lambda_anxiety_k = 0.06
+
+[topic_picker]
+# ── 话题选择器：为孤独触发（lonely_low/mid）提供自然破冰话题 ──
+# 各来源权重。系统做加权随机，数值不需要归一化。
+schedule_weight = 0.30          # 基于课表/假期/周末
+memory_weight = 0.25            # 基于 LanceDB 记忆
+weather_season_weight = 0.20    # 基于季节感知（零依赖）
+general_weight = 0.25           # 通用日常关心
+solar_terms_weight = 0.10       # 节气话题
+anniversary_weight = 0.15       # 纪念日/倒计时
+preference_followup_weight = 0.10  # 偏好追问
+netease_weight = 0.12                # v9 新增:音乐话题源权重
+netease_daily_quota = 2              # v9 新增:音乐话题日配额(每日推荐+播放历史共享)
+netease_source_weights = [0.5, 0.5]  # v9 新增:每日推荐 vs 播放历史 随机选源权重
+netease_fault_daily_quota = 1        # v9 新增:故障提及日配额
+
+# 话题注入控制
+topic_probability = 0.70        # 孤独触发时注入话题的概率（0~1）
+force_topic_threshold = 3       # 连续N次都是孤独触发时，强制注入话题
+trigger_history_max = 6         # 触发历史记录最大长度
+
+[schedule]
+quiet_start = 0
+quiet_end = 8
+morning_start = 8
+morning_end = 10
+night_start = 20
+night_end = 21
+special_dates = ["05-11", "11-03"]
+
+# ── 课表 ──
+xlsx_path = "xskb.xlsx"              # 课表文件，直接替换即可更新
+semester_start = "2026-02-23"         # 学期起始日期，换学期改此行
+semester_end = "2026-07-04"           # 学期结束日期，之后自动视为假期
+exam_weeks = []                       # 考试周日期范围，如 ["2026-06-22,2026-07-03"]
+
+[circadian]
+# ── v7: 生物钟学习 — 从主人回复时间学习睡眠时段,动态调整静默窗口 ──
+history_days = 14        # 回复记录滚动窗口(天)
+min_sample_days = 7      # 最少有数据天数才计算学习窗口
+min_confidence = 0.5     # 学习置信度低于此值 → 回退配置默认窗口(0-8);默认与 min_sample_days=7 天满安静时的置信度 0.5 匹配
+min_width = 5            # 学习窗口最小宽度(小时)
+max_width = 12           # 学习窗口最大宽度(小时)
+
+[netease]
+# ── v8: 听歌状态双向联动(夜间活跃反证)──
+play_cache_ttl_minutes = 15     # 播放记录缓存 TTL
+play_proof_window_hours = 2.0   # 播放证据时间窗(距评估时点)
+sleeping_confidence_factor = 0.5  # sleeping 置信度压制系数(有播放证据时)
+retry_count = 1                      # v9 新增:瞬时失败重试次数
+retry_backoff_seconds = 2.0          # v9 新增:重试退避(秒)
+reprobe_minutes = 30                 # v9 新增:登录失效后重探间隔(分钟)
+
+[hawkes]
+# ── Hawkes 自激过程（替代 Poisson 独立假设）──
+# λ(t) = base_mu + Σ α × exp(-β × (t - t_i))
+# 每次触发让 λ 短暂升高（"越想越孤独"正反馈），随后指数衰减
+enabled = true
+alpha = 0.3         # 单词触发的激发强度
+beta = 0.5          # 衰减速率 (1/小时)，半衰期 ≈ ln(2)/0.5 ≈ 1.39h
+window_hours = 24   # 只考虑 24h 内的事件
+
+[cooldown]
+# ── 硬限制（安全网，Poisson之上）──
+max_daily_active = 4
+max_daily_silent = 2
+# 最小间隔（分钟），防止同1分钟发2条
+min_interval_minutes = 30
+# 退避：无回复累计时，λ 乘以衰减因子
+no_reply_lambda_decay = 0.7   # 每条无回复消息，λ × 0.7
+# ── v4: 概率累积 ──
+longing_growth_factor = 0.08   # 每次 held λ 增长量
+anxiety_block_threshold = 70.0  # 焦虑大于此 → 不累积（"生气了不会找你"）
+max_lambda_multiplier = 5.0     # λ 最大倍数
+longing_decay_factor = 0.5      # 用户回复后 λ 回退系数
+# ── v6: 溢出逃生阀 ──
+# 死锁态（焦虑≥block_threshold → 累积 blocked → overflow 永远到不了）
+# 改为时间+状态驱动：blocked + 沉默超限 + 冷却外 → 强制破防发送
+longing_break_enabled = true            # 逃生阀总开关
+longing_break_min_silence_hours = 72    # 高焦虑下沉默多久触发破防（墙钟）
+longing_break_cooldown_days = 3         # 破防后冷却天数，防刷屏
+# 仪式触发权重缩放（特殊日期/早安/晚安/用餐/记忆等固定事件的权重乘数）
+ritual_weight_scale = 1.0               # 默认 1.0；调低可减少仪式触发对情绪触发的压制
+
+# ── v4: 多维人格初始值 ──
+[personality]
+openness = 55.0
+conscientiousness = 65.0
+extraversion = 45.0
+agreeableness = 70.0
+neuroticism = 60.0
+tsundere_intensity = 70.0
+playfulness = 55.0
+attachment_style = 60.0
+
+# ── v4: Bayesian 用户状态推断 ──
+[bayesian]
+learning_rate = 0.05             # 在线学习率（越小越保守）
+min_confidence_for_block = 0.5   # 置信度高于此才阻塞发送
+utility_threshold = 0.4          # 加权效用高于此推荐发送
+escape_valve_sleep_block = 0.9   # v7: 逃生阀豁免时，睡觉置信度≥此值仍降级（默认0.9）
+
+# ── v4: 消息组合系统 ──
+[composer]
+# combo 尺寸概率
+size_1_weight = 0.20
+size_2_weight = 0.50
+size_3_weight = 0.30
+# cue 基础权重（会被 personality 调制）
+cue_tsundere_weight = 0.30
+cue_tsundere_soft_weight = 0.25
+cue_tsundere_cool_weight = 0.10
+cue_dere_weight = 0.10
+cue_playful_weight = 0.20
+cue_anxious_weight = 0.15
+cue_caring_weight = 0.25
+cue_cool_weight = 0.05
+
+
+# ── 安全阀：防止连续崩溃吓到主人 ──
+[safety]
+enabled = true
+crash_cooldown_hours = 24      # lonely_high 触发后 24h 内禁止再次崩溃
+crash_window_hours = 48         # 统计窗口
+crash_max_in_window = 2         # 48h 内 ≥2 次崩溃 → 强制温和模式
+
+# ── 监控阈值（chiguo_monitor.py health() 使用）──
+[monitor]
+disk_warn_mb = 500         # 磁盘剩余小于此值 → warn
+disk_critical_mb = 100     # 磁盘剩余小于此值 → critical
+memory_warn_mb = 500       # 进程 RSS 大于此值 → warn
+memory_critical_mb = 1000  # 进程 RSS 大于此值 → critical
+# LanceDB 路径由主配置 lancedb_path 读取，此处不重复定义
+
+# ── 日志轮转 & 对话存档 (v5) ──
+[logging]
+retention_months = 12        # 归档保留月数（0 = 永不删除）
+archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
