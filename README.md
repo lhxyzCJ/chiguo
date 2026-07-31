@@ -38,7 +38,7 @@ python3 chiguo_daemon.py
 # 交互式 Demo
 python3 chiguo_demo.py
 
-# 跑全部测试(18 个文件)
+# 跑全部测试(19 个文件)
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \
@@ -47,7 +47,8 @@ uv run python test_ebbinghaus.py && uv run python test_longing.py && \
 uv run python test_escape_valve.py && uv run python test_feedback.py && \
 uv run python test_trigger.py && uv run python test_topics.py && \
 uv run python test_circadian.py && uv run python test_followup.py && \
-uv run python test_netease_proof.py && uv run python test_netease_service.py
+uv run python test_netease_proof.py && uv run python test_netease_service.py && \
+uv run python test_envcheck.py
 ```
 
 > 注意:集成测试需要当前目录存在 `chiguo_proactive.toml`,请始终从项目根目录运行。
@@ -58,7 +59,7 @@ uv run python test_netease_proof.py && uv run python test_netease_service.py
 
 ```bash
 git clone <仓库地址> && cd <仓库目录>
-bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量 18 测试 → 环境检查(OpenClaw skill/网易云登录) → cron 提示
+bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量 19 测试 → 环境检查(OpenClaw skill/网易云登录) → cron 提示
 ```
 
 部署脚本会检查:OpenClaw skill 目录(`~/.openclaw/workspace/skills/chiguo/`)、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。定时任务经 `openclaw cron` 注册,见 `doc/OPENCLAW_INTEGRATION.md`。
@@ -122,7 +123,8 @@ anniversary_manager.py   # 纪念日/倒计时 CRUD
 chiguo_monitor.py        # 结构化监控(stats / alerts / health)
 chiguo_watchdog.py       # 独立看门狗(停滞检测,超 3h 告警)
 chiguo_demo.py           # 演示模式
-test_*.py                # 测试(18 个文件,300+ 用例,独立 runner)
+test_*.py                # 测试(19 个文件,300+ 用例,独立 runner)
+data/                    # 数据文件:课表 xskb.xlsx、手动记忆 chiguo_memories.json、网易云二维码 netease_qr.png
 ```
 
 ## CLI 参考
@@ -156,6 +158,9 @@ python3 chiguo_daemon.py --alerts          # 异常检测告警
 python3 chiguo_daemon.py --monitor         # 完整监控报告
 python3 chiguo_monitor.py --summary        # 人类可读摘要
 python3 chiguo_watchdog.py --quiet         # 看门狗(退出码驱动)
+
+# 环境就绪检查(只读)
+python3 chiguo_envcheck.py                 # 检查 Python/OpenClaw/LanceDB/网易云/数据,退出码 0=就绪 1=警告 2=严重
 ```
 
 ## 文档

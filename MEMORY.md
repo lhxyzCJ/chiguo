@@ -1,5 +1,25 @@
 # MEMORY.md
 
+## 2026-08-01 — v10.1 最终审查修复 I-1:check_netease 退出码纳入 API 可达性
+
+**问题**:`check_netease` 的 `ok = cookie_path.is_file()`——cookie 存在但 API 宕机时 severity 仍为 ok、退出码 0、deploy.sh 打印「环境就绪 ✓」,与 spec §4.2「API 不可达 → warn」冲突。
+
+- **修复**:新增 `api_ok` 追踪(仅 HTTP 200 算可达),`ok = api_ok and cookie_path.is_file()`;issues 文案保持现状(API OK(200)/API HTTP xxx/API 不可达: xxx);返回结构 `{"name","ok","severity","detail"}` 与其余 4 组检查项不变
+- 文件:`chiguo_envcheck.py`
+- 验证:`test_envcheck.py` 10/10 通过(test_check_netease_no_cookie_warn 用 127.0.0.1:1 端口,API 必败 + 无 cookie,不受影响,无需改测试);模拟:API 200+cookie → ok True;API 宕+cookie 存在 → warn False
+
+## 2026-08-01 — v10.1 目录整理(data/) + 环境就绪检查(chiguo_envcheck)
+
+**背景**：项目根堆积数据/资源文件与代码混放；新机部署缺少统一环境就绪检查，OpenClaw/网易云登录缺失只能靠运行时报错发现。
+
+- **数据收进 data/**：课表 `data/xskb.xlsx`、手动记忆 `data/chiguo_memories.json`、网易云二维码 `data/netease_qr.png` 统一移入 `data/` 子目录；代码默认值（schedule_parser.py:36、chiguo_state.py:235/322、netease_bridge.py:172）与 toml 同步；相对路径经 `_anchored` 解析（绝对路径原样保留），与 cwd 无关；`schedule_cache.json` 等运行时文件仍留项目根
+- **chiguo_envcheck.py 新增**：5 组只读检查——env（Python≥3.14 + uv）、openclaw（toml personality_source 目录 + SUN2.md/SKILL.md）、lancedb（可导入 + 只读连接）、netease（API 轻量健康请求 + cookie + health 文件）、data（课表 + 手动记忆存在可读）；JSON → stdout，退出码 0=就绪 / 1=warn / 2=critical（与 watchdog 一致）；路径单一事实来源为 `chiguo_proactive.toml`（与 daemon 相同读取点）；只读：不建目录、不写缓存、不启动服务
+- **test_envcheck.py 新增**：10 用例（home=/db_path=/base_dir= 注入隔离，不触碰真实 `~/.openclaw`）
+- **deploy.sh 集成**：新增「环境就绪检查」步骤（退出码 0/1/2 分支），替代散装 OpenClaw/网易云检查；自检数组补 test_envcheck（18→19 个测试）
+- **文档同步**：AGENTS.md 测试链 18→19 文件（含 test_envcheck）；README/doc README 补 `data/` 文件结构与 envcheck CLI；doc/SYSTEM.md 模块表加 chiguo_envcheck.py/test_envcheck.py、路径说明补 data/ 前缀；MEMORY/IMPROVE 记录
+- 文件：`chiguo_state.py`、`schedule_parser.py`、`netease_bridge.py`、`chiguo_envcheck.py`（新）、`test_envcheck.py`（新）、`deploy.sh`、`AGENTS.md`、`README.md`、`doc/README.md`、`doc/SYSTEM.md`、`MEMORY.md`、`doc/IMPROVE.md`
+- 验证：19 文件全量回归（348 tests）通过；`chiguo_envcheck.py` 本机退出码 2（无 `~/.openclaw`）；`chiguo_daemon.py` 单次决策输出 JSON 正常；git status 无杂项（运行时文件已 gitignore）
+
 ## 2026-08-01 — v10 多机可移植性修复（GitHub 化：路径解耦 + deploy.sh + 测试隔离）
 
 **背景**：项目搬到 GitHub private 仓库，实际运行机为另一台（pull 后运行）。审计（探索子代理）发现 5 处硬编码 `/root/.openclaw/...` + 若干 cwd 依赖；无测试断言默认路径，改默认值安全。

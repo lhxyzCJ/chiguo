@@ -32,37 +32,29 @@ else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
 
-# ── 3. 全量自检(18 个测试,任一失败即中止) ───────────────────
+# ── 3. 全量自检(19 个测试,任一失败即中止) ───────────────────
 TESTS=(test_chiguo_math test_holiday_parser test_integration test_monitor
        test_eventbus test_personality test_bayesian test_composer
        test_ebbinghaus test_longing test_escape_valve test_feedback
        test_trigger test_topics test_circadian test_followup
-       test_netease_proof test_netease_service)
+       test_netease_proof test_netease_service test_envcheck)
 say "运行全量测试(${#TESTS[@]} 个文件) ..."
 for t in "${TESTS[@]}"; do
     uv run python "$t.py" >/dev/null || fail "$t.py 失败,中止部署"
 done
 say "全部测试通过 ✓"
 
-# ── 4. OpenClaw 集成检查 ────────────────────────────────────
-OPENCLAW_DIR="$HOME/.openclaw"
-if [ ! -d "$OPENCLAW_DIR" ]; then
-    warn "未找到 \$HOME/.openclaw → 目标机需先安装 OpenClaw(消息发送端)"
-elif [ ! -d "$OPENCLAW_DIR/workspace/skills/chiguo" ]; then
-    warn "缺少 \$HOME/.openclaw/workspace/skills/chiguo → 需放入 SKILL.md/SUN2.md/"
-    warn "  references/迟菓语言技巧指南.md/scripts/on-user-msg.sh(可从旧运行机拷贝,"
-    warn "  参见 doc/OPENCLAW_INTEGRATION.md)"
-else
-    say "OpenClaw skill 目录存在 ✓"
-fi
-
-# ── 5. 网易云检查 ───────────────────────────────────────────
-if [ ! -f netease_cookie.txt ]; then
-    warn "netease_cookie.txt 不存在 → 首次需扫码登录: uv run python netease_bridge.py --login"
-    warn "  (依赖本机 NeteaseCloudMusicApi,默认 http://localhost:3000,可用 NETEASE_API_BASE 覆盖)"
-else
-    say "网易云已登录(netease_cookie.txt) ✓"
-fi
+# ── 4. 环境就绪检查(OpenClaw/依赖/数据文件,chiguo_envcheck.py) ──
+say "运行环境检查 ..."
+set +e
+uv run python chiguo_envcheck.py
+EC=$?
+set -e
+case $EC in
+    0) say "环境就绪 ✓" ;;
+    1) warn "环境存在警告(见上方 JSON,系统可运行但部分降级)" ;;
+    2) fail "环境存在严重问题(见上方 JSON),请先修复再继续" ;;
+esac
 
 # ── 6. 迁移提示 ─────────────────────────────────────────────
 if [ ! -f chiguo_state.json ]; then

@@ -169,7 +169,7 @@ def login_qr_flow():
     print(f"[2/3] 二维码已生成")
 
     # Save QR image
-    qr_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "netease_qr.png")
+    qr_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "netease_qr.png")
     if "," in qr_data:
         b64_data = qr_data.split(",", 1)[1]
         with open(qr_path, "wb") as f:

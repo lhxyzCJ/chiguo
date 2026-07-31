@@ -33,7 +33,7 @@ PERIOD_TIMES = {
 class ScheduleParser:
     """课表解析 + 查询"""
 
-    def __init__(self, xlsx_path: str = "xskb.xlsx",
+    def __init__(self, xlsx_path: str = "data/xskb.xlsx",
                  cache_path: str = "schedule_cache.json",
                  semester_start: date = None):
         self.xlsx_path = Path(xlsx_path)
@@ -435,7 +435,7 @@ if __name__ == "__main__":
     from datetime import datetime, timezone, timedelta
     CST = timezone(timedelta(hours=8))
 
-    parser = ScheduleParser("xskb.xlsx")
+    parser = ScheduleParser("data/xskb.xlsx")
 
     if len(sys.argv) > 1 and sys.argv[1] == "--dump":
         print(json.dumps(parser._schedule, indent=2, ensure_ascii=False, default=str))
