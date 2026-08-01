@@ -31,3 +31,6 @@ wechat-bridge/node_modules/
 wechat-bridge/.env
 wechat-bridge/package-lock.json
 wechat-bridge/npm-debug.log*
+
+# tick cron 运行日志（运行时产物，不跟踪）
+logs/
