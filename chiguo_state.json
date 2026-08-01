@@ -1,25 +1,27 @@
 {
-  "_version": 9,
+  "_version": 10,
   "emotion": {
-    "loneliness": 17.423138225235707,
-    "affection": 54.61131140894132,
-    "anxiety": 47.29421482758805,
-    "energy": 59.96768068192749,
-    "tsundere_index": 70.00051808522447,
-    "loneliness_rate": 2.402215409156056,
-    "anxiety_rate": 0.6106429320209479
+    "loneliness": 77.6899655437451,
+    "affection": 55.24487370961934,
+    "anxiety": 69.73049557004775,
+    "energy": 99.96032676727859,
+    "tsundere_index": 74.08882116846884,
+    "loneliness_rate": 0.4007437598483516,
+    "anxiety_rate": 0.35814567961893135
   },
   "cooldown": {
-    "last_message_at": "2026-08-01T20:22:44.617526+08:00",
-    "last_user_message_at": null,
-    "messages_today": 2,
+    "last_message_at": "2026-08-01T23:07:44.448949+08:00",
+    "last_user_message_at": "2026-08-01T21:09:08.147805+08:00",
+    "messages_today": 0,
     "messages_without_reply": 2,
-    "current_date": "2026-08-01",
+    "current_date": "2026-08-02",
     "morning_sent": false,
     "night_sent": false,
     "trigger_history": [
       "longing",
-      "lonely_low"
+      "lonely_low",
+      "longing",
+      "longing"
     ],
     "event_timestamps": [
       {
@@ -31,26 +33,50 @@
         "type": "lonely_low",
         "time": "2026-08-01T20:22:44.617526+08:00",
         "msg_id": "1c567c92274d"
+      },
+      {
+        "type": "longing",
+        "time": "2026-08-01T21:24:46.869971+08:00",
+        "msg_id": "772ba1523427"
+      },
+      {
+        "type": "longing",
+        "time": "2026-08-01T23:07:44.448949+08:00",
+        "msg_id": "7a06ec207544"
       }
     ],
-    "reply_latencies": [],
+    "reply_latencies": [
+      0.7732028552777778
+    ],
     "busy_suppress_until": null,
     "held_count": 0,
     "accumulated_lambda": 0.0,
-    "last_user_msg_length": null,
+    "last_user_msg_length": 7,
     "last_crash_at": null,
     "crash_count_48h": 0,
     "crash_timestamps": [],
     "last_longing_break_at": null,
-    "recv_dedup": null
+    "recv_dedup": {
+      "text_sha": "cab372eab5a631b4e9537d678073f41fbb558be51b0af1ba746706d5733ce6c8",
+      "at": "2026-08-01T21:09:08.147805+08:00",
+      "analysis": false
+    }
   },
   "circadian": {
-    "reply_days": [],
+    "reply_days": [
+      {
+        "date": "2026-08-01",
+        "hours": [
+          21
+        ],
+        "bucket": "weekend"
+      }
+    ],
     "active_days": [],
     "quiet_start": 0,
     "quiet_end": 8,
     "confidence": 0.0,
-    "sample_days": 0,
+    "sample_days": 1,
     "weekday_quiet_start": 0,
     "weekday_quiet_end": 8,
     "weekday_confidence": 0.0,
@@ -62,14 +88,25 @@
   "personality": {
     "openness": 55.0,
     "conscientiousness": 65.0,
-    "extraversion": 45.0,
+    "extraversion": 45.03,
     "agreeableness": 70.0,
-    "neuroticism": 60.03,
-    "tsundere_intensity": 70.1,
-    "playfulness": 55.05,
-    "attachment_style": 60.03
+    "neuroticism": 60.010000000000005,
+    "tsundere_intensity": 70.19999999999999,
+    "playfulness": 55.14999999999999,
+    "attachment_style": 60.09
   },
-  "last_tick": "2026-08-01T20:52:44.534063+08:00",
-  "tick_seq": 17,
-  "_checksum": "2175f357ebbee5158bc8a140da5e8b5d8cf4c49c46de78680754468558bf7864"
+  "personality_baseline": {
+    "openness": 55.0,
+    "conscientiousness": 65.0,
+    "extraversion": 60.0,
+    "agreeableness": 65.0,
+    "neuroticism": 60.0,
+    "tsundere_intensity": 75.0,
+    "playfulness": 55.0,
+    "attachment_style": 60.0
+  },
+  "personality_history": [],
+  "last_tick": "2026-08-02T03:15:01.915954+08:00",
+  "tick_seq": 66,
+  "_checksum": "3dcfb909aaba8f88c92ca5bc18de2ebeb0df927327bbd440b959d048e3a9cd33"
 }
