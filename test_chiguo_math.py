@@ -7,23 +7,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from chiguo_math import (
-    sigmoid, decay, recover, poisson_prob, poisson_event,
+    sigmoid, decay, recover,
     dynamic_lambda, weighted_trigger_choice, hawkes_intensity,
 )
 from datetime import datetime, timezone, timedelta
 
 CST = timezone(timedelta(hours=8))
-
-PASS = 0
-FAIL = 0
-
-def check(cond, msg):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-    else:
-        FAIL += 1
-        print(f"  FAIL: {msg}")
 
 # ── sigmoid ──────────────────────────────────────────
 
@@ -116,26 +105,6 @@ def test_recover_negative_half_life_guard():
     assert recover(30, 100, 10, -5) == 30
     assert recover(30, 100, 10, 0) == 30
     print("  OK test_recover_negative_half_life_guard")
-
-# ── poisson ──────────────────────────────────────────
-
-def test_poisson_prob_zero_lambda():
-    """λ=0 → 概率 0"""
-    assert poisson_prob(0, 1) == 0.0
-    print("  OK test_poisson_prob_zero_lambda")
-
-def test_poisson_prob_bounds():
-    """概率在 [0, 1] 范围内"""
-    for lam in [0.01, 0.1, 0.5, 1.0, 5.0]:
-        p = poisson_prob(lam, 1)
-        assert 0 <= p <= 1, f"lam={lam}: p={p} out of bounds"
-    print("  OK test_poisson_prob_bounds")
-
-def test_poisson_event_deterministic():
-    """λ=100 → 几乎必然触发"""
-    hits = sum(1 for _ in range(1000) if poisson_event(100, 1))
-    assert hits > 900, f"expected >900 hits with λ=100, got {hits}"
-    print("  OK test_poisson_event_deterministic")
 
 # ── dynamic_lambda ───────────────────────────────────
 
@@ -271,7 +240,6 @@ if __name__ == "__main__":
         test_decay_negative_half_life_guard,
         test_recover_half_life, test_recover_zero_time, test_recover_full,
         test_recover_negative_half_life_guard,
-        test_poisson_prob_zero_lambda, test_poisson_prob_bounds, test_poisson_event_deterministic,
         test_dynamic_lambda_bounds, test_dynamic_lambda_monotonic,
         test_weighted_choice_deterministic, test_weighted_choice_empty, test_weighted_choice_all_zero,
         test_weighted_choice_negative_weights,

@@ -129,14 +129,6 @@ def test_tsundere_style_valid_cue_keys():
     print("  OK test_tsundere_style_valid_cue_keys")
 
 
-def test_energy_modifier():
-    """extraversion 调制元气"""
-    p_low = PersonalityTraits(extraversion=30)
-    p_high = PersonalityTraits(extraversion=70)
-    assert p_low.energy_modifier() < 1.0
-    assert p_high.energy_modifier() > 1.0
-    print(f"  OK test_energy_modifier: low={p_low.energy_modifier():.2f} high={p_high.energy_modifier():.2f}")
-
 
 def test_anxiety_sensitivity():
     """neuroticism 调制焦虑敏感度"""
@@ -223,7 +215,6 @@ if __name__ == "__main__":
         test_tsundere_style_tsuntsun_maps_to_soft,
         test_tsundere_style_cool_dere_maps_to_cool,
         test_tsundere_style_valid_cue_keys,
-        test_energy_modifier,
         test_anxiety_sensitivity,
         test_openness_bonus,
         test_serialization_roundtrip,

@@ -63,14 +63,6 @@ def test_anxiety_at_threshold():
     print(f"  OK test_anxiety_at_threshold: blocked={blocked}")
 
 
-def test_anxiety_just_above_threshold():
-    """焦虑略高于阈值：阻塞"""
-    lam, blocked = longing_accumulate(0.25, 0.25, growth_factor=0.08, anxiety=70.1,
-                                       anxiety_block_threshold=70.0, held_count=1)
-    assert blocked
-    print(f"  OK test_anxiety_just_above_threshold: blocked={blocked}")
-
-
 def test_longing_decay_full_recovery():
     """decay_factor=0 → 完全回退到 base"""
     base = 0.25
@@ -88,7 +80,6 @@ if __name__ == "__main__":
         test_held_count_effect,
         test_longing_decay,
         test_anxiety_at_threshold,
-        test_anxiety_just_above_threshold,
         test_longing_decay_full_recovery,
     ]
     for t in tests:

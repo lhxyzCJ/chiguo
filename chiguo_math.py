@@ -40,21 +40,6 @@ def recover(current: float, target: float, elapsed_hours: float, half_life_hours
     return current + gap * (1.0 - decay_factor)
 
 
-# ── Poisson 过程 ──────────────────────────────────────────
-# 替代固定冷却窗口。λ = 事件发生率（次/小时）
-
-def poisson_prob(lambda_per_hour: float, interval_hours: float) -> float:
-    """在 interval_hours 内至少发生1次的概率。"""
-    if lambda_per_hour <= 0:
-        return 0.0
-    return 1.0 - math.exp(-lambda_per_hour * interval_hours)
-
-
-def poisson_event(lambda_per_hour: float, interval_hours: float) -> bool:
-    """以 Poisson 概率随机决定是否触发事件。"""
-    return random.random() < poisson_prob(lambda_per_hour, interval_hours)
-
-
 # ── 动态 λ 计算 ──────────────────────────────────────────
 
 def dynamic_lambda(

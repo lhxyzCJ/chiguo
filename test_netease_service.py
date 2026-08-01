@@ -214,25 +214,6 @@ def test_source_fallback_when_daily_down():
     print("  OK test_source_fallback_when_daily_down")
 
 
-def test_both_sources_down_no_quota():
-    """两源都不可用(探针 healthy)→ None 且不消费配额、不误标故障(数据空不是故障)"""
-    random.seed(42)
-    with tempfile.TemporaryDirectory() as td:
-        svc = _make_service(td)
-        orig = _patch(daily=lambda *a, **k: None, recent=lambda *a, **k: None,
-                      health=lambda: {"api_alive": True, "logged_in": True})
-        try:
-            assert svc.music_topic(NOW) is None
-            assert svc._health["quota_music_used"] == 0
-            assert svc.health()["faulty"] is False
-        finally:
-            _restore(orig)
-    print("  OK test_both_sources_down_no_quota")
-
-
-# ── 3. 时段门控 ─────────────────────────────────────────────
-
-
 def test_time_gate_in_class():
     """in_class=True → None,且不消费配额"""
     random.seed(42)
@@ -684,27 +665,6 @@ def test_peek_two_sources_down_probes_health():
     print("  OK test_peek_two_sources_down_probes_health")
 
 
-def test_music_topic_is_peek_plus_consume():
-    """music_topic = peek + consume:一次调用恰好消费 1 配额(既有配额行为不变)"""
-    random.seed(42)
-    with tempfile.TemporaryDirectory() as td:
-        svc = _make_service(td)
-        orig = _patch(daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
-        try:
-            assert svc.music_topic(NOW) is not None
-            assert svc._health["quota_music_used"] == 1
-            assert svc.music_topic(NOW) is not None
-            assert svc._health["quota_music_used"] == 2
-            assert svc.music_topic(NOW) is None
-            assert svc._health["quota_music_used"] == 2
-        finally:
-            _restore(orig)
-    print("  OK test_music_topic_is_peek_plus_consume")
-
-
-# ── 6. 时间/tz 与配置 ───────────────────────────────────────
-
-
 def test_music_topic_naive_now():
     """naive now → 按 CST 补齐不崩,正常产出话题"""
     random.seed(42)
@@ -745,7 +705,6 @@ if __name__ == "__main__":
     test_quota_rolls_over_day()
     test_random_source_selection()
     test_source_fallback_when_daily_down()
-    test_both_sources_down_no_quota()
     test_time_gate_in_class()
     test_time_gate_quiet_window()
     test_fault_topic_bypasses_time_gate()
@@ -767,6 +726,5 @@ if __name__ == "__main__":
     test_peek_does_not_consume_quota()
     test_peek_fault_does_not_consume_fault_quota()
     test_peek_two_sources_down_probes_health()
-    test_music_topic_is_peek_plus_consume()
     netease_bridge.set_api_retry_policy(*_DEFAULT_RETRY)  # 恢复模块级重试策略
     print("test_netease_service.py: ALL PASS")

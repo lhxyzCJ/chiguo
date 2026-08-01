@@ -24,15 +24,6 @@ class EventBus:
             if handler not in self._subscribers[event_type]:
                 self._subscribers[event_type].append(handler)
 
-    def unsubscribe(self, event_type: str, handler: Callable[..., Any]):
-        """取消订阅。"""
-        with self._lock:
-            if event_type in self._subscribers:
-                try:
-                    self._subscribers[event_type].remove(handler)
-                except ValueError:
-                    pass
-
     def publish(self, event_type: str, **data) -> list[Any]:
         """发布事件。返回所有 handler 的结果列表。失败 handler 的结果为 None。"""
         with self._lock:
@@ -47,17 +38,7 @@ class EventBus:
                 results.append(None)
         return results
 
-    def clear(self):
-        """清空所有订阅。"""
-        with self._lock:
-            self._subscribers.clear()
 
-    def has_subscribers(self, event_type: str) -> bool:
-        """检查是否有订阅者。"""
-        return len(self._subscribers.get(event_type, [])) > 0
-
-
-# 全局单例，各模块共享
 _bus: EventBus | None = None
 
 

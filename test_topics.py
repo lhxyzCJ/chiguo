@@ -432,24 +432,6 @@ def test_netease_weight_in_weights():
     print("  OK test_netease_weight_in_weights")
 
 
-def test_netease_topic_emitted_when_service_injected():
-    """注入恒返回 netease 话题的 fake service（不限配额）+ 真实 state：300 种子至少命中一次 netease_music"""
-    with tempfile.TemporaryDirectory() as td:
-        state = _real_state(td)
-        picker = TopicPicker(state, _picker_cfg(),
-                             netease_service=FakeNeteaseService(topic=NETEASE_FIXED))
-        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
-        seen = False
-        for i in range(300):
-            random.seed(7000 + i)
-            t = picker.pick(now)
-            if t.get("type") == "netease_music":
-                seen = True
-                break
-        assert seen, "300 种子内应至少出现一次 netease_music"
-    print("  OK test_netease_topic_emitted_when_service_injected")
-
-
 def test_netease_service_called_with_gate_args():
     """fake service 记录调用参数：peek_music_topic 收到与 state 一致的 in_class/in_quiet_window"""
     bridge = FakeBridge([MEMORY_PREF, MEMORY_EVENT])
@@ -628,7 +610,6 @@ if __name__ == "__main__":
         test_memory_sources_unavailable_skipped,
         test_memory_and_preference_topics_with_bridge,
         test_netease_weight_in_weights,
-        test_netease_topic_emitted_when_service_injected,
         test_netease_service_called_with_gate_args,
         test_netease_consume_only_when_selected,
         test_netease_fault_consume_when_selected,

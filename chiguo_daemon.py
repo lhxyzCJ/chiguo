@@ -84,7 +84,6 @@ class DecisionEngine:
 
         # ── v4: EventBus ──
         self.bus = get_eventbus()
-        self._setup_eventbus_hooks()
 
         # ── v5: monotonic 锚点（不持久化，用于检测壁钟跳变）──
         self._monotonic_at_save: float = 0.0
@@ -125,14 +124,6 @@ class DecisionEngine:
                                             netease_service=self.netease_service)
             self.composer = MessageComposer(self.state, self.config.get("composer", {}))
             self.state._bayesian_estimator = None
-
-    def _setup_eventbus_hooks(self):
-        """注册 EventBus 监听器（v4 解耦）。"""
-        self.bus.subscribe("decision_made", self._on_decision_made)
-
-    def _on_decision_made(self, **kwargs):
-        """决策完成后的回调（EventBus 解耦保留点）。"""
-        pass
 
     def _dynamic_sleep_interval(self, now, decision: dict) -> float:
         """
@@ -822,7 +813,7 @@ class DecisionEngine:
                 trigger.data["topic"] = topic_data
 
         # ── 使用 composer 组合情境文本 ──
-        situation = self.composer.compose_situation(trigger, combo, topic_data, silent_h)
+        situation = self.composer.compose_situation(combo, topic_data, silent_h)
 
         # 课表上下文
         sch = self.state.schedule_status(now)

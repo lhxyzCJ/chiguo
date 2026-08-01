@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 CST = timezone(timedelta(hours=8))
 
 from chiguo_state import ChiguoState, ChiguoEmotion, CooldownState
-from chiguo_trigger import evaluate_triggers, Trigger
+from chiguo_trigger import evaluate_triggers
 
 
 def _base_cfg(tmp: str) -> dict:
@@ -60,14 +60,14 @@ def test_deadlock_eligible_no_last_msg():
         cfg = _base_cfg(tmp)
         state = _make_state(cfg)
         state.emotion.anxiety = 100.0
-        # last_user_message_at 为 None → silent_hours_wall 返回 999.0（天然满足 72h）
+        # last_user_message_at 为 None → silent_hours(wall=True) 返回 999.0（天然满足 72h）
         now = datetime.now(CST)
         assert state.longing_break_eligible(now), "deadlock (no msg ever) should be eligible"
         print("  OK test_deadlock_eligible_no_last_msg")
 
 
 def test_deadlock_eligible_4_days_silence():
-    """死锁态：焦虑≥阈值 + 4天前最后一条消息 → silent_hours_wall ≈ 96h → eligible"""
+    """死锁态：焦虑≥阈值 + 4天前最后一条消息 → silent_hours(wall=True) ≈ 96h → eligible"""
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _base_cfg(tmp)
         state = _make_state(cfg)
@@ -91,7 +91,7 @@ def test_non_blocked_not_eligible():
 
 
 def test_insufficient_silence():
-    """沉默不足：焦虑=100 但最后消息仅 1 天前 → silent_hours_wall ≈ 24h < 72h"""
+    """沉默不足：焦虑=100 但最后消息仅 1 天前 → silent_hours(wall=True) ≈ 24h < 72h"""
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _base_cfg(tmp)
         state = _make_state(cfg)

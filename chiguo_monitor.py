@@ -492,9 +492,6 @@ class ChiguoMonitor:
         for e in recent_entries:
             self._normalize_entry(e)  # 与 stats() 相同的脏数据归一化（state:null 等）
 
-        if not recent_entries and last_tick_str:
-            # 有 state 但无近期日志 → 可能日志被清过，不告警
-            pass
 
         sends = [e for e in recent_entries if e.get("action") == "send"]
         idles = [e for e in recent_entries if e.get("action") == "idle"]

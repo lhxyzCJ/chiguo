@@ -6,7 +6,7 @@ import os
 import random
 import sys
 import tempfile
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1094,25 +1094,6 @@ def test_sleep_hours_deduction():
     print("  OK test_sleep_hours_deduction")
 
 
-def test_memory_bridge_timestamp_auto_detection():
-    """memory_bridge.recent() timestamp unit auto-detection gracefully degrades"""
-    from memory_bridge import MemoryBridge
-
-    # Graceful degradation: LanceDB 不可用时返回空列表
-    bridge = MemoryBridge(db_path="/nonexistent/path")
-    if not bridge.available:
-        results = bridge.recent(hours=168)
-        assert results == []
-
-    # Timestamp 检测启发式：ms 时间戳 > 1e12，s 时间戳 < 1e12
-    # 此逻辑在 _recent_fallback 中使用
-    epoch_ms = 1700000000000  # > 1e12 → detected as ms
-    epoch_s = 1700000000       # < 1e12 → detected as s
-    assert epoch_ms > 1e12
-    assert epoch_s < 1e12
-    print("  OK test_memory_bridge_timestamp_auto_detection")
-
-
 def test_reply_latency_stats():
     """stats() 正确计算回复延迟的 avg/median"""
     with tempfile.TemporaryDirectory() as td:
@@ -1191,7 +1172,6 @@ if __name__ == "__main__":
         test_alert_resolve,
         test_alert_acknowledge,
         test_sleep_hours_deduction,
-        test_memory_bridge_timestamp_auto_detection,
         test_reply_latency_stats,
     ]
     failed = 0

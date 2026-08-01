@@ -20,7 +20,6 @@ CST = timezone(timedelta(hours=8))
 
 from chiguo_state import ChiguoState, ChiguoEmotion, CooldownState
 from chiguo_trigger import evaluate_triggers
-from chiguo_math import sigmoid, recover, decay
 
 # 用临时目录隔离所有运行时文件（修复：不再触碰项目根的真实状态文件）
 TMP_DIR: Path | None = None

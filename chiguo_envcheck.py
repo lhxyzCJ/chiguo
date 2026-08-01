@@ -14,10 +14,8 @@ import shutil
 import sys
 import tomllib
 import urllib.request
-import urllib.error
 from pathlib import Path
 
-CST_NOTE = None  # 无时区逻辑,占位保持模块风格一致
 
 _BASE_DIR = Path(__file__).resolve().parent
 
@@ -134,7 +132,7 @@ def check_data(xlsx_path: Path, memories_path: Path) -> dict:
             "detail": f"课表/手动记忆 OK ({xlsx_path.name}, {memories_path.name})"}
 
 
-def run_checks(home: Path = None, base_dir: Path = None) -> dict:
+def run_checks(base_dir: Path = None) -> dict:
     """按序执行 5 组检查。返回完整报告 dict。单项失败不中断。"""
     base = base_dir or _BASE_DIR
     cfg = _load_config(base)

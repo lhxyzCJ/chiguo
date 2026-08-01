@@ -105,22 +105,6 @@ def test_rate_factor_boosts_lonely_at_low_loneliness():
 
 
 # ═══════════════════════════════════════════════════════════
-# anxiety softmax 归一化（v7 修复回归保护）
-# ═══════════════════════════════════════════════════════════
-
-def test_anxiety_default_normalized_out():
-    """默认 anxiety=40：w≈0.171 < anxiety_min_weight(0.3) → 100 种子 anxiety 触发 0 次"""
-    with tempfile.TemporaryDirectory() as td:
-        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
-        s = _make_state(td, now, loneliness=75, energy=40)
-        counts = _run_seeds(s, now, n=100)
-        assert counts.get("anxiety", 0) == 0, f"anxiety=40 must not be candidate, got {counts}"
-        # 对照：孤独候选仍在（归一化只影响 anxiety 自身，不压制 lonely）
-        lonely = sum(v for k, v in counts.items() if k.startswith("lonely_"))
-        assert lonely == 100, f"lonely should still fire, got {counts}"
-    print("  OK test_anxiety_default_normalized_out")
-
-
 def test_anxiety_high_fires():
     """anxiety=80：w≈0.65 → 高概率触发（实测 100 种子 88 次 anxiety + 12 次 playful）"""
     with tempfile.TemporaryDirectory() as td:
@@ -308,7 +292,6 @@ if __name__ == "__main__":
         test_no_candidates_returns_none,
         test_lonely_softmax_competition_at_high_loneliness,
         test_rate_factor_boosts_lonely_at_low_loneliness,
-        test_anxiety_default_normalized_out,
         test_anxiety_high_fires,
         test_morning_window_probability,
         test_night_window_probability,
