@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-08-02 — bridge.mjs askPi 改造：回复侧 openclaw agent → pi-agent（Phase 4 任务 12）
+
+**问题**：回复侧仍由 openclaw agent（main session + standing order）承担「情绪分析 + 回复」，与 Phase 4 寄主迁移目标（全部 LLM 调用走 pi-run.mjs）不一致；standing order 补分析的时序依赖 agent 行为，链路脆弱。
+
+**方案**：
+- `wechat-bridge/bridge.mjs`：`askOpenClaw` → `askPi`（`node pi-run.mjs --prompt <原文> --analysis-mode`，一次完成分析+回复）；`upgradeAnalysis(text, analysis)` 把 analysis 接线到 `daemon --user-msg --analysis`（recv_dedup 升级语义，不重复记账；失败不阻塞回复流）；消息流程改为 `recordUserMsg（确定性）→ askPi → upgradeAnalysis → bot.reply`；加 ESM 入口守卫 + 导出三个函数（测试钩子）；`WECHAT_BRIDGE_PI_RUN` 环境变量（默认随仓库定位，可移植）
+- `scripts/pi-run.mjs`：Task 10 review Minor——非零退出码丢弃 stdout（即使含完整回复）→ salvage：stdout 含完整 message_end 回复即按成功返回，避免「回复已生成却报处理失败」
+- `scripts/wechat-bridge.sh`：`.env` 加 `WECHAT_BRIDGE_PI_RUN`
+- `test_bridge_askpi.mjs`（新，10 用例）：fake pi-run/daemon 集成式测试；`test_pi_run.mjs` 补 3 例 salvage
+
+**验证**：test_pi_run 19/19、test_bridge_askpi 10/10、test_trigger_script 15/15、test_wechat_bridge 8/8、import/--check 通过。
+
+**遗留**：纪念日/假期（--anniversary/--break）特殊命令执行链路随 openclaw standing order 停用而暂断（pi 纯文本调用无工具权限；brief 未要求本任务处理）——需后续任务接线；chiguo-tick 与 bridge 共用 chiguo-main 会话的跨进程并发需评估。
+
 ## 2026-08-02 — chiguo-tick.sh 系统 crontab 入口（Phase 4 任务 11）
 
 **问题**：Phase 4 寄主迁移后，openclaw cron trigger-script（chiguo-watch.js + install_integration.sh）将由系统 crontab 直接替代，需要零模型门控的入口脚本。

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * wechat-bridge — 微信 (wechatbot fork) ↔ OpenClaw agent 桥接
+ * wechat-bridge — 微信 (wechatbot fork) ↔ pi-agent 桥接
  *
- * 微信消息 → openclaw agent (main session) → 回复发回微信。
+ * 微信消息 → pi-agent（scripts/pi-run.mjs，chiguo-main 会话）→ 回复发回微信。
  * 使用 fork 的 inboundDebounce 合并连发文本（windowMs 4000）。
  *
  * v2 新增（迟菓主动链路）:
@@ -15,17 +15,24 @@
  *  - storageDir 默认 = 本文件同目录 credentials/（git 跟踪 → 登录态随仓库走；
  *    失效时 SDK 打印二维码重新扫码，即"尝试保留"）。绝不写入 wechatbot 仓库。
  *  - 所有路径/端口/主人 ID 可用 WECHAT_BRIDGE_* 环境变量覆盖（scripts/wechat-bridge.sh 生成 .env）。
+ *
+ * v4（Phase 4 寄主迁移）:
+ *  - 回复侧从 openclaw agent 改为 pi-agent：askPi 调 scripts/pi-run.mjs
+ *    （--prompt <原文> --analysis-mode），一次完成「情绪分析 JSON + 回复」。
+ *  - 分析接线：askPi 返回 analysis 后 → daemon --user-msg <原文> --analysis '<JSON>'
+ *    （recv_dedup 升级语义——bridge 已确定性 --user-msg 过，不重复记账）。
  */
 import { createServer } from 'node:http'
 import { WeChatBot } from '@wechatbot/wechatbot'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { pathToFileURL } from 'node:url'
 
 const execFileP = promisify(execFile)
 
 const DEBOUNCE_MS = 4000
-const SESSION_KEY = process.env.WECHAT_BRIDGE_SESSION_KEY ?? 'agent:main:main'
-const AGENT_BIN = process.env.WECHAT_BRIDGE_AGENT ?? 'openclaw'
+const PI_RUN_SCRIPT = process.env.WECHAT_BRIDGE_PI_RUN
+  ?? new URL('../scripts/pi-run.mjs', import.meta.url).pathname
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 const DAEMON_PY = process.env.WECHAT_BRIDGE_DAEMON_PY ?? '/root/chiguo/.venv/bin/python'
@@ -33,7 +40,7 @@ const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? '/root/chiguo/chiguo_d
 // 登录态目录：默认随仓库（wechat-bridge/credentials/，git 跟踪）；可用 WECHAT_BRIDGE_STORAGE 覆盖
 const DEFAULT_STORAGE = new URL('./credentials/', import.meta.url).pathname
 
-/** 串行化 agent 调用（main session 不允许并发 turn）。 */
+/** 串行化 pi 调用（同一 pi 会话 chiguo-main 不允许并发 turn，含 chiguo-tick 的周期调用）。 */
 class TurnQueue {
   constructor() {
     this.tail = Promise.resolve()
@@ -46,30 +53,28 @@ class TurnQueue {
   }
 }
 
-/** 调用 openclaw agent，返回回复文本。失败抛错。 */
-async function askOpenClaw(text) {
-  const { stdout } = await execFileP(AGENT_BIN, [
-    'agent',
-    '--session-key', SESSION_KEY,
-    '-m', text,
-    '--json',
-  ], { timeout: 180_000, maxBuffer: 10 * 1024 * 1024 })
+/** 调用 pi-agent（pi-run.mjs），一次完成「情绪分析 JSON + 回复」。
+ * 返回 { text, analysis }；analysis 为解析后的对象或 null。失败抛错。 */
+export async function askPi(text) {
+  const { stdout } = await execFileP('node', [PI_RUN_SCRIPT, '--prompt', text, '--analysis-mode'], {
+    timeout: 180_000,
+    maxBuffer: 16 * 1024 * 1024,
+  })
 
-  const parsed = JSON.parse(stdout)
-  if (parsed.status !== 'ok') {
-    throw new Error(`agent status=${parsed.status} summary=${parsed.summary ?? ''}`)
+  let parsed
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    throw new Error(`pi-run 输出非 JSON: ${String(stdout).slice(0, 100)}`)
   }
-  const payloads = parsed.result?.payloads ?? []
-  const reply = payloads
-    .map((p) => p.text)
-    .filter((t) => typeof t === 'string' && t.length > 0)
-    .join('\n')
-  if (!reply) throw new Error('agent returned empty reply')
-  return reply
+  if (!parsed.ok) {
+    throw new Error(parsed.error ?? 'pi-run 返回 ok=false 且无 error')
+  }
+  return { text: parsed.text, analysis: parsed.analysis ?? null }
 }
 
-/** 确定性记录主人消息到迟菓 daemon（无分析；standing order 稍后补分析，daemon 去重升级）。失败不阻塞回复流。 */
-async function recordUserMsg(text) {
+/** 确定性记录主人消息到迟菓 daemon（无分析；随后的 askPi 分析经 upgradeAnalysis 升级，daemon 去重）。失败不阻塞回复流。 */
+export async function recordUserMsg(text) {
   try {
     await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--user-msg', text], {
       timeout: 30_000,
@@ -77,6 +82,22 @@ async function recordUserMsg(text) {
     })
   } catch (err) {
     console.error('[user-msg record error]',
+      err instanceof Error ? err.message : String(err))
+  }
+}
+
+/** 分析升级：askPi 已产出情绪分析 JSON → daemon --user-msg --analysis。
+ * recv_dedup 升级语义：同一原文（600s 窗口内）只补分析微调，不重复记账。失败不阻塞回复流。 */
+export async function upgradeAnalysis(text, analysis) {
+  if (!analysis) return
+  const analysisJson = typeof analysis === 'string' ? analysis : JSON.stringify(analysis)
+  try {
+    await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--user-msg', text, '--analysis', analysisJson], {
+      timeout: 30_000,
+      maxBuffer: 4 * 1024 * 1024,
+    })
+  } catch (err) {
+    console.error('[analysis upgrade error]',
       err instanceof Error ? err.message : String(err))
   }
 }
@@ -153,7 +174,7 @@ async function main() {
     if (!text?.trim()) return
     console.log(`[in] ${msg.userId}: ${text.slice(0, 80)}`)
 
-    await recordUserMsg(text)  // 确定性回传 daemon（先于 agent 的 standing order 分析）
+    await recordUserMsg(text)  // 确定性回传 daemon（先于 askPi 分析；analysis 稍后经 upgradeAnalysis 升级）
 
     try {
       await bot.sendTyping(msg.userId).catch(() => {})
@@ -162,12 +183,13 @@ async function main() {
     queue
       .run(async () => {
         try {
-          const reply = await askOpenClaw(text)
+          const { text: reply, analysis } = await askPi(text)
+          await upgradeAnalysis(text, analysis)  // recv_dedup 升级语义，不重复记账
           console.log(`[out] ${reply.slice(0, 80)}`)
           await bot.reply(msg, reply)
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err)
-          console.error('[agent error]', reason)
+          console.error('[pi error]', reason)
           await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
         }
       })
@@ -186,7 +208,9 @@ async function main() {
   console.log('wechat-bridge 运行中（Ctrl+C 停止）')
 }
 
-main().catch((err) => {
-  console.error('启动失败:', err instanceof Error ? err.message : String(err))
-  process.exit(1)
-})
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error('启动失败:', err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  })
+}

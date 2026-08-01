@@ -1,5 +1,18 @@
 # MEMORY.md
 
+## 2026-08-02 — bridge.mjs askPi 改造：回复侧 openclaw agent → pi-agent（Phase 4 任务 12）
+
+**背景**：Phase 4 回复侧从 openclaw agent（main session，standing order 补分析）迁移到 pi-agent。pi-run.mjs（Task 10）已支持 `--analysis-mode` 一次输出「情绪分析 JSON + 回复」，bridge 从「agent 回复 + standing order 事后补分析」改为「pi-run 一次调用 + bridge 内联 analysis 接线」。
+
+- **`wechat-bridge/bridge.mjs`**：`askOpenClaw`（openclaw agent --session-key main）→ `askPi`（`node scripts/pi-run.mjs --prompt <原文> --analysis-mode`，180s 超时；解析 stdout JSON，`{ok:false}`/非 JSON → 抛错同现状）。新增 `upgradeAnalysis(text, analysis)`：askPi 返回 analysis 后补 `daemon --user-msg <原文> --analysis '<JSON>'`（recv_dedup 升级语义——bridge 已确定性 `--user-msg` 过，600s 窗口内只补分析微调不重复记账），失败不阻塞回复流。消息流程：`recordUserMsg（确定性）→ askPi → upgradeAnalysis → bot.reply`。环境变量：删 `WECHAT_BRIDGE_AGENT`/`WECHAT_BRIDGE_SESSION_KEY`，加 `WECHAT_BRIDGE_PI_RUN`（默认 `<repo>/scripts/pi-run.mjs`，随 import.meta.url 定位可移植）。**ESM 入口守卫**（仿 pi-run.mjs，仅直接执行跑 main）+ 导出 `askPi`/`recordUserMsg`/`upgradeAnalysis`（测试钩子）。TurnQueue 保留（串行化同 pi 会话并发 turn）
+- **`scripts/pi-run.mjs`**：修 Task 10 review Minor——非零退出码时不再丢弃 stdout：若 stdout 已含完整回复（parseNdjson 取到最后 message_end 文本）→ 按成功返回；无完整回复才按失败抛错（如 teardown/session 保存失败不影响已生成的回复）
+- **`scripts/wechat-bridge.sh`**：`.env` 生成加 `WECHAT_BRIDGE_PI_RUN=$PROJECT_DIR/scripts/pi-run.mjs`
+- **`test_pi_run.mjs`**（16→19 用例）：新增 runPiBin salvage 3 例（真实 spawn：非零退出含完整回复不丢 stdout / 无完整回复 reject / run() 链路 ok:true）
+- **`test_bridge_askpi.mjs`（新，10 用例，独立 runner）**：fake pi-run（canned JSON）+ fake daemon（记录 argv）真实 execFile 链路——askPi 参数（--prompt 原文 --analysis-mode）/ok+analysis/无 analysis/ok:false reject/非 JSON reject；upgradeAnalysis 参数（--user-msg 原文 --analysis JSON 逐字段核对）/null 不调/失败不抛错；recordUserMsg 不带 --analysis/失败不抛错；全链路顺序（record → askPi → upgrade 各只调一次）
+- **验证**：test_pi_run 19/19、test_bridge_askpi 10/10、test_trigger_script 15/15、test_wechat_bridge 8/8、`node -e import(bridge.mjs)` 通过、`node --check` 全过
+- **特殊命令（纪念日 --anniversary / 假期 --break）**：原由 standing order（agents/main/AGENTS.md）让 openclaw agent 执行；迁移后 pi 纯文本调用无工具权限、SUN2.md 无命令表 → 命令执行链路暂断（brief 未要求，保持现状），待后续任务接线（回复文本命令意图无解析路径，需评估）
+- **遗留（本任务范围外）**：chiguo-tick（发送侧）与 bridge（回复侧）共用 `chiguo-main` 会话，TurnQueue 仅串行化 bridge 内 turn，跨进程并发需 Task 13/15 评估
+
 ## 2026-08-02 — chiguo-tick.sh 系统 crontab 入口（Phase 4 任务 11）
 
 **背景**：Phase 4 寄主迁移，openclaw cron trigger-script 由系统 crontab 直接替代。`scripts/chiguo-tick.sh` 每 15 分钟零模型门控：daemon `--compact` 判定 → idle 静默退出 / send → pi-run 生成 → bridge `/send` → `--record-send` 回写。
