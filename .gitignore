@@ -30,3 +30,7 @@ netease_cookie.txt
 
 # Git worktrees
 .worktrees/
+
+# Installer backups (scripts/install_integration.sh, .claude/settings.json)
+.claude/settings.json.bak
+.claude/settings.json.bak.*
