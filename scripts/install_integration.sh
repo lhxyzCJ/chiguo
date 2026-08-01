@@ -2,7 +2,7 @@
 # ============================================================
 # chiguo OpenClaw 集成安装/校验器（可移植：任意 pull 仓库的机器）
 # 依据官方文档 docs.openclaw.ai（出处见 doc/OPENCLAW_INTEGRATION.md §九）
-# 模式: --dry-run（只扫描报告）/ --yes（自动全部）/ 默认交互（非 TTY 等价 --dry-run）
+# 模式: --dry-run（只扫描报告）/ --yes（自动全部）/ 默认交互 ask（逐项确认：自动修 / 跳过留给用户；非 TTY 等价 --dry-run）
 # 退出码: 0=完成  1=有待办/警告/残留未处理  2=严重问题
 # 幂等: 重复运行安全；每次修改前备份。
 # ============================================================
@@ -27,7 +27,17 @@ DRY=0; [ "$MODE" = dry-run ] && DRY=1
 PENDING=0    # 1 = 有待办/残留（dry-run 报告；yes/ask 完成后仍存在则退出 1）
 PY="$(command -v python3 || echo "$REPO_DIR/.venv/bin/python")"   # JSON 编辑（stdlib 即可）
 
-would() { [ "$DRY" = 1 ] && { PENDING=1; printf '  [dry-run] %s\n' "$*"; } || eval "$*"; }
+# 交互模式（ask）：每个写操作前逐项确认；回答 y 执行，n/其他 跳过并把 PENDING=1（残留未处理）
+confirm() { [ "$MODE" = ask ] || return 0
+  printf '  [ask] %s\n' "$1"
+  read -r -p '  执行？[y/N] ' ans
+  case "$ans" in
+    y|Y|yes|Yes|YES) return 0 ;;
+    *) PENDING=1; printf '  [ask] 已跳过（视为残留未处理，最终退出码 1）\n'; return 1 ;;
+  esac
+}
+would() { if [ "$DRY" = 1 ]; then PENDING=1; printf '  [dry-run] %s\n' "$*"
+  else confirm "$*" && eval "$*"; fi }
 
 # ── 阶段 0: 环境探测（官方：<command> --help 为权威清单）──────
 if ! command -v openclaw >/dev/null 2>&1; then
@@ -85,7 +95,7 @@ SO_FILE="$HOME/.openclaw/workspace/agents/main/AGENTS.md"
 if ! grep -qs 'CHIGUO-STANDING-ORDER-START' "$SO_FILE" 2>/dev/null; then
   if [ "$DRY" = 1 ]; then
     PENDING=1; echo "  [dry-run] 将写入 standing order 到 $SO_FILE"
-  else
+  elif confirm "将写入 standing order 到 $SO_FILE"; then
     mkdir -p "$(dirname "$SO_FILE")"
     [ -f "$SO_FILE" ] && cp -a "$SO_FILE" "$SO_FILE.bak"
     awk '/# CHIGUO-STANDING-ORDER-START/{f=1;next}/# CHIGUO-STANDING-ORDER-END/{f=0;next}!f' "$SO_FILE" 2>/dev/null > "$SO_FILE.tmp"
@@ -111,9 +121,9 @@ fi
 if [ "$OLD_HOOK" = 1 ]; then
   if [ "$DRY" = 1 ]; then
     PENDING=1; echo "  [dry-run] 将备份并移除 $CLAUDE_SETTINGS 中的 chiguo hook 条目"
-  else
+  elif confirm "将备份并移除 $CLAUDE_SETTINGS 中的 chiguo hook 条目"; then
     cp -a "$CLAUDE_SETTINGS" "$CLAUDE_SETTINGS.bak"
-    "$PY" - "$CLAUDE_SETTINGS" <<'PYJ' || warn "hook 清除失败（.bak 已保留，请手工处理）"
+    "$PY" - "$CLAUDE_SETTINGS" <<'PYJ' || { PENDING=1; warn "hook 清除失败（.bak 已保留，请手工处理）"; }
 import json, sys
 p = sys.argv[1]
 with open(p, encoding="utf-8") as f:
