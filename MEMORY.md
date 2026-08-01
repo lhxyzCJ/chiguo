@@ -1,5 +1,17 @@
 # MEMORY.md
 
+## 2026-08-01 — 版本号机制引入（chiguo_version.py，当前 v1）
+
+**背景**：项目此前无统一版本号（文档里 v4~v11 为演进称呼、状态文件 `_version` 为 schema 号）。用户定规则：当前版本 = v1，每完成一轮修改手动 +0.1（类似 Linux 次版本步进），何时步进由维护者决定。
+
+- 新增 `chiguo_version.py`：`VERSION = "1"`（唯一修改点，其他模块 import 引用）
+- `chiguo_daemon.py`：`--version` CLI 参数（`chiguo v1`）；决策 JSON（send/idle/紧凑 idle）加 `version` 字段——决策日志可追溯行为版本
+- `chiguo_envcheck.py`：报告加 `app_version`；`chiguo_monitor.py`：报告加 `app_version`
+- 未改状态文件 schema（`_version` 保留为状态结构版本，避免迁移风险）
+- `doc/README.md`：§版本号说明
+- 验证：`--version`/`--compact`/决策 JSON/envcheck 均带版本；`node test_trigger_script.js` + test_integration/test_envcheck/test_monitor/test_chiguo_math 通过
+- 文件：`chiguo_version.py`（新）、`chiguo_daemon.py`、`chiguo_envcheck.py`、`chiguo_monitor.py`、`doc/README.md`、`MEMORY.md`
+
 ## 2026-08-01 — v11 集成命令适配：automations → cron（真机 2026.7.1-2 集成从未装上的根因修复）
 
 **背景**：本地装好 OpenClaw 2026.7.1-2 后调试 chiguo 集成，发现 `openclaw automations` 命令不存在（"Unknown command: openclaw automations"），官方命令已改名为 `openclaw cron`（`cron add --trigger-script/--system-event/--every/--wake/--timeout-seconds` 契约完整）。旧 `automations` 别名在 2026.7.1-2 已移除。**远端生产机因此从未装上 v11 集成**（安装器阶段 0 探测失败 → 走降级路径退出 1；automations list 报 unknown command；standing order 也从未写入 AGENTS.md）。

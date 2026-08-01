@@ -159,6 +159,10 @@ python3 chiguo_envcheck.py               # 检查 Python/OpenClaw/LanceDB/网易
 - **忽略**：备份/临时文件（`*.bak`/`*.tmp`/`*.pid`/`*.lock`）与敏感 token（`netease_cookie.txt`——如确需入库须 `git add -f`）
 - 目标机推送节奏与方式自定（如 cron `git add -A && git commit && git push`）
 
+## 版本号
+
+版本号单一来源：`chiguo_version.py` 的 `VERSION`。当前为 `v1`；每完成一轮修改由维护者手动 +0.1（`v1 → v1.1 → v1.2`，类似 Linux 次版本步进）。daemon 决策 JSON、`--version`、envcheck/monitor 报告均带版本号。
+
 ## 文档
 
 - [SYSTEM.md](SYSTEM.md) — 完整系统文档（架构、业务逻辑、配置参考）
