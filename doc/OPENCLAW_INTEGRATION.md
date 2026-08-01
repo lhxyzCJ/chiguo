@@ -1,151 +1,93 @@
-# OpenClaw 集成指南
+# OpenClaw 集成指南（v11）
 
-> daemon v4 | 基于 `openclaw cron add --help` (v2026.6.10)
+> 官方文档出处: docs.openclaw.ai（automations/cron-jobs、hooks、cli、doctor；功能探测以
+> `<command> --help` 为权威清单）。旧版（v4）cron system-event + Claude-Code hook 方案见文末「降级路径」。
 
 ## 架构
 
 ```
-openclaw cron (每30分钟, --session main --wake now)
-  → agent 收到 message payload
-  → 执行 python3 chiguo_daemon.py
-    ├─ action=idle   → 结束
-    └─ action=send   → SUN2.md 生成消息 → openclaw-weixin 发送
+发送侧（trigger-script 门控，零 idle 模型调用）：
+OpenClaw automations --every 15m --trigger-script scripts/chiguo-watch.js --session main
+  → trigger 脚本无模型执行：exec 跑 <仓库目录>/.venv/bin/python chiguo_daemon.py --compact
+    ├─ action=idle → {fire:false}（零模型调用，~90% 的评估不唤醒 agent）
+    └─ action=send → {fire:true, message:<决策 JSON>}
+  → main session agent 收到 system-event（生成指令 + 决策 JSON）
+    → 按 SUN2.md 生成 1-3 句 → openclaw-weixin 发送
+    → daemon --record-send / --send-result 回写发送状态（幂等）
 
-WeChat 消息到达
-  → UserPromptSubmit hook 触发
-  → agent 收到 hook 提示
-  → LLM 分析情绪 → daemon --user-msg --analysis → SUN2.md 回复
+回复侧（standing order 单记录，替代 v4 UserPromptSubmit hook）：
+微信消息到达 → agent 正常回复；standing order（agents/main/AGENTS.md）强制流程：
+  LLM 情绪分析（warmth/effort/attention/topic）→ daemon --user-msg --analysis → SUN2.md 回复
+  （无 hook 双重记录；回复延迟建模唯一入口是 agent 调 --user-msg 这一次）
 ```
 
 ---
 
-## 一、创建 Cron
-
-在 OpenClaw 终端执行：
+## 一、安装（推荐：任意机器 pull 后自动引导）
 
 ```bash
-openclaw cron add \
-  --name "chiguo-check" \
-  --cron "*/30 * * * *" \
-  --tz "Asia/Shanghai" \
-  --session main \
-  --wake now \
-  --exact \
-  --timeout-seconds 120 \
-  --system-event "运行 python3 <仓库目录>/chiguo_daemon.py。解析 stdout JSON。若 action=idle，回复 NO_REPLY。若 action=send，读取 context 字段，按 SUN2.md 人格生成 1-3 句微信消息，通过 openclaw-weixin 通道发给 owner@im.wechat。遵守 context.layer_guidance 的语气指引和 context.instruction 的格式约束。若 layer_guidance 含【安全阀】标记，语气务必温和克制。"
+bash scripts/install_integration.sh --dry-run   # 先扫描（只读）
+bash scripts/install_integration.sh --yes       # 自动安装+迁移
+bash deploy.sh                                  # 或随部署一起（传 --skip-integration 可跳过）
 ```
 
-### 参数说明（来自 `openclaw cron add --help`）
+安装器模式（官方命令见 §二）：
 
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| `--name` | `chiguo-check` | cron 任务名 |
-| `--cron` | `*/30 * * * *` | 5 字段 cron 表达式，每 30 分钟 |
-| `--tz` | `Asia/Shanghai` | 时区，中国标准时间 |
-| `--session` | `main` | 发送到 main session |
-| `--wake` | `now` | 立即唤醒 session（不等 heartbeat） |
-| `--exact` | — | 禁用 cron 随机抖动（精确 30 分钟） |
-| `--timeout-seconds` | `120` | agent 处理超时 2 分钟 |
-| `--system-event` | `"..."` | agent 收到后按此指令执行 |
+| 模式 | 行为 |
+|------|------|
+| `--dry-run` | 只扫描报告，不写任何东西；发现待办/残留则退出 1（非 TTY 默认也是它） |
+| `--yes` | 自动完成全部安装+迁移（每次修改前备份） |
+| 默认（交互 ask） | 逐项确认：y 执行，n 跳过并视为残留（退出 1） |
+| `--skip-integration` | 静默跳过（deploy.sh 传参用） |
 
-### 为什么不用 `--command`
-
-`--command` 直接在 Gateway 进程跑 shell，不启动 agent。daemon 输出的 JSON 需要 agent 解析并生成消息，所以必须用 `--system-event` 让 agent 处理。
-
-### 为什么是 30 分钟
-
-`base_lambda=0.25`（平均 4 小时一次事件），`min_interval=30min`（发消息后 30min 内不会再发），`emotion` 半衰期 30-500 小时。15 分钟粒度在数学上无意义——96 次/天的 cron 触发中 ~90 次输出 idle。30 分钟减少一半无效调用，延迟上限 30 分钟对情绪动力学无任何影响。
-
-### 管理
-
-```bash
-openclaw cron list                  # 列出所有 cron
-openclaw cron show chiguo-check     # 查看详情
-openclaw cron disable chiguo-check  # 暂停
-openclaw cron enable chiguo-check   # 恢复
-openclaw cron run chiguo-check      # 手动触发一次
-openclaw cron rm chiguo-check       # 删除
-```
+退出码约定：`0`=完成，`1`=有待办/警告/残留未处理，`2`=严重问题。全部幂等，重复运行安全。
 
 ---
 
-## 二、UserPromptSubmit Hook
+## 二、安装器做了什么（逐阶段对应官方命令）
 
-项目根目录创建 `.claude/settings.json`：
+| 阶段 | 内容 | 官方命令 |
+|------|------|----------|
+| 0 探测 | openclaw 存在性 / 功能探测 / Gateway 状态 | `openclaw -V`；`openclaw automations add --help \| grep --trigger-script`（官方：`<command> --help` 为权威清单）；`openclaw gateway status`。无 openclaw → 跳过安装退出 0；不支持 `--trigger-script` → 提示降级路径退出 1 |
+| 0b 残留扫描 | 旧方案残留发现即报告 | `openclaw automations list --all \| grep -i chiguo`（--all 含禁用）；`.claude/settings.json` 中 chiguo 的 UserPromptSubmit 条目；`~/.openclaw/workspace/skills/chiguo/scripts/on-user-msg.sh`；`openclaw hooks list \| grep -i chiguo`；`openclaw config get hooks.internal.handlers`（legacy 格式，官方建议迁移） |
+| 1 开关 | 开启官方危险自动化开关（脚本以 agent 权限无头执行，安装器仅注册 chiguo-watch.js 一条命令） | `openclaw config set cron.triggers.enabled true`；修改后 `openclaw config validate` |
+| 2 注册 | 先移除旧作业，再注册 trigger-script 作业（已存在则跳过，幂等） | `openclaw automations rm <旧作业>`；`openclaw automations add --name chiguo-check --every 15m --trigger-script '<仓库目录>/scripts/chiguo-watch.js' --session main --wake now --timeout-seconds 120 --system-event '<指令>'` |
+| 3 standing order | 回复侧流程写入 `~/.openclaw/workspace/agents/main/AGENTS.md`（`# CHIGUO-STANDING-ORDER-START/END` 标记段，幂等：已存在跳过；写入前备份 .bak） | 见 §四全文 |
+| 3b 清理 | 清除 v4 残留：`.claude/settings.json` hook 条目（备份后 JSON 编辑，保留其他 hook）；on-user-msg.sh → `.bak` 后移除；OpenClaw 原生 chiguo hook 禁用；legacy handlers 迁移 | `openclaw hooks disable <name>`；`openclaw doctor --fix`（官方迁移工具） |
+| 4 验证 | 配置合法 / 作业在册 / 官方审计（--yes 模式）/ 端到端冒烟 | `openclaw config validate`；`openclaw automations list \| grep chiguo-check`；`openclaw security audit --deep`；`openclaw automations run chiguo-check --wait --wait-timeout 10m`（输出 idle 即链路通） |
 
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.openclaw/workspace/skills/chiguo/scripts/on-user-msg.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
+阶段 2 注册时写入的 `--system-event` 指令全文（与安装器 INSTRUCTION 一致）：
+
+```
+收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给主人（当前微信会话上下文）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。发送后运行 <仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。
 ```
 
-Hook 脚本 `scripts/on-user-msg.sh`：
-
-```bash
-#!/bin/bash
-MSG="${CLAUDE_USER_PROMPT:-}"
-if [ -z "$MSG" ]; then exit 0; fi
-echo "<chiguo>主人发了新消息。chiguo skill §二：1.LLM分析情绪 2.daemon --user-msg --analysis 3.SUN2.md回复</chiguo>"
-```
+15 分钟间隔：idle 评估不再消耗模型，决策延迟从 30min 降到 15min；daemon 内部 pacing（poisson / min_interval / quiet hours）不受影响。
 
 ---
 
-## 三、情绪分析 prompt
+## 三、trigger 脚本契约（scripts/chiguo-watch.js）
 
-Agent 收到主人消息后，LLM 分析：
+官方契约（docs.openclaw.ai/automation/cron-jobs → "Event triggers"）：脚本返回
+`{fire: bool, message?: string, state?: object}`，state ≤ 16KB（官方上限）。
 
-```
-分析主人发给迟菓的微信消息。只输出 JSON，不输出解释。
+| 情形 | 返回 |
+|------|------|
+| `action=send` | `{fire: true, message: <完整决策 JSON>}`（清空 last_error） |
+| `action=idle` | `{fire: false}`（零模型调用，清空 last_error） |
+| daemon 崩溃 / 非零退出 / 坏 JSON / 超时 / 未知 action | `{fire: false, state: {last_error: ...}}`，持久留到下次评估带出 |
 
-{
-  "warmth": <float -1.0~1.0>,
-  "effort": <float 0.0~1.0>,
-  "attention": <float 0.0~1.0>,
-  "suppress_hours": <float 0.0~24.0 可选>
-}
+实现要点：
 
-warmth: -1.0=敌意/烦躁("别烦我","滚"), -0.5=冷淡("嗯","..."), 0=中性("好的"), 0.5=温暖("菓菓辛苦了"), 1.0=亲密("菓菓最好了！想你了")
-effort: 0=敷衍("嗯","ok","."), 0.5=一般("好的菓菓"), 1.0=用心长消息
-attention: 0=无视迟菓(说别的事), 0.5=部分回应, 1.0=直接回应她的话题
-suppress_hours: 检测到忙碌/结束对话时设置("在开会"→4,"晚安睡了"→8)，不确定时省略此字段
-```
+- 执行：`tools.call('exec', {command})` 跑 `<仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --compact`（仓库路径来自环境变量 `CHIGUO_REPO`，缺省为脚本所在目录的上级）。
+- 解析：优先全文 JSON，失败逐行回退（stdout 杂音泄漏防护）；`--compact` 保证 idle 时 stdout 无输出。
+- 纯搬运工：脚本不生成消息、不决策，只做 exec + 解析 + fire（决策/生成分离铁律）。
+- 单测：`node test_trigger_script.js`（mock 四路径：idle / send / 坏 JSON / daemon 非零退出）。
 
-更新 daemon：
-```bash
-python3 <仓库目录>/chiguo_daemon.py \
-  --user-msg "<消息原文>" \
-  --analysis '<LLM输出的JSON>'
-```
+### 决策输出参考（fire:true 时 message 的完整内容）
 
----
+#### send 示例
 
-## 四、特殊命令
-
-| 主人说 | 执行 CLI |
-|--------|---------|
-| "记住X月X日是XX" | `python3 <仓库目录>/chiguo_daemon.py --anniversary "add anniversary MM-DD <名称>"` |
-| "X月X日要XX" | `python3 <仓库目录>/chiguo_daemon.py --anniversary "add countdown YYYY-MM-DD <名称>"` |
-| "有哪些纪念日" | `python3 <仓库目录>/chiguo_daemon.py --anniversary list` |
-| "放暑假了"/"放假了" | `python3 <仓库目录>/chiguo_daemon.py --break on` |
-| "开学了" | `python3 <仓库目录>/chiguo_daemon.py --break off` |
-
----
-
-## 五、决策输出参考
-
-### send 示例
 ```json
 {
   "action": "send",
@@ -166,61 +108,157 @@ python3 <仓库目录>/chiguo_daemon.py \
 }
 ```
 
-### 触发类型速查
-lonely_low / lonely_mid / lonely_high / anxiety / longing / morning / night / meal / playful / memory / reflect / special
+#### 触发类型速查
 
-### 安全阀标记
+special / morning / night / meal / memory / follow_up / lonely_low / lonely_mid / lonely_high / anxiety / playful / reflect / longing（13 种，v7 新增 follow_up）
+
+#### 安全阀标记
+
 若 `layer_guidance` 含以下标记，必须遵守：
+
 - **【安全阀】48h内多次崩溃** → 语气温和克制，用关心代替不安，不质问不崩溃
 - **【安全阀】距上次崩溃不足24h** → 语气放软，不再次崩溃
 
-### idle 示例
+#### idle 示例
+
 ```json
 {"action":"idle","reason":"no_trigger","state":{...}}
 ```
-`reason`: no_trigger / quiet_hours / daily_limit / low_energy / min_interval / user_sleeping / user_busy
+
+`reason`: no_trigger / quiet_hours / daily_limit / low_energy / min_interval / user_sleeping / user_busy / busy_suppressed / sleeping_guard
 
 ---
 
-## 六、调试
+## 四、回复侧流程（standing order 内容全文）
+
+安装器在 `~/.openclaw/workspace/agents/main/AGENTS.md` 写入的段落（标记段幂等，重复运行不重复；写入前备份 `.bak`）：
+
+```
+
+# CHIGUO-STANDING-ORDER-START
+## 迟菓消息流程（standing order，每会话注入）
+每次收到主人的微信消息并准备回复时：
+1. 用 LLM 分析主人消息情绪，输出 JSON：{"warmth": -1~1, "effort": 0~1, "attention": 0~1, "topic": "可选", "suppress_hours": 可选}
+2. 运行 <仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --user-msg <消息原文> --analysis '<JSON>'
+3. 按 ~/.openclaw/workspace/skills/chiguo/SUN2.md 人格回复
+4. 纪念日/假期指令：运行 chiguo_daemon.py --anniversary / --break 对应命令
+# CHIGUO-STANDING-ORDER-END
+```
+
+### 情绪分析 prompt
+
+第 1 步 LLM 分析的完整 JSON 规范（与 standing order 的 JSON 一致，字段注释供 agent 校准）：
+
+```
+分析主人发给迟菓的微信消息。只输出 JSON，不输出解释。
+
+{
+  "warmth": <float -1.0~1.0>,
+  "effort": <float 0.0~1.0>,
+  "attention": <float 0.0~1.0>,
+  "topic": "<字符串 可选，消息涉及的话题/事件，用于话题跟随>",
+  "suppress_hours": <float 0.0~24.0 可选>
+}
+
+warmth: -1.0=敌意/烦躁("别烦我","滚"), -0.5=冷淡("嗯","..."), 0=中性("好的"), 0.5=温暖("菓菓辛苦了"), 1.0=亲密("菓菓最好了！想你了")
+effort: 0=敷衍("嗯","ok","."), 0.5=一般("好的菓菓"), 1.0=用心长消息
+attention: 0=无视迟菓(说别的事), 0.5=部分回应, 1.0=直接回应她的话题
+suppress_hours: 检测到忙碌/结束对话时设置("在开会"→4,"晚安睡了"→8)，不确定时省略此字段
+```
+
+更新 daemon：
 
 ```bash
-# 手动决策
-python3 <仓库目录>/chiguo_daemon.py
-
-# 模拟主人消息
-python3 <仓库目录>/chiguo_daemon.py --user-msg "我回来了" --analysis '{"warmth":0.5,"effort":0.4,"attention":0.7}'
-
-# 状态 + 健康
-python3 <仓库目录>/chiguo_daemon.py --status
-python3 <仓库目录>/chiguo_daemon.py --health
-
-# 统计 + 告警
-python3 <仓库目录>/chiguo_daemon.py --stats 7
-python3 <仓库目录>/chiguo_daemon.py --alerts
-
-# 手动触发 cron
-openclaw cron run chiguo-check
-
-# 查看 cron 运行历史
-openclaw cron runs chiguo-check
+<仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py \
+  --user-msg "<消息原文>" \
+  --analysis '<LLM输出的JSON>'
 ```
 
 ---
 
-## 七、文件清单
+## 五、特殊命令（--anniversary / --break）
 
-```
-<仓库目录>/
-├── chiguo_daemon.py               # 决策引擎
-├── chiguo_proactive.toml          # 全部配置
-├── doc/OPENCLAW_INTEGRATION.md    # 本文档
+| 主人说 | 执行 CLI |
+|--------|----------|
+| "记住X月X日是XX" | `<仓库目录>/.venv/bin/python chiguo_daemon.py --anniversary "add anniversary MM-DD <名称>"` |
+| "X月X日要XX" | `<仓库目录>/.venv/bin/python chiguo_daemon.py --anniversary "add countdown YYYY-MM-DD <名称>"` |
+| "有哪些纪念日" | `<仓库目录>/.venv/bin/python chiguo_daemon.py --anniversary list` |
+| "放暑假了"/"放假了" | `<仓库目录>/.venv/bin/python chiguo_daemon.py --break on` |
+| "开学了" | `<仓库目录>/.venv/bin/python chiguo_daemon.py --break off` |
 
-~/.openclaw/workspace/skills/chiguo/
-├── SKILL.md                       # agent 指令集
-├── SUN2.md                        # 迟菓人格
-├── scripts/
-│   └── on-user-msg.sh             # hook 脚本
-└── references/
-    └── 迟菓语言技巧指南.md
+---
+
+## 六、管理命令
+
+```bash
+openclaw automations list                              # 列出所有作业
+openclaw automations get chiguo-check                  # 查看详情（确认 --trigger-script 落库）
+openclaw automations edit chiguo-check ...             # 修改参数
+openclaw automations disable chiguo-check              # 暂停（不删除，调度器不再触发）
+openclaw automations enable chiguo-check               # 恢复
+openclaw automations run chiguo-check --wait --wait-timeout 10m   # 手动触发并等待结果（端到端冒烟）
+openclaw automations rm chiguo-check                   # 删除
 ```
+
+---
+
+## 七、调试
+
+```bash
+# 手动决策（JSON 到 stdout，idle 也有输出；--compact 时 idle 无输出）
+uv run python chiguo_daemon.py
+uv run python chiguo_daemon.py --compact
+
+# 模拟主人消息（回复侧链路）
+uv run python chiguo_daemon.py --user-msg "我回来了" --analysis '{"warmth":0.5,"effort":0.4,"attention":0.7,"topic":"今天"}'
+
+# 状态 + 健康 + 统计 + 告警 + 监控
+uv run python chiguo_daemon.py --status
+uv run python chiguo_daemon.py --health
+uv run python chiguo_daemon.py --stats 7
+uv run python chiguo_daemon.py --alerts
+uv run python chiguo_daemon.py --monitor
+
+# trigger 脚本四路径单测
+node test_trigger_script.js
+
+# 安装器只读扫描（改完安装器后先跑这个）
+bash scripts/install_integration.sh --dry-run
+
+# 端到端冒烟（输出 idle 即链路通）
+openclaw automations run chiguo-check --wait --wait-timeout 10m
+
+# 配置校验 + 官方审计
+openclaw config validate
+openclaw security audit --deep
+openclaw doctor
+```
+
+---
+
+## 八、降级路径（版本不支持 trigger-script 时）
+
+安装器阶段 0 探测发现当前版本不支持 `automations --trigger-script` 时（官方：`<command> --help` 为权威清单），保留 v4 的 cron system-event 方式：
+
+```bash
+openclaw automations add --name chiguo-check --cron "*/30 * * * *" --tz Asia/Shanghai \
+  --session main --wake now --timeout-seconds 120 \
+  --system-event "运行 python3 <repo>/chiguo_daemon.py。解析 stdout JSON。idle→NO_REPLY；send→SUN2.md 生成并发送"
+```
+
+注意：
+
+- 此方式是 v4 旧方案，每次触发都会唤醒 agent（~90% idle 空转模型调用），仅作降级兜底；新版本请用主方案并重跑安装器。
+- 回复侧：保留 standing order（同主方案，不依赖 hook）；v4 的 `.claude/settings.json` UserPromptSubmit hook 已由安装器阶段 3b 清除，不需要也不应恢复。
+
+---
+
+## 九、官方出处索引
+
+- Automations / trigger-script / event triggers：`/automation`、`/automation/cron-jobs`
+- 危险自动化开关 `cron.triggers.enabled`：`/automation/cron-jobs`（Warning 段）
+- Internal hooks / 事件表 / legacy handlers / doctor --fix：`/automation/hooks`
+- Standing orders：`/automation`（Quick decision guide）
+- CLI 参考（config get/set/validate、automations、hooks、security audit、doctor）：`/cli`
+- `<command> --help` 权威性：`/cli`（Command tree 段）
+- `openclaw cron` = `openclaw automations` 别名：`/automation/cron-jobs`
