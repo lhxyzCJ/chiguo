@@ -32,16 +32,17 @@ else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
 
-# ── 3. 全量自检(22 py + 3 脚本测试,任一失败即中止) ──────────
+# ── 3. 全量自检(22 py + 4 脚本测试,任一失败即中止) ──────────
 TESTS=(test_chiguo_math test_holiday_parser test_integration test_monitor
        test_eventbus test_personality test_bayesian test_composer
        test_ebbinghaus test_longing test_escape_valve test_feedback
        test_trigger test_topics test_circadian test_followup
        test_netease_proof test_netease_service test_envcheck
        test_composer_trade test_personality_init test_toml_binding)
-say "运行脚本测试(3 个文件) ..."
+say "运行脚本测试(4 个文件) ..."
 node test_trigger_script.js >/dev/null || fail "test_trigger_script.js 失败,中止部署"
 bash test_install_integration.sh >/dev/null || fail "test_install_integration.sh 失败,中止部署"
+bash test_install_pi.sh >/dev/null || fail "test_install_pi.sh 失败,中止部署"
 bash test_wechat_bridge.sh >/dev/null || fail "test_wechat_bridge.sh 失败,中止部署"
 say "运行全量 Python 测试(${#TESTS[@]} 个文件) ..."
 for t in "${TESTS[@]}"; do
@@ -49,10 +50,14 @@ for t in "${TESTS[@]}"; do
 done
 say "全部测试通过 ✓"
 
-# ── 4. 环境就绪检查(OpenClaw/依赖/数据文件,chiguo_envcheck.py) ──
+# ── 4. 环境就绪检查(pi/依赖/数据文件,chiguo_envcheck.py) ──
 say "运行环境检查 ..."
 set +e
-uv run python chiguo_envcheck.py
+if [[ "$*" == *--skip-pi* ]]; then
+    uv run python chiguo_envcheck.py --skip-pi
+else
+    uv run python chiguo_envcheck.py
+fi
 EC=$?
 set -e
 case $EC in

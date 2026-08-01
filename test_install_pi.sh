@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # install_pi.sh 桩测试：假 pi/curl/crontab + 临时 HOME，验证 dry-run 只读扫描、
-# 待办清单与退出码（0=完成/1=有待办/2=严重）及 --skip-pi（12 用例）
+# 待办清单与退出码（0=完成/1=有待办/2=严重）、--skip-pi、--yes 写入产物断言、
+# auth.json 合并写入与两遍 --yes 幂等（不重复 .bak/crontab 行/扩展条目）（14 用例）
 set -uo pipefail
 TMP="$(mktemp -d /tmp/chiguo-pi-test.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
@@ -56,6 +57,30 @@ exit 1
 STUB
   chmod +x "$TMP/bin/$t"
 done
+
+# ── 成功桩 git/npm/node（bin-ok，用例 13/14）：clone 建目录结构 + npm 建 memory-pro CLI ──
+mkdir -p "$TMP/bin-ok"
+cat > "$TMP/bin-ok/git" <<'STUB'
+#!/usr/bin/env bash
+echo "git $*" >> "$CALLS_LOG"
+DIR="${@: -1}"
+mkdir -p "$DIR/dist/pi-adapter"
+touch "$DIR/dist/pi-adapter/index.js"
+STUB
+cat > "$TMP/bin-ok/npm" <<'STUB'
+#!/usr/bin/env bash
+echo "npm $*" >> "$CALLS_LOG"
+if [ "${1:-}" = install ]; then
+  mkdir -p "$PWD/node_modules/.bin"
+  printf '#!/usr/bin/env bash\necho "memory-pro stats OK"\n' > "$PWD/node_modules/.bin/memory-pro"
+  chmod +x "$PWD/node_modules/.bin/memory-pro"
+fi
+STUB
+cat > "$TMP/bin-ok/node" <<'STUB'
+#!/usr/bin/env bash
+echo "node $*" >> "$CALLS_LOG"
+STUB
+for t in git npm node; do chmod +x "$TMP/bin-ok/$t"; done
 
 # ── nopi 目录：无 pi 的隔离工具集（用例 1）──
 for t in bash printf command grep awk sed cat cp mkdir mv rm python3 head tail timeout tr dirname; do
@@ -178,11 +203,56 @@ set +e; OUT=$(bash scripts/install_pi.sh --skip-pi 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] && pass "--skip-pi → 退出 0" || fail "期望 0 实得 $RC"
 [ -z "$OUT" ] || fail "--skip-pi 应静默无输出"
 
-# ── 用例 12: 干净环境 --yes 模拟失败工具（git 桩 exit 1）→ 阶段 1 失败归 PENDING，退出 1 ──
+# ── 用例 12: 干净环境 --yes 模拟失败工具（git 桩 exit 1）→ 阶段 1 失败归 PENDING，退出 1；
+#             阶段 2/3/6 仍写入（settings.json/json5/crontab 产物断言），auth 不写（无 key）──
 clean_home
-set +e; OUT=$(bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
+set +e; OUT=$(env -u OPENCODE_API_KEY bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 1 ] || fail "--yes clone 失败期望 1 实得 $RC"
 echo "$OUT" | grep -q "clone/build 失败" || fail "缺少 clone/build 失败警告"
-pass "--yes 阶段失败 → PENDING + 退出 1"
+SET_EXT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["extensions"][0])' "$HOME/.pi/agent/settings.json")
+[ "$SET_EXT" = "$WANT" ] || fail "阶段 2 未写入 extensions: $SET_EXT"
+grep -q '\.openclaw/memory/lancedb-pro' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "阶段 3 未写入 dbPath"
+grep -q 'qwen3-embedding' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "阶段 3 未写入 embedding"
+grep -q 'chiguo-tick' "$CRON_STATE" || fail "阶段 6 未注册 crontab"
+[ ! -f "$HOME/.pi/agent/auth.json" ] || fail "无 OPENCODE_API_KEY 不应写 auth.json"
+pass "--yes 阶段失败 → PENDING + 退出 1（阶段 2/3/6 产物已断言）"
+
+# ── 用例 13: --yes 合并写 auth.json（保留旧 provider 条目 + opencode-go + chmod 600 + .bak 不重复）──
+clean_home
+mkdir -p "$HOME/.pi/agent"
+printf '{"deepseek":{"type":"api_key","key":"sk-old"}}' > "$HOME/.pi/agent/auth.json"
+export OPENCODE_API_KEY=sk-new
+set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "auth 合并写第一遍期望 0 实得 $RC"
+AUTH_MERGE=$(python3 -c 'import json,sys;print(json.dumps(json.load(open(sys.argv[1])),sort_keys=True,separators=(",",":")))' "$HOME/.pi/agent/auth.json")
+[ "$AUTH_MERGE" = '{"deepseek":{"key":"sk-old","type":"api_key"},"opencode-go":{"key":"sk-new","type":"api_key"}}' ] \
+  || fail "auth.json 未合并: $AUTH_MERGE"
+[ "$(stat -c %a "$HOME/.pi/agent/auth.json")" = 600 ] || fail "auth.json 权限非 600"
+[ -f "$HOME/.pi/agent/auth.json.bak" ] || fail "缺 auth.json.bak"
+set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "auth 合并写第二遍期望 0 实得 $RC"
+[ ! -f "$HOME/.pi/agent/auth.json.bak.bak" ] || fail ".bak 被重复备份"
+unset OPENCODE_API_KEY
+pass "auth.json 合并写入（保留旧条目 + chmod 600）+ .bak 不重复"
+
+# ── 用例 14: --yes 两遍幂等（crontab 单行 / extensions 单条 / 零 .bak / 不重复 clone）──
+clean_home
+export OPENCODE_API_KEY=sk-ok
+: > "$CALLS_LOG"
+set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "第一遍 --yes 期望 0 实得 $RC"
+GIT1=$(grep -c "^git " "$CALLS_LOG" || true)
+NPM1=$(grep -c "^npm install" "$CALLS_LOG" || true)
+set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "第二遍 --yes 期望 0 实得 $RC"
+[ "$(grep -c 'chiguo-tick' "$CRON_STATE" || true)" = 1 ] || fail "crontab 重复注册: $(cat "$CRON_STATE")"
+EXT_N=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["extensions"]))' "$HOME/.pi/agent/settings.json")
+[ "$EXT_N" = 1 ] || fail "extensions 重复条目: $EXT_N"
+[ ! -f "$HOME/.pi/agent/settings.json.bak" ] && [ ! -f "$HOME/.pi/agent/memory-lancedb-pro.json5.bak" ] \
+  && [ ! -f "$HOME/.pi/agent/auth.json.bak" ] || fail "两遍 --yes 不应产生 .bak"
+[ "$(grep -c "^git " "$CALLS_LOG" || true)" = "$GIT1" ] || fail "第二遍重复 clone"
+[ "$(grep -c "^npm install" "$CALLS_LOG" || true)" = "$NPM1" ] || fail "第二遍重复 npm install"
+unset OPENCODE_API_KEY
+pass "--yes 两遍幂等（不重复 crontab/扩展/.bak/clone）"
 
 echo "test_install_pi: 通过"

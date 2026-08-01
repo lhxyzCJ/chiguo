@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # ============================================================
-# chiguo_envcheck.py — 环境就绪检查(v10.2)
+# chiguo_envcheck.py — 环境就绪检查(v10.3)
 # 检查:Python/uv 版本、pi-agent(pi --version)、pi 扩展路径(settings.json)、
 #       ollama embedding(qwen3-embedding)、auth.json opencode-go 条目、
 #       LanceDB lancedb-pro、网易云 API+登录、数据文件完整。
 # 输出:JSON → stdout,汇总退出码 0=就绪 1=warn 2=critical(与 watchdog 一致)。
-# 只读:不建目录、不写缓存、不启动服务;网易云/ollama 检查仅发轻量健康请求。
+# 只读:不建目录、不写缓存、不启动服务;网易云/ollama 检查仅发轻量健康请求
+#       (localhost 目标绕过系统代理,等价 curl --noproxy '*')。
+# 参数:--skip-pi → 用户显式跳过 pi 安装(deploy.sh --skip-pi 传入)时,
+#       pi 缺失降为 warn,不阻塞部署(如实报告降级)。
 # 路径单一事实来源:chiguo_proactive.toml(与 daemon 相同读取点);
 #       pi 侧路径(settings.json/auth.json/扩展)为 ~/.pi 约定(与 install_pi.sh 一致)。
 # ============================================================
@@ -16,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -58,10 +62,25 @@ def check_env() -> dict:
             "severity": "ok" if ok else "critical", "detail": detail}
 
 
-def check_pi(pi_bin: str = "pi") -> dict:
-    """pi-agent 可执行且可报告版本。缺失/不可运行 → critical(消息生成端缺失)。"""
+def _urlopen(req, timeout: float = 5):
+    """本地回环目标禁用系统代理(等价 install_pi.sh 的 curl --noproxy '*'),
+    远程目标保留默认代理。本机有 http_proxy 时 localhost 直连不被劫持。"""
+    host = urllib.parse.urlsplit(req.full_url).hostname or ""
+    if host in ("localhost", "127.0.0.1", "::1"):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        return opener.open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def check_pi(pi_bin: str = "pi", skip_pi: bool = False) -> dict:
+    """pi-agent 可执行且可报告版本。缺失/不可运行 → critical(消息生成端缺失);
+    --skip-pi 下缺失降为 warn(用户显式跳过 pi,不阻塞部署但如实报告降级)。"""
     resolved = shutil.which(pi_bin)
     if not resolved:
+        if skip_pi:
+            return {"name": "pi", "ok": False, "severity": "warn",
+                    "detail": "pi 未安装(--skip-pi) → 消息生成端缺失,消息将无法生成"
+                              "(需要时安装 pi-agent 后重跑 deploy.sh)"}
         return {"name": "pi", "ok": False, "severity": "critical",
                 "detail": "pi 未安装 → 消息生成端缺失(Phase 4 寄主;请安装 pi-agent 后重跑 deploy.sh)"}
     try:
@@ -112,7 +131,7 @@ def check_ollama(base_url: str = "http://localhost:11434") -> dict:
     try:
         req = urllib.request.Request(f"{base_url}/api/tags",
                                      headers={"User-Agent": "chiguo-envcheck"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         names = [m.get("name", "") for m in data.get("models", [])]
         if any(n.startswith("qwen3-embedding") for n in names):
@@ -175,7 +194,7 @@ def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
     try:
         req = urllib.request.Request(f"{api_base}/login/status",
                                      headers={"User-Agent": "chiguo-envcheck"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _urlopen(req, timeout=5) as resp:
             status = resp.status
         if status == 200:
             api_ok = True
@@ -211,8 +230,9 @@ def check_data(xlsx_path: Path, memories_path: Path) -> dict:
             "detail": f"课表/手动记忆 OK ({xlsx_path.name}, {memories_path.name})"}
 
 
-def run_checks(base_dir: Path = None) -> dict:
-    """按序执行 8 组检查。返回完整报告 dict。单项失败不中断。"""
+def run_checks(base_dir: Path = None, skip_pi: bool = False) -> dict:
+    """按序执行 8 组检查。返回完整报告 dict。单项失败不中断。
+    skip_pi: deploy.sh --skip-pi 传入 → pi 缺失降为 warn,不阻塞部署。"""
     base = base_dir or _BASE_DIR
     cfg = _load_config(base)
     lancedb_path = _cfg_path(cfg, "memory", "lancedb_path",
@@ -227,7 +247,7 @@ def run_checks(base_dir: Path = None) -> dict:
     ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
     checks = [
         check_env(),
-        check_pi(),
+        check_pi(skip_pi=skip_pi),
         check_pi_ext(pi_settings, pi_ext),
         check_lancedb(lancedb_path),
         check_ollama(ollama_url),
@@ -254,7 +274,8 @@ def exit_code(report: dict) -> int:
 
 
 def main() -> int:
-    report = run_checks()
+    skip_pi = "--skip-pi" in sys.argv[1:]
+    report = run_checks(skip_pi=skip_pi)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return exit_code(report)
 

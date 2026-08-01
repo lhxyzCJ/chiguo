@@ -25,7 +25,8 @@ uv run python test_escape_valve.py && uv run python test_feedback.py && \
 uv run python test_trigger.py && uv run python test_topics.py && \
 uv run python test_circadian.py && uv run python test_followup.py && \
 uv run python test_netease_proof.py && uv run python test_netease_service.py && \
-uv run python test_envcheck.py   # full suite (19 py + 5 script tests)
+uv run python test_envcheck.py && uv run python test_composer_trade.py && \
+uv run python test_personality_init.py && uv run python test_toml_binding.py   # full suite (22 py + 6 script tests)
 
 uv run python test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout

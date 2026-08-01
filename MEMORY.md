@@ -1,5 +1,17 @@
 # MEMORY.md
 
+## 2026-08-02 — Task 13 评审修复：--skip-pi 贯通 deploy/envcheck、--yes 写入断言与幂等测试、secret 传参加固
+
+**背景**：Task 13 review 发现：① `deploy.sh --skip-pi` 无效——envcheck 第 4 步无条件跑且 `check_pi` 缺 pi 即 critical，无 pi 机器在第 5.6 步跳过机制前已中止；② `test_install_pi.sh` 用例 12 只断言退出码，阶段 2/3/6 写入产物、auth.json 合并写、两遍 `--yes` 幂等均无测试；③ API key 经 argv 传 python3（ps 可见）；④ auth 检查裸 grep 与 envcheck 真值检查语义不一致；⑤ crontab 只 grep `chiguo-tick`，仓库路径变更后旧条目发现不了；⑥ `OLLAMA_URL` vs `OLLAMA_BASE` 不一致；⑦ envcheck 走 urllib 无代理绕过（本机有 http_proxy）。
+
+- **`chiguo_envcheck.py`（v10.2 → v10.3）**：`--skip-pi` 参数 → `check_pi` 缺 pi 由 critical 降为 warn（用户显式跳过时不阻塞部署，如实报告消息生成端缺失）；新增 `_urlopen`——localhost/127.0.0.1/::1 目标禁用系统代理（等价 install_pi.sh 的 curl `--noproxy '*'`），ollama/netease 检查改用之（本机 http_proxy 不再劫持本地健康请求）
+- **`deploy.sh`**：第 4 步 envcheck 在 `--skip-pi` 时传 `--skip-pi`（提示从误导变为有效）；第 3 步脚本测试门控加入 `test_install_pi.sh`（3 → 4 个文件，注释计数同步）
+- **`scripts/install_pi.sh`**：阶段 5 API key 改经环境变量传 python3（不再走 argv，消除 ps 明文暴露面）；新增 `auth_has_key()`（python3 真值检查，与 envcheck `check_pi_auth` 语义一致）替换阶段 5/7 两处裸 `grep opencode-go`；阶段 6 crontab 改精确行匹配 `grep -Fqx`，发现旧 chiguo-tick 条目（路径已变）则整行替换而非误报已注册；`OLLAMA_URL` → `OLLAMA_BASE`（与 envcheck 统一）
+- **`test_envcheck.py`**：15 → 17 用例（`check_pi` skip_pi 降 warn；ollama 本地检查代理绕过——本地 HTTP server + http_proxy 指向死端口仍直连成功）；run_checks 补 skip_pi 冒烟
+- **`test_install_pi.sh`**：12 → 14 用例——用例 12 补阶段 2/3/6 产物断言（settings.json extensions/json5 dbPath+crontab 注册/auth 不写）；新增用例 13（`--yes` 合并写 auth.json：保留旧 deepseek 条目 + opencode-go + chmod 600 + .bak 不重复，成功桩 git/npm/node）；用例 14（干净环境两遍 `--yes` 幂等：crontab 单行/extensions 单条/零 .bak/不重复 clone 与 npm install）
+- **验证**：test_envcheck 17/17、test_install_pi 14/14、bash -n 三脚本通过；真实 envcheck 本机运行（pi OK 在机）退出 1（与 226830d 基线一致）
+- **遗留**：`OPENCODE_API_KEY` 本机未设置（auth.json 无 opencode-go）→ Task 15 集成冒烟前注入；`test_adapt_personality.py`（11 用例）不在 deploy.sh 门控与 SYSTEM.md 表格内（单独文件，未纳入本轮）
+
 ## 2026-08-02 — install_pi.sh + envcheck/deploy 接线：多机 pi 环境一键引导（Phase 4 任务 13）
 
 **背景**：Phase 4 寄主迁移到 pi-agent 后，「任意机器 pull 仓库后一键装好 pi 环境」缺引导脚本。原 `install_integration.sh`（OpenClaw 引导）不覆盖 pi 侧；本机 `~/.pi/agent/settings.json` 的 extensions 指向 Windows 路径（/mnt/c/...，本机不存在）需修正为 Linux 路径；`~/.pi/agent/memory-lancedb-pro.json5` 缺 dbPath（默认指 `~/.pi/agent/memory/lancedb-pro`，需改为历史库 `~/.openclaw/memory/lancedb-pro`）；envcheck 仍检查 OpenClaw。

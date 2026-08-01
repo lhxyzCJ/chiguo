@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_envcheck.py — chiguo_envcheck 环境检查单元测试(v10.2)"""
+"""test_envcheck.py — chiguo_envcheck 环境检查单元测试(v10.3)"""
 
 import sys
 import os
@@ -33,6 +33,14 @@ def test_check_pi_missing_critical():
     assert r["severity"] == "critical" and not r["ok"]
     assert "未安装" in r["detail"]
     print("  OK test_check_pi_missing_critical")
+
+
+def test_check_pi_skip_warn():
+    """--skip-pi 下 pi 缺失 → warn（不阻塞部署，如实报告降级），非 critical。"""
+    r = ec.check_pi(pi_bin="/nonexistent/pi", skip_pi=True)
+    assert r["severity"] == "warn" and not r["ok"]
+    assert "skip-pi" in r["detail"]
+    print("  OK test_check_pi_skip_warn")
 
 
 def test_check_pi_ok():
@@ -98,6 +106,46 @@ def test_check_ollama_unreachable_warn():
     print("  OK test_check_ollama_unreachable_warn")
 
 
+def test_check_ollama_proxy_bypassed():
+    """ollama 检查(127.0.0.1)必须绕过系统代理：http_proxy 指向死端口也不误判不可达。"""
+    import http.server
+    import socketserver
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps({"models": [{"name": "qwen3-embedding:0.6b"}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    with socketserver.TCPServer(("127.0.0.1", 0), Handler) as srv:
+        port = srv.server_address[1]
+        th = threading.Thread(target=srv.serve_forever, daemon=True)
+        th.start()
+        saved = {k: os.environ.get(k) for k in
+                 ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "no_proxy")}
+        for k in saved:
+            os.environ.pop(k, None)
+        os.environ["http_proxy"] = "http://127.0.0.1:1"
+        try:
+            r = ec.check_ollama(f"http://127.0.0.1:{port}")
+            assert r["severity"] == "ok", r
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            srv.shutdown()
+    print("  OK test_check_ollama_proxy_bypassed")
+
+
 def test_check_lancedb_missing_db_warn():
     with tempfile.TemporaryDirectory() as td:
         r = ec.check_lancedb(db_path=Path(td) / "no_such_lancedb")
@@ -152,12 +200,15 @@ def test_run_checks_never_crashes():
         assert report["summary"]["ok"] + report["summary"]["warn"] + report["summary"]["critical"] == 8
         # netease/ollama 检查会尝试连 localhost —— 只要求不崩(超时 5s 内失败 → warn)
         json.dumps(report)
+        report2 = ec.run_checks(base_dir=td, skip_pi=True)
+        assert len(report2["checks"]) == 8
     print("  OK test_run_checks_never_crashes")
 
 
 if __name__ == "__main__":
     test_check_env()
     test_check_pi_missing_critical()
+    test_check_pi_skip_warn()
     test_check_pi_ok()
     test_check_pi_ext_missing_warn()
     test_check_pi_ext_windows_warn()
@@ -165,10 +216,11 @@ if __name__ == "__main__":
     test_check_pi_auth_missing_warn()
     test_check_pi_auth_ok()
     test_check_ollama_unreachable_warn()
+    test_check_ollama_proxy_bypassed()
     test_check_lancedb_missing_db_warn()
     test_check_netease_no_cookie_warn()
     test_check_data_missing_warn()
     test_check_data_ok()
     test_exit_code_mapping()
     test_run_checks_never_crashes()
-    print(f"test_envcheck.py: ALL {15} TESTS PASSED")
+    print(f"test_envcheck.py: ALL {17} TESTS PASSED")
