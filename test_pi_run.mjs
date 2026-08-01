@@ -1,7 +1,7 @@
 // test_pi_run.mjs — pi-run 解析逻辑 + 调用链路测试（独立 runner，仿 test_trigger_script.js）
 // 用法: node test_pi_run.mjs（退出码 0=全过，1=有失败）
 import assert from 'node:assert'
-import { readToml, parseNdjson, extractAnalysis, run } from './scripts/pi-run.mjs'
+import { readToml, parseNdjson, extractAnalysis, runPiBin, run } from './scripts/pi-run.mjs'
 
 let passed = 0
 const tests = []
@@ -106,6 +106,22 @@ t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json
   assert.ok(a.some((x) => x.includes('SUN2.md')), '注入 SUN2.md 路径')
   assert.ok(a.some((x) => x.includes('迟菓语言技巧指南.md')), '注入语言技巧指南路径')
   assert.strictEqual(a[a.length - 1], 'P', 'prompt 为最后参数')
+})
+
+// ── runPiBin 真实 spawn（node -e 模拟 pi 退出码/stdout）──
+const NDJSON_FULL = '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"完整回复"}]}}'
+t('runPiBin: 非零退出但 stdout 含完整回复 → 不丢 stdout（salvage）', async () => {
+  const code = `console.log(${JSON.stringify(NDJSON_FULL)});process.exit(3)`
+  const { stdout } = await runPiBin('node', ['-e', code], {})
+  assert.match(stdout, /完整回复/, 'stdout 完整回复应保留')
+})
+t('runPiBin: 非零退出且无完整回复 → reject 含退出码', async () => {
+  await assert.rejects(runPiBin('node', ['-e', 'process.exit(3)'], {}), /pi exited 3/)
+})
+t('run: runPiBin salvage 场景 → ok:true 且 text 保留', async () => {
+  const code = `console.log(${JSON.stringify(NDJSON_FULL)});process.exit(3)`
+  const r = await run((_bin, _args, opts) => runPiBin('node', ['-e', code], opts), { prompt: 'hi', analysisMode: false })
+  assert.deepStrictEqual(r, { ok: true, text: '完整回复' })
 })
 
 // ── readToml 极简解析（临时 toml 文件）──

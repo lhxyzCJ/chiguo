@@ -102,7 +102,8 @@ scripts/install_integration.sh # [v11] OpenClaw 集成安装器（严格校验 +
 scripts/pi-run.mjs      # [Phase 4] pi 调用统一封装（发送生成 + 回复分析；PIRUN_* 环境变量/toml [host] 段配置；NDJSON 解析 + <<ANALYSIS>> 提取）
 test_*.py                # 测试（19 个文件，含 test_circadian/test_followup/test_netease_proof/test_netease_service/test_envcheck）
 test_trigger_script.js   # [v11] chiguo-watch.js 契约测试（node，15 用例）
-test_pi_run.mjs          # [Phase 4] pi-run.mjs 单测（node，16 用例：解析/提取/调用链路/exec 抛错/配置读取）
+test_pi_run.mjs          # [Phase 4] pi-run.mjs 单测（node，19 用例：解析/提取/调用链路/exec 抛错/非零退出 salvage/配置读取）
+test_bridge_askpi.mjs    # [Phase 4] bridge.mjs askPi 测试（node，10 用例：fake pi-run/daemon 真实 execFile 链路）
 test_install_integration.sh # [v11] 安装器桩测试（bash，12 用例）
 data/                    # 数据文件：课表 xskb.xlsx、手动记忆 chiguo_memories.json、网易云二维码 netease_qr.png
 ```

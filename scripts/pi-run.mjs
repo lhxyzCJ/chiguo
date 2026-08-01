@@ -80,7 +80,9 @@ export function runPiBin(bin, args, opts) {
     c.stderr.on('data', (d) => { stderr += d })
     c.on('error', (err) => reject(err))
     c.on('close', (code, signal) => {
-      if (code !== 0) {
+      // 非零退出但 stdout 已含完整回复（如 teardown/session 保存失败）→ 不丢回复；
+      // parseNdjson 取最后 message_end，无完整回复仍按失败处理
+      if (code !== 0 && !parseNdjson(stdout)) {
         const err = new Error(`pi exited ${code ?? `(${signal})`}${stderr ? `: ${stderr.trim().slice(0, 200)}` : ''}`)
         err.code = code
         return reject(err)

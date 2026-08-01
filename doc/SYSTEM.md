@@ -716,7 +716,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `test_envcheck.py` | 环境检查单元测试（10 用例：env 版本/uv、openclaw 目录缺失 critical/skill 缺 warn/正常、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 
-共计 **348** 个测试用例（19 个测试文件；另含 node 侧 test_trigger_script.js 15 用例 + test_pi_run.mjs 16 用例，见 doc/README.md）。
+共计 **348** 个测试用例（19 个测试文件；另含 node 侧 test_trigger_script.js 15 用例 + test_pi_run.mjs 19 用例 + test_bridge_askpi.mjs 10 用例，见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `test_holiday_parser.py` 7/7 用例通过。
@@ -1518,7 +1518,7 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 详见 `OPENCLAW_INTEGRATION.md`（v11）。关键两条链路：
 
 1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（Phase 4 起替代 openclaw cron trigger-script；安装由 `scripts/install_pi.sh` 管理，本机手动注册）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/pi-run.mjs` 按 SUN2.md 生成消息 → curl bridge `/send` → `--record-send <msg_id> --text <text>` 回写
-2. **回复侧（standing order）**：微信消息到达 → agent 正常回复；standing order（agents/main/AGENTS.md）强制 LLM 情绪分析 → `--user-msg --analysis` 更新 daemon → SUN2.md 回复（替代 v4 的 UserPromptSubmit hook，无双重记录）
+2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ `scripts/pi-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格；Phase 4 起替代 openclaw agent standing order）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，600s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
 
 安装/卸载/校验由 `scripts/install_integration.sh` 完成（deploy.sh 第 5 步接入）；旧版 v4 cron system-event + hook 方案见 OPENCLAW_INTEGRATION.md §八降级路径。
 
