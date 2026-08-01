@@ -5,7 +5,6 @@ import json
 import os
 import sys
 import tempfile
-import tomllib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -122,22 +121,9 @@ def test_record_send_result_success():
         r = result_entries[0]
         assert r["msg_id"] == "test_msg_2"
         assert r["status"] == "success"
-        assert r["refunded"] is False
-    print("  OK test_record_send_result_success")
-
-
-def test_record_send_result_no_error_success():
-    """success 时不传 error → error 为 None"""
-    with tempfile.TemporaryDirectory() as td:
-        engine = _make_engine(td)
-        st = engine.state
-        st.cooldown.current_date = datetime.now(CST).strftime("%Y-%m-%d")
-        st.on_character_message(datetime.now(CST), "morning")
-        r = engine.record_send_result("test_msg_3", "success")
-        assert r["status"] == "success"
         assert r["error"] is None
         assert r["refunded"] is False
-    print("  OK test_record_send_result_no_error_success")
+    print("  OK test_record_send_result_success")
 
 
 def test_monitor_stats_send_result():
@@ -299,7 +285,6 @@ if __name__ == "__main__":
     tests = [
         test_record_send_result_failed,
         test_record_send_result_success,
-        test_record_send_result_no_error_success,
         test_monitor_stats_send_result,
         test_monitor_summary_includes_send_result,
         test_cli_send_result_branch,

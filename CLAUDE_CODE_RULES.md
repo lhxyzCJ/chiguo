@@ -1,6 +1,6 @@
 # Claude Code Rules — Chiguo Proactive Message System
 
-> Auto-generated 2026-07-02 from full codebase audit. 159 tests, zero framework, pure Python stdlib.
+> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-01. 19 py runners + 2 script tests, zero framework, pure Python stdlib.
 > **Iron law**: decision/generation separation. Daemon outputs JSON. OpenClaw generates messages.
 
 ---
@@ -8,12 +8,18 @@
 ## 1. Build & Test
 
 ```bash
-# Run ALL 159 tests (10 files)
+# Run ALL tests: 19 py runners + 2 script tests (every runner exits non-zero on failure)
+node test_trigger_script.js && bash test_install_integration.sh && \
 python3 test_chiguo_math.py && python3 test_holiday_parser.py && \
 python3 test_integration.py && python3 test_monitor.py && \
 python3 test_eventbus.py && python3 test_personality.py && \
 python3 test_bayesian.py && python3 test_composer.py && \
-python3 test_ebbinghaus.py && python3 test_longing.py
+python3 test_ebbinghaus.py && python3 test_longing.py && \
+python3 test_escape_valve.py && python3 test_feedback.py && \
+python3 test_trigger.py && python3 test_topics.py && \
+python3 test_circadian.py && python3 test_followup.py && \
+python3 test_netease_proof.py && python3 test_netease_service.py && \
+python3 test_envcheck.py
 
 # Single file
 python3 test_monitor.py
@@ -41,35 +47,37 @@ python3 update_holidays.py 2027 --solar --force  # generate holiday data
 python3 chiguo_rotation.py --force
 ```
 
-**No build step. No pip install.** Dependencies: Python 3.11+ stdlib (`tomllib`). Optional: `openpyxl` (schedule), `lancedb` (memory bridge). Note: `memory_bridge.py` hard-imports `lancedb` at module level; will crash on import if absent. Install lancedb or accept import failure.
+**No build step. No pip install.** Python 3.14-only (PEP 758 bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`). Optional: `openpyxl` (schedule), `lancedb` (memory bridge). Note: `memory_bridge.py` lazy-imports `lancedb` inside `_ensure_table()`; when absent it runs with `available=False` and memory queries degrade gracefully — the daemon never crashes on missing lancedb.
 
 ---
 
 ## 2. Architecture — File Dependency Tree
 
 ```
-chiguo_daemon.py (DecisionEngine — 1267 lines)
-├── chiguo_math.py          Pure functions: sigmoid, decay, recover, Poisson, Hawkes, longing
-├── chiguo_state.py         ChiguoState + ChiguoEmotion + CooldownState (1310 lines)
-│   ├── chiguo_personality.py  PersonalityTraits (8 dims) + PersonalityDelta + Deltas (242 lines)
+chiguo_daemon.py (DecisionEngine — 1580 lines)
+├── chiguo_math.py          Pure functions: sigmoid, decay, recover, dynamic_lambda, Hawkes, longing
+├── chiguo_state.py         ChiguoState + ChiguoEmotion + CooldownState (1701 lines)
+│   ├── chiguo_personality.py  PersonalityTraits (8 dims) + PersonalityDelta + Deltas (231 lines)
 │   ├── chiguo_bayesian.py     UserStateEstimator (6 states) + BayesianLearner
-│   ├── schedule_parser.py     xskb.xlsx → schedule_cache.json → query() (336 lines)
-│   ├── holiday_parser.py      7 holidays + 6 makeup days for 2026 (185 lines)
-│   └── memory_bridge.py       LanceDB read-only + Ebbinghaus forgetting (477 lines)
+│   ├── schedule_parser.py     xskb.xlsx → schedule_cache.json → query() (445 lines)
+│   ├── holiday_parser.py      7 holidays + 6 makeup days for 2026 (187 lines)
+│   ├── memory_bridge.py       LanceDB read-only (lazy import, available=False degrade) + Ebbinghaus forgetting (506 lines)
+│   └── chiguo_circadian.py    dual-bucket sleep-window learning (weekday/weekend + active-time merging)
 ├── chiguo_trigger.py       evaluate_triggers() → 13 trigger types (incl. v7 follow_up), sigmoid-weighted
-├── chiguo_topics.py        TopicPicker — 7 sources, Ebbinghaus-weighted memory
-├── chiguo_composer.py      MessageComposer — Intent × Cue × Vibe (387 lines)
-├── chiguo_eventbus.py      EventBus — lightweight pub/sub singleton
+├── chiguo_topics.py        TopicPicker — 8 sources (incl. v9 netease), Ebbinghaus-weighted memory
+├── chiguo_composer.py      MessageComposer — Intent × Cue × Vibe (389 lines)
+├── chiguo_eventbus.py      EventBus — lightweight pub/sub singleton (subscribe/publish only)
 ├── chiguo_rotation.py      Monthly log rotation → archive/
-└── chiguo_monitor.py       ChiguoMonitor + AlertManager + DecisionIndex (1167+ lines)
+├── chiguo_version.py       Project version single source (VERSION="1", +0.1 per round)
+└── chiguo_monitor.py       ChiguoMonitor + AlertManager + DecisionIndex (1196 lines)
 
 Supporting (not imported by daemon):
-├── chiguo_demo.py          Interactive terminal demo (template-only, no LLM) (188 lines)
-├── chiguo_generator.py     MessageGenerator (LLM via Ollama + template fallback) (269 lines)
-├── chiguo_sender.py        MessageSender (outbox file → OpenClaw WeChat bridge)
+├── chiguo_demo.py          Interactive terminal demo (template-only, no LLM) (191 lines)
 ├── chiguo_watchdog.py      Standalone health checks (cron/systemd timer)
+├── chiguo_envcheck.py      Read-only env readiness check (Python/OpenClaw/LanceDB/netease/data, exit 0/1/2)
 ├── anniversary_manager.py  CRUD for anniversaries/countdowns
-├── netease_bridge.py       Netease Cloud Music API (QR login, daily recs) (465 lines)
+├── netease_bridge.py       Netease Cloud Music API (QR login, recent plays, daily recs) (634 lines)
+├── chiguo_netease.py       Netease strategy layer (v9): health probe/degradation chain/peek-consume quota
 ├── solar_terms.py          24 solar terms lookup (±1 day window) (85 lines)
 └── update_holidays.py      Generate holidays.json + solar_terms.json for any year
 ```
@@ -89,7 +97,7 @@ evaluate(now)
 │   ├── Daily limit            (max 4 active / 2 silent)
 │   ├── Min interval           30 min default
 │   ├── Energy check           primary gate 12, override min 5 via rate_energy_override
-│   ├── Quiet hours            22:00-8:00
+│   ├── Quiet hours            00:00-8:00
 │   ├── Busy suppression       user busy → suppress_hours
 │   ├── Bayesian block         evaluated in evaluate(), not can_send()
 │   └── Longing overflow       held_count>3 + acc_lam>=base*1.5 + anxiety<threshold → allow
@@ -115,9 +123,9 @@ evaluate(now)
 
 | Dimension | Initial | Equilibrium | Half-life | User reply effect |
 |-----------|---------|-------------|-----------|-------------------|
-| loneliness | 15 | → 100 | 40h | Poisson drop |
+| loneliness | 15 | → 100 | 40h | decay drop (0.35h) |
 | affection | 55 | → 0 | 500h | Mild gain |
-| anxiety | 40 | → 100 | 30h | Poisson drop |
+| anxiety | 40 | → 100 | 30h | decay drop (0.5h) |
 | energy | 85 | → 100 | 8h | Mild gain |
 | tsundere_index | 70 | → personality baseline | — | Drops on reply |
 
@@ -129,7 +137,7 @@ evaluate(now)
 **Key formulas**:
 - Decay: `value * 2^(-t/half_life)`
 - Recovery: `current + gap * (1 - 2^(-t/half_life))`
-- Poisson: `P(event) = 1 - exp(-lambda * interval)`
+- Event rate: `current_lambda()` — base × sigmoid(loneliness) × sigmoid(anxiety) × availability × Hawkes × no-reply backoff
 - Dynamic lambda: `base * sigmoid(loneliness) * sigmoid(anxiety) * availability * modifiers`
 - Hawkes: `base_mu + Σ(alpha * exp(-beta * (t - t_i)))`
 - Longing accumulate: `new_lambda += growth_factor * max(held_count, 1)`, capped at `base_lambda * max_lambda_multiplier`; blocked if `anxiety >= anxiety_block_threshold`
@@ -143,7 +151,7 @@ evaluate(now)
 | Trigger | Weight | Condition |
 |---------|--------|-----------|
 | special | 3.0 × ritual_scale | Today is special date (birthdays) |
-| morning | 2.5 × ritual_scale | 8-10am, 10% Poisson, not sent today |
+| morning | 2.5 × ritual_scale | 8-10am, 10% random gate, not sent today |
 | night | 2.0 × ritual_scale | 8-9pm, 12% probability, not sent today |
 | json_memory | 2.0 × ritual_scale | JSON memory with trigger_at in ±10min window |
 | lancedb_memory | 1.5 × ritual_scale | 8% random gate when silent>6h |
@@ -162,7 +170,7 @@ evaluate(now)
 
 ## 6. Topic Injection (chiguo_topics.py)
 
-7 sources, weighted random, triggered on lonely triggers (70% chance, forced at 3 consecutive):
+8 sources, weighted random, triggered on lonely triggers (70% chance, forced at 3 consecutive):
 
 | Source | Weight | Description |
 |--------|--------|-------------|
@@ -173,6 +181,7 @@ evaluate(now)
 | anniversary | 0.15 | Today's anniversaries + upcoming within 7 days |
 | solar_terms | 0.10 | ±1 day window around 24 solar terms |
 | preference_followup | 0.10 | LanceDB user preference category memories |
+| netease | 0.12 | NeteaseService strategy layer (v9): music topic, peek/consume quota |
 
 **Ebbinghaus**: `R = e^(-t / (strength * importance))`, clamped to `[min_weight, 1.0]`. Default strength=168h (7-day half-life), min_weight=0.1.
 
@@ -227,7 +236,7 @@ Intent × Cue × Vibe three-layer system:
 
 ## 9. Ship of Theseus — Config Parameters (chiguo_proactive.toml)
 
-229 lines, 16 sections: `[openclaw]` `[memory]` `[character]` `[emotion]` `[sigmoid]` `[poisson]` `[topic_picker]` `[schedule]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]`. Key tunables:
+277 lines, 19 sections: `[openclaw]` `[memory]` `[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]`. Key tunables:
 
 | Section | Key params | Effect |
 |---------|-----------|--------|
@@ -236,7 +245,9 @@ Intent × Cue × Vibe three-layer system:
 | `[poisson]` | base_lambda (0.25/h) | Message frequency baseline |
 | `[hawkes]` | alpha=0.3, beta=0.5 | Self-excitation strength/decay |
 | `[cooldown]` | max sends, min interval, longing params | Send gating |
-| `[topic_picker]` | 7 source weights | Topic distribution |
+| `[topic_picker]` | 8 source weights | Topic distribution |
+| `[circadian]` | confidence threshold, window params | Sleep-window learning (v7/v8) |
+| `[netease]` | retry, quotas, source weights | Netease strategy layer (v9) |
 | `[composer]` | combo size probs, 8 cue weights | Message composition |
 | `[personality]` | 8-dim initial values | Character baseline |
 | `[bayesian]` | learning_rate, thresholds | User state inference |
@@ -250,7 +261,7 @@ Intent × Cue × Vibe three-layer system:
 **Send decision**:
 ```json
 {
-  "action": "send", "msg_id": "12-char hex",
+  "action": "send", "version": "1", "msg_id": "12-char hex",
   "trigger": "trigger_type", "intensity": "soft|medium|strong",
   "context": {
     "layer_guidance": "...", "character_rules": "...", "instruction": "...",
@@ -266,22 +277,22 @@ Intent × Cue × Vibe three-layer system:
 }
 ```
 
-**Idle decision**: `action: "idle"`, adds `reason` (idle-only description), `idle_reason` (user_sleeping/user_busy/daily_limit/low_energy/min_interval/quiet_hours/no_trigger), and `next_evaluation_at`.
+**Idle decision**: `action: "idle"` (also carries top-level `version`), adds `reason` (idle reason: user_sleeping/user_busy/daily_limit/low_energy/min_interval/quiet_hours/no_trigger/busy_suppressed/sleeping_guard), `next_evaluation_at`, and `state`/`bayesian`.
 
 ---
 
-## 11. OpenClaw Integration
+## 11. OpenClaw Integration (v11)
 
-### chiguo skill workflow
-1. **Cron** triggers agent (interval configured in SKILL.md / OpenClaw cron settings)
-2. Agent runs `python3 chiguo_daemon.py`
-3. If `action: "send"`: generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `openclaw-weixin` channel
-4. If `action: "idle"`: stops
+### Send side — trigger-script gate (zero model calls on idle)
+1. **Cron**: `openclaw cron add chiguo-check --every 15m --trigger-script scripts/chiguo-watch.js --session main` (registered by `scripts/install_integration.sh`; `openclaw cron` is the official command — the old `automations` alias was removed 2026.7.1-2)
+2. Trigger script runs `<repo>/.venv/bin/python chiguo_daemon.py --compact` with no model execution
+3. `action: "idle"` → `{fire: false}` (~90% of evaluations never wake the agent)
+4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `openclaw-weixin` channel → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
 
-### UserPromptSubmit hook
-1. WeChat message arrives → hook runs `on-user-msg.sh`
+### Reply side — standing order (replaces v4 UserPromptSubmit hook)
+1. WeChat message arrives → agent replies normally; standing order (agents/main/AGENTS.md, installed by `install_integration.sh`) forces the flow
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
-3. Agent replies naturally using SUN2.md personality
+3. Agent replies naturally using SUN2.md personality (single-record: no double recording, no hook)
 
 ### SUN2.md Personality Constitution (283 lines)
 - **3-layer structure**: 喧闹外壳 → 倔强中层 → 脆弱内核
@@ -294,14 +305,15 @@ Intent × Cue × Vibe three-layer system:
 - `/root/.openclaw/workspace/skills/chiguo/SKILL.md` (133 lines)
 - `/root/.openclaw/workspace/skills/chiguo/SUN2.md` (283 lines)
 - `/root/.openclaw/workspace/skills/chiguo/references/迟菓语言技巧指南.md` (153 lines)
-- `/root/.openclaw/workspace/skills/chiguo/scripts/on-user-msg.sh` (8 lines)
-- `/root/.openclaw/workspace/agents/main/` — 12 files (IDENTITY, SOUL, MEMORY, etc.)
+- `/root/.openclaw/workspace/agents/main/` — 12 files (IDENTITY, SOUL, MEMORY, etc.; reply-side standing order lives in AGENTS.md)
+
+Note: v4 residue `scripts/on-user-msg.sh` and `.claude/settings.json` UserPromptSubmit hooks are removed by `install_integration.sh` stage 3b (backed up to `.bak`).
 
 ---
 
-## 12. Runtime Files (all .gitignore)
+## 12. Runtime Files (.gitignore policy: only backups/temp/locks/tokens ignored)
 
-Note: `.gitignore` currently only covers 7 of 17 runtime files. The 10 missing entries should be added.
+Note: analysis-relevant runtime data (decisions/state/monitor logs) is **tracked** in git so the target machine can push it to GitHub for local analysis; `.gitignore` ignores only `*.bak`/`*.tmp`/`*.pid`/`*.lock`/`netease_cookie.txt` and caches (see doc/README.md §运行时数据回流).
 
 | File | Writer | Purpose |
 |------|--------|---------|
@@ -311,7 +323,6 @@ Note: `.gitignore` currently only covers 7 of 17 runtime files. The 10 missing e
 | `chiguo_decisions.jsonl` | chiguo_daemon.py | Append-only decision log |
 | `chiguo_messages.jsonl` | chiguo_daemon.py | Human-readable conversation log (v5) |
 | `chiguo_state_audit.jsonl` | chiguo_state.py | Corruption/recovery audit trail (v5) |
-| `chiguo_message_log.json` | chiguo_sender.py | Sent message history (last 200) |
 | `chiguo_alerts.json` | chiguo_monitor.py | AlertManager persisted state |
 | `chiguo_watchdog_state.json` | chiguo_watchdog.py | Last seen tick_seq for stall detection |
 | `chiguo_loop.pid` | chiguo_daemon.py | PID lock file |
@@ -322,6 +333,8 @@ Note: `.gitignore` currently only covers 7 of 17 runtime files. The 10 missing e
 | `solar_terms.json` | update_holidays.py | Override solar terms for future years |
 | `netease_cache.json` | netease_bridge.py | Daily song recommendations cache |
 | `netease_cookie.txt` | netease_bridge.py | Netease API auth cookie (chmod 600) |
+| `recent_play_cache.json` | netease_bridge.py | Recent-play cache (v8, atomic write, 15-min TTL) |
+| `netease_health.json` | chiguo_netease.py | Netease health/quota state (v9, atomic write) |
 
 ---
 
@@ -354,29 +367,30 @@ Note: `.gitignore` currently only covers 7 of 17 runtime files. The 10 missing e
 
 | File | Lines | Purpose | Key exports |
 |------|-------|---------|-------------|
-| chiguo_math.py | 189 | Pure math | sigmoid, decay, recover, poisson_*, hawkes_intensity, longing_*, weighted_trigger_choice |
-| chiguo_state.py | 1310 | State engine | ChiguoState, ChiguoEmotion, CooldownState |
-| chiguo_daemon.py | 1267 | Orchestrator | DecisionEngine, main() |
-| chiguo_trigger.py | 279 | Trigger selection | evaluate_triggers(), Trigger |
-| chiguo_topics.py | 316 | Topic injection | TopicPicker |
-| chiguo_composer.py | 387 | Message composition | MessageComposer |
-| chiguo_personality.py | 242 | Personality system | PersonalityTraits, PersonalityDelta, PersonalityDeltas |
-| chiguo_bayesian.py | 460 | User inference | UserStateEstimator, BayesianLearner |
-| chiguo_eventbus.py | 74 | Pub/sub | EventBus, get_eventbus(), reset_eventbus() |
-| chiguo_monitor.py | 1167+ | Analytics | ChiguoMonitor, AlertManager, DecisionIndex |
-| chiguo_watchdog.py | 200 | Health checks | run_all_checks(), cli() |
-| chiguo_rotation.py | 130 | Log rotation | rotate_if_needed(), force_rotate() |
-| chiguo_demo.py | 188 | Interactive demo | Demo class |
-| chiguo_generator.py | 269 | Message generation | MessageGenerator |
-| chiguo_sender.py | 100 | Message delivery | MessageSender |
-| memory_bridge.py | 477 | Memory access | MemoryBridge |
-| schedule_parser.py | 336 | Schedule | ScheduleParser |
-| holiday_parser.py | 185 | Holidays | HolidayParser |
+| chiguo_math.py | 167 | Pure math | sigmoid, decay, recover, dynamic_lambda, hawkes_intensity, longing_*, weighted_trigger_choice |
+| chiguo_state.py | 1701 | State engine | ChiguoState, ChiguoEmotion, CooldownState |
+| chiguo_daemon.py | 1580 | Orchestrator | DecisionEngine, main() |
+| chiguo_trigger.py | 370 | Trigger selection | evaluate_triggers(), Trigger |
+| chiguo_topics.py | 372 | Topic injection | TopicPicker |
+| chiguo_composer.py | 389 | Message composition | MessageComposer |
+| chiguo_personality.py | 231 | Personality system | PersonalityTraits, PersonalityDelta, PersonalityDeltas |
+| chiguo_bayesian.py | 474 | User inference | UserStateEstimator, BayesianLearner |
+| chiguo_eventbus.py | 56 | Pub/sub | EventBus, get_eventbus(), reset_eventbus() |
+| chiguo_monitor.py | 1196 | Analytics | ChiguoMonitor, AlertManager, DecisionIndex |
+| chiguo_watchdog.py | 294 | Health checks | run_all_checks(), cli() |
+| chiguo_rotation.py | 165 | Log rotation | rotate_if_needed(), force_rotate() |
+| chiguo_demo.py | 191 | Interactive demo | Demo class |
+| chiguo_version.py | 5 | Project version | VERSION |
+| memory_bridge.py | 506 | Memory access | MemoryBridge |
+| schedule_parser.py | 445 | Schedule | ScheduleParser |
+| holiday_parser.py | 187 | Holidays | HolidayParser |
 | solar_terms.py | 85 | Solar terms | SolarTerms |
-| anniversary_manager.py | 200 | Anniversaries | AnniversaryManager |
-| netease_bridge.py | 465 | Music API | login_qr_flow(), fetch_daily_songs() |
-| update_holidays.py | 230 | Holiday gen | generate() |
-| chiguo_proactive.toml | 229 | Config | All parameters |
+| anniversary_manager.py | 216 | Anniversaries | AnniversaryManager |
+| netease_bridge.py | 634 | Music API | login_qr_flow(), fetch_recent_play(), fetch_daily_songs() |
+| chiguo_netease.py | 305 | Netease strategy | NeteaseService |
+| chiguo_envcheck.py | 178 | Env readiness | run_checks() |
+| update_holidays.py | 234 | Holiday gen | generate() |
+| chiguo_proactive.toml | 277 | Config | All parameters |
 
 ---
 

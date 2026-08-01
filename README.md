@@ -35,6 +35,9 @@ python3 chiguo_daemon.py --status
 # 单次决策(输出 JSON)
 python3 chiguo_daemon.py
 
+# 版本号
+python3 chiguo_daemon.py --version
+
 # 交互式 Demo
 python3 chiguo_demo.py
 
@@ -53,6 +56,8 @@ uv run python test_envcheck.py
 ```
 
 > 注意:集成测试需要当前目录存在 `chiguo_proactive.toml`,请始终从项目根目录运行。
+
+> 版本机制:项目版本号单一来源为 `chiguo_version.py` 的 `VERSION`(当前 v1),每完成一轮修改手动 +0.1(`v1 → v1.1 → v1.2`)。daemon 决策 JSON、`--version`、envcheck/monitor 报告均带版本号;状态文件 `_version` 是 schema 号(STATE_VERSION=8),与项目版本无关。
 
 ## 部署到其他机器
 
@@ -123,6 +128,9 @@ memory_bridge.py         # LanceDB 只读桥接 + Ebbinghaus 遗忘
 anniversary_manager.py   # 纪念日/倒计时 CRUD
 chiguo_monitor.py        # 结构化监控(stats / alerts / health)
 chiguo_watchdog.py       # 独立看门狗(停滞检测,超 3h 告警)
+chiguo_rotation.py       # 日志轮转 + 告警持久化 + 索引查询
+chiguo_envcheck.py       # 环境就绪检查(Python/OpenClaw/LanceDB/网易云/数据,只读)
+chiguo_version.py        # 项目版本号单一来源(当前 v1,每轮修改 +0.1)
 chiguo_demo.py           # 演示模式
 test_*.py                # 测试(19 个文件,300+ 用例,独立 runner)
 data/                    # 数据文件:课表 xskb.xlsx、手动记忆 chiguo_memories.json、网易云二维码 netease_qr.png
@@ -134,7 +142,8 @@ data/                    # 数据文件:课表 xskb.xlsx、手动记忆 chiguo_m
 # 决策引擎
 python3 chiguo_daemon.py                  # 单次决策
 python3 chiguo_daemon.py --status         # 查看状态
-python3 chiguo_daemon.py --compact        # 紧凑模式(idle 不输出)
+python3 chiguo_daemon.py --compact        # 紧凑模式(idle 输出最小单行 JSON {"action":"idle","version":...,"time":...})
+python3 chiguo_daemon.py --version        # 版本号(chiguo_version.py,规则: 每轮修改 +0.1)
 python3 chiguo_daemon.py --loop 120       # 持续运行(间隔最小 60 秒)
 
 # 主人消息

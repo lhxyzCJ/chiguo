@@ -1,0 +1,68 @@
+{
+  "_version": 8,
+  "emotion": {
+    "loneliness": 11.226950124950328,
+    "affection": 54.98161884295986,
+    "anxiety": 42.16133357739928,
+    "energy": 65.72360612916714,
+    "tsundere_index": 70.0,
+    "loneliness_rate": 2.572131028685326,
+    "anxiety_rate": 0.6690389362240536
+  },
+  "cooldown": {
+    "last_message_at": "2026-08-01T18:19:05.036894+08:00",
+    "last_user_message_at": null,
+    "messages_today": 1,
+    "messages_without_reply": 1,
+    "current_date": "2026-08-01",
+    "morning_sent": false,
+    "night_sent": false,
+    "trigger_history": [
+      "longing"
+    ],
+    "event_timestamps": [
+      {
+        "type": "longing",
+        "time": "2026-08-01T18:19:05.036894+08:00",
+        "msg_id": "b8c08a5f7d2e"
+      }
+    ],
+    "reply_latencies": [],
+    "busy_suppress_until": null,
+    "held_count": 0,
+    "accumulated_lambda": 0.0,
+    "last_user_msg_length": null,
+    "last_crash_at": null,
+    "crash_count_48h": 0,
+    "crash_timestamps": [],
+    "last_longing_break_at": null
+  },
+  "circadian": {
+    "reply_days": [],
+    "active_days": [],
+    "quiet_start": 0,
+    "quiet_end": 8,
+    "confidence": 0.0,
+    "sample_days": 0,
+    "weekday_quiet_start": 0,
+    "weekday_quiet_end": 8,
+    "weekday_confidence": 0.0,
+    "weekend_quiet_start": 0,
+    "weekend_quiet_end": 8,
+    "weekend_confidence": 0.0
+  },
+  "pending_topics": [],
+  "personality": {
+    "openness": 55.0,
+    "conscientiousness": 65.0,
+    "extraversion": 45.03,
+    "agreeableness": 70.0,
+    "neuroticism": 59.95,
+    "tsundere_intensity": 70.0,
+    "playfulness": 55.05,
+    "attachment_style": 60.03
+  },
+  "last_tick": "2026-08-01T18:34:04.246990+08:00",
+  "tick_seq": 10,
+  "_checksum": "e1a5b34f37e5801025fe75935fe92908c9adcb6880c97e64da9cdaee1dcc6814"
+}

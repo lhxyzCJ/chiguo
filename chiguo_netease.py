@@ -25,7 +25,7 @@ HEALTH_SCHEMA_KEYS = ("api_alive", "logged_in", "faulty", "last_check",
 
 def _in_quiet_window(dt: datetime, start: int, end: int) -> bool:
     """与 chiguo_daemon._in_quiet_window 同语义(跨午夜)。
-    供 chiguo_topics(Task 3 TopicPicker)导入复用,勿删。"""
+    供 chiguo_topics 导入复用。"""
     if end < start:
         return dt.hour >= start or dt.hour < end
     return start <= dt.hour < end

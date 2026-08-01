@@ -67,14 +67,11 @@ class UserStateEstimator:
 
         # 从配置读取 Bayesian 参数
         self.utility_threshold = float(self.config.get("utility_threshold", 0.4))
-        self.min_confidence_for_block = float(self.config.get("min_confidence_for_block", 0.5))
         lr = float(self.config.get("learning_rate", 0.05))
 
         # ── 在线学习器 ──
         self.learner = BayesianLearner(self, learning_rate=lr)
 
-        # ── 观察历史 ──
-        self.observation_history: list[dict] = []
 
     def _init_default_likelihoods(self):
         """初始化经验似然参数表。"""
@@ -376,20 +373,8 @@ class UserStateEstimator:
         }
 
     def record_observation(self, observations: dict, actual_state: str = None):
-        """
-        记录观察用于在线学习。
-        actual_state: 如果已知真实状态（用户明确说了），可用于监督学习。
-        """
-        record = {
-            "observations": observations,
-            "actual_state": actual_state,
-            "timestamp": datetime.now(CST).isoformat(),
-        }
-        self.observation_history.append(record)
-        if len(self.observation_history) > 200:
-            self.observation_history = self.observation_history[-200:]
-
-        # 在线学习：如果有真实状态标签
+        """记录观察用于在线学习。
+        actual_state: 已知真实状态（用户明确说了）时触发监督学习。"""
         if actual_state:
             self.learner.update_from_label(observations, actual_state)
 

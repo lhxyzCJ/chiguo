@@ -11,7 +11,6 @@ import os
 import random
 import time as _time_module
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 # 注意：lancedb 在 _ensure_table() 内惰性导入，不在此处顶层导入。
 # lancedb 未安装时 daemon 仍可启动（available=False 优雅降级）。
@@ -20,7 +19,6 @@ CST = timezone(timedelta(hours=8))
 
 # ── 搜索关键词（定位与迟菓/主人相关的记忆）─────────────────
 USER_KEYWORDS = ["迟菓", "菓菓", "主人", "chiguo", "微信", "互动", "早安", "晚安"]
-MEMORY_CACHE_TTL = 300  # 5分钟后重新查询
 
 # ── Ebbinghaus 遗忘参数 ──
 DEFAULT_EBBINGHAUS_STRENGTH = 168.0   # 记忆强度 S（小时），越大遗忘越慢
@@ -50,8 +48,6 @@ class MemoryBridge:
         self._lancedb = None  # 惰性导入缓存（模块级不再 import lancedb）
         self._available: bool | None = None  # None=未检测, True=可用, False=不可用
         self._last_probe: float = 0.0  # 最近一次探测时间戳（m12: 失败后按节流重试）
-        self._cache: dict = {}
-        self._cache_ts: float = 0
 
     @property
     def available(self) -> bool:

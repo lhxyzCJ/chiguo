@@ -12,7 +12,7 @@ from datetime import datetime
 from chiguo_math import weighted_trigger_choice
 from solar_terms import SolarTerms
 from anniversary_manager import AnniversaryManager
-from chiguo_netease import NeteaseService, _in_quiet_window
+from chiguo_netease import _in_quiet_window
 
 
 class TopicPicker:

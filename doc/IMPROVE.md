@@ -1,6 +1,34 @@
 # 改进清单
 
-> 版本: 2026-07-31 | 全量代码审计完成（4 路并行 agent + 1 轮交叉复核），发现 6 CRITICAL + 14 MAJOR + 30+ MINOR，TOP5 及遗留 MAJOR 全部修复（见下方 2026-07-31 记录）
+> 版本: 2026-08-01 | 全量代码审计完成（5 路并行 agent + 1 轮交叉复核），发现死代码/冗余/文档漂移 50+ 项，高置信度项全部清理；版本号机制引入（v1 → v1.1，见下）
+
+---
+
+## 2026-08-01 — 全面审查与简化（v1.1：死代码清理 + 冗余合并 + 文档同步 + 版本号机制）
+
+**问题**：代码 1.8 万行沉淀大量 v1~v11 演进遗留（死模块/死函数/死导入/重复实现），文档与代码漂移（CLAUDE_CODE_RULES 停在 2026-07-02 基线，README/CLAUDE/SYSTEM 多处与实际不符）。
+
+**审查**（5 路并行只读子代理，全部 grep 验证）：state/daemon/monitor 组、工具链 20 模块组、测试与脚本组、文档一致性组。
+
+**代码清理**：
+- 删整文件 2：`chiguo_generator.py`（v1 遗留 Ollama 直连生成器，仅 demo 用）、`chiguo_sender.py`（outbox 发送器，仅 demo 用 + 违反安全边界）；`chiguo_demo.py` 改用生产路径 `MessageComposer` 情境组合
+- 死函数 6：`poisson_prob`/`poisson_event`（chiguo_math，触发已内联）、`energy_modifier`/`PersonalityDeltas.DAILY_DECAY`（personality）、`min_confidence_for_block` 属性 + `observation_history`（bayesian，监督学习不受影响）、`unsubscribe`/`clear`/`has_subscribers`（eventbus，仅测试用）
+- 死字段/常量：`Emotion.prev_loneliness`（只写不读）、`CST_NOTE`、`MEMORY_CACHE_TTL`/`_cache`/`_cache_ts`（memory_bridge 缓存从未接线）
+- 死导入 12 处：chiguo_state(math/longing_accumulate/default_personality)、chiguo_sender(urllib)、anniversary_manager(field)、memory_bridge(Path)、chiguo_demo(sys)、chiguo_topics(NeteaseService)、chiguo_envcheck(urllib.error) + 测试 4 处
+- daemon 空回调 `_on_decision_made`/`_setup_eventbus_hooks` 删除（publish 保留为 EventBus 扩展点）；monitor 空分支删除
+- 签名修正：`compose_situation` 去掉无用 trigger 参数（composer/daemon/测试同步）
+
+**冗余合并**（chiguo_state）：`silent_hours(now, wall=True)` 合并 `silent_hours_wall`；`_current_bucket(now)`/`_finalize(now)` helper 消除 2+4 处重复；`infer_user_state` 死 except 删除
+
+**注释勘误**：半衰期 ×0.6 表述（恢复速度 ≈1.67 倍）、availability docstring 三档实测值、静默窗口来源注释（生物钟学习覆盖）、update_holidays 干支（2027=丁未年）、monitor :258 过时注释、chiguo_netease "Task 3" 残留
+
+**测试精简**（21 项全绿）：删冗余测试 7（test_bayesian record_observation、test_trigger anxiety_default_normalized_out、test_topics netease_topic_emitted、test_netease_service both_sources_down/peek_plus_consume、test_longing just_above_threshold、test_feedback no_error_success 并入 success）+ 死代码测试用例（poisson/energy_modifier/eventbus 3 方法）+ no-op 测试（test_monitor timestamp_auto_detection）；`check()`/PASS/FAIL 死框架删除；test_record_observation 改写为监督学习断言
+
+**文档同步**：README/SYSTEM/CLAUDE/CLAUDE_CODE_RULES（整体修订至 3.14/19 测试/8 源/277 行/v11 集成/惰性 lancedb）/AGENTS/OPENCLAW_INTEGRATION 全部对齐；IMPROVE 本条 + MEMORY 记录
+
+**版本**：v1 → v1.1（chiguo_version.py）
+
+**验证**：21 个 runner 全量回归通过（node 15/15 + bash 12/12 + 19 py 全绿）
 
 ---
 

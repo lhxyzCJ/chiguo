@@ -350,7 +350,7 @@ class MessageComposer:
 
         return self.VIBES.get(base, base)
 
-    def compose_situation(self, trigger, combo: dict, topic_data: dict | None,
+    def compose_situation(self, combo: dict, topic_data: dict | None,
                           silent_hours: float) -> str:
         """
         组合成最终的情境描述文本，替代旧的 situation_map。

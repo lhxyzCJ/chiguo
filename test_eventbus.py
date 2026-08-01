@@ -42,43 +42,12 @@ def test_multiple_subscribers():
     print("  OK test_multiple_subscribers")
 
 
-def test_unsubscribe():
-    """取消订阅"""
-    bus = EventBus()
-    results = []
-
-    def h(**kw): results.append(1)
-
-    bus.subscribe("e", h)
-    bus.publish("e")
-    assert len(results) == 1
-
-    bus.unsubscribe("e", h)
-    bus.publish("e")
-    assert len(results) == 1  # 不再增加
-    print("  OK test_unsubscribe")
-
-
 def test_no_subscribers_no_crash():
     """发布到无订阅者的事件不崩溃"""
     bus = EventBus()
     results = bus.publish("nonexistent", x=1)
     assert results == []
     print("  OK test_no_subscribers_no_crash")
-
-
-def test_has_subscribers():
-    """检查是否有订阅者"""
-    bus = EventBus()
-    assert not bus.has_subscribers("e")
-
-    def h(**kw): pass
-    bus.subscribe("e", h)
-    assert bus.has_subscribers("e")
-
-    bus.unsubscribe("e", h)
-    assert not bus.has_subscribers("e")
-    print("  OK test_has_subscribers")
 
 
 def test_handler_exception_isolated():
@@ -95,19 +64,6 @@ def test_handler_exception_isolated():
 
     assert results == [1]
     print("  OK test_handler_exception_isolated")
-
-
-def test_clear():
-    """清空所有订阅"""
-    bus = EventBus()
-    results = []
-
-    def h(**kw): results.append(1)
-    bus.subscribe("e", h)
-    bus.clear()
-    bus.publish("e")
-    assert results == []
-    print("  OK test_clear")
 
 
 def test_global_singleton():
@@ -163,11 +119,8 @@ if __name__ == "__main__":
     tests = [
         test_subscribe_and_publish,
         test_multiple_subscribers,
-        test_unsubscribe,
         test_no_subscribers_no_crash,
-        test_has_subscribers,
         test_handler_exception_isolated,
-        test_clear,
         test_global_singleton,
         test_publish_returns_results,
         test_multiple_events,

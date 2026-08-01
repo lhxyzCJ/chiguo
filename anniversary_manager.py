@@ -7,7 +7,7 @@
 import json
 import os
 import uuid
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 from datetime import date
 from pathlib import Path
 

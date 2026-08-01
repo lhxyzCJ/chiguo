@@ -1,5 +1,21 @@
 # MEMORY.md
 
+## 2026-08-01 — 全面审查与简化（v1 → v1.1）
+
+**背景**：用户要求全面审查并简化代码、完善文档、push、版本号步进 0.1。5 路并行子代理只读审查（state/daemon/monitor 组、工具链 20 模块、测试脚本组、文档一致性组），发现死代码/冗余/文档漂移 50+ 项，全部 grep 验证。
+
+- 删整文件：`chiguo_generator.py`（v1 遗留 Ollama 直连生成器）、`chiguo_sender.py`（outbox 发送器，违反安全边界）——仅 demo 用；`chiguo_demo.py` 改用生产路径 `MessageComposer`（select_combo + compose_situation）
+- 死函数：`poisson_prob`/`poisson_event`、`energy_modifier`/`DAILY_DECAY`、`min_confidence_for_block`/`observation_history`、eventbus `unsubscribe`/`clear`/`has_subscribers`
+- 死字段：`prev_loneliness`（只写不读）、`CST_NOTE`、memory_bridge 未接线缓存
+- 死导入 12 处 + 测试死导入 4 处；daemon 空回调链删除（publish 保留）
+- `compose_situation` 去 trigger 参数（composer/daemon/测试同步）
+- state 合并：`silent_hours(now, wall=True)` 合并 `silent_hours_wall`；`_current_bucket`/`_finalize` helper；死 except 删除
+- 注释勘误 6 处（半衰期表述/availability docstring/干支 2027=丁未/静默窗口来源/Task 3 残留）
+- 测试：删冗余 7 + 死代码用例 + no-op 测试；`check()` 框架删除；21 项全绿
+- 文档：README/SYSTEM/CLAUDE/CLAUDE_CODE_RULES 全量修订（3.14/19 测试/8 源/277 行/v11 集成/惰性 lancedb）
+- 版本：`chiguo_version.py` VERSION "1" → "1.1"
+- 文件：chiguo_generator.py/sender.py（删）、chiguo_state.py、chiguo_math.py、chiguo_personality.py、chiguo_bayesian.py、chiguo_eventbus.py、chiguo_memory_bridge.py、chiguo_envcheck.py、chiguo_monitor.py、chiguo_daemon.py、chiguo_composer.py、chiguo_topics.py、chiguo_netease.py、chiguo_demo.py、update_holidays.py、anniversary_manager.py、chiguo_version.py、7 个测试文件、全部文档
+
 ## 2026-08-01 — 版本号机制引入（chiguo_version.py，当前 v1）
 
 **背景**：项目此前无统一版本号（文档里 v4~v11 为演进称呼、状态文件 `_version` 为 schema 号）。用户定规则：当前版本 = v1，每完成一轮修改手动 +0.1（类似 Linux 次版本步进），何时步进由维护者决定。

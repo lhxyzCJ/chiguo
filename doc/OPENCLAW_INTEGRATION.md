@@ -82,7 +82,7 @@ bash deploy.sh                                  # 或随部署一起（传 --ski
 实现要点：
 
 - 执行：`tools.call('exec', {command})` 跑 `<仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --compact`（仓库路径来自环境变量 `CHIGUO_REPO`，缺省为脚本所在目录的上级）。
-- 解析：优先全文 JSON，失败逐行回退（stdout 杂音泄漏防护）；`--compact` 时 idle 输出最小单行 `{"action":"idle","time":...}`（chiguo_watch 视为 fire:false；另见 §七 调试）。
+- 解析：优先全文 JSON，失败逐行回退（stdout 杂音泄漏防护）；`--compact` 时 idle 输出最小单行 `{"action":"idle","version":...,"time":...}`（chiguo_watch 视为 fire:false；另见 §七 调试）。
 - 纯搬运工：脚本不生成消息、不决策，只做 exec + 解析 + fire（决策/生成分离铁律）。
 - 单测：`node test_trigger_script.js`（mock 四路径：idle / send / 坏 JSON / 无输出或 exec 抛错）。
 
@@ -93,6 +93,7 @@ bash deploy.sh                                  # 或随部署一起（传 --ski
 ```json
 {
   "action": "send",
+  "version": "1",
   "trigger": "lonely_mid",
   "intensity": "medium",
   "context": {
@@ -124,7 +125,7 @@ special / morning / night / meal / memory / follow_up / lonely_low / lonely_mid 
 #### idle 示例
 
 ```json
-{"action":"idle","reason":"no_trigger","state":{...}}
+{"action":"idle","version":"1","reason":"no_trigger","state":{...}}
 ```
 
 `reason`: no_trigger / quiet_hours / daily_limit / low_energy / min_interval / user_sleeping / user_busy / busy_suppressed / sleeping_guard

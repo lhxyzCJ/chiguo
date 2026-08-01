@@ -162,7 +162,7 @@ def test_compose_situation():
     from chiguo_trigger import Trigger
     trigger = Trigger(type="lonely_mid")
 
-    situation = c.compose_situation(trigger, combo, None, 5.0)
+    situation = c.compose_situation(combo, None, 5.0)
     assert len(situation) > 20
     assert "哥哥" in situation or "主人" in situation or "风格" in situation or "氛围" in situation
     print(f"  OK test_compose_situation: {len(situation)} chars")

@@ -11,8 +11,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required)
-uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && uv run python test_integration.py && uv run python test_monitor.py && uv run python test_eventbus.py && uv run python test_personality.py && uv run python test_bayesian.py && uv run python test_composer.py && uv run python test_ebbinghaus.py && uv run python test_longing.py && uv run python test_escape_valve.py && uv run python test_feedback.py && uv run python test_trigger.py && uv run python test_topics.py && uv run python test_circadian.py && uv run python test_followup.py && uv run python test_netease_proof.py   # full suite (17 files)
+# Run all tests (Python 3.14+ required) — 19 py + 2 script tests
+node test_trigger_script.js && bash test_install_integration.sh && \
+uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
+uv run python test_integration.py && uv run python test_monitor.py && \
+uv run python test_eventbus.py && uv run python test_personality.py && \
+uv run python test_bayesian.py && uv run python test_composer.py && \
+uv run python test_ebbinghaus.py && uv run python test_longing.py && \
+uv run python test_escape_valve.py && uv run python test_feedback.py && \
+uv run python test_trigger.py && uv run python test_topics.py && \
+uv run python test_circadian.py && uv run python test_followup.py && \
+uv run python test_netease_proof.py && uv run python test_netease_service.py && \
+uv run python test_envcheck.py   # full suite (19 py + 2 script tests)
 
 # Or individually
 uv run python test_monitor.py
@@ -51,9 +61,9 @@ No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python �
 
 **Decision/generation separation** — the core design principle. `chiguo_daemon.py` is a zero-LLM math engine that evaluates state and outputs structured JSON. Message generation happens externally via OpenClaw's `chiguo` skill, which reads that JSON, generates text, and sends via WeChat.
 
-**OpenClaw integration** (see `doc/OPENCLAW_INTEGRATION.md`):
-- `openclaw cron` triggers daemon check every 30 min → agent runs `chiguo_daemon.py` → if send, generates message via SUN2.md
-- `UserPromptSubmit` hook triggers on WeChat message → agent analyzes emotion → updates daemon via `--user-msg --analysis` → replies
+**OpenClaw integration** (see `doc/OPENCLAW_INTEGRATION.md`, v11):
+- `openclaw cron add chiguo-check --every 15m --trigger-script scripts/chiguo-watch.js --session main` — trigger script runs `chiguo_daemon.py --compact` with zero model calls; idle → `{fire:false}`, send → `{fire:true, message:<decision JSON>}` → agent generates message via SUN2.md and sends
+- Reply side uses a **standing order** (agents/main/AGENTS.md, installed by `scripts/install_integration.sh`) — LLM emotion analysis → `--user-msg --analysis` → reply per SUN2.md (replaces the v4 UserPromptSubmit hook; no double-recording)
 - Skill files in `/root/.openclaw/workspace/skills/chiguo/`: SKILL.md (agent instructions) + SUN2.md (personality)
 
 **v4 (2026-06-27)** adds: Bayesian user state inference, multi-dimensional personality (Big Five + character-specific), Ebbinghaus forgetting curves, message composition system (Intent × Cue × Vibe), probability accumulation with anxiety blocking, EventBus decoupling, personality adaptation, and dynamic sleep scheduling.
@@ -66,33 +76,39 @@ No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python �
 chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_state.py     → 5-dimension emotion engine + 8-dim personality + Bayesian inference + schedule + holidays + memory
   ├─ chiguo_trigger.py   → sigmoid-weighted random trigger selection (13 trigger types incl. reflect, longing, follow_up)
-  ├─ chiguo_topics.py    → 7-source topic injection with Ebbinghaus-weighted memory + personality modulation
+  ├─ chiguo_topics.py    → 8-source topic injection with Ebbinghaus-weighted memory + personality modulation
   ├─ chiguo_composer.py  → Intent × Cue × Vibe three-layer message composition (v4)
-  ├─ chiguo_math.py      → pure functions: sigmoid, half-life decay, Poisson CDF, Hawkes, longing accumulation (v4)
+  ├─ chiguo_math.py      → pure functions: sigmoid, half-life decay, Hawkes, longing accumulation (v4)
   ├─ chiguo_personality.py → Big Five + character traits (8 dimensions) (v4)
   ├─ chiguo_bayesian.py  → Bayesian user state estimation (6 states, online learning) (v4)
   ├─ chiguo_eventbus.py  → lightweight pub/sub event bus (v4)
   ├─ chiguo_circadian.py → circadian sleep-window learning (dual-bucket: weekday/weekend independent windows + active-time merging) (v7, v8 dual-bucket)
   ├─ netease_bridge.py  → NetEase API bridge (fetch_recent_play: recent-play proof inside quiet window, cached) (v8)
+  ├─ chiguo_netease.py  → NetEase strategy layer (v9): health probe/login-expiry/degradation chain/peek-consume quota/music topic material
   ├─ schedule_parser.py  → xskb.xlsx → schedule_cache.json
   ├─ holiday_parser.py   → Chinese holiday detection (State Council schedule)
   ├─ solar_terms.py      → 24 solar terms
   ├─ memory_bridge.py    → LanceDB read-only bridge + Ebbinghaus forgetting (v4)
   ├─ anniversary_manager.py → anniversary/countdown CRUD
   ├─ chiguo_watchdog.py  → daemon health checks (disk, memory, tick freshness)
+  ├─ chiguo_rotation.py  → monthly log rotation → archive/
+  ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
+  ├─ chiguo_version.py   → project version single source (VERSION="1", +0.1 per round)
   └─ chiguo_monitor.py   → streaming JSONL analytics (stats/alerts/health)
 
   Output: chiguo_decisions.jsonl (append-only structured log)
   State:  chiguo_state.json (atomic write: .tmp → os.replace)
 ```
 
-**Config**: `chiguo_proactive.toml` — all parameters (270 lines). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
+**Config**: `chiguo_proactive.toml` — all parameters (277 lines). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
-**5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply Poisson-based instant drops.
+**Version**: `chiguo_version.py` is the single source (`VERSION="1"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=8), unrelated to the project version.
+
+**5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h).
 
 **Trigger selection**: sigmoid-weighted, not hard-threshold. `chiguo_trigger.py` computes weights for 13 trigger types (incl. v7 follow_up), then weighted random choice. No priority-based cascading — every eligible trigger has non-zero probability.
 
-**Topic injection**: When `lonely_low` or `lonely_mid` triggers fire, 70% chance to inject a conversation topic from 7 weighted sources (schedule, memory, weather, anniversary, etc.). 3 consecutive lonely triggers → forced topic injection.
+**Topic injection**: When `lonely_low` or `lonely_mid` triggers fire, 70% chance to inject a conversation topic from 8 weighted sources (schedule, memory, weather, anniversary, solar terms, preference followup, general, netease). 3 consecutive lonely triggers → forced topic injection.
 
 **CLI convention**: all entry points follow argparse patterns. Output is JSON to stdout, diagnostics to stderr.
 
@@ -119,7 +135,7 @@ All auto-generated at first run, all in `.gitignore`:
 - **Emotion trends**: first-half vs second-half mean comparison; no heavy regression needed.
 - **Reply rate estimation**: inferred from `messages_without_reply` deltas between consecutive sends (no explicit reply tracking in logs).
 - **Config hot-reload**: `_maybe_reload_config()` checks toml mtime before each `evaluate()` call. Only matters for `--loop` mode; cron spawns fresh processes.
-- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 17 test runners exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
+- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 19 py test runners (+ 2 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
 
 ## 安全边界
 

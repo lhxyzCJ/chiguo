@@ -200,25 +200,16 @@ def test_learner_update_from_implicit():
     print(f"  OK test_learner_update_from_implicit: {old_lik:.3f} → {new_lik:.3f}")
 
 
-def test_record_observation():
-    """观察记录不崩溃"""
-    est = make_estimator()
-    est.record_observation({"reply_latency": 0.1, "silence_hours": 1.0})
-    assert len(est.observation_history) == 1
-    print("  OK test_record_observation")
-
-
-def test_record_observation_stores_entries():
-    """record_observation() 正确存储观察数据（raw values, 会被重新分类）"""
+def test_record_observation_supervised():
+    """record_observation() 带真实标签时触发监督学习（似然表更新）"""
     est = make_estimator()
     obs = {"reply_latency": 0.05, "msg_length": 3, "silence_hours": 0.5}
+    before = est._likelihood_cache.get(("chatting", "reply_latency", "fast"), 0.0)
     est.record_observation(obs, "chatting")
-    assert len(est.observation_history) == 1
-    entry = est.observation_history[0]
-    assert entry["observations"] == obs
-    assert entry["actual_state"] == "chatting"
-    assert "timestamp" in entry
-    print("  OK test_record_observation_stores_entries")
+    after = est._likelihood_cache.get(("chatting", "reply_latency", "fast"), 0.0)
+    assert after != before, "监督学习应更新似然表"
+    est.record_observation({"reply_latency": 5.0, "silence_hours": 8.0}, None)
+    print("  OK test_record_observation_supervised")
 
 
 def test_learner_update_from_implicit_bad_timing():
@@ -269,8 +260,7 @@ if __name__ == "__main__":
         test_should_send_bayesian,
         test_learner_update_from_label,
         test_learner_update_from_implicit,
-        test_record_observation,
-        test_record_observation_stores_entries,
+        test_record_observation_supervised,
         test_learner_update_from_implicit_bad_timing,
         test_all_states_in_posterior,
     ]

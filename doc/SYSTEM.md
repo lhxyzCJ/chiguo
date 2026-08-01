@@ -1,6 +1,6 @@
 # 迟菓主动消息系统 — 系统文档
 
-> 版本: v9（网易云音乐渠道增强：TopicPicker 第 8 源 + 策略层鲁棒性）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
+> 版本: v1（`chiguo_version.py` VERSION=1,每轮修改 +0.1;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=8,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
 
 ## 一、架构总览
 
@@ -32,7 +32,7 @@
 ┌──────────────────────────────────────────────────────────────────┐
 │                    OpenClaw（消息生成 + 发送）                      │
 │                                                                    │
-│  cron/heartbeat 读取 daemon 输出                                    │
+│  trigger-script(15分钟,零模型) 读取 daemon 输出                    │
 │  → action=send → chiguo skill (SUN2.md) 生成消息                   │
 │  → openclaw-weixin 通道发送                                        │
 │  → daemon.py --user-msg 记录交互 → --send-result 回传发送结果（v6 反馈闭环） │
@@ -554,7 +554,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 CLI CRUD：`--anniversary "add anniversary 11-03 主人生日"` 等。
 
-OpenClaw skill 检测主人提到日期 → 自动调用 CLI 记录。详见 OPENCLAW_INTEGRATION.md §9。
+OpenClaw skill 检测主人提到日期 → 自动调用 CLI 记录。详见 OPENCLAW_INTEGRATION.md §五（特殊命令）。
 
 ---
 
@@ -679,6 +679,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_watchdog.py` | 零依赖独立看门狗（cron 集成）（v4） | 无 |
 | `chiguo_envcheck.py` | 环境就绪检查（v10.1）：5 组只读检查（Python/uv、OpenClaw skill、LanceDB、网易云、数据文件），网易云检查仅 HTTP 200 计 API 可达（不可达 → warn，含 cookie 存在时），JSON → stdout，退出码 0=就绪/1=警告/2=严重（与 watchdog 一致），路径单一事实来源为 `chiguo_proactive.toml`；测试 `test_envcheck.py` | 无 |
+| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
 | `chiguo_state.json` | 运行时状态（STATE_VERSION=8，首次运行后生成） | 无 |
@@ -727,7 +728,10 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 # 单次决策（输出 JSON 到 stdout）
 python3 chiguo_daemon.py
 
-# 紧凑模式（idle 时不输出）
+# 版本号（chiguo_version.py: 规则 每轮修改 +0.1）
+python3 chiguo_daemon.py --version
+
+# 紧凑模式（idle 输出最小单行 JSON {"action":"idle","version":...,"time":...}）
 python3 chiguo_daemon.py --compact
 
 # 显示状态
@@ -871,6 +875,7 @@ python3 chiguo_watchdog.py --notify     # 异常时 stderr 输出告警摘要
 ```json
 {
   "action": "send",
+  "version": "1",
   "trigger": "lonely_mid",
   "intensity": "medium",
   "context": {
@@ -910,6 +915,7 @@ python3 chiguo_watchdog.py --notify     # 异常时 stderr 输出告警摘要
 ```json
 {
   "action": "idle",
+  "version": "1",
   "reason": "quiet_hours",
   "next_evaluation_at": "2026-06-25 08:00:00",
   "state": {
@@ -936,6 +942,8 @@ idle reason 枚举：
 - `no_trigger` — 没有触发条件满足
 - `user_sleeping` — Bayesian 推断用户正在睡觉
 - `user_busy` — Bayesian 推断用户正在忙
+- `busy_suppressed` — 用户显式 busy_suppress 抑制期（优先于 Bayesian 判断，不累积 longing）
+- `sleeping_guard` — 逃生阀豁免睡觉门控时 Bayesian 睡觉置信度 ≥ `escape_valve_sleep_block`（默认 0.9），降级为不发送
 
 ---
 
@@ -1477,9 +1485,9 @@ python3 chiguo_daemon.py --export --format csv       # 导出为 CSV
 python3 chiguo_daemon.py --export --days 30          # 导出最近 30 天
 
 # 记录发送（OpenClaw 回调）
-python3 chiguo_daemon.py --record-send \             # 记录菓菓发出的消息
-  --msg-text "谁、谁关心你了！" \
-  --msg-id "msg_20260628_143205_a1b2c3"
+python3 chiguo_daemon.py --record-send msg_20260628_143205_a1b2c3 \   # 记录菓菓发出的消息
+  --text "谁、谁关心你了！" \
+  --trigger lonely_mid --intensity medium   # 可选: 触发类型/消息强度
 
 # 日志轮转（v7 补充: 锚定 base_dir，从任意工作目录运行都轮转项目文件）
 python3 chiguo_daemon.py --rotate                    # 手动触发日志轮转
@@ -1503,11 +1511,12 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 
 ## 十一、OpenClaw 集成
 
-详见 `OPENCLAW_INTEGRATION.md`。关键两步：
+详见 `OPENCLAW_INTEGRATION.md`（v11）。关键两条链路：
 
-1. **HEARTBEAT.md**：追加 daemon 检查指令（55 分钟一次）
-2. **chiguo SKILL.md**：追加 user-msg 回调指令（每次回复后记录）
-3. **可选 Cron**：`/cron add ... */20 * * * *` 提高频率到 20 分钟
+1. **发送侧（trigger-script 门控）**：`openclaw cron add chiguo-check --every 15m --trigger-script scripts/chiguo-watch.js --session main` → 脚本零模型执行 `chiguo_daemon.py --compact` → idle 返回 `{fire:false}`（~90% 评估不唤醒 agent），send 返回 `{fire:true, message:<决策 JSON>}` → agent 按 SUN2.md 生成消息发送 → `--record-send <msg_id> --text <text> [--trigger] [--intensity]` 回写
+2. **回复侧（standing order）**：微信消息到达 → agent 正常回复；standing order（agents/main/AGENTS.md）强制 LLM 情绪分析 → `--user-msg --analysis` 更新 daemon → SUN2.md 回复（替代 v4 的 UserPromptSubmit hook，无双重记录）
+
+安装/卸载/校验由 `scripts/install_integration.sh` 完成（deploy.sh 第 5 步接入）；旧版 v4 cron system-event + hook 方案见 OPENCLAW_INTEGRATION.md §八降级路径。
 
 ---
 
@@ -1632,8 +1641,8 @@ rm <仓库根目录>/chiguo_state.json
 | `state.py` | v1 状态引擎 | `chiguo_state.py` |
 | `daemon.py` | v1 决策引擎 | `chiguo_daemon.py` |
 | `triggers.py` | v1 触发器 | `chiguo_trigger.py` |
-| `generator.py` | v1 消息生成 | `chiguo_generator.py` |
-| `sender.py` | v1 发送器 | `chiguo_sender.py` |
+| `generator.py` | v1 消息生成 | `chiguo_generator.py`（v2+ 曾沿用，2026-08-01 删除——消息生成移交 OpenClaw，daemon 只输出 JSON） |
+| `sender.py` | v1 发送器 | `chiguo_sender.py`（v2+ 曾沿用，2026-08-01 删除——发送移交 OpenClaw） |
 | `proactive.toml` | v1 配置 | `chiguo_proactive.toml` |
 | `memories.json` | v1 记忆 | `chiguo_memories.json` |
 | `demo_scenario.py` | v1 场景测试 | `chiguo_demo.py` |
@@ -1747,7 +1756,7 @@ OpenClaw cron 停止时 daemon 不执行。恢复后：
 - **tick_seq 单调递增**：每次成功 save +1，watchdog 持久化上次值到 `chiguo_watchdog_state.json`，seq 停滞超过 3h 则告警（`stall_since` 记录首次停滞时刻，seq 恢复自动清除）
 - **审计日志**：所有恢复/删除/校验失败/时钟异常事件记录到 `chiguo_state_audit.jsonl`
 - **校验和**：`save()` 时 SHA256(payload) → `_checksum` 字段，`_load()` 时验证，不匹配 → raise ValueError 强制走 `.bak` 恢复链（v6，位翻转/手改后宁可回退也不带病运行）
-- **跨进程写锁**：`state_lock()` contextmanager（fcntl flock + 模块级 fd 缓存可重入 + 5s LOCK_NB 超时审计），`save()` 复用统一锁；cron 与 UserPromptSubmit 并发时 read-modify-write 临界区可显式加锁
+- **跨进程写锁**：`state_lock()` contextmanager（fcntl flock + 模块级 fd 缓存可重入 + 5s LOCK_NB 超时审计），`save()` 复用统一锁；cron（trigger-script 评估）与 agent（standing order 调 --user-msg）并发时 read-modify-write 临界区可显式加锁
 - **PID 锁文件**：`--loop` 模式启动时检查 `chiguo_loop.pid`，已存在且进程存活则拒绝启动，退出时清理
 - **时钟异常检测**：壁钟倒退和 NTP 前跳均记录审计日志
 
@@ -1755,7 +1764,7 @@ OpenClaw cron 停止时 daemon 不执行。恢复后：
 
 - PID 锁仅 `--loop` 模式生效，cron 单次执行无需
 - 反馈闭环依赖 OpenClaw agent 主动回传 --send-result，若 agent 未配置此步骤则发送结果仍不可知
-- `state_lock()` 是显式锁：`save()` 内部已持锁，但 cron 与 UserPromptSubmit 各自的 read-modify-write 若未包在 `with state_lock():` 内，仍存在 lost update 窗口
+- `state_lock()` 是显式锁：`save()` 内部已持锁，但 cron 与 agent（--user-msg）各自的 read-modify-write 若未包在 `with state_lock():` 内，仍存在 lost update 窗口
 - watchdog 的 `stall_since` 检测对 state 文件重建（tick_seq 归零）会误报 —— **2026-07-31 已修复**：tick_seq 回退（< prev_seq）视为重启（重置 `stall_since`、不告警、输出 `tick_restarted` 标记）；仅相等且 >3h 不增才告警停滞；下一次运行自动自愈清除旧误报（现网 `stall_since=16:41` 误报已实测清除）
 - 生物钟学习依赖主人回复样本：冷启动（<7 个有回复日或置信度 <0.5）该桶回退配置默认静默窗口 0-8；学习窗口是统计估计，异常作息（考试周熬夜/时区变化）由置信度门槛与滚动窗口自动衰减
 - 双作息迁移是启发式：历史无 bucket 字段的条目按 `weekday() < 5` 补桶，无节假日判定——节假日/调休日的历史回复可能被补入错误桶，随滚动窗口自然衰减

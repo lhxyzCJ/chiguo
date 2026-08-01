@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # ============================================================
 # chiguo_demo.py — 迟菓主动消息系统 交互式演示 v2
-# 数学驱动：Poisson + Sigmoid + 半衰期
+# 数学驱动：Sigmoid + 半衰期 + 动态 λ
 #
-# ⚠️ 演示模式：绕过 Bayesian 推断/消息组合系统/逃生阀，仅展示模板生成，与生产行为不同
-# （monkeypatch _llm_generate → _template_generate，v2 架构；生产走 chiguo_daemon.py v4/v6）
+# ⚠️ 演示模式：仅展示触发决策与情境组合（MessageComposer），
+# 不接入 OpenClaw/不发送/不落盘决策日志，与生产行为不同
 # ============================================================
 
-import sys
 import os
 import tomllib
 from datetime import datetime, timedelta, timezone
@@ -17,8 +16,7 @@ CST = timezone(timedelta(hours=8))
 
 from chiguo_state import ChiguoState
 from chiguo_trigger import evaluate_triggers
-from chiguo_generator import MessageGenerator
-from chiguo_sender import MessageSender
+from chiguo_composer import MessageComposer
 from chiguo_math import sigmoid
 
 
@@ -42,9 +40,8 @@ class Demo:
         with open("chiguo_proactive.toml", "rb") as f:
             self.cfg = tomllib.load(f)
         self.state = ChiguoState(self.cfg)
-        self.gen = MessageGenerator(self.cfg)
-        self.sender = MessageSender(self.cfg)
-        self.gen._llm_generate = lambda t, s, n: self.gen._template_generate(t, s)
+        self.composer = MessageComposer(self.state, self.cfg.get("composer", {}))
+        self.sent: list[dict] = []
 
     def tick(self, mins: float):
         self.sim_now += timedelta(minutes=mins)
@@ -57,8 +54,10 @@ class Demo:
         if not trigger:
             return
 
-        msg = self.gen.generate(trigger, self.state, self.sim_now)
-        self.sender.send(msg, trigger.type, sim_time=self.sim_now)
+        combo = self.composer.select_combo(trigger.type, self.sim_now)
+        silent_h = self.state.cooldown.silent_hours(self.sim_now)
+        situation = self.composer.compose_situation(combo, None, silent_h)
+        self.sent.append({"time": self.sim_now.isoformat(), "message": situation})
         self.state.on_character_message(self.sim_now, trigger.type)
         if trigger.type == "morning":
             self.state.cooldown.morning_sent = True
@@ -130,7 +129,7 @@ class Demo:
         print(f"{Color.B}{Color.MAG}║{Color.R} 🧠 LanceDB记忆: {mem_stats['total_memories']}总/{mem_stats['user_relevant_count']}相关")
         print(f"{Color.B}{Color.MAG}║{Color.R} 上次消息: {c['minutes_since_last']:.0f}min前 | {s['time']}")
 
-        recent = self.sender.history[-3:]
+        recent = self.sent[-3:]
         if recent:
             print(f"{Color.B}{Color.MAG}╠══════════════════════════════════════════════╣{Color.R}")
             for r in recent:
@@ -138,9 +137,10 @@ class Demo:
         print(f"{Color.B}{Color.MAG}╚══════════════════════════════════════════════╝{Color.R}")
 
     def run(self):
-        print(f"\n🌸 迟菓 主动消息系统 v2")
-        print(f"   数学: Poisson + Sigmoid + 半衰期")
-        print(f"{Color.YEL}⚠️ 演示模式：绕过 Bayesian 推断/消息组合系统/逃生阀，仅展示模板生成，与生产行为不同{Color.R}")
+        from chiguo_version import VERSION
+        print(f"\n🌸 迟菓 主动消息系统 v{VERSION}")
+        print(f"   数学: Sigmoid + 半衰期 + 动态 λ")
+        print(f"{Color.YEL}⚠️ 演示模式：仅展示触发决策与情境组合，不接入 OpenClaw/不发送，与生产行为不同{Color.R}")
         self.render()
 
         while True:
@@ -173,9 +173,8 @@ class Demo:
             elif cmd == "s": self.render()
             elif cmd == "r":
                 self.state = ChiguoState(self.cfg)
-                self.gen = MessageGenerator(self.cfg)
-                self.sender = MessageSender(self.cfg)
-                self.gen._llm_generate = lambda t, s, n: self.gen._template_generate(t, s)
+                self.composer = MessageComposer(self.state, self.cfg.get("composer", {}))
+                self.sent = []
                 self.sim_now = datetime.now(CST)
                 print(f"{Color.YEL}🔄 已重置{Color.R}")
                 self.render()

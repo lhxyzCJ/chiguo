@@ -120,10 +120,6 @@ class PersonalityTraits:
             else:
                 return "tsundere_cool"  # 酷娇——独立但关心
 
-    def energy_modifier(self) -> float:
-        """extraversion 对元气表现的调制系数。0.8~1.2。"""
-        return 0.8 + (self.extraversion / 100) * 0.4
-
     def anxiety_sensitivity(self) -> float:
         """neuroticism 对不安变化的敏感度。0.8~1.3。"""
         return 0.8 + (self.neuroticism / 100) * 0.5
@@ -202,12 +198,6 @@ class PersonalityDeltas:
     SENT_NO_REPLY = PersonalityDelta(
         tsundere_intensity=0.1, neuroticism=0.08,
         extraversion=-0.03,
-    )
-
-    # 长期趋势
-    DAILY_DECAY = PersonalityDelta(
-        neuroticism=-0.01,  # 没有负面刺激时缓慢回归基线
-        tsundere_intensity=-0.01,
     )
 
 

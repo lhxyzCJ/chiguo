@@ -1,5 +1,5 @@
 # ============================================================
-# chiguo_state.py — 迟菓情绪状态引擎 v6
+# chiguo_state.py — 迟菓情绪状态引擎 v8
 # 数学驱动：Sigmoid 概率 + 半衰期衰减 + Hawkes 自激过程
 # v4 新增：多维人格、Bayesian 用户状态推断、概率累积、EventBus
 # v5 新增：状态备份(.bak)、fsync、tick_seq、损坏审计、tmp验证
@@ -9,7 +9,6 @@
 # ============================================================
 
 import json
-import math
 import os
 import hashlib
 import shutil
@@ -22,12 +21,11 @@ from contextlib import contextmanager
 
 from chiguo_math import (
     sigmoid, decay, recover,
-    dynamic_lambda, hawkes_intensity, longing_accumulate, longing_decay,
+    dynamic_lambda, hawkes_intensity, longing_decay,
 )
 from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
     personality_to_dict, personality_from_dict,
-    default_personality,
 )
 from schedule_parser import ScheduleParser
 from holiday_parser import HolidayParser
@@ -50,7 +48,6 @@ class ChiguoEmotion:
     anxiety: float = 40.0
     energy: float = 85.0
     tsundere_index: float = 70.0
-    prev_loneliness: float = 15.0   # 上次 tick 前值（计算变化率用）
     loneliness_rate: float = 0.0    # Δloneliness/hour
     anxiety_rate: float = 0.0       # Δanxiety/hour
 
@@ -111,9 +108,9 @@ class CooldownState:
         来源:生物钟学习(置信度达标)或配置默认——由 _sync_quiet_window 决定。"""
         return self._quiet_start, self._quiet_end
 
-    def silent_hours(self, now: datetime) -> float:
-        """清醒沉默时间：墙钟 - 静默窗口（配置默认 0-8，生物钟学习达标后为学习窗口）。
-        角色知道主人在睡觉，睡眠时间不算真沉默。
+    def silent_hours(self, now: datetime, wall: bool = False) -> float:
+        """沉默时间（小时）。默认清醒沉默 = 墙钟 - 静默窗口（睡眠不算真沉默）；
+        wall=True 返回墙钟沉默（不减睡眠窗口，Bayesian/分类器用）。
         时间戳缺失/不可解析 → 999.0（与"从未交互"语义一致），不崩溃。"""
         if not self.last_user_message_at:
             return 999.0
@@ -124,24 +121,13 @@ class CooldownState:
         if last.tzinfo is None:
             last = last.replace(tzinfo=CST)
         raw = (now - last).total_seconds() / 3600
+        if wall:
+            return max(0.0, raw)
         sleep_hours = self._sleep_hours_in_range(last, now)
         return max(0.0, raw - sleep_hours)
 
-    def silent_hours_wall(self, now: datetime) -> float:
-        """墙钟沉默时间（不减睡眠窗口）。Bayesian/分类器用。
-        时间戳缺失/不可解析 → 999.0（与"从未交互"语义一致），不崩溃。"""
-        if not self.last_user_message_at:
-            return 999.0
-        try:
-            last = datetime.fromisoformat(self.last_user_message_at)
-        except (ValueError, TypeError):
-            return 999.0
-        if last.tzinfo is None:
-            last = last.replace(tzinfo=CST)
-        return max(0.0, (now - last).total_seconds() / 3600)
-
-    # v6: 睡眠窗口由 ChiguoState 从 config [schedule] quiet_start/quiet_end 注入，
-    # 不再与 toml 手动同步维护（原 0-8 硬编码）。
+    # v6/v7: 睡眠窗口由 _sync_quiet_window 决定——生物钟学习置信度达标后
+    # 用学习窗口覆盖 config [schedule] quiet_start/quiet_end 默认值。
     def _sleep_hours_in_range(self, start: datetime, end: datetime) -> float:
         """计算 [start, end] 区间内落在睡眠窗口（配置注入，默认 0-8）的小时数。"""
         qs, qe = self._quiet_start, self._quiet_end
@@ -293,6 +279,11 @@ class ChiguoState:
             s.get("quiet_start", 0), s.get("quiet_end", 8),
         )
 
+    def _current_bucket(self, now: datetime) -> str:
+        """v8: 按当前时刻判定作息桶（weekday/weekend），配合假日/调休。"""
+        return bucket_for(now, self.holiday_parser.is_holiday,
+                          self.holiday_parser.is_makeup_workday)
+
     def _sync_quiet_window(self, now: datetime | None = None):
         """v8: 按当前时刻分桶选窗口;置信度达标 → 学习窗口,否则回退配置默认。
         兼容字段(quiet_start/end/confidence)同步为当前生效桶快照,门禁经 quiet_window() 读取不变。
@@ -300,14 +291,12 @@ class ChiguoState:
         if now is None:
             now = datetime.now(CST)
         cfg = self.config.get("circadian", {})
-        bucket = bucket_for(now, self.holiday_parser.is_holiday,
-                            self.holiday_parser.is_makeup_workday)
-        start, end, conf = self.circadian.bucket_window(bucket)
+        start, end, conf = self.circadian.bucket_window(self._current_bucket(now))
         try:
             start, end, conf = int(start), int(end), float(conf)
         except (ValueError, TypeError):
             start, end, conf = 0, 8, 0.0
-        self.circadian.set_active_bucket(bucket, start, end, conf)
+        self.circadian.set_active_bucket(self._current_bucket(now), start, end, conf)
         if conf >= cfg.get("min_confidence", 0.5):
             self.cooldown.set_quiet_window(start, end)
         else:
@@ -695,7 +684,7 @@ class ChiguoState:
             now = datetime.now(CST)
 
         # 从未交互过 → 返回默认中性状态（墙钟，睡眠也计入天数）
-        silent_h = self.cooldown.silent_hours_wall(now)
+        silent_h = self.cooldown.silent_hours(now, wall=True)
         if silent_h > 720:  # 30 天从未交互
             return {
                 "posterior": {"chatting": 0.05, "browsing": 0.50, "busy": 0.10,
@@ -713,12 +702,9 @@ class ChiguoState:
 
         last_msg_len = None
         if self.cooldown.last_user_message_at:
-            try:
-                last_msg_len = msg_length if msg_length is not None else (
-                    self.cooldown.last_user_msg_length if self.cooldown.last_user_msg_length is not None else 10
-                )
-            except (ValueError, TypeError):
-                pass
+            last_msg_len = msg_length if msg_length is not None else (
+                self.cooldown.last_user_msg_length if self.cooldown.last_user_msg_length is not None else 10
+            )
 
         # 课表状态
         in_class = False
@@ -732,7 +718,7 @@ class ChiguoState:
             "reply_latency": last_latency,
             "msg_length": last_msg_len,
             # 墙钟沉默时间：Bayesian classifier 阈值基于墙钟校准
-            "silence_hours": self.cooldown.silent_hours_wall(now),
+            "silence_hours": self.cooldown.silent_hours(now, wall=True),
             "in_class": in_class,
             "is_weekend": now.weekday() >= 5,
         }
@@ -845,8 +831,8 @@ class ChiguoState:
         主人当前可接收消息的程度 [0, 1]。
         寒暑假   → 0.85（手动或学期结束）
         节假日   → 0.85（放假，完全自由）
-        上课中   → 0.08（极低但非零，崩溃边缘可突破）
-        课间     → 0.50
+        上课中(满课)→ 0.05 / 0.08 / 0.12（极低但非零，崩溃边缘可突破）
+        课间/剩余课上完 → 0.85 / 0.70 / 0.50（按剩余节数递减）
         空闲     → 0.85
         深夜     → 0.0（硬禁发，由 can_send 处理）
 
@@ -995,14 +981,13 @@ class ChiguoState:
 
         # ── 孤独值: 向 100 靠拢，半衰期控制速度 ──
         half_life = cfg.get("loneliness_gain_half_life", 40.0)
-        # 长时间沉默，靠拢加速（半衰期缩短为 60%）
+        # 长时间沉默，靠拢加速（半衰期 ×0.6 → 恢复速度 ≈ 1.67 倍）
         if silent_h > 24:
-            half_life = half_life * 0.6  # 40% 更快
+            half_life = half_life * 0.6
         old_lo = self.emotion.loneliness
         self.emotion.loneliness = recover(
             self.emotion.loneliness, 100.0, hours, half_life
         )
-        self.emotion.prev_loneliness = old_lo
 
         # ── 不安值: 向 100 靠拢。知道主人在上课时焦虑减速 ──
         old_anx = self.emotion.anxiety
@@ -1054,8 +1039,7 @@ class ChiguoState:
         energy_hl = cfg.get("energy_regen_half_life", 8.0)
         self.emotion.energy = recover(self.emotion.energy, 100.0, hours, energy_hl)
 
-        self.emotion.clamp()
-        self._check_daily_reset(now)
+        self._finalize(now)
 
     # ── v7: 接话茬 — 待接续话题管理 ────────────────────
 
@@ -1216,7 +1200,7 @@ class ChiguoState:
 
         # ── v4: Bayesian 在线学习 ──
         try:
-            silence_h = self.cooldown.silent_hours_wall(now) if now else 0
+            silence_h = self.cooldown.silent_hours(now, wall=True) if now else 0
             obs = {
                 "reply_latency": round(latency_h, 3) if latency_h else None,
                 "msg_length": msg_length,
@@ -1231,9 +1215,7 @@ class ChiguoState:
 
         # ── v7/v8: 生物钟学习(每次回复记录小时 + 重算窗口;v8 按当日分桶)──
         circ_cfg = self.config.get("circadian", {})
-        bucket = bucket_for(now, self.holiday_parser.is_holiday,
-                            self.holiday_parser.is_makeup_workday)
-        self.circadian.record(now, circ_cfg.get("history_days", 14), bucket)
+        self.circadian.record(now, circ_cfg.get("history_days", 14), self._current_bucket(now))
         self.circadian.recompute(
             min_sample_days=circ_cfg.get("min_sample_days", 7),
             history_days=circ_cfg.get("history_days", 14),
@@ -1243,8 +1225,7 @@ class ChiguoState:
         # v8: 与 record 使用同一 now(测试注入过去时间时桶选择语义一致)
         self._sync_quiet_window(now)
 
-        self.emotion.clamp()
-        self._check_daily_reset(now)
+        self._finalize(now)
 
     def _latency_multiplier(self, latency_hours: float) -> dict:
         """
@@ -1384,7 +1365,7 @@ class ChiguoState:
 
         # ── v4: Bayesian 在线学习 ──
         try:
-            silence_h = self.cooldown.silent_hours_wall(now) if now else 0
+            silence_h = self.cooldown.silent_hours(now, wall=True) if now else 0
             self.bayesian_estimator.record_observation({
                 "reply_latency": None,
                 "msg_length": None,
@@ -1398,8 +1379,7 @@ class ChiguoState:
         except Exception:
             pass
 
-        self.emotion.clamp()
-        self._check_daily_reset(now)
+        self._finalize(now)
 
     # ── Poisson 事件率 ──────────────────────────────────
 
@@ -1501,7 +1481,7 @@ class ChiguoState:
         if self.emotion.anxiety < block_th:
             return False  # 非阻塞态 → 交给 is_longing_overflow 正常路径
         min_silence = cfg.get("longing_break_min_silence_hours", 72.0)
-        if self.cooldown.silent_hours_wall(now) < min_silence:
+        if self.cooldown.silent_hours(now, wall=True) < min_silence:
             return False
         if not self.cooldown.last_longing_break_at:
             return True
@@ -1546,8 +1526,7 @@ class ChiguoState:
             else:
                 self.cooldown.event_timestamps.pop()
         self.cooldown.last_longing_break_at = None
-        self.emotion.clamp()
-        self._check_daily_reset(now)
+        self._finalize(now)
 
     def can_send(self, now: datetime) -> bool:
         cfg = self.config.get("cooldown", {})
@@ -1594,6 +1573,11 @@ class ChiguoState:
             return False
 
         return True
+
+    def _finalize(self, now: datetime):
+        """统一收尾：情绪归位 + 跨日重置。"""
+        self.emotion.clamp()
+        self._check_daily_reset(now)
 
     def _check_daily_reset(self, now: datetime):
         today = now.strftime("%Y-%m-%d")
