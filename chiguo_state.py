@@ -1,11 +1,12 @@
 # ============================================================
-# chiguo_state.py — 迟菓情绪状态引擎 v8
+# chiguo_state.py — 迟菓情绪状态引擎 v9
 # 数学驱动：Sigmoid 概率 + 半衰期衰减 + Hawkes 自激过程
 # v4 新增：多维人格、Bayesian 用户状态推断、概率累积、EventBus
 # v5 新增：状态备份(.bak)、fsync、tick_seq、损坏审计、tmp验证
 # v6 新增：逃生阀、跨进程可重入锁、滑动崩溃窗口、配置化睡眠窗口、校验和强制回退
 # v7 新增:生物钟学习(circadian) + 接话茬(pending_topics)
 # v8 新增:双作息(circadian 分桶学习/迁移,STATE_VERSION 8)
+# v9 新增:recv_dedup 用户消息去重标记(桥确定性记录 + standing order 分析升级共用)
 # ============================================================
 
 import json
@@ -92,6 +93,7 @@ class CooldownState:
     crash_count_48h: int = 0  # v4.1: 48h 内崩溃次数（用于安全阀降级）
     crash_timestamps: list[str] = field(default_factory=list)  # v6: 崩溃触发时间戳列表（滑动窗口统计）
     last_longing_break_at: str | None = None  # v6: 上次逃生阀破防时间 ISO（冷却用）
+    recv_dedup: dict | None = None  # v9: 最近一次用户消息去重标记 {"text_sha","at","analysis"}（bridge 确定性记录 + standing order 升级共用）
 
     def __post_init__(self):
         # v6: 睡眠窗口来源配置（非 dataclass 字段，不序列化）。ChiguoState 负责注入。
@@ -500,7 +502,7 @@ class ChiguoState:
         except Exception:
             pass  # audit 失败不影响主流程
 
-    STATE_VERSION = 8  # v8: 双作息(circadian 分桶学习 + 迁移)
+    STATE_VERSION = 9  # v8: 双作息(circadian 分桶学习 + 迁移); v9: cooldown.recv_dedup 消息去重标记
 
     # ── v6: 跨进程写锁（fcntl.flock）。锁文件常驻，os.replace 换 inode 不影响锁。
     # 防止 cron + 手动运行多实例竞争写导致 checksum 不匹配→删重建。
@@ -1103,6 +1105,20 @@ class ChiguoState:
 
     # ── 事件响应（半衰期衰减） ──────────────────────────
 
+    def _apply_analysis_impact(self, analysis: dict, now: datetime | None = None):
+        """v9: LLM 分析微调独立应用（情绪影响 + 接话茬话题摄入）。
+        供 on_user_message（首次记录）与 recv_dedup 升级路径（bridge 已记录后
+        standing order 补分析）共用——只叠加分析维度，不重复基础回复效果。"""
+        self._anxiety_before_analysis = self.emotion.anxiety
+        self._apply_emotion_impact(analysis, now)
+
+        # ── v7: 接话茬话题摄入 ──
+        topic = analysis.get("topic")
+        if analysis.get("topic_resolved"):
+            self.resolve_pending_topic(topic, now)
+        elif topic:
+            self.add_pending_topic(topic, now)
+
     def on_user_message(self, now: datetime, msg_length: int = 10,
                          analysis: dict | None = None):
         """收到主人消息：情绪骤降，用半衰期建模。
@@ -1152,15 +1168,7 @@ class ChiguoState:
 
         # ── LLM 内容分析微调（叠加在基础上） ──
         if analysis is not None:
-            self._anxiety_before_analysis = self.emotion.anxiety
-            self._apply_emotion_impact(analysis, now)
-
-            # ── v7: 接话茬话题摄入 ──
-            topic = analysis.get("topic")
-            if analysis.get("topic_resolved"):
-                self.resolve_pending_topic(topic, now)
-            elif topic:
-                self.add_pending_topic(topic, now)
+            self._apply_analysis_impact(analysis, now)
 
         self.cooldown.last_user_message_at = now.isoformat()
         self.cooldown.last_user_msg_length = msg_length

@@ -1,30 +1,36 @@
 {
-  "_version": 8,
+  "_version": 9,
   "emotion": {
-    "loneliness": 11.226950124950328,
-    "affection": 54.98161884295986,
-    "anxiety": 42.16133357739928,
-    "energy": 65.72360612916714,
-    "tsundere_index": 70.0,
-    "loneliness_rate": 2.572131028685326,
-    "anxiety_rate": 0.6690389362240536
+    "loneliness": 17.423138225235707,
+    "affection": 54.61131140894132,
+    "anxiety": 47.29421482758805,
+    "energy": 59.96768068192749,
+    "tsundere_index": 70.00051808522447,
+    "loneliness_rate": 2.402215409156056,
+    "anxiety_rate": 0.6106429320209479
   },
   "cooldown": {
-    "last_message_at": "2026-08-01T18:19:05.036894+08:00",
+    "last_message_at": "2026-08-01T20:22:44.617526+08:00",
     "last_user_message_at": null,
-    "messages_today": 1,
-    "messages_without_reply": 1,
+    "messages_today": 2,
+    "messages_without_reply": 2,
     "current_date": "2026-08-01",
     "morning_sent": false,
     "night_sent": false,
     "trigger_history": [
-      "longing"
+      "longing",
+      "lonely_low"
     ],
     "event_timestamps": [
       {
         "type": "longing",
         "time": "2026-08-01T18:19:05.036894+08:00",
         "msg_id": "b8c08a5f7d2e"
+      },
+      {
+        "type": "lonely_low",
+        "time": "2026-08-01T20:22:44.617526+08:00",
+        "msg_id": "1c567c92274d"
       }
     ],
     "reply_latencies": [],
@@ -35,7 +41,8 @@
     "last_crash_at": null,
     "crash_count_48h": 0,
     "crash_timestamps": [],
-    "last_longing_break_at": null
+    "last_longing_break_at": null,
+    "recv_dedup": null
   },
   "circadian": {
     "reply_days": [],
@@ -55,14 +62,14 @@
   "personality": {
     "openness": 55.0,
     "conscientiousness": 65.0,
-    "extraversion": 45.03,
+    "extraversion": 45.0,
     "agreeableness": 70.0,
-    "neuroticism": 59.95,
-    "tsundere_intensity": 70.0,
+    "neuroticism": 60.03,
+    "tsundere_intensity": 70.1,
     "playfulness": 55.05,
     "attachment_style": 60.03
   },
-  "last_tick": "2026-08-01T18:34:04.246990+08:00",
-  "tick_seq": 10,
-  "_checksum": "e1a5b34f37e5801025fe75935fe92908c9adcb6880c97e64da9cdaee1dcc6814"
+  "last_tick": "2026-08-01T20:52:44.534063+08:00",
+  "tick_seq": 17,
+  "_checksum": "2175f357ebbee5158bc8a140da5e8b5d8cf4c49c46de78680754468558bf7864"
 }

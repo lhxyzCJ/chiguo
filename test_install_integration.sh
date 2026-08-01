@@ -92,6 +92,7 @@ rm -f "$JOB_STATE" "$HOME/.openclaw/workspace/agents/main/AGENTS.md" "$TMP/repo/
 set +e; bash scripts/install_integration.sh --yes >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] && pass "支持 + 干净环境 → 退出 0" || fail "期望 0 实得 $RC"
 grep -q "cron add chiguo-check" "$CALLS_LOG" || fail "未注册新作业"
+grep -q -- "--trigger-script /tmp/chiguo-watch." "$CALLS_LOG" || fail "注册未传 sed 替换后的临时触发器文件"
 grep -q "config set cron.triggers.enabled true" "$CALLS_LOG" || fail "未执行 config set"
 grep -q "security audit --deep" "$CALLS_LOG" || fail "未执行 security audit --deep"
 

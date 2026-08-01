@@ -26,6 +26,7 @@ import os
 import time
 import random
 import uuid
+import hashlib
 import tomllib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -889,6 +890,8 @@ class DecisionEngine:
             "instruction": instruction,
         }
 
+    RECV_DEDUP_WINDOW_S = 600  # v9: bridge 确定性记录与 standing order 分析升级的判定窗口
+
     def record_user_message(self, text: str, analysis_json: str | None = None):
         now = datetime.now(CST)
         msg_id = self._make_msg_id()
@@ -902,9 +905,49 @@ class DecisionEngine:
                 print(f"[warn] 分析JSON解析失败: {e}，降级为纯长度模式", file=sys.stderr)
                 analysis_dict = None
 
+        # ── v9: recv 去重（升级语义）──────────────────────
+        # 同一条消息会被记录两次：bridge 先确定性 --user-msg（无分析），
+        # standing order 随后补 --user-msg --analysis。基础回复效果
+        # （延迟/情绪骤降/好感/元气）只应应用一次；第二次只补分析微调。
+        text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        dedup = self.state.cooldown.recv_dedup
+        is_dup = bool(dedup and dedup.get("text_sha") == text_sha and dedup.get("at"))
+        if is_dup:
+            try:
+                prev_at = datetime.fromisoformat(dedup["at"])
+                is_dup = (now - prev_at).total_seconds() < self.RECV_DEDUP_WINDOW_S
+            except (ValueError, TypeError):
+                is_dup = False
+
+        if is_dup:
+            if analysis_dict and not dedup.get("analysis"):
+                self.state._apply_analysis_impact(analysis_dict, now)
+                self.state.cooldown.recv_dedup = {
+                    "text_sha": text_sha,
+                    "at": now.isoformat(),
+                    "analysis": True,
+                }
+                self.state.save()
+                self._monotonic_at_save = time.monotonic()  # v5
+                self._log({
+                    "action": "recv_upgrade",
+                    "msg_id": msg_id,
+                    "message_text": text,
+                    "user_emotion_analysis": analysis_dict,
+                    "state": self.state.snapshot(now),
+                })
+            return
+
         # ── v4: 保存发送前状态用于追踪 ──
         prev_send_was_replied = self.state.cooldown.messages_without_reply > 0
         self.state.on_user_message(now, len(text), analysis=analysis_dict)
+
+        # ── v9: 更新去重标记（记录是否已含分析）──
+        self.state.cooldown.recv_dedup = {
+            "text_sha": text_sha,
+            "at": now.isoformat(),
+            "analysis": analysis_dict is not None,
+        }
 
         # ── v4: 人格自适应（收到回复后）──
         if prev_send_was_replied:
