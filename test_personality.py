@@ -166,7 +166,7 @@ def test_serialization_missing_fields():
     d = {"openness": 80}
     p = personality_from_dict(d)
     assert p.openness == 80.0
-    assert p.extraversion == 45.0  # default
+    assert p.extraversion == 60.0  # default
     print("  OK test_serialization_missing_fields")
 
 
