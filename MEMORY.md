@@ -1,5 +1,17 @@
 # MEMORY.md
 
+## 2026-08-02 — scripts/pi-run.mjs pi 调用统一封装 + 单测（Phase 4 任务 10）
+
+**背景**：Phase 4 寄主从 OpenClaw 迁移到 pi-agent。pi-run.mjs 是 chiguo 的 pi 调用统一封装——所有 LLM 调用（发送侧生成 + 回复侧分析）都走它。
+
+- **`scripts/pi-run.mjs`（新）**：CLI `node pi-run.mjs --prompt <文本> [--analysis-mode]`；输出 JSON `{ok:true,text,analysis?}` 或 `{ok:false,error}`（stdout，诊断走 stderr）。配置优先级：`PIRUN_*` 环境变量 > toml `[host]` 段 > 默认值（opencode-go/deepseek-v4-flash/high/chiguo-main）。人格注入：`--append-system-prompt` ×2（SUN2.md + 迟菓语言技巧指南.md）；`--session-id chiguo-main` 固定会话；`--no-context-files` 隔离仓库开发上下文；`--mode json` 出 NDJSON 事件流，解析取**最后一条** message_end 的 text（多段 join，空内容不覆盖）；`--thinking high`；超时 120s
+- **导出（测试钩子）**：`readToml`（极简解析，只读 `[host]` 段 key=value 字符串/数字/布尔，忽略注释与内联注释）、`parseNdjson`、`extractAnalysis`（`<<ANALYSIS>>{json}<<END>>` 提取，坏 JSON/无块回退）、`runPiBin`（spawn 收集 stdout，非零退出 reject）、`run(exec, opts)`（exec 可注入供测试 mock）；`main()` 仅在直接执行时运行（ESM 入口守卫）
+- **关键坑（调研+实测）**：`execFile` 调 pi 会**挂起**（pi 等 stdin EOF，execFile 管道不关闭）——改用 `spawn` + `stdio:['ignore','pipe','pipe']`（stdin ignore=EOF 立即，实测 spawn 600ms 完成 / execFile 挂死）；本机 pi 0.83.0 只有 `deepseek` provider 有 auth 且 key 已失效（401），`opencode-go` 无 key → 真调不可行，冒烟用 fake pi（NDJSON 事件流脚本）走通全链路
+- **`chiguo_proactive.toml [host]`**：补 `provider="opencode-go"` / `model="deepseek-v4-flash"` / `thinking_level="high"` / `session_id="chiguo-main"` / `personality_dir="/root/chiguo/personality"`（原 Task 3 段只有运维约束注释；tomllib 解析验证通过）
+- **`test_pi_run.mjs`（新，16 用例，独立 runner 仿 test_trigger_script.js）**：parseNdjson 5 例（正常/空/坏 JSON/混合/无 message_end）、extractAnalysis 3 例（有块/无块/坏 JSON）、run 链路 5 例（正常/空回复/坏 JSON/exec 抛错/analysis-mode）+ piArgs 构造断言（provider/model/session/thinking/双人格注入/--mode json/prompt 为末参）+ readToml 2 例（解析/缺文件）
+- **冒烟**：真调 `node scripts/pi-run.mjs --prompt 测试` → `{"ok":false,"error":"pi exited 1: ... No API key found for opencode-go."}`（无 key 环境预期行为，快速失败不挂起）；fake pi 模拟 → `{"ok":true,"text":...}` 与 analysis-mode 提取均通过
+- **`doc/SYSTEM.md`**：文件清单补 scripts/pi-run.mjs + test_pi_run.mjs；`doc/IMPROVE.md` 变更记录
+
 ## 2026-08-02 — 人格基线回归 + personality_history 实现（Phase 3 任务 9）
 
 **背景**：调研发现三类人格漂移问题——①主人热情回复 → tsundere 70→10（clamp 下限），2-4 个月变甜妹（dere_dere）；②主人持续沉默 → tsundere 顶到 90 + 神经质追高（极端崩溃人格）；③无基线回归机制（只有 clamp [10,90]），且 `personality_history` 文档声称存在（SYSTEM.md:643）但从未实现（恒为 []）。
