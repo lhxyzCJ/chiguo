@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-08-02 — scripts/pi-run.mjs pi 调用统一封装 + 单测（Phase 4 任务 10）
+
+**问题**：Phase 4 寄主从 OpenClaw 迁移到 pi-agent，但 pi 调用无统一封装——发送侧生成 + 回复侧分析需要同一套「pi 参数构造 + NDJSON 解析 + 人格注入 + 情绪分析提取」逻辑。
+
+**方案**：
+- `scripts/pi-run.mjs`（新）：CLI 封装，`--prompt <文本> [--analysis-mode]` → stdout JSON；配置 PIRUN_* 环境变量 > toml `[host]` 段 > 默认值（opencode-go/deepseek-v4-flash/high/chiguo-main）；`--append-system-prompt` ×2（SUN2.md + 迟菓语言技巧指南.md）、`--session-id` 固定会话、`--no-context-files` 隔离仓库上下文、`--mode json`；解析 NDJSON 取最后 message_end 的 text；analysis-mode 提取 `<<ANALYSIS>>{json}<<END>>`
+- 导出可测纯函数：`readToml`（极简 [host] 段解析）/`parseNdjson`/`extractAnalysis`/`runPiBin`/`run(exec, opts)`；ESM 入口守卫（仅直接执行跑 main）
+- `chiguo_proactive.toml [host]` 补配置键（provider/model/thinking_level/session_id/personality_dir），原 Task 3 段仅运维约束注释
+- `test_pi_run.mjs`（新，16 用例，独立 runner）：4 必测路径（正常 NDJSON / 空回复 / 坏 JSON / exec 抛错）+ 解析/提取/配置补充用例
+
+**验证**：16/16 通过；冒烟真调（无 key 环境）→ 快速失败 `{"ok":false,"error":"pi exited 1: ... No API key found"}` 不挂起；fake pi NDJSON 模拟 → 生成/分析两模式均正确提取；tomllib 解析 [host] 段通过
+
+**遗留**：本机无 opencode-go key，真调链路（带 key）待 install_pi.sh（Task 11）后冒烟；pi 0.83.0 下 execFile 挂起坑已记录（用 spawn 规避）
+
+---
+
 ## 2026-08-02 — 人格基线回归 + personality_history 实现（Phase 3 任务 9）
 
 **问题**：人格系统无基线回归机制（只有 clamp [10,90]）——①主人热情回复把 tsundere 70→10（clamp 下限），2-4 个月漂移成甜妹（dere_dere）；②主人持续沉默把 tsundere 顶到 90 + 神经质追高（极端崩溃人格）；③`personality_history` 文档声称存在但从未实现（恒为 []，SYSTEM.md:643 声称"记录供回溯"为空头支票）。

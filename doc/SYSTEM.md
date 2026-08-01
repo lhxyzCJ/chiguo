@@ -562,7 +562,7 @@ OpenClaw skill 检测主人提到日期 → 自动调用 CLI 记录。详见 OPE
 
 ## 五、LLM 内容分析
 
-主人回复时，OpenClaw 可调用 LLM 分析消息内容，传入 `--analysis` 参数实现差异化情绪变化。
+主人回复时，pi-agent（Phase 4 迁移后）调用 LLM 分析消息内容，产出 `--analysis` 参数实现差异化情绪变化。所有 LLM 调用统一走 `scripts/pi-run.mjs`（发送侧生成 + 回复侧分析）。
 
 ### 5.1 分析维度
 
@@ -716,7 +716,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `test_envcheck.py` | 环境检查单元测试（10 用例：env 版本/uv、openclaw 目录缺失 critical/skill 缺 warn/正常、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 
-共计 **348** 个测试用例（19 个测试文件）。
+共计 **348** 个测试用例（19 个测试文件；另含 node 侧 test_trigger_script.js 15 用例 + test_pi_run.mjs 16 用例，见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `test_holiday_parser.py` 7/7 用例通过。
