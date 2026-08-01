@@ -1,0 +1,10 @@
+{
+  "name": "wechat-bridge",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "chiguo ↔ wechatbot (iLink Bot SDK) 桥接：主动发送端点 + 回复确定性回传",
+  "dependencies": {
+    "@wechatbot/wechatbot": "file:../../wechatbot/nodejs"
+  }
+}

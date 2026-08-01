@@ -15,7 +15,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-node test_trigger_script.js && bash test_install_integration.sh && \
+node test_trigger_script.js && bash test_install_integration.sh && bash test_wechat_bridge.sh && \
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \
@@ -25,7 +25,7 @@ uv run python test_escape_valve.py && uv run python test_feedback.py && \
 uv run python test_trigger.py && uv run python test_topics.py && \
 uv run python test_circadian.py && uv run python test_followup.py && \
 uv run python test_netease_proof.py && uv run python test_netease_service.py && \
-uv run python test_envcheck.py   # full suite (19 py + 2 script tests)
+uv run python test_envcheck.py   # full suite (19 py + 3 script tests)
 
 uv run python test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout
@@ -46,7 +46,7 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 - Everything tunable in `chiguo_proactive.toml` (277 lines); hot-reloads via mtime check in `--loop` mode only (cron spawns fresh processes).
 - Output: `chiguo_decisions.jsonl` (append-only). State: `chiguo_state.json` (atomic `.tmp` → `os.replace`, `.bak` backup, SHA256 checksum, monotonic `tick_seq`). Runtime files are `.gitignore`d.
 - CLI convention: JSON to stdout, diagnostics to stderr. Always use `CST = timezone(timedelta(hours=8))` — never naive datetimes.
-- OpenClaw integration (v11): `scripts/chiguo-watch.js` trigger-script (cron 每 15 分钟零模型门控) + `scripts/install_integration.sh` 安装器 (deploy.sh 第 5 步接入; 详见 `doc/OPENCLAW_INTEGRATION.md`).
+- OpenClaw integration (v12): `scripts/chiguo-watch.js` trigger-script (cron 每 15 分钟零模型门控; QuickJS 沙箱禁 require/process/__dirname, 仓库路径是 @@CHIGUO_REPO@@ 字面量占位符, 安装器注册时 sed 替换) + `scripts/install_integration.sh` 安装器 (deploy.sh 第 5 步接入; 详见 `doc/OPENCLAW_INTEGRATION.md`). 微信发送走 wechat-bridge (`wechat-bridge/bridge.mjs` 随仓库部署, HTTP POST 127.0.0.1:18790/send, 必须 --noproxy '*'; 管理脚本 `scripts/wechat-bridge.sh` install/start/stop/status/login, deploy.sh 第 5.5 步接入); 回复侧 bridge 确定性 `--user-msg` + standing order 补分析 (daemon recv_dedup 升级语义, 见 CooldownState.recv_dedup). 登录态存仓库 `wechat-bridge/credentials/` git 跟踪 (private 仓库, 新设备 clone 即保留登录, 失效自动重登).
 
 ## Known gotchas
 

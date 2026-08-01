@@ -1,6 +1,34 @@
 # 改进清单
 
-> 版本: 2026-08-01 | 全量代码审计完成（5 路并行 agent + 1 轮交叉复核），发现死代码/冗余/文档漂移 50+ 项，高置信度项全部清理；版本号机制引入（v1 → v1.1，见下）
+> 版本: 2026-08-01 | 集成链路修复（v1.2）+ wechat-bridge 可移植化（v1.3）完成，见下
+
+---
+
+## 2026-08-01 — wechat-bridge 可移植化 + 登录态随仓库保留（v1.3）
+
+**问题**：bridge 原先硬编码在 `/root/wechat-bridge`（非 git、独立于仓库），daemon 路径/主人 ID/端口全部是单机值；凭证目录 `~/.wechatbot` 未展开（字面目录落在 cwd 下）。用户要求可移植部署，登录态"尝试保留"，且 token 不得进入 wechatbot 仓库。
+
+**方案**：
+- bridge 移入仓库 `wechat-bridge/`；`storageDir` 默认 `./credentials/`（import.meta.url 解析，无 ~ 展开坑）；`.env` 由安装生成（OWNER 从 toml 读、daemon 路径/端口/存储均可 `WECHAT_BRIDGE_*` 覆盖）
+- 登录态三文件（credentials/context_tokens/cursor）git 跟踪 → 新设备 clone 即保留登录；失效自动重登；`login` 命令强制重登。凭证与 wechatbot 仓库完全隔离
+- `scripts/wechat-bridge.sh`：install/start/stop/status/login 幂等管理（wechatbot SDK clone 到 `$HOME/wechatbot`、npm file: 依赖、`--env-file` 启动）
+- deploy.sh 第 5.5 步接入；新桩测试 test_wechat_bridge.sh 8 用例；旧目录清理
+
+**验证**：管理脚本本机实测——install 生成 .env ✓、start 复用登录态（日志 `Loaded stored credentials`，未扫码）✓、/send 冒烟 ✓、全量回归（19 py + 3 脚本）✓
+
+---
+
+## 2026-08-01 — 集成链路修复（v1.2：QuickJS 沙箱触发器 + wechat-bridge 发送 + recv_dedup）
+
+**问题**：决策引擎正常但 OpenClaw 集成断裂——cron 触发器 `code mode module access is disabled` 连续报错（触发脚本用 `require('node:path')`，OpenClaw 2026.7.1-2 的 trigger 沙箱为 QuickJS WASM，静态扫描禁用 require/import，且无 process/__dirname/module）；微信发送通道（openclaw-weixin）已被拆除（用户改用 wechatbot/iLink SDK 桥）；主人回复从不回传 daemon（last_user_message_at 恒 null）。
+
+**修复**：
+- **触发器沙箱适配**：删 shebang（代码被包进 `(async()=>{})()`，`#` 非首字节即 SyntaxError）+ 删 require；仓库路径改 `@@CHIGUO_REPO@@` 占位符字面量，安装器注册前 sed 替换进临时文件；`install_integration.sh` 用子 shell 包裹注册命令（修复 `exit $rc` 误杀安装器）+ 触发器源文件回退路径。线上作业 `cron edit --trigger-script` 刷新快照，评估 error→ok
+- **发送走 wechat-bridge**：`/root/wechat-bridge/bridge.mjs` 新增 `POST 127.0.0.1:18790/send`（仅 OWNER 可收、405/403/500 语义、`WECHAT_BRIDGE_SEND_PORT` 可覆盖）；坑：该 fork `bot.start()` 长轮询挂起不返回 → 端点必须先于 start 启动；本机 curl 不匹配 no_proxy 的 `127.*` → 指令与 SKILL.md 一律 `--noproxy '*'`
+- **回复去重升级**：bridge 确定性先 `--user-msg`（无分析），standing order 补 `--analysis`；daemon `CooldownState.recv_dedup`（v9，600s 同文本窗口）识别重复 → 只叠加 `_apply_analysis_impact` 分析微调，基础效果（延迟/情绪骤降/好感/元气）只算一次；不同文本/超窗正常全记录。test_feedback +3 用例
+- **SKILL.md**：`/root/character_test/` 陈旧路径 → `/root/chiguo/`（此前导致 agent 无法 `--record-send` 回传）；§一不再让 agent 自跑 daemon（触发器已跑）；发送步骤改 bridge curl
+
+**验证**：端到端实测 cron fire → agent 生成 → bridge /send → 微信送达 ✓；21 个 runner 全绿（node 15/15、bash 安装器 11 用例、19 py）
 
 ---
 
@@ -1016,7 +1044,7 @@ Poisson 过程要求事件独立。但情绪是**自相关**的 — 上一小时
 │ 1. 读取 context.music_share                       │
 │ 2. LLM 生成自然消息 (迟菓人格 + 歌曲信息)          │
 │ 3. 可选: 附带播放链接/小程序卡片                   │
-│ 4. 通过 openclaw-weixin 发送                     │
+│ 4. 通过 wechat-bridge /send 发送 (127.0.0.1:18790)                │
 │ 5. 🚫 不要求主人回复 (不是 hard sell)              │
 └─────────────────────────────────────────────────┘
 ```

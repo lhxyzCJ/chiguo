@@ -24,3 +24,10 @@ netease_cookie.txt
 # Installer backups (scripts/install_integration.sh, .claude/settings.json)
 .claude/settings.json.bak
 .claude/settings.json.bak.*
+
+# wechat-bridge — 依赖/本地配置忽略；登录态 credentials/ 目录**故意 git 跟踪**
+# （登录态随私有仓库走 → 新设备 clone 即保留登录，绝不写入 wechatbot 仓库）
+wechat-bridge/node_modules/
+wechat-bridge/.env
+wechat-bridge/package-lock.json
+wechat-bridge/npm-debug.log*
