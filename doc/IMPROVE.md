@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-08-02 — 人格基线回归 + personality_history 实现（Phase 3 任务 9）
+
+**问题**：人格系统无基线回归机制（只有 clamp [10,90]）——①主人热情回复把 tsundere 70→10（clamp 下限），2-4 个月漂移成甜妹（dere_dere）；②主人持续沉默把 tsundere 顶到 90 + 神经质追高（极端崩溃人格）；③`personality_history` 文档声称存在但从未实现（恒为 []，SYSTEM.md:643 声称"记录供回溯"为空头支票）。
+
+**方案**（软回归 `v += (baseline - v) * regress_rate`）：
+- `chiguo_personality.py`：`PersonalityTraits.__post_init__` 记录 `_baseline`（构造时实际传入值，非 dataclass 默认值；非 dataclass 字段 → asdict/__eq__ 不含）；`regress_to_baseline(rate=0.01)`（rate≤0 关闭）；`reset_baseline(dict)`（加载状态恢复持久化基线）
+- `chiguo_state.py`：`adapt_personality` evolve 后读 toml `[personality] regress_rate` 调回归（config 引用已持有，无新接线）→ 缓存 sensitivity → 追加 `{ts, dims}`（8 维）到 `personality_history`（滚动 200 条）；`__init__` 快照初始基线 `_personality_initial_baseline`；save/load 持久化 `personality_baseline` + `personality_history`（旧状态无基线 → 回退 toml 初始值）；`STATE_VERSION` 9→10（checksum 含新字段，旧文件校验不受影响：新字段缺省时重算哈希与旧存储一致）
+- `chiguo_proactive.toml [personality]`：`regress_rate = 0.01`（注释：0=关闭防漂移）
+
+**设计决策**：基线随状态持久化而非每次启动重读 toml——daemon 由 cron 每 15 分钟新进程拉起，若基线 = 加载时的漂移值，回归锚点随重启漂移、机制形同虚设；持久化后旧状态文件（无该字段）首次加载回退 toml 初始值，语义为"初始设定锚点"。
+
+**验证**：RED 证据 ①`AttributeError: 'PersonalityTraits' object has no attribute 'regress_to_baseline'` ②state 层无回归时 300 次热情回复 tsundere=31.0 <50（70-39=31，与 brief 预测一致）→ GREEN 11/11；数值：300 次热情（回归 0.01）tsundere 停在 62.8（>50，不再甜妹化），200 次沉默停在 83.6（<85，不再极端化）；regress_rate=0 → 31.0（等价旧行为）；history 300 次调用滚动至 200 条、条目含 {ts, dims(8 维)}；save/load 往返基线+history 持久化；真实 state.json 迁移：daemon 单次运行 exit 0，_version 9→10、基线锚定 toml 75.0（加载的漂移值 70.2 未被当成基线）、checksum 有效；全量回归 22 py 仅 test_monitor.py:test_health_ok 失败——环境性（本机 netease 未登录 → healthy=False，stash 改动同样失败，与任务无关）
+
+---
+
 ## 2026-08-02 — layer_guidance 对齐新人格：哼低频/波浪线 10%/赛博萌新/交易思维（Phase 2 任务 8）
 
 **问题**：`layer_guidance`（chiguo_daemon.py:698-786）是 daemon 硬编码 dict，与 SUN2.md「两套互不导出的体系」——shell 层称「哼」为核心语气词（原著 0.4% 低频）、波浪线「适度」（原著 ≈8-10%）、铁律③只写"不扮演游戏专家"未覆盖赛博萌新边界（不许自称管服务器/封 IP）、无交易思维铁律（原著核心机制）、kernel 层无崩溃句式原型。

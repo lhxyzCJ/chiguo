@@ -1,6 +1,6 @@
 # 迟菓主动消息系统 — 系统文档
 
-> 版本: v1（`chiguo_version.py` VERSION=1,每轮修改 +0.1;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=8,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
+> 版本: v1（`chiguo_version.py` VERSION=1,每轮修改 +0.1;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
 
 ## 一、架构总览
 
@@ -635,12 +635,13 @@ OpenClaw SKILL.md 建议判断标准：
 - 表达暂时离开（"回头聊""等一下""等会"）→ `suppress_hours: 1-2`
 - 其他情况 → 不传或 0
 
-### 5.6 人格自适应（v4）
+### 5.6 人格自适应（v4，v10 加基线回归）
 
 每次互动微调人格（变化 < 0.2 每步，经数周/月才显著变化）：
 - 正面互动（收到回复、温暖回复）→ 外向性/宜人性微增，神经质微降
 - 负面互动（沉默期、冷淡回复）→ 外向性微降，神经质微增
-- `PersonalityDelta` 计算变化量，记录在 `personality_history` 供回溯
+- `PersonalityDelta` 计算变化量；每次 `adapt_personality()` 末尾追加一条 `{ts, dims}`（8 维当前值）到 `personality_history`（上限 200 条滚动，超出丢最旧；持久化于 `chiguo_state.json`）供回溯
+- **基线回归（v10，防人格漂移）**：每次 evolve 后按 `v += (baseline - v) * regress_rate` 向初始基线软回归——基线 = 构造时实际传入的初始值（toml `[personality]` 或默认），随状态持久化（`personality_baseline`，旧状态无则回退 toml 初始值）。修复两类漂移：热情回复把傲娇 70→10 clamp 下限（2-4 个月变甜妹 dere_dere）、持续沉默把傲娇顶到 90 + 神经质追高（极端崩溃人格）。速率 `[personality] regress_rate`（默认 0.01，0 = 关闭回归）
 
 ### 5.7 消息组合系统（v4）
 
@@ -684,7 +685,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_version.py` | 项目版本号单一来源（`VERSION="1"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
-| `chiguo_state.json` | 运行时状态（STATE_VERSION=8，首次运行后生成） | 无 |
+| `chiguo_state.json` | 运行时状态（STATE_VERSION=10，首次运行后生成；v10 含 `personality_baseline`/`personality_history`） | 无 |
 | `chiguo_decisions.jsonl` | 决策日志（首次运行后生成） | 无 |
 | `recent_play_cache.json` | 最近播放记录缓存（v8，netease fetch_recent_play 原子写，TTL 15 分钟） | 无 |
 | `netease_health.json` | 网易云健康状态文件（v9，chiguo_netease 原子写：api 存活/登录态/故障原因/音乐+故障双日配额） | 无 |
@@ -1663,6 +1664,7 @@ rm <仓库根目录>/chiguo_state.json
 | v7 | 2026-07-31 | 逃生阀约束：从未交互用户不触发逃生阀；`escape_valve_sleep_block` 睡觉门控二次确认；busy_suppressed 独立 reason 不累积 longing；**v7 补充（daemon 遗留修复）**：cwd 隔离（移除模块级 os.chdir）、`--loop` 最小 60s 提示、`--ack` 自动联动 `--alerts`、`--rotate` 锚定 base_dir |
 | **v8** | **2026-07-31** | **用户状态渠道增强：双作息分桶学习（工作日/周末两桶独立窗口 + 调休/假期修正，STATE_VERSION 7→8）+ 听歌双向联动（睡眠窗口内播放反证：sleeping 置信度 ×0.5 压制 + record_active 反向校正生物钟）** |
 | **v9** | **2026-07-31** | **网易云音乐渠道增强：对话内容源 + 鲁棒性 —— TopicPicker 第 8 源 netease（netease_weight=0.12）+ 网易云策略层 chiguo_netease（健康探针/登录失效检测/降级链/共享日配额 2/随机选源/peek-consume 两阶段，netease_health.json；STATE_VERSION 不变，无状态迁移）** |
+| **v10** | **2026-08-02** | **人格基线回归 + personality_history（STATE_VERSION 9→10）**：`PersonalityTraits.regress_to_baseline()` 每步 `v += (baseline - v) * regress_rate` 向构造时初始值软回归（基线随状态持久化 `personality_baseline`，旧状态回退 toml `[personality]` 初始值；速率 `regress_rate` 默认 0.01，0=关闭）——修复热情回复甜妹化/持续沉默极端化两类人格漂移；`adapt_personality` 每次追加 `{ts, dims}` 到 `personality_history`（滚动 200 条持久化） |
 
 ### v3→v4 迁移
 

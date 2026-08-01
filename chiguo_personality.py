@@ -44,6 +44,32 @@ class PersonalityTraits:
     """依恋风格：高→焦虑型依恋（怕被抛弃、需要确认被需要）；
        低→回避型依恋（假装不在乎、保持距离）"""
 
+    def __post_init__(self):
+        # 基线：构造时实际传入的初始值（非 dataclass 默认值），回归目标。
+        # 非 dataclass 字段 → asdict/__eq__ 不包含。
+        self._baseline = {
+            field_name: getattr(self, field_name)
+            for field_name in self.__dataclass_fields__
+        }
+
+    def reset_baseline(self, baseline: dict):
+        """覆盖基线（加载状态时恢复持久化的初始值，防止基线随漂移状态漂移）。"""
+        self._baseline = {
+            field_name: float(baseline[field_name])
+            for field_name in self.__dataclass_fields__
+            if field_name in baseline
+        }
+
+    def regress_to_baseline(self, rate: float = 0.01):
+        """向初始基线软回归，防人格漂移。rate=0 关闭。"""
+        if rate <= 0:
+            return
+        for field_name in self.__dataclass_fields__:
+            val = getattr(self, field_name)
+            base = self._baseline.get(field_name)
+            if base is not None:
+                setattr(self, field_name, val + (base - val) * rate)
+
     def clamp(self):
         """钳位到 [10, 90]（人格不会极端到 0 或 100）。"""
         for field_name in self.__dataclass_fields__:

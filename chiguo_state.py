@@ -7,6 +7,7 @@
 # v7 新增:生物钟学习(circadian) + 接话茬(pending_topics)
 # v8 新增:双作息(circadian 分桶学习/迁移,STATE_VERSION 8)
 # v9 新增:recv_dedup 用户消息去重标记(桥确定性记录 + standing order 分析升级共用)
+# v10 新增:人格基线回归(regress_to_baseline, 防漂移) + personality_history 持久化(STATE_VERSION 10)
 # ============================================================
 
 import json
@@ -214,6 +215,10 @@ class ChiguoState:
             playfulness=pers_cfg.get("playfulness", 55.0),
             attachment_style=pers_cfg.get("attachment_style", 60.0),
         )
+        # ── v10: 人格初始基线快照（__post_init__ 已记录构造值；加载旧状态无持久化基线时回退到它）──
+        self._personality_initial_baseline = dict(self.personality._baseline)
+        # ── v10: 人格演变历史 [{ts, dims}]，滚动 200 条 ──
+        self.personality_history: list[dict] = []
 
         # ── v4: Bayesian 用户状态推断器（延迟初始化，避免循环导入）──
         self._bayesian_estimator = None
@@ -423,10 +428,19 @@ class ChiguoState:
         pers_data = data.get("personality")
         if pers_data:
             self.personality = personality_from_dict(pers_data)
+            # ── v10: 恢复持久化基线（回归目标）；旧状态无 → 回退 toml 初始值 ──
+            saved_base = data.get("personality_baseline")
+            if isinstance(saved_base, dict) and saved_base:
+                self.personality.reset_baseline(saved_base)
+            else:
+                self.personality.reset_baseline(dict(self._personality_initial_baseline))
         else:
             emo_data = data.get("emotion", {})
             tsun = emo_data.get("tsundere_index", 70.0)
             self.personality.tsundere_intensity = tsun
+        # ── v10: 人格演变历史（普通 list，isinstance 检查兜底）──
+        ph = data.get("personality_history")
+        self.personality_history = ph if isinstance(ph, list) else []
         # v2→v3 迁移：trigger_history 有数据但 event_timestamps 空
         if (self.cooldown.trigger_history and
                 not self.cooldown.event_timestamps and
@@ -502,7 +516,7 @@ class ChiguoState:
         except Exception:
             pass  # audit 失败不影响主流程
 
-    STATE_VERSION = 9  # v8: 双作息(circadian 分桶学习 + 迁移); v9: cooldown.recv_dedup 消息去重标记
+    STATE_VERSION = 10  # v8: 双作息(circadian 分桶学习 + 迁移); v9: cooldown.recv_dedup; v10: personality_baseline + personality_history
 
     # ── v6: 跨进程写锁（fcntl.flock）。锁文件常驻，os.replace 换 inode 不影响锁。
     # 防止 cron + 手动运行多实例竞争写导致 checksum 不匹配→删重建。
@@ -624,6 +638,8 @@ class ChiguoState:
                 "circadian": asdict(self.circadian),
                 "pending_topics": self.pending_topics,
                 "personality": personality_to_dict(self.personality),
+                "personality_baseline": dict(self.personality._baseline),
+                "personality_history": self.personality_history,
                 "last_tick": datetime.now(CST).isoformat(),
                 "tick_seq": self.tick_seq,
             }
@@ -774,6 +790,25 @@ class ChiguoState:
                 delta.evolve(PersonalityDeltas.SENT_NO_REPLY)
 
         self.personality.evolve(delta)
+
+        # ── v10: 基线回归：每步向初始值软靠拢 v += (baseline - v) * rate，
+        # 防人格漂移（热情回复甜妹化/持续沉默极端化）。rate 从 toml [personality] 读，0=关闭。
+        try:
+            rate = float(self.config.get("personality", {}).get("regress_rate", 0.01))
+        except (ValueError, TypeError):
+            rate = 0.01
+        self.personality.regress_to_baseline(rate)
+
+        # ── v10: 人格演变历史（滚动 200 条，超出丢最旧）──
+        self.personality_history.append({
+            "ts": datetime.now(CST).isoformat(),
+            "dims": {
+                field_name: getattr(self.personality, field_name)
+                for field_name in PersonalityTraits.__dataclass_fields__
+            },
+        })
+        if len(self.personality_history) > 200:
+            del self.personality_history[:-200]
 
         # 情绪调制：缓存 anxiety_sensitivity 供 _apply_emotion_impact 使用
         self.personality._cached_anxiety_sensitivity = self.personality.anxiety_sensitivity()
