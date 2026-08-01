@@ -11,8 +11,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required) — 19 py + 2 script tests
-node test_trigger_script.js && bash test_install_integration.sh && bash test_install_pi.sh && \
+# Run all tests (Python 3.14+ required) — 23 py + 7 script tests
+node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && node test_trigger_script.js && \
+bash test_install_integration.sh && bash test_install_pi.sh && bash test_wechat_bridge.sh && \
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \
@@ -22,7 +23,9 @@ uv run python test_escape_valve.py && uv run python test_feedback.py && \
 uv run python test_trigger.py && uv run python test_topics.py && \
 uv run python test_circadian.py && uv run python test_followup.py && \
 uv run python test_netease_proof.py && uv run python test_netease_service.py && \
-uv run python test_envcheck.py   # full suite (19 py + 2 script tests)
+uv run python test_envcheck.py && uv run python test_composer_trade.py && \
+uv run python test_personality_init.py && uv run python test_toml_binding.py && \
+uv run python test_adapt_personality.py   # full suite (23 py + 7 script tests)
 
 # Or individually
 uv run python test_monitor.py
@@ -59,12 +62,14 @@ No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python �
 
 ## Architecture
 
-**Decision/generation separation** — the core design principle. `chiguo_daemon.py` is a zero-LLM math engine that evaluates state and outputs structured JSON. Message generation happens externally via OpenClaw's `chiguo` skill, which reads that JSON, generates text, and sends via WeChat.
+**Decision/generation separation** — the core design principle. `chiguo_daemon.py` is a zero-LLM math engine that evaluates state and outputs structured JSON. Message generation happens externally via **pi-agent** (Phase 4 host; OpenClaw deactivated), which reads that JSON, generates text per `personality/SUN2.md`, and sends via wechat-bridge.
 
-**OpenClaw integration** (see `doc/OPENCLAW_INTEGRATION.md`, v11):
-- `openclaw cron add chiguo-check --every 15m --trigger-script scripts/chiguo-watch.js --session main` — trigger script runs `chiguo_daemon.py --compact` with zero model calls; idle → `{fire:false}`, send → `{fire:true, message:<decision JSON>}` → agent generates message via SUN2.md and sends
-- Reply side uses a **standing order** (agents/main/AGENTS.md, installed by `scripts/install_integration.sh`) — LLM emotion analysis → `--user-msg --analysis` → reply per SUN2.md (replaces the v4 UserPromptSubmit hook; no double-recording)
-- Skill files in `/root/.openclaw/workspace/skills/chiguo/`: SKILL.md (agent instructions) + SUN2.md (personality)
+**pi-agent integration** (see `doc/PI_INTEGRATION.md`, Phase 4):
+- Send side: system crontab `*/15 * * * * scripts/chiguo-tick.sh` — runs `chiguo_daemon.py --compact` with zero model calls; idle → silent exit, send → `scripts/pi-run.mjs` (session `chiguo-send`) generates message per SUN2.md → curl `[host].wechat_bridge_url` → `--record-send` writes back
+- Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askPi` (pi-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
+- Sessions: reply=`chiguo-main`, proactive send=`chiguo-send` — separate sessions eliminate cross-process concurrent turns
+- Environment: `scripts/install_pi.sh` bootstraps pi (memory-lancedb-pro extension, settings/json5, ollama embedding, opencode-go auth, crontab)
+- OpenClaw flow (cron trigger-script + standing order) is **deactivated** (`openclaw cron disable chiguo-check`); `doc/OPENCLAW_INTEGRATION.md` kept as rollback reference
 
 **v4 (2026-06-27)** adds: Bayesian user state inference, multi-dimensional personality (Big Five + character-specific), Ebbinghaus forgetting curves, message composition system (Intent × Cue × Vibe), probability accumulation with anxiety blocking, EventBus decoupling, personality adaptation, and dynamic sleep scheduling.
 
@@ -93,16 +98,16 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_watchdog.py  → daemon health checks (disk, memory, tick freshness)
   ├─ chiguo_rotation.py  → monthly log rotation → archive/
   ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
-  ├─ chiguo_version.py   → project version single source (VERSION="1", +0.1 per round)
+  ├─ chiguo_version.py   → project version single source (VERSION="1.4", +0.1 per round)
   └─ chiguo_monitor.py   → streaming JSONL analytics (stats/alerts/health)
 
   Output: chiguo_decisions.jsonl (append-only structured log)
   State:  chiguo_state.json (atomic write: .tmp → os.replace)
 ```
 
-**Config**: `chiguo_proactive.toml` — all parameters (277 lines). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
+**Config**: `chiguo_proactive.toml` — all parameters (309 lines). `[openclaw]` deprecated (Task 14, superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
-**Version**: `chiguo_version.py` is the single source (`VERSION="1"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=8), unrelated to the project version.
+**Version**: `chiguo_version.py` is the single source (`VERSION="1.4"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
 
 **5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h).
 
@@ -135,7 +140,7 @@ All auto-generated at first run, all in `.gitignore`:
 - **Emotion trends**: first-half vs second-half mean comparison; no heavy regression needed.
 - **Reply rate estimation**: inferred from `messages_without_reply` deltas between consecutive sends (no explicit reply tracking in logs).
 - **Config hot-reload**: `_maybe_reload_config()` checks toml mtime before each `evaluate()` call. Only matters for `--loop` mode; cron spawns fresh processes.
-- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 19 py test runners (+ 2 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
+- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 23 py test runners (+ 7 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
 
 ## 安全边界
 

@@ -3,12 +3,18 @@
 # 数学驱动：Poisson + Sigmoid + 半衰期
 # ============================================================
 
+# ────────────────────────────────────────────────────────────
+# [openclaw] 已废弃（Phase 4 Task 14：由 [host] 取代）
+# 消息生成/情绪分析已迁移到 pi-agent（scripts/pi-run.mjs 读 [host] 段）；
+# 本段仅保留 wechat_recipient（chiguo-tick.sh / wechat-bridge.sh 发送目标仍读取），
+# 其余键仅为回退兼容（chiguo_daemon.py _build_context 在 [host] 缺 personality_dir 时兜底）。
+# ────────────────────────────────────────────────────────────
 [openclaw]
-wechat_channel = "openclaw-weixin"
-wechat_recipient = "owner@im.wechat"
-personality_source = "~/.openclaw/workspace/skills/chiguo"  # SUN2.md 目录（~ = $HOME，运行用户需有 OpenClaw skill）
-llm_base_url = "http://localhost:11434/v1"
-llm_model = "qwen3:14b"
+wechat_channel = "openclaw-weixin"      # 已废弃：微信收发由 wechat-bridge 承担
+wechat_recipient = "owner@im.wechat"   # 仍读取：发送目标（tick/bridge 管理脚本）
+personality_source = "/root/chiguo/personality"  # 已废弃：见 [host].personality_dir（随仓库部署）
+llm_base_url = "http://localhost:11434/v1"       # 已废弃：OpenClaw 本地 ollama，pi 侧走 opencode-go 网关
+llm_model = "qwen3:14b"                          # 已废弃
 
 [memory]
 # ── OpenClaw LanceDB 记忆系统（只读，不写）──
@@ -279,9 +285,10 @@ retention_months = 12        # 归档保留月数（0 = 永不删除）
 archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 
 # ────────────────────────────────────────────────────────────
-# [host] 主机/主人（哥哥）运维约束 + pi 调用配置（Task 10 起由 scripts/pi-run.mjs 读取）
-# 运维约束从 OpenClaw USER.md 迁移而来（Task 3）；Task 14 将正式改造本段结构
-# 配置键：provider/model/thinking_level/session_id/personality_dir（PIRUN_* 环境变量可覆盖）
+# [host] 主机/主人（哥哥）运维约束 + pi 调用配置（Phase 4 起由 scripts/pi-run.mjs 读取）
+# 运维约束从 OpenClaw USER.md 迁移而来（Task 3）；Task 14 对齐为正式配置段。
+# 配置键：provider/model/thinking_level/session_id/send_session_id/personality_dir/wechat_bridge_url
+# （PIRUN_* 环境变量可覆盖：PIRUN_PROVIDER/PIRUN_MODEL/PIRUN_THINKING/PIRUN_SESSION/PIRUN_PERSONALITY/PIRUN_GUIDE）
 # ────────────────────────────────────────────────────────────
 [host]
 # 沟通：全程中文；直接切入不客套（不要「您好/请问有什么可以帮您」）；默认精简输出，需要细节时哥哥会主动说明
@@ -290,10 +297,13 @@ archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 # 备份：修改核心配置、执行破坏性操作前，必须先提示备份方案；备份优先
 # 时间：禁止在 22:00 ~ 次日 08:00 主动推送非紧急通知
 # 边界：不重复解释 Linux/正则/服务运维等基础概念；不擅自修改 OpenClaw 核心配置，修改前必须确认
-# 环境：Debian Linux, root 用户；核心服务 ~/.openclaw/（OpenClaw）；常用工具 rsync/systemctl/nano/tar
+# 环境：Debian Linux, root 用户；历史核心服务 ~/.openclaw/（OpenClaw 已停用，仅历史记忆库引用）；
+#       常用工具 rsync/systemctl/nano/tar
 
-provider = "opencode-go"
+provider = "opencode-go"        # pi provider（auth.json 键名；key 由 install_pi.sh 从 OPENCODE_API_KEY 写入）
 model = "deepseek-v4-flash"
 thinking_level = "high"
-session_id = "chiguo-main"
-personality_dir = "/root/chiguo/personality"
+session_id = "chiguo-main"      # 回复侧会话（bridge askPi；进程内 TurnQueue 串行）
+send_session_id = "chiguo-send" # 主动发送会话（chiguo-tick.sh 经 PIRUN_SESSION 注入；与回复会话分离 → 消除跨进程并发 turn）
+personality_dir = "/root/chiguo/personality"        # SUN2.md + 迟菓语言技巧指南.md（随仓库部署）
+wechat_bridge_url = "http://127.0.0.1:18790/send"   # 主动发送端点（chiguo-tick.sh curl 目标；--noproxy '*'）

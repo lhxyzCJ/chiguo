@@ -228,7 +228,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime) -> Trigger | None:
     # boredom / playful 触发：高元气 + 沉默适中 + 非上课
     if emo.energy > 70 and 2 < silent_h < 48 and _is_free_time(state, now):
         # v4: 外向性调制 playful
-        pers_extra = getattr(getattr(state, 'personality', None), 'extraversion', 45.0)
+        pers_extra = getattr(getattr(state, 'personality', None), 'extraversion', 60.0)
         pers_extra_factor = 0.5 + (pers_extra / 100) * 1.0  # 0.5~1.5
         w_bored = 0.15 * (emo.energy / 100) * aff_factor * pers_extra_factor
         if w_bored > 0.03:

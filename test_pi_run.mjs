@@ -141,6 +141,7 @@ writeFileSync(tomlPath, [
   'model = "deepseek-v4-flash"',
   'thinking_level = "high"',
   'session_id = "chiguo-main"',
+  'send_session_id = "chiguo-send"',
   'personality_dir = "/tmp/pp"',
   'enabled = true',
   'retries = 2',
@@ -153,6 +154,7 @@ t('readToml: 解析 [host] 段字符串/布尔/数字键（忽略注释与其他
   assert.strictEqual(out.host.model, 'deepseek-v4-flash')
   assert.strictEqual(out.host.thinking_level, 'high')
   assert.strictEqual(out.host.session_id, 'chiguo-main')
+  assert.strictEqual(out.host.send_session_id, 'chiguo-send')
   assert.strictEqual(out.host.personality_dir, '/tmp/pp')
   assert.strictEqual(out.host.enabled, true)
   assert.strictEqual(out.host.retries, 2)

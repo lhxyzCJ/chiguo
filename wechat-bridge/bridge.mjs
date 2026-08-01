@@ -21,12 +21,16 @@
  *    （--prompt <原文> --analysis-mode），一次完成「情绪分析 JSON + 回复」。
  *  - 分析接线：askPi 返回 analysis 后 → daemon --user-msg <原文> --analysis '<JSON>'
  *    （recv_dedup 升级语义——bridge 已确定性 --user-msg 过，不重复记账）。
+ *  - 特殊命令（纪念日/假期）确定性接管：收到消息先 detectSpecialCommand（规则化，
+ *    不依赖 pi 输出稳定性），命中 → 直接执行 daemon --anniversary/--break 并回复确认，
+ *    不再经 pi（pi 为纯文本调用无工具权限；对应 openclaw standing order 第 4 步）。
  */
 import { createServer } from 'node:http'
 import { WeChatBot } from '@wechatbot/wechatbot'
-import { execFile } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
+import { detectSpecialCommand, executeSpecialCommand } from './command-detect.mjs'
 
 const execFileP = promisify(execFile)
 
@@ -175,6 +179,24 @@ async function main() {
     console.log(`[in] ${msg.userId}: ${text.slice(0, 80)}`)
 
     await recordUserMsg(text)  // 确定性回传 daemon（先于 askPi 分析；analysis 稍后经 upgradeAnalysis 升级）
+
+    // 特殊命令（纪念日/假期）确定性接管：命中则直接执行 daemon，不经 pi（Phase 4 Task 14）
+    const special = detectSpecialCommand(text)
+    if (special) {
+      queue.run(async () => {
+        try {
+          const r = await executeSpecialCommand(spawn, special, DAEMON_PY, DAEMON_SCRIPT)
+          console.log(`[special] ${special.daemon.join(' ')} → ok=${r.ok}`)
+          await bot.reply(msg, r.reply)
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err)
+          console.error('[special error]', reason)
+          await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
+        }
+      })
+        .catch((err) => console.error('[queue error]', err))
+      return
+    }
 
     try {
       await bot.sendTyping(msg.userId).catch(() => {})
