@@ -41,6 +41,21 @@ confirm() { [ "$MODE" = ask ] || return 0
   esac
 }
 
+# auth.json 含 provider 且有真值 key（与 envcheck check_pi_auth 语义一致；
+# 裸 grep 'opencode-go' 会把注释/残缺条目误判为已配置）
+auth_has_key() {
+  [ -f "$AUTH" ] || return 1
+  "$PY" - "$AUTH" <<'PYC' >/dev/null 2>&1
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+entry = cfg.get("opencode-go")
+sys.exit(0 if isinstance(entry, dict) and entry.get("key") else 1)
+PYC
+}
+
 # ── 固定路径 ───────────────────────────────────────────────
 PI_BIN="$(command -v pi || true)"
 EXT_DIR="$HOME/.pi-agent"
@@ -51,7 +66,7 @@ JSON5="$HOME/.pi/agent/memory-lancedb-pro.json5"
 AUTH="$HOME/.pi/agent/auth.json"
 TICK="$CHIGUO_REPO/scripts/chiguo-tick.sh"
 CRON_LINE="*/15 * * * * $TICK >> $CHIGUO_REPO/logs/cron-tick.log 2>&1"
-OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+OLLAMA_BASE="${OLLAMA_BASE:-http://localhost:11434}"
 
 # ── 阶段 0: 环境探测 ───────────────────────────────────────
 if [ -z "$PI_BIN" ]; then
@@ -197,13 +212,13 @@ EOJ
 fi
 
 # ── 阶段 4: ollama embedding 模型检查 ──────────────────────
-say "阶段 4: ollama embedding（$OLLAMA_URL）..."
-TAGS="$(curl -sf --max-time 5 --noproxy '*' "$OLLAMA_URL/api/tags" 2>/dev/null || true)"
+say "阶段 4: ollama embedding（$OLLAMA_BASE）..."
+TAGS="$(curl -sf --max-time 5 --noproxy '*' "$OLLAMA_BASE/api/tags" 2>/dev/null || true)"
 if printf '%s' "$TAGS" | grep -q 'qwen3-embedding'; then
-  say "ollama OK（$OLLAMA_URL 已有 qwen3-embedding）"
+  say "ollama OK（$OLLAMA_BASE 已有 qwen3-embedding）"
 elif [ -z "$TAGS" ]; then
   PENDING=1
-  warn "ollama 不可达（$OLLAMA_URL）→ 记忆 embedding 降级；请启动 ollama（ollama serve）后重跑"
+  warn "ollama 不可达（$OLLAMA_BASE）→ 记忆 embedding 降级；请启动 ollama（ollama serve）后重跑"
 elif [ "$DRY" = 1 ]; then
   PENDING=1
   echo "  [dry-run] ollama 缺 qwen3-embedding:0.6b → 将执行 ollama pull qwen3-embedding:0.6b"
@@ -217,8 +232,8 @@ fi
 
 # ── 阶段 5: auth.json opencode-go 条目（key 从环境变量读，不落盘明文）──
 say "阶段 5: ~/.pi/agent/auth.json opencode-go 条目..."
-if [ -f "$AUTH" ] && grep -q 'opencode-go' "$AUTH"; then
-  say "auth.json OK（已含 opencode-go 条目）"
+if auth_has_key; then
+  say "auth.json OK（已含 opencode-go key）"
 elif [ -z "${OPENCODE_API_KEY:-}" ]; then
   PENDING=1
   warn "auth.json 缺 opencode-go 且 OPENCODE_API_KEY 未设置 → 无法写入 key；export OPENCODE_API_KEY=... 后重跑（或手工编辑 $AUTH）"
@@ -228,9 +243,11 @@ else
     echo "  [dry-run] 将写 opencode-go 条目到 $AUTH（key 从 OPENCODE_API_KEY 读，chmod 600，含 .bak 备份）"
   elif confirm "写入 $AUTH 的 opencode-go 条目（key 来自 OPENCODE_API_KEY）"; then
     [ -f "$AUTH" ] && cp -a "$AUTH" "$AUTH.bak"
-    if "$PY" - "$AUTH" "$OPENCODE_API_KEY" <<'PYJ'; then
+    # key 经环境变量传给 python3（argv 会被 ps 看到，明文泄露面更大）
+    if OPENCODE_API_KEY="${OPENCODE_API_KEY:-}" "$PY" - "$AUTH" <<'PYJ'; then
 import json, os, sys
-p, key = sys.argv[1], sys.argv[2]
+p = sys.argv[1]
+key = os.environ["OPENCODE_API_KEY"]
 cfg = {}
 if os.path.exists(p):
     try:
@@ -255,14 +272,27 @@ fi
 
 # ── 阶段 6: crontab 注册 chiguo-tick ───────────────────────
 say "阶段 6: crontab 注册 chiguo-tick..."
-if crontab -l 2>/dev/null | grep -q 'chiguo-tick'; then
+CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
+if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$CRON_LINE"; then
   say "crontab 已注册 chiguo-tick（$CRON_LINE）"
+elif printf '%s\n' "$CURRENT_CRON" | grep -q 'chiguo-tick'; then
+  # 旧条目（仓库路径/参数已变，仅 grep 名字发现不了）→ 按当前 CRON_LINE 整行替换
+  if [ "$DRY" = 1 ]; then
+    PENDING=1
+    echo "  [dry-run] crontab 有旧 chiguo-tick 条目（路径已变）→ 将替换为: $CRON_LINE"
+  elif confirm "替换旧 chiguo-tick 条目为: $CRON_LINE"; then
+    if ( printf '%s\n' "$CURRENT_CRON" | grep -v 'chiguo-tick' || true; echo "$CRON_LINE" ) | crontab -; then
+      say "crontab 旧条目已替换"
+    else
+      PENDING=1; warn "crontab 替换失败（请手工执行: (crontab -l | grep -v chiguo-tick; echo '$CRON_LINE') | crontab -）"
+    fi
+  fi
 else
   if [ "$DRY" = 1 ]; then
     PENDING=1
     echo "  [dry-run] 将注册 crontab: $CRON_LINE"
   elif confirm "注册 crontab: $CRON_LINE"; then
-    if ( crontab -l 2>/dev/null; echo "$CRON_LINE" ) | crontab -; then
+    if ( printf '%s\n' "$CURRENT_CRON"; echo "$CRON_LINE" ) | crontab -; then
       say "crontab 已注册"
     else
       PENDING=1; warn "crontab 注册失败（请手工执行: (crontab -l; echo '$CRON_LINE') | crontab -）"
@@ -287,7 +317,7 @@ else
   else
     SMOKE_BAD=1; warn "memory-pro CLI 缺失（阶段 1 clone/build 未完成?）"
   fi
-  if [ -f "$AUTH" ] && grep -q 'opencode-go' "$AUTH"; then
+  if auth_has_key; then
     PROVIDER="$(sed -n 's/^provider *= *"\(.*\)"/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
     MODEL="$(sed -n 's/^model *= *"\(.*\)"/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
     [ -n "$PROVIDER" ] || PROVIDER=opencode-go

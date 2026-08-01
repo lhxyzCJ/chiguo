@@ -100,11 +100,12 @@ chiguo_demo.py           # 演示模式（v2 架构，非生产行为）
 scripts/chiguo-watch.js  # [v11] OpenClaw trigger-script（cron 门控：exec 跑 daemon --compact，零模型执行）
 scripts/install_integration.sh # [v11] OpenClaw 集成安装器（严格校验 + 旧方案残留迁移 + 幂等，deploy.sh 第 5 步接入）
 scripts/pi-run.mjs      # [Phase 4] pi 调用统一封装（发送生成 + 回复分析；PIRUN_* 环境变量/toml [host] 段配置；NDJSON 解析 + <<ANALYSIS>> 提取）
-test_*.py                # 测试（19 个文件，含 test_circadian/test_followup/test_netease_proof/test_netease_service/test_envcheck）
+test_*.py                # 测试（22 个文件，含 test_circadian/test_followup/test_netease_proof/test_netease_service/test_envcheck 等）
 test_trigger_script.js   # [v11] chiguo-watch.js 契约测试（node，15 用例）
 test_pi_run.mjs          # [Phase 4] pi-run.mjs 单测（node，19 用例：解析/提取/调用链路/exec 抛错/非零退出 salvage/配置读取）
 test_bridge_askpi.mjs    # [Phase 4] bridge.mjs askPi 测试（node，10 用例：fake pi-run/daemon 真实 execFile 链路）
 test_install_integration.sh # [v11] 安装器桩测试（bash，12 用例）
+test_install_pi.sh      # [Phase 4] pi 环境安装器桩测试（bash，14 用例：dry-run 零写入/待办清单/--skip-pi/--yes 产物断言/auth 合并/两遍幂等）
 data/                    # 数据文件：课表 xskb.xlsx、手动记忆 chiguo_memories.json、网易云二维码 netease_qr.png
 ```
 
@@ -151,7 +152,7 @@ python3 chiguo_watchdog.py --quiet       # 仅异常输出（退出码驱动）
 python3 chiguo_watchdog.py --notify      # stderr 告警摘要
 
 # 环境就绪检查（只读）
-python3 chiguo_envcheck.py               # 检查 Python/OpenClaw/LanceDB/网易云/数据，退出码 0=就绪 1=警告 2=严重
+python3 chiguo_envcheck.py               # 检查 Python/uv/pi/LanceDB/网易云/数据，退出码 0=就绪 1=警告 2=严重；--skip-pi 时 pi 缺失降为警告不阻塞
 ```
 
 ## 运行时数据回流（git 跟踪策略）

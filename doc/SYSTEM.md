@@ -681,7 +681,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_watchdog.py` | 零依赖独立看门狗（cron 集成）（v4） | 无 |
-| `chiguo_envcheck.py` | 环境就绪检查（v10.2）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、LanceDB、ollama embedding、auth.json opencode-go、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（不可达 → warn），JSON → stdout，退出码 0=就绪/1=警告/2=严重（与 watchdog 一致），路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `test_envcheck.py` | 无 |
+| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、LanceDB、ollama embedding、auth.json opencode-go、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重（与 watchdog 一致），路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `test_envcheck.py` | 无 |
 | `chiguo_version.py` | 项目版本号单一来源（`VERSION="1"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
@@ -713,10 +713,13 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `test_followup.py` | 接话茬单元测试（14 用例：pending 管理/钟形权重/多话题/记忆兜底/FakeBridge） | chiguo_state, chiguo_trigger, memory_bridge |
 | `test_netease_proof.py` | 听歌反证单元测试（31 用例：fetch_recent_play 解析/缓存/降级 + `_api_get` 重试策略与每日推荐 schema 过滤 + 非 dict 响应降级 + 窗口内反证 sleeping 压制/按播放时刻分桶/逃生阀放行 + netease 跨触发注入规则） | netease_bridge, chiguo_daemon |
 | `test_netease_service.py` | 网易云策略层单元测试（30 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题绕过门控+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | chiguo_netease, netease_bridge |
-| `test_envcheck.py` | 环境检查单元测试（15 用例：env 版本/uv、pi 缺失 critical/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩） | chiguo_envcheck |
+| `test_composer_trade.py` | 组合权衡测试（5 用例：cue 权重重排、trade_tsundere 交易式撒娇） | chiguo_composer |
+| `test_personality_init.py` | 初始人格值对齐原著测试（2 用例） | chiguo_personality |
+| `test_toml_binding.py` | personality toml 接线测试（7 用例：toml 存在、meta.name、cue↔模板关联、参考台词注入） | chiguo_composer, chiguo_proactive.toml |
+| `test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 
-共计 **348** 个测试用例（19 个测试文件；另含 node 侧 test_trigger_script.js 15 用例 + test_pi_run.mjs 19 用例 + test_bridge_askpi.mjs 10 用例，见 doc/README.md）。
+共计 **369** 个测试用例（22 个测试文件；另含 node 侧 test_trigger_script.js 15 用例 + test_pi_run.mjs 19 用例 + test_bridge_askpi.mjs 10 用例、bash 侧 test_install_integration.sh / test_install_pi.sh（14 用例）/ test_wechat_bridge.sh，见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `test_holiday_parser.py` 7/7 用例通过。
