@@ -175,8 +175,8 @@ special / morning / night / meal / memory / follow_up / lonely_low / lonely_mid 
 
 # CHIGUO-STANDING-ORDER-START
 ## 迟菓消息流程（standing order，每会话注入）
-每次收到主人的微信消息并准备回复时：
-1. 用 LLM 分析主人消息情绪，输出 JSON：{"warmth": -1~1, "effort": 0~1, "attention": 0~1, "topic": "可选", "suppress_hours": 可选}
+每次收到哥哥的微信消息并准备回复时：
+1. 用 LLM 分析哥哥消息情绪，输出 JSON：{"warmth": -1~1, "effort": 0~1, "attention": 0~1, "topic": "可选", "suppress_hours": 可选}
 2. 运行 <仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --user-msg <消息原文> --analysis '<JSON>'
 3. 按 ~/.openclaw/workspace/skills/chiguo/SUN2.md 人格回复
 4. 纪念日/假期指令：运行 chiguo_daemon.py --anniversary / --break 对应命令
