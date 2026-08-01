@@ -92,10 +92,13 @@ export function runPiBin(bin, args, opts) {
   })
 }
 
-export async function run(exec, { prompt, analysisMode }) {
-  const sysPrompt = analysisMode
-    ? `你是迟菓。以下是当前收到的一条微信消息。先输出 JSON 情绪分析：{"warmth":-1~1,"effort":0~1,"attention":0~1,"topic":"可选","suppress_hours":"可选"}，用 <<ANALYSIS>>{...}<<END>> 包裹。然后以 SUN2.md 人格自然回复哥哥。\n\n消息：${prompt}`
-    : prompt
+export async function run(exec, { prompt, analysisMode, sendMode }) {
+  let sysPrompt = prompt
+  if (analysisMode) {
+    sysPrompt = `你是迟菓。以下是当前收到的一条微信消息。先输出 JSON 情绪分析：{"warmth":-1~1,"effort":0~1,"attention":0~1,"topic":"可选","suppress_hours":"可选"}，用 <<ANALYSIS>>{...}<<END>> 包裹。然后以 SUN2.md 人格自然回复哥哥。\n\n消息：${prompt}`
+  } else if (sendMode) {
+    sysPrompt = `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按 SUN2.md 人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${prompt}`
+  }
   const piArgs = ['-p', '--provider', PROVIDER, '--model', MODEL,
     '--session-id', SESSION_ID, '--no-context-files',
     '--append-system-prompt', PERSONALITY,
@@ -119,10 +122,11 @@ export async function run(exec, { prompt, analysisMode }) {
 async function main() {
   const args = process.argv.slice(2)
   const promptIdx = args.indexOf('--prompt')
-  if (promptIdx < 0) { console.error('usage: pi-run.mjs --prompt <text>'); process.exit(2) }
+  if (promptIdx < 0) { console.error('usage: pi-run.mjs --prompt <text> [--analysis-mode|--send-mode]'); process.exit(2) }
   const prompt = args[promptIdx + 1]
   const analysisMode = args.includes('--analysis-mode')
-  console.log(JSON.stringify(await run(runPiBin, { prompt, analysisMode })))
+  const sendMode = args.includes('--send-mode')
+  console.log(JSON.stringify(await run(runPiBin, { prompt, analysisMode, sendMode })))
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main()
