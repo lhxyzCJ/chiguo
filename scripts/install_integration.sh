@@ -47,8 +47,8 @@ if ! command -v openclaw >/dev/null 2>&1; then
   exit 0
 fi
 say "openclaw $(openclaw -V 2>&1 | head -1)"
-if ! openclaw automations add --help 2>&1 | grep -q -- '--trigger-script'; then
-  warn "当前版本不支持 automations --trigger-script（官方：<command> --help 为权威清单）"
+if ! openclaw cron add --help 2>&1 | grep -q -- '--trigger-script'; then
+  warn "当前版本不支持 cron --trigger-script（官方：<command> --help 为权威清单）"
   warn "降级路径：保留旧 cron system-event 方式 → 见 doc/OPENCLAW_INTEGRATION.md §八"
   exit 1
 fi
@@ -59,14 +59,14 @@ fi
 
 # ── 阶段 0b: 旧方案残留扫描（发现即报告）──────────────────
 echo "[chiguo-integ] 扫描旧方案残留 ..."
-OLD_JOBS="$(openclaw automations list --all 2>/dev/null | grep -i chiguo | awk '{print $1}' | grep -vx 'chiguo-check' || true)"
+OLD_JOBS="$(openclaw cron list --all 2>/dev/null | grep -i chiguo | awk '{print $1}' | grep -vx 'chiguo-check' || true)"
 CLAUDE_SETTINGS="$CHIGUO_REPO/.claude/settings.json"
 OLD_HOOK=0; [ -f "$CLAUDE_SETTINGS" ] && grep -q 'chiguo' "$CLAUDE_SETTINGS" && OLD_HOOK=1
 ON_USER_MSG="$HOME/.openclaw/workspace/skills/chiguo/scripts/on-user-msg.sh"
 CHIGUO_NATIVE_HOOKS="$(openclaw hooks list 2>/dev/null | grep -i chiguo | awk '{print $1}' || true)"
 LEGACY_HANDLERS="$(openclaw config get hooks.internal.handlers 2>/dev/null || true)"
 TRIGGERS_ENABLED="$(openclaw config get cron.triggers.enabled 2>/dev/null || true)"
-[ -n "$OLD_JOBS" ] && warn "发现旧 automations 作业: $(echo "$OLD_JOBS" | tr '\n' ' ')"
+[ -n "$OLD_JOBS" ] && warn "发现旧 chiguo 作业: $(echo "$OLD_JOBS" | tr '\n' ' ')"
 [ "$OLD_HOOK" = 1 ] && warn "发现 .claude/settings.json 中 chiguo 的 UserPromptSubmit hook"
 [ -f "$ON_USER_MSG" ] && warn "发现旧 hook 脚本: $ON_USER_MSG"
 [ -n "$CHIGUO_NATIVE_HOOKS" ] && warn "发现 OpenClaw 原生 chiguo hook: $(echo "$CHIGUO_NATIVE_HOOKS" | tr '\n' ' ')"
@@ -83,11 +83,11 @@ fi
 # ── 阶段 2: 作业注册（幂等；先清旧作业）──────────────────
 for job in $OLD_JOBS; do
   echo "[chiguo-integ] 移除旧作业 $job（由新 trigger-script 作业接管）"
-  would "openclaw automations rm $job"
+  would "openclaw cron rm $job"
 done
-if ! openclaw automations get chiguo-check >/dev/null 2>&1; then
+if ! openclaw cron get chiguo-check >/dev/null 2>&1; then
   INSTRUCTION="收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给主人（当前微信会话上下文）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。发送后运行 ${CHIGUO_REPO}/.venv/bin/python ${CHIGUO_REPO}/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。"
-  would "openclaw automations add --name chiguo-check --every 15m --trigger-script '$CHIGUO_REPO/scripts/chiguo-watch.js' --session main --wake now --timeout-seconds 120 --system-event '$INSTRUCTION'"
+  would "openclaw cron add chiguo-check --every 15m --trigger-script '$CHIGUO_REPO/scripts/chiguo-watch.js' --session main --wake now --timeout-seconds 120 --system-event '$INSTRUCTION'"
 else
   say "作业 chiguo-check 已存在，跳过注册"
 fi
@@ -181,7 +181,7 @@ if ! grep -qs 'CHIGUO-STANDING-ORDER-START' "$SO_FILE" 2>/dev/null; then
 else
   say "复验通过：standing order 标记段已写入 $SO_FILE"
 fi
-if ! openclaw automations list 2>/dev/null | grep -q chiguo-check; then
+if ! openclaw cron list 2>/dev/null | grep -q chiguo-check; then
   warn "作业 chiguo-check 未在册"; PENDING=1
 else
   say "作业 chiguo-check 在册"
@@ -191,5 +191,5 @@ if [ "$MODE" = yes ]; then
   openclaw security audit --deep 2>&1 | tail -5
 fi
 [ "$PENDING" = 1 ] && exit 1
-say "集成安装完成 ✓（端到端冒烟: openclaw automations run chiguo-check --wait --wait-timeout 10m）"
+say "集成安装完成 ✓（端到端冒烟: openclaw cron run chiguo-check --expect-final）"
 exit 0

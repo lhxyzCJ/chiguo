@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// chiguo-watch.js — OpenClaw automations trigger script（迟菓主动消息）
+// chiguo-watch.js — OpenClaw cron trigger script（迟菓主动消息）
 // 官方契约: docs.openclaw.ai/automation/cron-jobs → "Event triggers"
 // 职责: 无模型执行 daemon --compact; 仅 action=send 时 fire 唤醒 agent。
 // 容错: daemon 崩溃/坏 JSON/超时 → fire:false + state.last_error（下次评估带出）。

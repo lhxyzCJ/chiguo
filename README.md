@@ -60,10 +60,10 @@ uv run python test_envcheck.py
 
 ```bash
 git clone <仓库地址> && cd <仓库目录>
-bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量 19 测试 → 环境检查(OpenClaw skill/网易云登录) → OpenClaw 集成安装(install_integration.sh) + automations 冒烟提示
+bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量 19 测试 → 环境检查(OpenClaw skill/网易云登录) → OpenClaw 集成安装(install_integration.sh) + cron 冒烟提示
 ```
 
-部署脚本会检查:OpenClaw skill 目录(`~/.openclaw/workspace/skills/chiguo/`)、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。OpenClaw 集成(trigger-script 门控 + standing order)由 `scripts/install_integration.sh` 自动完成,定时作业经 `openclaw automations --trigger-script` 注册,完整指南见 `doc/OPENCLAW_INTEGRATION.md`。
+部署脚本会检查:OpenClaw skill 目录(`~/.openclaw/workspace/skills/chiguo/`)、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。OpenClaw 集成(trigger-script 门控 + standing order)由 `scripts/install_integration.sh` 自动完成,定时作业经 `openclaw cron --trigger-script` 注册,完整指南见 `doc/OPENCLAW_INTEGRATION.md`。
 
 ## 架构
 

@@ -86,7 +86,7 @@ cat <<EOF
 ────────────────── 部署完成 ──────────────────
 OpenClaw 集成: $( [ "$INTEG_OK" = 1 ] && echo "已由本脚本自动完成" || echo "未安装或未完全安装（见上方输出; bash scripts/install_integration.sh --dry-run 排查）")
   手动重跑/排查: bash scripts/install_integration.sh --dry-run（扫描）| --yes（自动修复）
-  端到端冒烟:   openclaw automations run chiguo-check --wait --wait-timeout 10m
+  端到端冒烟:   openclaw cron run chiguo-check --expect-final
   完整指南:     doc/OPENCLAW_INTEGRATION.md
 
 手动验证:
