@@ -194,9 +194,9 @@ else
     "normalized": true
   },
   "llm": {
-    "apiKey": "${DEEPSEEK_API_KEY}",
-    "model": "deepseek-chat",
-    "baseURL": "https://api.deepseek.com/v1"
+    "apiKey": "${OPENCODE_API_KEY}",
+    "model": "deepseek-v4-flash",
+    "baseURL": "https://opencode.ai/zen/go/v1"
   },
   "autoCapture": true,
   "autoRecall": true,
