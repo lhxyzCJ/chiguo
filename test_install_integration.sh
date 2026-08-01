@@ -136,4 +136,24 @@ touch "$JOB_STATE"
 set +e; FAKE_TRIGGERS_ENABLED=true bash scripts/install_integration.sh --dry-run >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] && pass "dry-run 全已安装 → 退出 0" || fail "期望 0 实得 $RC"
 
+# ── 用例 11: 无标志 + stdin 非终端 → 默认 dry-run（不进 ask/read）──
+rm -f "$JOB_STATE"
+: > "$CALLS_LOG"
+set +e; OUT=$(bash scripts/install_integration.sh < /dev/null 2>&1); RC=$?; set -e
+[ "$RC" = 1 ] || fail "非 TTY 默认 dry-run 期望 1 实得 $RC"
+echo "$OUT" | grep -q 'dry-run' || fail "非 TTY 应走 dry-run 路径"
+echo "$OUT" | grep -q '\[ask\]' && fail "非 TTY 不应进入 ask 模式" || true
+grep -q "automations add --name" "$CALLS_LOG" && fail "默认模式不应执行 add" || true
+pass "非 TTY 默认 dry-run（无 ask 确认）"
+
+# ── 用例 12: hook JSON 清除失败（损坏文件）→ 警告 + 退出 1 ──
+rm -f "$JOB_STATE"
+printf '{"hooks":{"UserPromptSubmit":[{"command":"chiguo"' > "$TMP/repo/.claude/settings.json"
+: > "$CALLS_LOG"
+set +e; OUT=$(bash scripts/install_integration.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 1 ] || fail "hook 清除失败期望 1 实得 $RC"
+echo "$OUT" | grep -q 'hook 清除失败' || fail "缺少 hook 清除失败警告"
+[ -f "$TMP/repo/.claude/settings.json.bak" ] || fail "缺少 .bak 备份"
+pass "hook 清除失败 → 警告 + 退出 1"
+
 echo "test_install_integration: 通过"
