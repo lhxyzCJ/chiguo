@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 # ============================================================
-# chiguo_envcheck.py — 环境就绪检查(v10.1)
-# 检查:Python/uv 版本、OpenClaw+skill 目录、LanceDB lancedb-pro、
-#       网易云 API+登录、数据文件完整。
+# chiguo_envcheck.py — 环境就绪检查(v10.2)
+# 检查:Python/uv 版本、pi-agent(pi --version)、pi 扩展路径(settings.json)、
+#       ollama embedding(qwen3-embedding)、auth.json opencode-go 条目、
+#       LanceDB lancedb-pro、网易云 API+登录、数据文件完整。
 # 输出:JSON → stdout,汇总退出码 0=就绪 1=warn 2=critical(与 watchdog 一致)。
-# 只读:不建目录、不写缓存、不启动服务;网易云检查仅发轻量健康请求。
-# 路径单一事实来源:chiguo_proactive.toml(与 daemon 相同读取点)。
+# 只读:不建目录、不写缓存、不启动服务;网易云/ollama 检查仅发轻量健康请求。
+# 路径单一事实来源:chiguo_proactive.toml(与 daemon 相同读取点);
+#       pi 侧路径(settings.json/auth.json/扩展)为 ~/.pi 约定(与 install_pi.sh 一致)。
 # ============================================================
 
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tomllib
 import urllib.request
@@ -55,17 +58,93 @@ def check_env() -> dict:
             "severity": "ok" if ok else "critical", "detail": detail}
 
 
-def check_openclaw(personality_dir: Path) -> dict:
-    """personality_source 目录(来自 toml)。目录缺失 → critical;skill 文件缺 → warn。"""
-    if not personality_dir.is_dir():
-        return {"name": "openclaw", "ok": False, "severity": "critical",
-                "detail": f"{personality_dir} 不存在 → OpenClaw 未安装或 personality_source 配置错误(消息生成端缺失)"}
-    missing = [n for n in ("SUN2.md", "SKILL.md") if not (personality_dir / n).is_file()]
-    if missing:
-        return {"name": "openclaw", "ok": False, "severity": "warn",
-                "detail": f"{personality_dir} 缺少 {', '.join(missing)} → 人格设定缺失,OpenClaw 仍可发消息"}
-    return {"name": "openclaw", "ok": True, "severity": "ok",
-            "detail": f"OpenClaw skill OK ({personality_dir} 含 SUN2.md/SKILL.md)"}
+def check_pi(pi_bin: str = "pi") -> dict:
+    """pi-agent 可执行且可报告版本。缺失/不可运行 → critical(消息生成端缺失)。"""
+    resolved = shutil.which(pi_bin)
+    if not resolved:
+        return {"name": "pi", "ok": False, "severity": "critical",
+                "detail": "pi 未安装 → 消息生成端缺失(Phase 4 寄主;请安装 pi-agent 后重跑 deploy.sh)"}
+    try:
+        out = subprocess.run([resolved, "--version"], capture_output=True,
+                             text=True, timeout=15)
+        ver = out.stdout.strip().splitlines()[0] if out.stdout.strip() else "?"
+    except Exception as e:
+        return {"name": "pi", "ok": False, "severity": "critical",
+                "detail": f"pi --version 失败: {e}"}
+    return {"name": "pi", "ok": True, "severity": "ok", "detail": f"pi OK ({ver})"}
+
+
+def _is_windows_ext(e) -> bool:
+    return (isinstance(e, str)
+            and ("/mnt/" in e or "\\" in e
+                 or (len(e) > 1 and e[1] == ":" and e[0].isalpha())))
+
+
+def check_pi_ext(settings_path: Path, expected_path: Path) -> dict:
+    """pi settings.json extensions 指向 Linux 扩展路径。缺失/指向 Windows 残留 → warn。"""
+    if not settings_path.is_file():
+        return {"name": "pi_ext", "ok": False, "severity": "warn",
+                "detail": f"{settings_path} 不存在 → pi 记忆扩展未注册(bash scripts/install_pi.sh --yes)"}
+    try:
+        cfg = json.loads(settings_path.read_text(encoding="utf-8"))
+        exts = cfg.get("extensions") or []
+        if not isinstance(exts, list):
+            exts = []
+    except Exception as e:
+        return {"name": "pi_ext", "ok": False, "severity": "warn",
+                "detail": f"{settings_path} 解析失败: {e}(bash scripts/install_pi.sh --yes 修复)"}
+    want = str(expected_path)
+    bad = [e for e in exts if _is_windows_ext(e)]
+    if want in exts and not bad:
+        return {"name": "pi_ext", "ok": True, "severity": "ok",
+                "detail": f"pi 扩展 OK ({want})"}
+    if bad:
+        return {"name": "pi_ext", "ok": False, "severity": "warn",
+                "detail": f"settings.json 扩展指向 Windows 残留 {bad} → 记忆扩展不会加载"
+                          f"(bash scripts/install_pi.sh --yes 修正)"}
+    return {"name": "pi_ext", "ok": False, "severity": "warn",
+            "detail": f"settings.json 缺扩展路径 {want} → 记忆扩展不会加载"
+                      f"(bash scripts/install_pi.sh --yes)"}
+
+
+def check_ollama(base_url: str = "http://localhost:11434") -> dict:
+    """ollama 服务可达 + qwen3-embedding 模型在册。任一缺失 → warn(记忆 embedding 降级)。"""
+    try:
+        req = urllib.request.Request(f"{base_url}/api/tags",
+                                     headers={"User-Agent": "chiguo-envcheck"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        names = [m.get("name", "") for m in data.get("models", [])]
+        if any(n.startswith("qwen3-embedding") for n in names):
+            return {"name": "ollama", "ok": True, "severity": "ok",
+                    "detail": f"ollama embedding OK ({base_url} 有 qwen3-embedding)"}
+        return {"name": "ollama", "ok": False, "severity": "warn",
+                "detail": f"ollama({base_url}) 无 qwen3-embedding 模型 → 记忆 embedding 降级"
+                          f"(ollama pull qwen3-embedding:0.6b)"}
+    except Exception as e:
+        return {"name": "ollama", "ok": False, "severity": "warn",
+                "detail": f"ollama 不可达({base_url}): {e} → 记忆 embedding 降级"
+                          f"(启动 ollama 后 bash scripts/install_pi.sh --yes)"}
+
+
+def check_pi_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
+    """auth.json 含 provider 条目(key 存在)。缺失 → warn(消息生成将失败)。"""
+    if not auth_path.is_file():
+        return {"name": "pi_auth", "ok": False, "severity": "warn",
+                "detail": f"{auth_path} 不存在 → {provider} key 缺失"
+                          f"(export OPENCODE_API_KEY=... 后 bash scripts/install_pi.sh --yes)"}
+    try:
+        cfg = json.loads(auth_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"name": "pi_auth", "ok": False, "severity": "warn",
+                "detail": f"{auth_path} 解析失败: {e}"}
+    entry = cfg.get(provider)
+    if isinstance(entry, dict) and entry.get("key"):
+        return {"name": "pi_auth", "ok": True, "severity": "ok",
+                "detail": f"auth.json 含 {provider} key(已配置)"}
+    return {"name": "pi_auth", "ok": False, "severity": "warn",
+            "detail": f"auth.json 无 {provider} 条目 → 消息生成将失败"
+                      f"(export OPENCODE_API_KEY=... 后 bash scripts/install_pi.sh --yes)"}
 
 
 def check_lancedb(db_path: Path) -> dict:
@@ -77,7 +156,7 @@ def check_lancedb(db_path: Path) -> dict:
                 "detail": "lancedb 未安装 → 记忆降级 JSON 模式(可运行: uv pip install lancedb)"}
     if not db_path.is_dir():
         return {"name": "lancedb", "ok": False, "severity": "warn",
-                "detail": f"{db_path} 不存在 → 记忆降级 JSON 模式(OpenClaw 侧 memory 插件未初始化?)"}
+                "detail": f"{db_path} 不存在 → 记忆降级 JSON 模式(memory-lancedb-pro 未初始化?)"}
     try:
         db = lancedb.connect(str(db_path))
         table = db.open_table("memories")
@@ -133,20 +212,26 @@ def check_data(xlsx_path: Path, memories_path: Path) -> dict:
 
 
 def run_checks(base_dir: Path = None) -> dict:
-    """按序执行 5 组检查。返回完整报告 dict。单项失败不中断。"""
+    """按序执行 8 组检查。返回完整报告 dict。单项失败不中断。"""
     base = base_dir or _BASE_DIR
     cfg = _load_config(base)
     lancedb_path = _cfg_path(cfg, "memory", "lancedb_path",
                              "~/.openclaw/memory/lancedb-pro", base)
-    personality = _cfg_path(cfg, "openclaw", "personality_source",
-                            "~/.openclaw/workspace/skills/chiguo", base)
     xlsx = _cfg_path(cfg, "schedule", "xlsx_path", "data/xskb.xlsx", base)
     mem = _cfg_path(cfg, "memory", "manual_path", "data/chiguo_memories.json", base)
     api_base = os.environ.get("NETEASE_API_BASE", "http://localhost:3000")
+    home = Path.home()
+    pi_settings = home / ".pi" / "agent" / "settings.json"
+    pi_ext = home / ".pi-agent" / "TestForPi-memory-lancedb-pro" / "dist" / "pi-adapter" / "index.js"
+    pi_auth = home / ".pi" / "agent" / "auth.json"
+    ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
     checks = [
         check_env(),
-        check_openclaw(personality),
+        check_pi(),
+        check_pi_ext(pi_settings, pi_ext),
         check_lancedb(lancedb_path),
+        check_ollama(ollama_url),
+        check_pi_auth(pi_auth),
         check_netease(api_base, base / "netease_cookie.txt", base / "netease_health.json"),
         check_data(xlsx, mem),
     ]

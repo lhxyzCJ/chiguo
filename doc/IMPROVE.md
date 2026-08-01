@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-08-02 — install_pi.sh + envcheck/deploy 接线：多机 pi 环境一键引导（Phase 4 任务 13）
+
+**问题**：Phase 4 寄主迁移到 pi-agent 后，「新机器 pull 仓库后一键装好 pi 环境」还没有引导脚本——原 `install_integration.sh`（OpenClaw 引导）不覆盖 pi 侧；`~/.pi/agent/settings.json` 现存 extensions 指向 Windows 路径（/mnt/c/...，本机不存在），`memory-lancedb-pro.json5` 缺 dbPath（默认指 `~/.pi/agent/memory/lancedb-pro` 而非历史库），envcheck 仍检查 OpenClaw。
+
+**方案**：
+- `scripts/install_pi.sh`（新，+x）：继承 install_integration.sh 约定——三模式（`--dry-run` 只读扫描/`--yes`/ask 交互，非 TTY 等价 dry-run）、退出码 0=完成/1=有待办/2=严重、幂等 + 修改前 `.bak` 备份。7 阶段：0 探测（`pi --version` 缺 → 严重；OPENCODE_API_KEY 提示）→ 1 clone+build memory-lancedb-pro（`~/.pi-agent/`，缺才 clone，缺 dist 才 build）→ 2 settings.json extensions 写 Linux 路径（清 Windows 残留）→ 3 `memory-lancedb-pro.json5`（dbPath=~/.openclaw/memory/lancedb-pro + ollama qwen3-embedding + llm=deepseek + autoCapture/autoRecall/smartExtraction，grep 校验已配则跳过）→ 4 ollama（`curl localhost:11434/api/tags`，缺模型 --yes 下 `ollama pull`）→ 5 auth.json opencode-go（key 从 `OPENCODE_API_KEY` 读，缺失只提示不写，chmod 600）→ 6 crontab 注册 chiguo-tick（幂等 grep）→ 7 冒烟（memory-pro stats + `pi -p --provider opencode-go`，仅 --yes/ask 执行）。dry-run 全程零写入（不 clone/不写文件/不注册 crontab/不执行冒烟）
+- `chiguo_envcheck.py`（v10.1 → v10.2）：openclaw skill 检查 → 4 项 pi 检查（`check_pi` pi --version 缺 → critical；`check_pi_ext` settings.json 扩展路径（Windows 残留 → warn）；`check_ollama` /api/tags qwen3-embedding；`check_pi_auth` auth.json opencode-go 条目）；5 组 → 8 组检查
+- `deploy.sh`：第 5.6 步接入 install_pi.sh（`--skip-pi` 跳过），退出码 0/1/2 同集成安装器语义；总结段加 pi 环境行
+- `test_install_pi.sh`（新，13 用例）：假 pi/curl/crontab/git 桩 + 临时 HOME——无 pi → 2、干净环境 dry-run → 1 且零写入（无 clone/npm/crontab 写入、无文件创建）、全部就绪 → 0、Windows 路径 → 待办且文件未改、crontab/json5/ollama/auth 各缺失 → 待办、非 TTY 默认 dry-run、dry-run 不执行冒烟、`--skip-pi` 静默 0、`--yes` 阶段失败 → PENDING + 1
+
+**验证**：`bash scripts/install_pi.sh --dry-run` 本机退出 1（待办：clone、settings Windows 路径、json5 缺 dbPath、OPENCODE_API_KEY 缺失——符合预期）；test_envcheck 15/15、test_install_pi 13/13、test_pi_run 19/19、test_trigger_script 15/15、test_bridge_askpi 10/10、test_install_integration/test_wechat_bridge 通过
+
+---
+
 ## 2026-08-02 — bridge.mjs askPi 改造：回复侧 openclaw agent → pi-agent（Phase 4 任务 12）
 
 **问题**：回复侧仍由 openclaw agent（main session + standing order）承担「情绪分析 + 回复」，与 Phase 4 寄主迁移目标（全部 LLM 调用走 pi-run.mjs）不一致；standing order 补分析的时序依赖 agent 行为，链路脆弱。

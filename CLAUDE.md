@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Run all tests (Python 3.14+ required) — 19 py + 2 script tests
-node test_trigger_script.js && bash test_install_integration.sh && \
+node test_trigger_script.js && bash test_install_integration.sh && bash test_install_pi.sh && \
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \

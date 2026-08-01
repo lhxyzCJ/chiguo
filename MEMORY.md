@@ -1,5 +1,27 @@
 # MEMORY.md
 
+## 2026-08-02 — install_pi.sh + envcheck/deploy 接线：多机 pi 环境一键引导（Phase 4 任务 13）
+
+**背景**：Phase 4 寄主迁移到 pi-agent 后，「任意机器 pull 仓库后一键装好 pi 环境」缺引导脚本。原 `install_integration.sh`（OpenClaw 引导）不覆盖 pi 侧；本机 `~/.pi/agent/settings.json` 的 extensions 指向 Windows 路径（/mnt/c/...，本机不存在）需修正为 Linux 路径；`~/.pi/agent/memory-lancedb-pro.json5` 缺 dbPath（默认指 `~/.pi/agent/memory/lancedb-pro`，需改为历史库 `~/.openclaw/memory/lancedb-pro`）；envcheck 仍检查 OpenClaw。
+
+- **`scripts/install_pi.sh`（新，+x）**：继承 install_integration.sh 约定——三模式（`--dry-run` 只读扫描 / `--yes` / ask 交互，非 TTY 等价 dry-run）、退出码 0=完成/1=有待办/2=严重、幂等 + 修改前 `.bak` 备份。7 阶段：
+  - 0 探测：`pi --version`（缺失 → fail 2：本脚本只配置不装 pi 本体）；OPENCODE_API_KEY 可用性提示
+  - 1 memory-lancedb-pro：clone `lhxyzCJ/TestForPi-memory-lancedb-pro` → `~/.pi-agent/`（不存在才 clone；缺 `dist/pi-adapter/index.js` 才 build）；`memory-pro` bin 即 `node_modules/.bin/memory-pro`
+  - 2 `~/.pi/agent/settings.json`：extensions 写 `~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`，python3 检查（含期望路径 + 无 Windows 残留 /mnt/、\\、盘符 → 才跳过），修复时清 Windows 条目 + 补 Linux 路径，`.bak` 备份
+  - 3 `~/.pi/agent/memory-lancedb-pro.json5`：grep 校验（qwen3-embedding + localhost:11434 + `.openclaw/memory/lancedb-pro` + `"autoCapture": true` 等三个开关）→ 不满足则备份重写模板（dbPath 沿用历史库、embedding=ollama、llm=deepseek `${DEEPSEEK_API_KEY}`、autoCapture/autoRecall/smartExtraction）；`dbPath` 支持 `~` 展开（adapter resolvePathImpl expandHomeDir 确认）
+  - 4 ollama：`curl -sf --max-time 5 --noproxy '*' localhost:11434/api/tags` 有 qwen3-embedding → OK；不可达 → 待办提示启动；可达缺模型 → `--yes` 下 `ollama pull qwen3-embedding:0.6b`
+  - 5 `~/.pi/agent/auth.json`：已含 opencode-go → OK；否则 OPENCODE_API_KEY 缺失 → 只提示（不写 key，不落盘明文）；有 → 写入 `{"opencode-go":{"type":"api_key","key":...}}` + chmod 600 + `.bak`
+  - 6 crontab：`crontab -l | grep chiguo-tick` 幂等，未注册则追加 `*/15 * * * * $CHIGUO_REPO/scripts/chiguo-tick.sh >> $CHIGUO_REPO/logs/cron-tick.log 2>&1`
+  - 7 冒烟（仅 --yes/ask）：`memory-pro stats`（历史库可读）+ `pi -p --provider opencode-go --model <toml[host].model> --session-id chiguo-install-smoke --no-context-files --thinking high --mode json '回复:ok'`（auth 有 opencode-go 才执行）；dry-run 一律不执行
+  - dry-run 全程零写入（不 clone / 不写文件 / 不注册 crontab / 不执行冒烟），待办清单输出，退出 1
+- **`chiguo_envcheck.py`（v10.1 → v10.2）**：openclaw skill 检查 → 4 项 pi 检查：`check_pi`（`pi --version`，缺失 → critical 消息生成端缺失）、`check_pi_ext`（settings.json 扩展路径，Windows 残留/缺失 → warn + 指向 install_pi.sh）、`check_ollama`（/api/tags qwen3-embedding）、`check_pi_auth`（auth.json opencode-go 条目，缺失 → warn + OPENCODE_API_KEY 提示）；5 组 → 8 组；`_is_windows_ext` 判据与 install_pi.sh 一致
+- **`deploy.sh`**：第 5.6 步接入 install_pi.sh（`--skip-pi` 跳过；退出码 0/1/2 语义同集成安装器）；总结 heredoc 加 pi 环境行 + `bash scripts/chiguo-tick.sh` 冒烟提示
+- **`test_envcheck.py`**：10 → 15 用例（pi 缺失 critical / pi 桩正常（临时 bin + chmod +x）/ pi_ext 缺失 warn / Windows 残留 warn / 正常 / pi_auth 缺失 warn / 正常 / ollama 不可达 warn；run_checks 断言 8 组）
+- **`test_install_pi.sh`（新，13 用例）**：假 pi/curl/crontab/git/npm/node 桩（调用落 calls.log）+ 临时 HOME + CHIGUO_REPO_OVERRIDE——① 无 pi（隔离 PATH）→ 2；② 干净环境 dry-run → 1 + 待办清单含 clone/crontab/auth + 零写入（无 ~/.pi、无 crontab 写入、git/npm 未被调）；③ 全部就绪（无 OPENCODE_API_KEY 也）→ 0；④ Windows 路径 → 1 + settings.json 未被改；⑤ crontab 缺 → 1；⑥ 非 TTY 默认 dry-run；⑦ auth 缺 + env 缺 → 提示 OPENCODE_API_KEY；⑧ ollama 缺模型 → 1；⑨ json5 缺 dbPath → 1；⑩ dry-run 不执行冒烟（pi -p / memory-pro 不出现）；⑪ `--skip-pi` 静默 0；⑫ `--yes` 桩 git 失败 → clone/build 失败警告 + 退出 1
+- **实现发现**：json5 校验 grep 必须匹配带引号的键（`"autoCapture": true`），最初 `autoCapture *: *true` 匹配不了引号导致误报待办（已修）；cli-main.ts 确认 `config.dbPath || getDefaultDbPath()`（默认 `~/.pi/agent/memory/lancedb-pro`）→ 必须显式写 dbPath 才沿用历史库；`settings.json` 现 600 权限文件重写后用 chmod 600 保密（auth.json）
+- **验证**：`bash scripts/install_pi.sh --dry-run` 本机退出 1（待办恰好为 clone / settings Windows 路径 / json5 缺 dbPath / OPENCODE_API_KEY 缺失，ollama 与 crontab 已就绪）——符合预期，`--yes` 留给 Task 15 集成冒烟；test_envcheck 15/15、test_install_pi 13/13、test_pi_run 19/19、test_trigger_script 15/15、test_bridge_askpi 10/10、test_install_integration/test_wechat_bridge 通过
+- **遗留**：`OPENCODE_API_KEY` 本机未设置（auth.json 也无 opencode-go）→ pi 实调（发送/回复）在 Task 15 集成冒烟前需要注入 key；lancedb Python 库未装（uv pip install lancedb 可补，envcheck warn）
+
 ## 2026-08-02 — bridge.mjs askPi 改造：回复侧 openclaw agent → pi-agent（Phase 4 任务 12）
 
 **背景**：Phase 4 回复侧从 openclaw agent（main session，standing order 补分析）迁移到 pi-agent。pi-run.mjs（Task 10）已支持 `--analysis-mode` 一次输出「情绪分析 JSON + 回复」，bridge 从「agent 回复 + standing order 事后补分析」改为「pi-run 一次调用 + bridge 内联 analysis 接线」。
