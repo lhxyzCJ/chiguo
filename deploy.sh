@@ -57,12 +57,14 @@ case $EC in
 esac
 
 # ── 5. OpenClaw 集成安装（可跳过: bash deploy.sh --skip-integration）──
+INTEG_OK=0
 if [[ "$*" != *--skip-integration* ]]; then
     say "安装 OpenClaw 集成（trigger-script 门控 + standing order）..."
     set +e
     bash "$PROJECT_DIR/scripts/install_integration.sh" "$@"
     IC=$?
     set -e
+    [ "$IC" = 0 ] && INTEG_OK=1
     case $IC in
         0) say "集成安装完成 ✓" ;;
         1) warn "集成安装有警告/残留未处理（见上方输出），daemon 部署不受影响" ;;
@@ -79,7 +81,7 @@ fi
 cat <<EOF
 
 ────────────────── 部署完成 ──────────────────
-OpenClaw 集成: 已由本脚本自动完成（--skip-integration 跳过时未安装）
+OpenClaw 集成: $( [ "$INTEG_OK" = 1 ] && echo "已由本脚本自动完成" || echo "未安装或未完全安装（见上方输出; bash scripts/install_integration.sh --dry-run 排查）")
   手动重跑/排查: bash scripts/install_integration.sh --dry-run（扫描）| --yes（自动修复）
   端到端冒烟:   openclaw automations run chiguo-check --wait --wait-timeout 10m
   完整指南:     doc/OPENCLAW_INTEGRATION.md
