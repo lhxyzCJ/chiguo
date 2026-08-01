@@ -27,6 +27,21 @@
 
 **验证**：`node test_trigger_script.js` 15/15；`bash test_install_integration.sh` 12/12（退出码 0）；`bash -n` 两脚本干净；真实 daemon 冒烟 idle → fire:false；19 个 py runner 全量回归不受影响。
 
+### Task 6 修复轮（全分支审查 5 Important + 官方文档合规 3 doc-level）
+
+**问题**：全量审查发现——阶段 4 验证不完整（config set / AGENTS.md 写入失败仍退出 0 声称完成）、旧作业/hook 解析依赖裸名单行输出（真机多列表格下幂等被破坏）、文档 `--compact` idle 无输出与 daemon 实际矛盾、deploy.sh 测试链漏脚本测试、`.claude/settings.json.bak` 未 gitignore；官方文档合规——`doctor --fix` 迁移清单不含 legacy hooks.internal.handlers 键、"输出 idle 即链路通"无法证实、automations rm/remove 拼写未说明。
+
+- **I-1**：`would()` 不再丢弃 eval 失败状态（失败 → PENDING=1 + 警告）；阶段 4（非 dry-run）新增两项复验——`config get cron.triggers.enabled` 必须 true、`grep CHIGUO-STANDING-ORDER-START` 必须命中，任一失败 PENDING=1
+- **I-2**：旧作业/hook 解析改为格式无关——`automations list --all` / `hooks list` 先 `awk '{print $1}'` 再整行排除 `chiguo-check`；桩测试 `FAKE_LIST_FORMAT=table` 覆盖多列表格输出
+- **I-3**：文档三处 `--compact` "idle 无输出" 改为 "输出最小单行 JSON"（daemon 实际行为 chiguo_daemon.py:1576-1578）；错误表"非零退出"措辞软化并加注：脚本只读 stdout 与 exec 抛错，不读退出码
+- **I-4**：deploy.sh 步骤 3 自检循环前补 `node test_trigger_script.js` + `bash test_install_integration.sh`（失败中止），标题更新为 19 py + 2 脚本测试
+- **I-5**：.gitignore 补 `.claude/settings.json.bak` 与 `.claude/settings.json.bak.*`
+- **D-1**：移除对 legacy handlers 的自动 `openclaw doctor --fix`（官方迁移清单不含该键）→ 保留检测与 warn（"官方建议迁移到 discovery 系统，本次未自动处理"），残留计入 PENDING=1；文档 §二/§九 同步；测试用例 8 改为断言迁移提示 + 退出 1
+- **D-2**：文档"输出 idle 即链路通"改为描述性冒烟步骤（观察 run --wait 退出码与 chiguo_decisions.jsonl 新条目）
+- **D-3**：§六 管理命令补括号说明：官方叙述文档用 `remove`、命令树为 `rm`，等效（automations=cron 别名）
+
+**验证**：`bash test_install_integration.sh` 14/14；`node test_trigger_script.js` 15/15；`bash -n` 3 脚本干净；`bash scripts/install_integration.sh --dry-run`（本机无 openclaw）退出 0；19 个 py runner 全量回归通过。
+
 ---
 
 ## 2026-08-01 — v10.1 最终审查修复 I-1：check_netease 退出码纳入 API 可达性
