@@ -26,6 +26,14 @@ has_credentials() { [ -f "$BRIDGE_DIR/credentials/credentials.json" ]; }
 
 write_env() {
     mkdir -p "$BRIDGE_DIR"
+    # memory-lancedb-pro smart extraction 的 opencode-go key：从 ~/.pi/agent/auth.json 读（单一来源）
+    PI_KEY="$(python3 -c "
+import json,os
+try:
+    d=json.load(open(os.path.expanduser('~/.pi/agent/auth.json')))
+    print(d.get('opencode-go',{}).get('key',''))
+except Exception: print('')
+" 2>/dev/null || true)"
     cat > "$ENV_FILE" <<EOF
 WECHAT_BRIDGE_SEND_PORT=$SEND_PORT
 WECHAT_BRIDGE_OWNER=$OWNER_ID
@@ -33,6 +41,7 @@ WECHAT_BRIDGE_DAEMON_PY=$PROJECT_DIR/.venv/bin/python
 WECHAT_BRIDGE_DAEMON=$PROJECT_DIR/chiguo_daemon.py
 WECHAT_BRIDGE_PI_RUN=$PROJECT_DIR/scripts/pi-run.mjs
 WECHAT_BRIDGE_STORAGE=$BRIDGE_DIR/credentials
+OPENCODE_API_KEY=$PI_KEY
 EOF
 }
 

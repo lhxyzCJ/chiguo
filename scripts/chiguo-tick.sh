@@ -3,6 +3,18 @@
 set -euo pipefail
 REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
 PY="$REPO/.venv/bin/python"
+# memory-lancedb-pro 扩展的 smart extraction 需要 opencode-go key（cron 环境无该变量）
+# 来源单一：~/.pi/agent/auth.json 的 opencode-go 条目（install_pi.sh 阶段 5 写入）
+if [ -z "${OPENCODE_API_KEY:-}" ] && [ -f "$HOME/.pi/agent/auth.json" ]; then
+  OPENCODE_API_KEY="$(python3 -c "
+import json,os
+try:
+    d=json.load(open(os.path.expanduser('~/.pi/agent/auth.json')))
+    print(d.get('opencode-go',{}).get('key',''))
+except Exception: print('')
+" 2>/dev/null || true)"
+  export OPENCODE_API_KEY
+fi
 OUT="$("$PY" "$REPO/chiguo_daemon.py" --compact 2>/dev/null || true)"
 ACTION="$(printf '%s' "$OUT" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("action",""))
