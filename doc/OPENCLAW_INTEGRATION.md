@@ -65,7 +65,7 @@ bash deploy.sh                                  # 或随部署一起（传 --ski
 阶段 2 注册时写入的 `--system-event` 指令全文（与安装器 INSTRUCTION 一致）：
 
 ```
-收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给主人（<主人 id>）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。通过 wechat-bridge 发送：curl -s --noproxy '*' -X POST http://127.0.0.1:18790/send -H 'Content-Type: application/json' -d '{"to":"<主人 id>","text":"<消息原文>"}'（返回 {"ok":true} 为成功）。发送后运行 <仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。
+收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给哥哥（<哥哥 id>）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。通过 wechat-bridge 发送：curl -s --noproxy '*' -X POST http://127.0.0.1:18790/send -H 'Content-Type: application/json' -d '{"to":"<哥哥 id>","text":"<消息原文>"}'（返回 {"ok":true} 为成功）。发送后运行 <仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。
 ```
 
 15 分钟间隔：idle 评估不再消耗模型，决策延迟从 30min 降到 15min；daemon 内部 pacing（poisson / min_interval / quiet hours）不受影响。

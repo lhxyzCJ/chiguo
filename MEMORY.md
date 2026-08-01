@@ -1,5 +1,14 @@
 # MEMORY.md
 
+## 2026-08-02 — 「主人」→「哥哥」代码层全清（Phase 2 任务 4）
+
+**背景**：原著中迟菓从未称呼对方「主人」（哥哥才是正确称呼），但 daemon 注入 LLM 的文本里仍有「主人」残留。SUN2.md（Phase 1）已归正，本任务清理代码层。
+
+- **chiguo_daemon.py 全清**：14 处「主人」→「哥哥」（计划预期 13 处，另发现 1 处 docstring 用法注释 L12「记录主人消息」一并替换）——context.safety_note/接话茬/课表 schedule_hint/instruction/CLI help/rate advice 全链路
+- **doc/OPENCLAW_INTEGRATION.md:68**：system-event 指令全文「发给主人（<主人 id>）」→「发给哥哥（<哥哥 id>）」+ `"to":"<主人 id>"` → `"to":"<哥哥 id>"`（该文件后续被 PI_INTEGRATION.md 取代，其余 9 处示例文本不改，见 doc 侧 Task 12）
+- **验证**：`grep -c "主人" chiguo_daemon.py` = 0；test_integration 17/17 绿；test_monitor 40/41（test_health_ok 为既有环境性失败——本机 netease 未登录 netease_health.json 报 unreachable → healthy=false，stash 后原树同样失败，与本次改动无关）；test_composer 10/10、test_escape_valve 15/15 绿。无测试断言引用「主人」（test_composer.py:167 断言已同时接受哥哥/主人）
+- 文件：chiguo_daemon.py、doc/OPENCLAW_INTEGRATION.md、MEMORY.md
+
 ## 2026-08-01 — wechat-bridge 可移植化 + 登录态随仓库保留（v1.2 → v1.3）
 
 **背景**：用户要求 wechat-bridge 做成可移植（未来设备直接部署），登录状态"尝试保留"。关键约束（用户明确）：登录 token 若写入 wechatbot（第三方 fork）仓库则不可接受，放 chiguo 仓库内可以。
