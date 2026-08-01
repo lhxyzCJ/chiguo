@@ -1,5 +1,16 @@
 # MEMORY.md
 
+## 2026-08-02 — composer cue 权重重排 + trade_tsundere（Phase 2 任务 6）
+
+**背景**：人格文件已按原著对齐，但 composer 的 cue 权重/风格仍偏离原著——caring_gentle 权重最高且 morning/meal ×1.5（违反"关心必带刺"）、playful_bubbly 鼓励嘻嘻高频（违反"全书仅 10 次"）、无交易思维 cue（原著核心）。本次把 cue 权重/风格对齐原著（嘴硬心软为主、温柔关心降权、禁止嘻嘻高频、新增交易式撒娇）。
+
+- **`chiguo_composer.py`**：CUES 4 个 style_hint 按原著改写（tsundere_classic 低频'哼'+动作伴随 / playful_bubbly 去嘻嘻 / anxious_clingy 强装没事不加卑微 / caring_gentle 关心必带刺）；新增 `trade_tsundere` cue（交易式撒娇，描述+风格均用交易/补偿框架）；INTENTS 新增 `compensate`（两不相欠/快过期了/补偿方案）；cue_weights 默认值重排 tsundere_classic 0.30→0.40、soft 0.25→0.20、cool 0.10→0.05、dere 0.10→0.05、playful 0.20→0.15、anxious 0.15→0.10、caring 0.25→0.10、cool_mysterious 0.05→0.00（保留在字典仅兼容）、新增 trade_tsundere 0.15；`_modulate_cue_weights` morning/meal/night 的 caring ×1.5 → ×1.0（不再放大温柔关心）
+- **`chiguo_proactive.toml [composer]`**：同步 8 个 cue 权重 + 新增 `cue_trade_weight = 0.15`
+- **`test_composer_trade.py`（新）**：权重排序（傲娇≥关心）、trade_tsundere 存在、cool 权重 0、toml 键存在、嘻嘻禁令、morning/meal/night 不放大 caring；RED 证据：改前 `AssertionError: 应有交易式撒娇 cue`
+- **`test_composer.py`**：`test_trigger_modulates_cue` 旧断言 `anxious >= 0.25`（依赖旧基础权重 0.15×2.0=0.30）随基础权重调低更新为相对断言 `>= 2.0×基础权重`（playful 同理，断言意图"触发调制放大"不变）
+- **`doc/SYSTEM.md`**：配置表 [composer] 权重同步
+- **验证**：test_composer_trade 5/5 绿 + test_composer 10/10 + test_trigger 15/15 + test_topics 22/22 + test_personality 18/18 + test_personality_init 绿
+
 ## 2026-08-02 — personality 初始值修正 + 测试（Phase 2 任务 5）
 
 **背景**：初始 tsundere_intensity=70 不满足 `tsundere_style()` 的 `>70` 分支 → 初始人格实际落入 `tsundere_cool`（酷娇），与主导画像 tsundere_heavy 矛盾。代码层 8 维初始值未对齐原著（Phase 1 SUN2.md 已对齐）。

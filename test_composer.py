@@ -132,10 +132,10 @@ def test_trigger_modulates_cue():
     w_lonely_high = c._modulate_cue_weights("lonely_high")
     w_playful = c._modulate_cue_weights("playful")
 
-    # lonely_high → anxious 权重大幅提高
-    assert w_lonely_high["anxious_clingy"] >= 0.25
-    # playful → playful_bubbly 权重极高
-    assert w_playful["playful_bubbly"] >= 0.45
+    # lonely_high → anxious 权重大幅提高（基础权重 ×2.0，Task 6 调低基础后改用相对断言）
+    assert w_lonely_high["anxious_clingy"] >= 2.0 * c.cue_weights["anxious_clingy"]
+    # playful → playful_bubbly 权重极高（基础权重 ×3.0）
+    assert w_playful["playful_bubbly"] >= 3.0 * c.cue_weights["playful_bubbly"]
     print("  OK test_trigger_modulates_cue")
 
 
