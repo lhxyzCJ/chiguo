@@ -37,7 +37,9 @@ confirm() { [ "$MODE" = ask ] || return 0
   esac
 }
 would() { if [ "$DRY" = 1 ]; then PENDING=1; printf '  [dry-run] %s\n' "$*"
-  else confirm "$*" && eval "$*"; fi }
+  elif confirm "$*"; then
+    if ! eval "$*"; then PENDING=1; warn "命令执行失败（残留未处理）：$*"; fi
+  fi }
 
 # ── 阶段 0: 环境探测（官方：<command> --help 为权威清单）──────
 if ! command -v openclaw >/dev/null 2>&1; then
@@ -57,11 +59,11 @@ fi
 
 # ── 阶段 0b: 旧方案残留扫描（发现即报告）──────────────────
 echo "[chiguo-integ] 扫描旧方案残留 ..."
-OLD_JOBS="$(openclaw automations list --all 2>/dev/null | grep -i chiguo | grep -vx 'chiguo-check' || true)"
+OLD_JOBS="$(openclaw automations list --all 2>/dev/null | grep -i chiguo | awk '{print $1}' | grep -vx 'chiguo-check' || true)"
 CLAUDE_SETTINGS="$CHIGUO_REPO/.claude/settings.json"
 OLD_HOOK=0; [ -f "$CLAUDE_SETTINGS" ] && grep -q 'chiguo' "$CLAUDE_SETTINGS" && OLD_HOOK=1
 ON_USER_MSG="$HOME/.openclaw/workspace/skills/chiguo/scripts/on-user-msg.sh"
-CHIGUO_NATIVE_HOOKS="$(openclaw hooks list 2>/dev/null | grep -i chiguo || true)"
+CHIGUO_NATIVE_HOOKS="$(openclaw hooks list 2>/dev/null | grep -i chiguo | awk '{print $1}' || true)"
 LEGACY_HANDLERS="$(openclaw config get hooks.internal.handlers 2>/dev/null || true)"
 TRIGGERS_ENABLED="$(openclaw config get cron.triggers.enabled 2>/dev/null || true)"
 [ -n "$OLD_JOBS" ] && warn "发现旧 automations 作业: $(echo "$OLD_JOBS" | tr '\n' ' ')"
@@ -155,8 +157,8 @@ if [ -n "$CHIGUO_NATIVE_HOOKS" ]; then
   done
 fi
 if [ -n "$LEGACY_HANDLERS" ]; then
-  echo "[chiguo-integ] legacy hooks.internal.handlers → 官方迁移工具"
-  would "openclaw doctor --fix"
+  warn "legacy hooks.internal.handlers 残留：官方建议迁移到 discovery 系统（doctor --fix 迁移清单不含该键，本次未自动处理，请手工迁移）"
+  PENDING=1
 fi
 
 # ── 阶段 4: 收尾验证 ──────────────────────────────────────
@@ -166,6 +168,19 @@ if [ "$DRY" = 1 ]; then
   exit 0
 fi
 openclaw config validate >/dev/null 2>&1 && say "config validate OK" || { warn "config validate 失败"; PENDING=1; }
+TRIGGERS_NOW="$(openclaw config get cron.triggers.enabled 2>/dev/null || true)"
+if [ "$TRIGGERS_NOW" != "true" ]; then
+  warn "复验失败：cron.triggers.enabled 仍为 '$TRIGGERS_NOW'（config set 可能失败，请手工执行 openclaw config set cron.triggers.enabled true 后重跑）"
+  PENDING=1
+else
+  say "复验通过：cron.triggers.enabled = true"
+fi
+if ! grep -qs 'CHIGUO-STANDING-ORDER-START' "$SO_FILE" 2>/dev/null; then
+  warn "复验失败：standing order 标记段未写入 $SO_FILE（写入可能失败，请手工处理）"
+  PENDING=1
+else
+  say "复验通过：standing order 标记段已写入 $SO_FILE"
+fi
 if ! openclaw automations list 2>/dev/null | grep -q chiguo-check; then
   warn "作业 chiguo-check 未在册"; PENDING=1
 else
