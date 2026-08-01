@@ -1,5 +1,17 @@
 # MEMORY.md
 
+## 2026-08-02 — 人格基线回归 + personality_history 实现（Phase 3 任务 9）
+
+**背景**：调研发现三类人格漂移问题——①主人热情回复 → tsundere 70→10（clamp 下限），2-4 个月变甜妹（dere_dere）；②主人持续沉默 → tsundere 顶到 90 + 神经质追高（极端崩溃人格）；③无基线回归机制（只有 clamp [10,90]），且 `personality_history` 文档声称存在（SYSTEM.md:643）但从未实现（恒为 []）。
+
+- **`chiguo_personality.py`**：`PersonalityTraits.__post_init__` 记录 `_baseline`（构造时实际传入值，非 dataclass 默认值——state 从 toml 读初始值构造，`_baseline` 必须锚定 toml 值；非 dataclass 字段 → asdict/__eq__ 不含）；`regress_to_baseline(rate=0.01)` 软回归 `v += (baseline - v) * rate`（rate≤0 关闭）；`reset_baseline(dict)`（加载状态恢复持久化基线）
+- **`chiguo_state.py`**：`adapt_personality` evolve 后读 `[personality] regress_rate`（config 引用已持有）调回归 → 缓存 anxiety_sensitivity → 追加 `{ts, dims}`（8 维）到 `personality_history`（滚动 200 条）；`__init__` 快照 `_personality_initial_baseline`；save/load 持久化 `personality_baseline` + `personality_history`（旧状态无基线 → 回退 toml 初始值）；`STATE_VERSION` 9→10
+- **基线持久化决策**：基线随状态存 chiguo_state.json 而非每次启动重读 toml——cron 每 15 分钟新进程拉起，若基线=加载时漂移值则回归锚点随重启漂移、机制失效；持久化 + 旧文件回退 toml 双保险
+- **`chiguo_proactive.toml [personality]`**：`regress_rate = 0.01`（0=关闭防漂移）
+- **`test_adapt_personality.py`（新，11 用例）**：300 次热情回复 tsundere>50（无回归 31<50 FAIL 成立，用 300 非 brief 代码的 100）、200 次沉默 <85（无回归 90 clamp 上限 FAIL 成立）、regress_rate=0 关闭、回归方向、baseline 记录构造值、reset_baseline、state 层接线（300 次 adapt 后 57.8>50 / rate=0 时 31.0<50）、history 滚动 200 条 + 结构、save/load 持久化、toml 键存在
+- **`doc/SYSTEM.md`**：§5.6 补基线回归 + history 说明；文件表/版本表补 v10；`doc/IMPROVE.md` 变更记录
+- **验证**：RED ①`AttributeError: no attribute 'regress_to_baseline'` ②state 层 300 次热情 tsundere=31.0<50（70-39=31 与 brief 预测一致）→ GREEN 11/11；test_personality 18/18、test_integration 17/17、其余全绿；真实 state.json 迁移：daemon 单次运行 exit 0，_version 9→10、基线锚定 toml 75.0（加载漂移值 70.2 未被当基线）、checksum 有效；test_monitor.py:test_health_ok 环境性失败（本机 netease 未登录，与任务无关）
+
 ## 2026-08-02 — layer_guidance 对齐新人格（Phase 2 任务 8）
 
 **背景**：调研结论——layer_guidance 是 daemon 内硬编码 dict，与 SUN2.md 是"两套互不导出的体系"（doc/sun2_comparison_report_v2.md）；其中「哼」高频/波浪线密集/旧台词的措辞与 SUN2.md 冲突。

@@ -231,6 +231,7 @@ neuroticism = 60.0
 tsundere_intensity = 75.0
 playfulness = 55.0
 attachment_style = 60.0
+regress_rate = 0.01                # 基线回归速率（每次互动后向初始值靠拢的比例，防人格漂移；0 = 关闭）
 
 # ── v4: Bayesian 用户状态推断 ──
 [bayesian]
