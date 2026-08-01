@@ -1152,15 +1152,16 @@ escape_valve_sleep_block = 0.9         # v7: 逃生阀豁免睡觉门控时，�
 size_1_weight = 0.20                   # 仅 Intent 概率
 size_2_weight = 0.50                   # Intent × Cue 概率
 size_3_weight = 0.30                   # Intent × Cue × Vibe 概率
-# Cue 基础权重（被 personality 调制）
-cue_tsundere_weight = 0.30
-cue_tsundere_soft_weight = 0.25
-cue_tsundere_cool_weight = 0.10
-cue_dere_weight = 0.10
-cue_playful_weight = 0.20
-cue_anxious_weight = 0.15
-cue_caring_weight = 0.25
-cue_cool_weight = 0.05
+# Cue 基础权重（被 personality 调制；Task 6 原著对齐：经典傲娇为主/温柔关心降权/新增交易式撒娇）
+cue_tsundere_weight = 0.40
+cue_tsundere_soft_weight = 0.20
+cue_tsundere_cool_weight = 0.05
+cue_dere_weight = 0.05
+cue_playful_weight = 0.15
+cue_anxious_weight = 0.10
+cue_caring_weight = 0.10
+cue_cool_weight = 0.00
+cue_trade_weight = 0.15
 
 [safety]
 # v4: 安全阀

@@ -82,13 +82,18 @@ class MessageComposer:
             {"text": "憋不住——'本来不想打扰哥哥的但是...'，积累的思念溢出", "tone": "soft"},
             {"text": "自然流露——没想好理由，就是突然想跟哥哥说话", "tone": "casual"},
         ],
+        "compensate": [
+            {"text": "两不相欠——用'扯平了'包装关心（'上次的奶茶，扯平。'）", "tone": "tsundere"},
+            {"text": "快过期了——'再不吃就过期了'式补偿邀请", "tone": "playful"},
+            {"text": "补偿方案——'这个给你，算是补偿。'", "tone": "soft"},
+        ],
     }
 
     # ── Cue 库（B）：人格面具/对话风格 ──
     CUES = {
         "tsundere_classic": {
             "description": "经典傲娇——嘴硬心软，表面攻击实则关心。语气带刺但话里有话。",
-            "style_hint": "用反问句包装关心，说'谁要你管'但其实想要关心。攻击性语言+波浪线。",
+            "style_hint": "用反问句包装关心，说'不·需·要。'但其实想要关心。低频'哼'（……哼。）。动作伴随：跺脚、塞钱、扭头。",
         },
         "tsundere_soft": {
             "description": "软傲娇——快藏不住了，语气半软半硬。偶尔泄漏真实感情后立刻嘴硬掩饰。",
@@ -104,15 +109,19 @@ class MessageComposer:
         },
         "playful_bubbly": {
             "description": "元气弹——活泼跳跃，语气词轰炸，像小太阳一样。",
-            "style_hint": "呀/啦/嘻嘻 高频使用，感叹号！，短句连发，跳跃思维。喵仅限猫/小白场景。",
+            "style_hint": "呀/啦/哼+感叹号，短句连发，跳跃思维。喵仅限猫/小白场景。",
         },
         "anxious_clingy": {
             "description": "小不安——试探性确认被需要，语气卑微但不想显得太 needy。",
-            "style_hint": "省略号多，问句多，说完立刻撤回'算了当我没说'。",
+            "style_hint": "省略号多，试探+强装没事（'……不告诉你。''……没有。没等你。'），不加卑微自我贬低",
         },
         "caring_gentle": {
             "description": "温柔关心——像小管家一样细心，关心但不啰嗦。",
-            "style_hint": "温和语气，实用性关心（吃饭/休息/添衣），带一点傲娇底色。",
+            "style_hint": "实用性关心（吃饭/休息/添衣），关心必带刺——'快吃啦'不是'好担心你'",
+        },
+        "trade_tsundere": {
+            "description": "交易式撒娇——用交易/补偿框架包装关心与接受。",
+            "style_hint": "两不相欠、补偿方案、'交易，做吗？——不和你做。'、倒计时威胁",
         },
         "cool_mysterious": {
             "description": "酷酷的神秘感——话不多但每句都让人想知道更多。",
@@ -155,14 +164,15 @@ class MessageComposer:
 
         # cue 基础权重（会被 personality 调制）
         self.cue_weights = {
-            "tsundere_classic": self.config.get("cue_tsundere_weight", 0.30),
-            "tsundere_soft": self.config.get("cue_tsundere_soft_weight", 0.25),
-            "tsundere_cool": self.config.get("cue_tsundere_cool_weight", 0.10),
-            "dere_dere": self.config.get("cue_dere_weight", 0.10),
-            "playful_bubbly": self.config.get("cue_playful_weight", 0.20),
-            "anxious_clingy": self.config.get("cue_anxious_weight", 0.15),
-            "caring_gentle": self.config.get("cue_caring_weight", 0.25),
-            "cool_mysterious": self.config.get("cue_cool_weight", 0.05),
+            "tsundere_classic": self.config.get("cue_tsundere_weight", 0.40),
+            "tsundere_soft": self.config.get("cue_tsundere_soft_weight", 0.20),
+            "tsundere_cool": self.config.get("cue_tsundere_cool_weight", 0.05),
+            "dere_dere": self.config.get("cue_dere_weight", 0.05),
+            "playful_bubbly": self.config.get("cue_playful_weight", 0.15),
+            "anxious_clingy": self.config.get("cue_anxious_weight", 0.10),
+            "caring_gentle": self.config.get("cue_caring_weight", 0.10),
+            "trade_tsundere": self.config.get("cue_trade_weight", 0.15),
+            "cool_mysterious": self.config.get("cue_cool_weight", 0.00),
         }
 
     def select_combo(self, trigger_type: str, now: datetime) -> dict:
@@ -293,10 +303,8 @@ class MessageComposer:
             weights["playful_bubbly"] *= 3.0
             weights["caring_gentle"] *= 0.5
         elif trigger_type in ("morning", "meal"):
-            weights["caring_gentle"] *= 1.5
             weights["playful_bubbly"] *= 1.2
         elif trigger_type == "night":
-            weights["caring_gentle"] *= 1.5
             weights["tsundere_soft"] *= 1.2
 
         return weights
