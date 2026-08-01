@@ -88,7 +88,7 @@ done
 if ! openclaw cron get chiguo-check >/dev/null 2>&1; then
   RECIPIENT="$(sed -n 's/^wechat_recipient *= *"\(.*\)"/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
   [ -n "$RECIPIENT" ] || RECIPIENT="owner@im.wechat"
-  INSTRUCTION="收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给主人（$RECIPIENT）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。通过 wechat-bridge 发送：curl -s --noproxy '*' -X POST http://127.0.0.1:18790/send -H 'Content-Type: application/json' -d '{\"to\":\"$RECIPIENT\",\"text\":\"<消息原文>\"}'（返回 {\"ok\":true} 为成功）。发送后运行 ${CHIGUO_REPO}/.venv/bin/python ${CHIGUO_REPO}/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。"
+  INSTRUCTION="收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给哥哥（$RECIPIENT）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。通过 wechat-bridge 发送：curl -s --noproxy '*' -X POST http://127.0.0.1:18790/send -H 'Content-Type: application/json' -d '{\"to\":\"$RECIPIENT\",\"text\":\"<消息原文>\"}'（返回 {\"ok\":true} 为成功）。发送后运行 ${CHIGUO_REPO}/.venv/bin/python ${CHIGUO_REPO}/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。"
   # 触发器脚本含 @@CHIGUO_REPO@@ 占位符（QuickJS 沙箱禁 require/process/__dirname，路径必须字面量）：
   # 注册前 sed 替换进临时文件，作业保存替换后的快照。子 shell 包裹（exit 只退子 shell），trap 清理临时文件。
   TRIG_SRC="$CHIGUO_REPO/scripts/chiguo-watch.js"
@@ -111,8 +111,8 @@ if ! grep -qs 'CHIGUO-STANDING-ORDER-START' "$SO_FILE" 2>/dev/null; then
 
 # CHIGUO-STANDING-ORDER-START
 ## 迟菓消息流程（standing order，每会话注入）
-每次收到主人的微信消息并准备回复时：
-1. 用 LLM 分析主人消息情绪，输出 JSON：{"warmth": -1~1, "effort": 0~1, "attention": 0~1, "topic": "可选", "suppress_hours": 可选}
+每次收到哥哥的微信消息并准备回复时：
+1. 用 LLM 分析哥哥消息情绪，输出 JSON：{"warmth": -1~1, "effort": 0~1, "attention": 0~1, "topic": "可选", "suppress_hours": 可选}
 2. 运行 ${CHIGUO_REPO}/.venv/bin/python ${CHIGUO_REPO}/chiguo_daemon.py --user-msg <消息原文> --analysis '<JSON>'
 3. 按 ~/.openclaw/workspace/skills/chiguo/SUN2.md 人格回复
 4. 纪念日/假期指令：运行 chiguo_daemon.py --anniversary / --break 对应命令
