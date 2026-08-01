@@ -56,6 +56,20 @@ case $EC in
     2) fail "环境存在严重问题(见上方 JSON),请先修复再继续" ;;
 esac
 
+# ── 5. OpenClaw 集成安装（可跳过: bash deploy.sh --skip-integration）──
+if [[ "$*" != *--skip-integration* ]]; then
+    say "安装 OpenClaw 集成（trigger-script 门控 + standing order）..."
+    set +e
+    bash "$PROJECT_DIR/scripts/install_integration.sh" "$@"
+    IC=$?
+    set -e
+    case $IC in
+        0) say "集成安装完成 ✓" ;;
+        1) warn "集成安装有警告/残留未处理（见上方输出），daemon 部署不受影响" ;;
+        2) fail "集成安装严重问题，请修复后重试（或 --skip-integration 跳过）" ;;
+    esac
+fi
+
 # ── 6. 迁移提示 ─────────────────────────────────────────────
 if [ ! -f chiguo_state.json ]; then
     warn "chiguo_state.json 不存在 → 若从旧运行机迁移,请拷贝 state/decisions 等运行时文件"
@@ -65,12 +79,10 @@ fi
 cat <<EOF
 
 ────────────────── 部署完成 ──────────────────
-定时任务: 通过 OpenClaw cron 注册(每 30 分钟),参考 doc/OPENCLAW_INTEGRATION.md:
-  openclaw cron add \
-    --name chiguo-check \
-    --cron "*/30 * * * *" \
-    --session main --wake now \
-    --system-event "运行 $PROJECT_DIR/.venv/bin/python $PROJECT_DIR/chiguo_daemon.py。解析 stdout JSON。若 action=idle 回复 NO_REPLY;若 action=send 按 SUN2.md 人格生成消息并发送(见 doc/OPENCLAW_INTEGRATION.md 完整文本)"
+OpenClaw 集成: 已由本脚本自动完成（trigger-script 门控 + standing order）
+  手动重跑/排查: bash scripts/install_integration.sh --dry-run（扫描）| --yes（自动修复）
+  端到端冒烟:   openclaw automations run chiguo-check --wait --wait-timeout 10m
+  完整指南:     doc/OPENCLAW_INTEGRATION.md
 
 手动验证:
   $PROJECT_DIR/.venv/bin/python chiguo_daemon.py            # 单次决策 → JSON
