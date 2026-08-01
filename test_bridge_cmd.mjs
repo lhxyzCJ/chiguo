@@ -35,6 +35,19 @@ t('detect: 尾标点剥离', () => {
   assert.ok(!r.daemon[1].includes('！'), '感叹号不应进命令')
   assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 11-03 主人生日'])
 })
+t('detect: 哥哥/主人 前缀兼容（哥哥记住X月X日是XX）', () => {
+  const r = detectSpecialCommand('哥哥记住5月11日是迟菓生日')
+  assert.strictEqual(r.action, 'anniversary_added')
+  assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 05-11 迟菓生日'])
+  assert.strictEqual(detectSpecialCommand('主人记住3月1日开学日').action, 'anniversary_added')
+})
+t('detect: 尾缀「了」不算名称（记住5月11日了 → 不拦截交 pi）', () => {
+  assert.strictEqual(detectSpecialCommand('记住5月11日了'), null)
+})
+t('detect: 尾缀「了」剥离（记住5月11日是生日了 → 名称 生日）', () => {
+  const r = detectSpecialCommand('记住5月11日是生日了')
+  assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 05-11 生日'])
+})
 
 // ── 检测：倒计时添加 ──
 t('detect: YYYY年M月D日要XX → countdown YYYY-MM-DD', () => {
@@ -73,6 +86,10 @@ t('detect: 有哪些纪念日 → list', () => {
 })
 t('detect: 纪念日列表 → list', () => {
   assert.strictEqual(detectSpecialCommand('纪念日列表').action, 'anniversary_list')
+})
+t('detect: 列表两分支 ^ 锚定（"今天是纪念日列表"/"我们有哪些纪念日" 不命中）', () => {
+  assert.strictEqual(detectSpecialCommand('今天是纪念日列表'), null)
+  assert.strictEqual(detectSpecialCommand('我们有哪些纪念日'), null)
 })
 t('detect: 放假了 → break on', () => {
   const r = detectSpecialCommand('放假了')
@@ -149,16 +166,31 @@ t('buildReply: daemon error（error 字段空）→ 兜底文案', () => {
 })
 
 // ── executeSpecialCommand：fake daemon 真实 execFile 链路 ──
+// fake daemon 输出 shape 固化自真实 daemon 实测（2026-08-02 隔离临时目录跑
+// chiguo_daemon.py --anniversary add/list/remove + --break on）：
+//   add   → {action:'anniversary_added', ok, id, name, date, type}          （chiguo_daemon.py:1186-1188）
+//   list  → {action:'anniversary_list', anniversaries:[{id,type,name,date,note,created_at}...], count}  （:1195-1203）
+//   remove→ {action:'anniversary_removed', ok}                               （:1191-1193）
+//   break → {action:'break_set', manual_override, message}                   （:1318-1325）
 const tmp = mkdtempSync(join(tmpdir(), 'bridge-cmd-'))
 const FAKE_DAEMON = join(tmp, 'fake-daemon.mjs')
 writeFileSync(FAKE_DAEMON, `
 const args = process.argv.slice(2)
-if (args[0] === '--break' && args[1] === 'on') {
-  process.stdout.write(JSON.stringify({ action: 'break_set', manual_override: true, message: 'ok' }))
+if (args[0] === '--break') {
+  process.stdout.write(JSON.stringify({ action: 'break_set', manual_override: args[1] === 'on', message: '假期模式已' + (args[1] === 'on' ? '开启' : '关闭') }))
 } else if (args[0] === '--anniversary' && args[1].startsWith('list')) {
-  process.stdout.write(JSON.stringify({ action: 'anniversary_list', anniversaries: [{ name: '生日', date: '05-11', type: 'anniversary' }], count: 1 }))
-} else if (args[0] === '--anniversary') {
-  process.stdout.write(JSON.stringify({ action: 'anniversary_added', ok: true, name: '考试', date: '2026-12-25', type: 'countdown' }))
+  process.stdout.write(JSON.stringify({ action: 'anniversary_list', anniversaries: [
+    { id: 'a1', type: 'countdown', name: '考试', date: '2026-12-25', note: '', created_at: '2026-08-01' },
+    { id: 'a2', type: 'anniversary', name: '生日', date: '05-11', note: '', created_at: '2026-08-01' },
+  ], count: 2 }))
+} else if (args[0] === '--anniversary' && (args[1].startsWith('add countdown') || args[1].startsWith('add anniversary'))) {
+  const p = args[1].split(' ')
+  process.stdout.write(JSON.stringify({ action: 'anniversary_added', ok: true, id: '5839c237dcef', name: p.slice(3).join(' '), date: p[2], type: p[1] }))
+} else if (args[0] === '--anniversary' && args[1].startsWith('remove')) {
+  process.stdout.write(JSON.stringify({ action: 'anniversary_removed', ok: true }))
+} else if (args[0] === '--anniversary' && args[1].startsWith('add')) {
+  process.stdout.write(JSON.stringify({ action: 'anniversary_added', ok: false, error: 'month must be in 1..12' }))
+  process.exit(1)
 } else {
   process.stdout.write(JSON.stringify({ ok: false, error: 'boom' }))
   process.exit(1)
@@ -172,17 +204,31 @@ t('executeSpecialCommand: break on → ok + 迟菓确认', async () => {
   assert.strictEqual(r.ok, true)
   assert.ok(r.reply.includes('放假了'))
 })
-t('executeSpecialCommand: anniversary add → ok + 名字日期', async () => {
+t('executeSpecialCommand: anniversary add → ok + 真实 shape 渲染（含 id 字段）', async () => {
   const spec = detectSpecialCommand('2026年12月25日要考试')
   const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
-  assert.ok(r.reply.includes('考试') && r.reply.includes('2026-12-25'))
+  assert.ok(r.reply.includes('考试') && r.reply.includes('2026-12-25'), r.reply)
 })
-t('executeSpecialCommand: list → 行渲染', async () => {
+t('executeSpecialCommand: add anniversary（真实 shape）→ 记住了！MM-DD——名称', async () => {
+  const spec = detectSpecialCommand('记住5月11日是迟菓生日')
+  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  assert.strictEqual(r.ok, true)
+  assert.ok(r.reply.includes('记住了！05-11——迟菓生日'), r.reply)
+})
+t('executeSpecialCommand: list → 真实 shape 行渲染（含倒计时标记 + count）', async () => {
   const spec = detectSpecialCommand('有哪些纪念日')
   const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
-  assert.ok(r.reply.includes('· 生日（05-11）'))
+  assert.ok(r.reply.includes('有 2 个'), r.reply)
+  assert.ok(r.reply.includes('· 生日（05-11）'), r.reply)
+  assert.ok(r.reply.includes('· 考试（2026-12-25 · 倒计时）'), r.reply)
+})
+t('executeSpecialCommand: break off（真实 shape）→ 开学确认', async () => {
+  const spec = detectSpecialCommand('开学了')
+  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  assert.strictEqual(r.ok, true)
+  assert.ok(r.reply.includes('开学了'), r.reply)
 })
 t('executeSpecialCommand: daemon 非零退出 + error JSON → ok:false + 处理失败', async () => {
   const spec = { action: 'x', daemon: ['--bad'], hint: 'hint' }

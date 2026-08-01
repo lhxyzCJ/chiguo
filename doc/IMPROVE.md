@@ -1,6 +1,19 @@
 # 改进清单
 
-> 版本: 2026-08-02 | 寄主迁移收尾（v1.4，Phase 4 Task 14）完成，见下
+> 版本: 2026-08-02 | 寄主迁移收尾（v1.4，Phase 4 Task 14）完成 + Task 14 评审修复，见下
+
+---
+
+## 2026-08-02 — 任务 14 评审修复：真实 daemon shape 验证 + bridge 链路测试 + 检测边界收紧
+
+**问题**：Task 14 评审两项 Important——①buildReply 依赖真实 daemon add 输出 shape 未验证（fake daemon 自拟 shape，31 用例全跑在手写 fake 上）；②bridge detect→execute→reply 特殊命令链路零测试覆盖。另有 6 项 Minor（文档/正则边界/死代码/版本号残留）。
+
+**方案**：
+- **真实 shape 验证**（Important #1）：隔离临时目录实测 `chiguo_daemon.py --anniversary "add anniversary 12-31 测试"` / `"add countdown ..."` / list / remove（临时 cwd 放空 anniversaries.json，未污染真实数据，跑完删除）——add 输出 flat `{action,ok,id,name,date,type}`（chiguo_daemon.py:1186-1188），list 条目含 `note/created_at`；与 buildReply 读取字段一致 → **代码无需改**，真实 shape 固化进 test_bridge_cmd.mjs fake daemon（add 分支回显命令内 name/date，同真 daemon 契约），并新增真实 shape 渲染用例（add anniversary、list 双行含倒计时标记 + count、break off）
+- **bridge 链路测试**（Important #2）：bridge.mjs onMessage 内联逻辑抽为 `export handleMessage(text,msg,bot,queue)`（recordUserMsg → detectSpecialCommand 命中 → execute+reply 不经 pi；否则 askPi+upgradeAnalysis+reply），`TurnQueue` 导出；test_bridge_askpi.mjs 补 4 链路用例（特殊命令不调 pi + daemon argv 精确断言 + 真实 shape 确认文案、--break on 链路、普通消息 askPi 全序、空文本短路），fake daemon 补真实 shape JSON 输出
+- **Minor**：①PI_INTEGRATION.md §五 注明裸「放假了」触发无限期 `--break on`（manual_override，`--break off` 关闭，monitor 持续告警）；②记住 正则加 `(?:哥哥|主人)?` 前缀（哥哥记住X月X日命中，仅纪念日分支、保守）；③尾标点剥离表加「了」（「记住5月11日了」不再把「了」当名称，交 pi）；④buildReply 删除 anniversary_removed 死分支（detect 不产生该 action）；⑤列表正则第二分支 ^ 锚定（「今天是纪念日列表」不再误命中）；⑥README.md STATE_VERSION=8→10 与 CLAUDE.md/chiguo_state.py 对齐
+
+**验证**：test_bridge_cmd 37/37（+6）、test_bridge_askpi 14/14（+4）、test_pi_run 19/19、test_trigger_script 15/15、test_wechat_bridge 通过、node --check 干净；真实 daemon add/list/remove/break 输出 shape 实测与 buildReply 匹配；仓库无 anniversaries.json/break_state.json 残留（未污染）。
 
 ---
 

@@ -1546,13 +1546,13 @@ standing order 停用后由 `wechat-bridge/command-detect.mjs` 确定性接管�
 
 | 哥哥说 | 执行 |
 |--------|------|
-| 记住X月X日(是)XX | `--anniversary "add anniversary MM-DD <名称>"` |
+| (哥哥/主人)记住X月X日(是)XX | `--anniversary "add anniversary MM-DD <名称>"`（名称尾缀 `了`/标点剥离） |
 | YYYY年X月X日(是/为/要)XX / X月X日要XX | `--anniversary "add countdown YYYY-MM-DD <名称>"`（无年份推断：今年已过 → 明年，CST） |
 | 有哪些纪念日 / 纪念日列表 | `--anniversary list` |
-| 放假了 / 放暑假了 / 我放假了 | `--break on` |
+| 放假了 / 放暑假了 / 我放假了 | `--break on`（**无限期** manual_override，误触发 `--break off` 关闭） |
 | 开学了 / 我开学了 | `--break off` |
 
-防误伤约束：消息 ≤40 字、非问句（末尾 吗/？/? 不拦截）、非 `你/您` 开头、`今天放假了` 等一天性陈述不拦截（交 pi 自然回复）。执行后回迟菓风确认文案。
+防误伤约束：消息 ≤40 字、非问句（末尾 吗/？/? 不拦截）、非 `你/您` 开头、`今天放假了` 等一天性陈述不拦截（交 pi 自然回复）；列表两分支均锚定开头（"今天是纪念日列表" 不命中）。执行后回迟菓风确认文案（daemon JSON 驱动，add/list 输出 shape 经真实 daemon 实测固化）。
 
 ### 11.2 会话与并发模型
 

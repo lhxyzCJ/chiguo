@@ -1,6 +1,6 @@
-// test_bridge_askpi.mjs — bridge.mjs askPi / analysis 接线测试（独立 runner）
+// test_bridge_askpi.mjs — bridge.mjs askPi / analysis / 特殊命令链路接线测试（独立 runner）
 // 用法: node test_bridge_askpi.mjs（退出码 0=全过，1=有失败）
-// 集成式：fake pi-run（canned JSON 响应）+ fake daemon（记录 argv），真实 execFile 链路。
+// 集成式：fake pi-run（canned JSON 响应）+ fake daemon（记录 argv + 真实 shape JSON），真实 execFile 链路。
 import assert from 'node:assert'
 import { writeFileSync, mkdtempSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,6 +20,19 @@ process.stdout.write(readFileSync(process.env.FAKE_PI_RESPONSE, 'utf8'))
 writeFileSync(FAKE_DAEMON, `
 import { appendFileSync } from 'node:fs'
 appendFileSync(process.env.FAKE_DAEMON_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+const args = process.argv.slice(2)
+if (args[0] === '--anniversary') {
+  const p = args[1].split(' ')
+  if (p[0] === 'add') {
+    process.stdout.write(JSON.stringify({ action: 'anniversary_added', ok: true, id: '5839c237dcef', name: p.slice(3).join(' '), date: p[2], type: p[1] }))
+  } else if (p[0] === 'list') {
+    process.stdout.write(JSON.stringify({ action: 'anniversary_list', anniversaries: [], count: 0 }))
+  } else {
+    process.stdout.write(JSON.stringify({ action: 'anniversary_removed', ok: true }))
+  }
+} else if (args[0] === '--break') {
+  process.stdout.write(JSON.stringify({ action: 'break_set', manual_override: args[1] === 'on', message: 'ok' }))
+}
 process.exit(Number(process.env.FAKE_DAEMON_EXIT ?? 0))
 `)
 
@@ -28,7 +41,7 @@ process.env.WECHAT_BRIDGE_DAEMON_PY = '/usr/bin/node'
 process.env.WECHAT_BRIDGE_DAEMON = FAKE_DAEMON
 process.env.FAKE_PI_LOG = PI_LOG
 process.env.FAKE_DAEMON_LOG = DAEMON_LOG
-const { askPi, recordUserMsg, upgradeAnalysis } = await import('./wechat-bridge/bridge.mjs')
+const { askPi, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue } = await import('./wechat-bridge/bridge.mjs')
 
 let passed = 0
 const tests = []
@@ -131,6 +144,64 @@ t('全链路: recordUserMsg → askPi → upgradeAnalysis 顺序与内容', asyn
   assert.deepStrictEqual(JSON.parse(dLines()[db]), ['--user-msg', '哥哥的消息'])
   assert.deepStrictEqual(JSON.parse(dLines()[db + 1]), ['--user-msg', '哥哥的消息', '--analysis', JSON.stringify({ warmth: 0.9, effort: 0.1 })])
   assert.strictEqual(pLines().length, pb + 1, 'pi 只被调一次')
+})
+
+// ── onMessage 链路（handleMessage：detect→execute→reply 接线，bridge.mjs）──
+const botStub = () => {
+  const replies = []
+  return {
+    replies,
+    reply: async (msg, text) => { replies.push(text) },
+    sendTyping: async () => {},
+  }
+}
+const msg = (text) => ({ userId: 'owner@im.wechat', text })
+const queue = new TurnQueue()
+
+t('handleMessage: 特殊命令（记住X月X日）→ 不调 pi、daemon --anniversary add、真实 shape 确认文案', async () => {
+  const db = dLines().length
+  const pb = pLines().length
+  const bot = botStub()
+  const r = await handleMessage('记住5月11日是迟菓生日', msg('记住5月11日是迟菓生日'), bot, queue)
+  assert.strictEqual(r, 'special')
+  assert.strictEqual(pLines().length, pb, '特殊命令不应调 pi')
+  assert.deepStrictEqual(JSON.parse(dLines()[db]), ['--user-msg', '记住5月11日是迟菓生日'])
+  assert.deepStrictEqual(JSON.parse(dLines()[db + 1]), ['--anniversary', 'add anniversary 05-11 迟菓生日'])
+  assert.deepStrictEqual(bot.replies, ['记住了！05-11——迟菓生日。……哼，才不会忘记。'])
+})
+t('handleMessage: 特殊命令（放假了）→ 不调 pi、daemon --break on、确认文案', async () => {
+  const db = dLines().length
+  const pb = pLines().length
+  const bot = botStub()
+  const r = await handleMessage('放假了', msg('放假了'), bot, queue)
+  assert.strictEqual(r, 'special')
+  assert.strictEqual(pLines().length, pb, '特殊命令不应调 pi')
+  assert.deepStrictEqual(JSON.parse(dLines()[db]), ['--user-msg', '放假了'])
+  assert.deepStrictEqual(JSON.parse(dLines()[db + 1]), ['--break', 'on'])
+  assert.ok(bot.replies[0].includes('放假了'), bot.replies[0])
+})
+t('handleMessage: 普通消息 → 走 askPi（--prompt 原文 --analysis-mode）+ upgradeAnalysis + 回复', async () => {
+  const db = dLines().length
+  const pb = pLines().length
+  setResponse({ ok: true, text: '今天天气不错呢', analysis: { warmth: 0.3, effort: 0.4 } })
+  const bot = botStub()
+  const r = await handleMessage('今天天气怎么样', msg('今天天气怎么样'), bot, queue)
+  assert.strictEqual(r, 'pi')
+  assert.strictEqual(pLines().length, pb + 1, 'pi 应被调一次')
+  assert.deepStrictEqual(JSON.parse(pLines()[pb]), ['--prompt', '今天天气怎么样', '--analysis-mode'])
+  assert.deepStrictEqual(JSON.parse(dLines()[db]), ['--user-msg', '今天天气怎么样'])
+  assert.deepStrictEqual(JSON.parse(dLines()[db + 1]), ['--user-msg', '今天天气怎么样', '--analysis', JSON.stringify({ warmth: 0.3, effort: 0.4 })])
+  assert.deepStrictEqual(bot.replies, ['今天天气不错呢'])
+})
+t('handleMessage: 空文本 → 不调 pi/daemon、不回复', async () => {
+  const db = dLines().length
+  const pb = pLines().length
+  const bot = botStub()
+  const r = await handleMessage('  ', msg('  '), bot, queue)
+  assert.strictEqual(r, null)
+  assert.strictEqual(pLines().length, pb)
+  assert.strictEqual(dLines().length, db)
+  assert.deepStrictEqual(bot.replies, [])
 })
 
 ;(async () => {

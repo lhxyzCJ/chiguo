@@ -43,12 +43,12 @@ export function detectSpecialCommand(text) {
   if (!t || t.length > MAX_LEN) return null
   if (/[吗？?]$/.test(t) || /^(你|您)/.test(t)) return null  // 问句/对话式提问不拦截
 
-  // 1) 纪念日：记住X月X日(是|为)?XX → add anniversary MM-DD <name>
-  let m = t.match(/^记住\s*(\d{1,2})月(\d{1,2})日\s*(?:是|为)?\s*(.+)$/)
+  // 1) 纪念日：记住X月X日(是|为)?XX → add anniversary MM-DD <name>（哥哥/主人 前缀兼容）
+  let m = t.match(/^(?:哥哥|主人)?记住\s*(\d{1,2})月(\d{1,2})日\s*(?:是|为)?\s*(.+)$/)
   if (m) {
     const mm = String(Number(m[1])).padStart(2, '0')
     const dd = String(Number(m[2])).padStart(2, '0')
-    const name = m[3].replace(/[。！!～~，,、]+$/, '').trim()
+    const name = m[3].replace(/[。！!～~，,、了]+$/, '').trim()
     if (name) {
       return {
         action: 'anniversary_added',
@@ -73,7 +73,7 @@ export function detectSpecialCommand(text) {
   }
   m = t.match(/^(\d{1,2})月(\d{1,2})日\s*要\s*(.+)$/)
   if (m) {
-    const name = m[3].replace(/[。！!～~，,、]+$/, '').trim()
+    const name = m[3].replace(/[。！!～~，,、了]+$/, '').trim()
     if (name) {
       const year = inferYear(Number(m[1]), Number(m[2]))
       const date = `${year}-${String(Number(m[1])).padStart(2, '0')}-${String(Number(m[2])).padStart(2, '0')}`
@@ -85,8 +85,8 @@ export function detectSpecialCommand(text) {
     }
   }
 
-  // 3) 列表：有哪些纪念日 / 纪念日列表等
-  if (/^(?:有)?哪些纪念日|纪念日(?:列表|有哪些|查|看看)/.test(t)) {
+  // 3) 列表：有哪些纪念日 / 纪念日列表等（两分支均 ^ 锚定）
+  if (/^(?:(?:有)?哪些纪念日|纪念日(?:列表|有哪些|查|看看))/.test(t)) {
     return { action: 'anniversary_list', daemon: ['--anniversary', 'list'], hint: '让我看看都有什么日子……' }
   }
 
@@ -111,8 +111,6 @@ export function buildReply(action, result) {
       return `记住了！${result.date}——${result.name}。……哼，才不会忘记。`
     case 'countdown_added':
       return `嗯嗯，${result.name}（${result.date}）——我算着日子呢。`
-    case 'anniversary_removed':
-      return result.ok ? '嗯，删掉了。' : '没找到那个纪念日……你确定记的是这个？'
     case 'anniversary_list': {
       const items = result.anniversaries ?? []
       if (!items.length) return '纪念日一个都没有……哼，那我先自己记住。'
