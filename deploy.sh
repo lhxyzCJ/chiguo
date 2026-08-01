@@ -32,15 +32,16 @@ else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
 
-# ── 3. 全量自检(19 py + 2 脚本测试,任一失败即中止) ──────────
+# ── 3. 全量自检(19 py + 3 脚本测试,任一失败即中止) ──────────
 TESTS=(test_chiguo_math test_holiday_parser test_integration test_monitor
        test_eventbus test_personality test_bayesian test_composer
        test_ebbinghaus test_longing test_escape_valve test_feedback
        test_trigger test_topics test_circadian test_followup
        test_netease_proof test_netease_service test_envcheck)
-say "运行脚本测试(2 个文件) ..."
+say "运行脚本测试(3 个文件) ..."
 node test_trigger_script.js >/dev/null || fail "test_trigger_script.js 失败,中止部署"
 bash test_install_integration.sh >/dev/null || fail "test_install_integration.sh 失败,中止部署"
+bash test_wechat_bridge.sh >/dev/null || fail "test_wechat_bridge.sh 失败,中止部署"
 say "运行全量 Python 测试(${#TESTS[@]} 个文件) ..."
 for t in "${TESTS[@]}"; do
     uv run python "$t.py" >/dev/null || fail "$t.py 失败,中止部署"
@@ -75,6 +76,30 @@ if [[ "$*" != *--skip-integration* ]]; then
     esac
 fi
 
+# ── 5.5 微信桥 wechat-bridge 安装+启动（可跳过: bash deploy.sh --skip-bridge）──
+BRIDGE_OK=0
+if [[ "$*" != *--skip-bridge* ]]; then
+    say "安装微信桥（wechat-bridge，发送端点 + 回复回传）..."
+    set +e
+    bash "$PROJECT_DIR/scripts/wechat-bridge.sh" install
+    BI=$?
+    set -e
+    case $BI in
+        0) BRIDGE_OK=1; say "微信桥安装完成 ✓" ;;
+        2) fail "微信桥安装严重问题，请修复后重试（或 --skip-bridge 跳过）" ;;
+    esac
+    set +e
+    bash "$PROJECT_DIR/scripts/wechat-bridge.sh" start
+    BC=$?
+    set -e
+    BRIDGE_OK=0
+    [ "$BC" = 0 ] && BRIDGE_OK=1
+    case $BC in
+        0) say "微信桥启动 ✓" ;;
+        1) warn "微信桥未启动（通常=无登录态/缺 .env；扫码见日志 /tmp/opencode/wechat-bridge.log 或 bash scripts/wechat-bridge.sh status）" ;;
+    esac
+fi
+
 # ── 6. 迁移提示 ─────────────────────────────────────────────
 if [ ! -f chiguo_state.json ]; then
     warn "chiguo_state.json 不存在 → 若从旧运行机迁移,请拷贝 state/decisions 等运行时文件"
@@ -88,6 +113,7 @@ OpenClaw 集成: $( [ "$INTEG_OK" = 1 ] && echo "已由本脚本自动完成" ||
   手动重跑/排查: bash scripts/install_integration.sh --dry-run（扫描）| --yes（自动修复）
   端到端冒烟:   openclaw cron run chiguo-check --expect-final
   完整指南:     doc/OPENCLAW_INTEGRATION.md
+微信桥:        $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态随仓库保留; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && start 排查）")
 
 手动验证:
   $PROJECT_DIR/.venv/bin/python chiguo_daemon.py            # 单次决策 → JSON

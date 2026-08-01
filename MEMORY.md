@@ -1,5 +1,29 @@
 # MEMORY.md
 
+## 2026-08-01 — wechat-bridge 可移植化 + 登录态随仓库保留（v1.2 → v1.3）
+
+**背景**：用户要求 wechat-bridge 做成可移植（未来设备直接部署），登录状态"尝试保留"。关键约束（用户明确）：登录 token 若写入 wechatbot（第三方 fork）仓库则不可接受，放 chiguo 仓库内可以。
+
+- **bridge 移入仓库**：`/root/wechat-bridge`（非 git 独立目录）→ `wechat-bridge/`（仓库内）；bridge.mjs v3 可移植化——`storageDir` 默认改为 `./credentials/`（`import.meta.url` 解析，不再有 `~` 未展开 bug）；package.json 空依赖，由安装写入 `file:` 依赖
+- **登录态保留**：credentials.json + context_tokens.json + cursor.json 存 `wechat-bridge/credentials/` **git 跟踪**（chiguo 私有仓库；.gitignore 注释说明故意跟踪）；新设备 clone 即带登录态，SDK 启动自动复用（实测 `Loaded stored credentials` 未重新扫码 ✓），失效走 `session:expired` → 自动打印新二维码重登（"尝试保留"语义）；强制重登 `bash scripts/wechat-bridge.sh login`
+- **管理脚本** `scripts/wechat-bridge.sh`（幂等）：install（clone/pull wechatbot SDK 到 `$HOME/wechatbot` → `npm install @wechatbot/wechatbot@file:<SDK>/nodejs` → 生成 .env：端口/OWNER 从 toml 读/daemon 路径/storage）、start（`node --env-file=.env bridge.mjs` setsid nohup）、stop、status、login；支持 `CHIGUO_REPO_OVERRIDE`/`WECHATBOT_DIR`/`WECHATBOT_REPO` 注入
+- **deploy.sh 第 5.5 步**接入 install+start（`--skip-bridge` 跳过），脚本测试清单 +test_wechat_bridge.sh（8 用例桩测试）
+- 旧目录 `/root/wechat-bridge` 已清理（凭证已迁入仓库）
+- 版本：v1.2 → v1.3
+- 文件：wechat-bridge/（新，含 credentials/）、scripts/wechat-bridge.sh（新）、test_wechat_bridge.sh（新）、deploy.sh、.gitignore、AGENTS.md、doc/OPENCLAW_INTEGRATION.md、chiguo_version.py、MEMORY.md
+
+## 2026-08-01 — 集成链路修复：cron 触发器 + wechat-bridge 发送 + 回复钩子（v1.1 → v1.2）
+
+**背景**：用户检查发现 chiguo 决策引擎正常但 OpenClaw 集成链路断裂——cron 触发器连续报错、openclaw-weixin 通道被拆、回复不回传 daemon。逐项修复。
+
+- **cron 触发器根因**（OpenClaw 2026.7.1-2）：trigger 脚本在 QuickJS WASM 沙箱求值，`require(`/`import` 静态扫描禁用（`code mode module access is disabled`），无 `process`/`__dirname`/`module`。`scripts/chiguo-watch.js` 删 shebang + require，仓库路径改 `@@CHIGUO_REPO@@` 字面量占位符（安装器注册时 sed 替换进临时文件，作业保存替换后快照）。线上作业 `e9cd8dd8-...` 已 `cron edit --trigger-script` + `--system-event` 刷新，评估状态 error→ok，fire 正常
+- **发送链路切换 wechat-bridge**（openclaw-weixin 通道已拆，不再恢复）：`/root/wechat-bridge/bridge.mjs` 新增 `POST http://127.0.0.1:18790/send`（仅 127.0.0.1，仅允许 `WECHAT_BRIDGE_OWNER`，端口可 `WECHAT_BRIDGE_SEND_PORT` 覆盖）；agent 生成消息后 `curl --noproxy '*'` 调用（本机 curl 不匹配 no_proxy 的 `127.*` 通配，不带必 503）。注意：该 fork 的 `bot.start()` 长轮询挂起不返回 → 端点须先于 start 启动。端到端验证：cron fire → agent → bridge → 微信送达 ✓
+- **回复钩子**：bridge 收消息时确定性先跑 `chiguo_daemon.py --user-msg`（无分析）；standing order 保留（AGENTS.md 已有，agent 补 `--analysis`）；daemon 新增 recv_dedup 去重升级语义——同文本 600s 内重复记录只叠加分析微调，不重复基础效果（`CooldownState.recv_dedup`，STATE_VERSION 8→9，`_apply_analysis_impact` 提取共用）
+- SKILL.md 全面修正：`/root/character_test/` 陈旧路径 → `/root/chiguo/`；发送步骤改 wechat-bridge；§一说明决策已由触发器脚本运行
+- 测试：test_feedback.py 新增 3 用例（同文本跳过/分析升级/不同文本全记录），全套 19 py + 2 脚本全绿；安装器子 shell 包裹修复 `exit` 误杀 + 触发器源文件回退
+- 版本：`chiguo_version.py` VERSION "1.1" → "1.2"
+- 文件：scripts/chiguo-watch.js、scripts/install_integration.sh、chiguo_state.py、chiguo_daemon.py、test_feedback.py、chiguo_version.py、AGENTS.md、CLAUDE_CODE_RULES.md、doc/OPENCLAW_INTEGRATION.md（v12）、doc/SYSTEM.md、doc/IMPROVE.md；仓库外：/root/wechat-bridge/bridge.mjs、~/.openclaw/workspace/skills/chiguo/SKILL.md
+
 ## 2026-08-01 — 全面审查与简化（v1 → v1.1）
 
 **背景**：用户要求全面审查并简化代码、完善文档、push、版本号步进 0.1。5 路并行子代理只读审查（state/daemon/monitor 组、工具链 20 模块、测试脚本组、文档一致性组），发现死代码/冗余/文档漂移 50+ 项，全部 grep 验证。

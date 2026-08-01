@@ -34,7 +34,7 @@
 │                                                                    │
 │  trigger-script(15分钟,零模型) 读取 daemon 输出                    │
 │  → action=send → chiguo skill (SUN2.md) 生成消息                   │
-│  → openclaw-weixin 通道发送                                        │
+│  → curl POST wechat-bridge /send (127.0.0.1:18790) 发送           │
 │  → daemon.py --user-msg 记录交互 → --send-result 回传发送结果（v6 反馈闭环） │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -951,7 +951,7 @@ idle reason 枚举：
 
 ```toml
 [openclaw]
-wechat_channel = "openclaw-weixin"      # 微信通道名
+wechat_channel = "openclaw-weixin"      # v12 起仅作元数据（实际发送走 wechat-bridge /send，见 doc/OPENCLAW_INTEGRATION.md）
 wechat_recipient = "..."                 # 接收者 ID
 personality_source = "~/.openclaw/workspace/skills/chiguo"  # SUN2.md 目录（~ 展开为 $HOME）
 

@@ -1,7 +1,11 @@
-# OpenClaw 集成指南（v11）
+# OpenClaw 集成指南（v12）
 
 > 官方文档出处: docs.openclaw.ai（automation/cron-jobs、hooks、cli、doctor；功能探测以
 > `<command> --help` 为权威清单）。旧版（v4）cron system-event + Claude-Code hook 方案见文末「降级路径」。
+>
+> v12 变更：微信发送链路从 openclaw-weixin 通道切换到 wechat-bridge（iLink Bot SDK，`/root/wechat-bridge`）：
+> agent 生成消息后 curl POST bridge 本地端点发送；回复侧由 bridge 确定性先记录 `--user-msg`，
+> standing order 补 LLM 分析（daemon recv_dedup 升级语义，不重复记账）。
 
 ## 架构
 
@@ -12,13 +16,15 @@ OpenClaw cron add chiguo-check --every 15m --trigger-script scripts/chiguo-watch
     ├─ action=idle → {fire:false}（零模型调用，~90% 的评估不唤醒 agent）
     └─ action=send → {fire:true, message:<决策 JSON>}
   → main session agent 收到 system-event（生成指令 + 决策 JSON）
-    → 按 SUN2.md 生成 1-3 句 → openclaw-weixin 发送
+    → 按 SUN2.md 生成 1-3 句
+    → curl --noproxy '*' -X POST http://127.0.0.1:18790/send {"to","text"} → wechat-bridge → bot.send()
     → daemon --record-send / --send-result 回写发送状态（幂等）
 
-回复侧（standing order 单记录，替代 v4 UserPromptSubmit hook）：
-微信消息到达 → agent 正常回复；standing order（agents/main/AGENTS.md）强制流程：
-  LLM 情绪分析（warmth/effort/attention/topic）→ daemon --user-msg --analysis → SUN2.md 回复
-  （无 hook 双重记录；回复延迟建模唯一入口是 agent 调 --user-msg 这一次）
+回复侧（bridge 确定性记录 + standing order 分析升级，替代 v4 UserPromptSubmit hook）：
+微信消息到达 → wechat-bridge 先确定性跑 daemon --user-msg（无分析，回复延迟唯一入口）
+  → agent 正常回复；standing order（agents/main/AGENTS.md）强制流程：
+    LLM 情绪分析（warmth/effort/attention/topic）→ daemon --user-msg --analysis（同文本 → recv_dedup 升级，只叠加分析）
+    → SUN2.md 回复
 ```
 
 ---
@@ -51,7 +57,7 @@ bash deploy.sh                                  # 或随部署一起（传 --ski
 | 0 探测 | openclaw 存在性 / 功能探测 / Gateway 状态 | `openclaw -V`；`openclaw cron add --help \| grep --trigger-script`（官方：`<command> --help` 为权威清单）；`openclaw gateway status`。无 openclaw → 跳过安装退出 0；不支持 `--trigger-script` → 提示降级路径退出 1 |
 | 0b 残留扫描 | 旧方案残留发现即报告 | `openclaw cron list --all \| grep -i chiguo`（--all 含禁用）；`.claude/settings.json` 中 chiguo 的 UserPromptSubmit 条目；`~/.openclaw/workspace/skills/chiguo/scripts/on-user-msg.sh`；`openclaw hooks list \| grep -i chiguo`；`openclaw config get hooks.internal.handlers`（legacy 格式，官方建议迁移） |
 | 1 开关 | 开启官方危险自动化开关（脚本以 agent 权限无头执行，安装器仅注册 chiguo-watch.js 一条命令） | `openclaw config set cron.triggers.enabled true`；修改后 `openclaw config validate` |
-| 2 注册 | 先移除旧作业，再注册 trigger-script 作业（已存在则跳过，幂等） | `openclaw cron rm <旧作业>`；`openclaw cron add chiguo-check --every 15m --trigger-script '<仓库目录>/scripts/chiguo-watch.js' --session main --wake now --timeout-seconds 120 --system-event '<指令>'` |
+| 2 注册 | 先移除旧作业，再注册 trigger-script 作业（已存在则跳过，幂等）。触发器脚本含 `@@CHIGUO_REPO@@` 占位符（QuickJS 沙箱禁 require/process/__dirname，仓库路径必须字面量）→ 注册前 sed 替换进临时文件 | `openclaw cron rm <旧作业>`；`openclaw cron add chiguo-check --every 15m --trigger-script '<sed 替换后的临时文件>' --session main --wake now --timeout-seconds 120 --system-event '<指令>'` |
 | 3 standing order | 回复侧流程写入 `~/.openclaw/workspace/agents/main/AGENTS.md`（`# CHIGUO-STANDING-ORDER-START/END` 标记段，幂等：已存在跳过；写入前备份 .bak） | 见 §四全文 |
 | 3b 清理 | 清除 v4 残留：`.claude/settings.json` hook 条目（备份后 JSON 编辑，保留其他 hook）；on-user-msg.sh → `.bak` 后移除；OpenClaw 原生 chiguo hook 禁用；legacy handlers 检测并告警（官方建议迁移到 discovery 系统；doctor --fix 迁移清单不含该键 → 不自动处理，残留计入待办 PENDING） | `openclaw hooks disable <name>`；`openclaw config get hooks.internal.handlers`（检测） |
 | 4 验证 | 配置合法 / 作业在册 / 开关与 standing order 复验（config set / AGENTS.md 写入失败兜底 → PENDING）/ 官方审计（--yes 模式）/ 端到端冒烟 | `openclaw config validate`；`openclaw cron list \| grep chiguo-check`；`openclaw config get cron.triggers.enabled`（必须 true）；`grep CHIGUO-STANDING-ORDER-START ~/.openclaw/workspace/agents/main/AGENTS.md`；`openclaw security audit --deep`；`openclaw cron run chiguo-check --expect-final`（观察 run --expect-final 退出码与决策日志 chiguo_decisions.jsonl 新条目判断链路） |
@@ -59,10 +65,38 @@ bash deploy.sh                                  # 或随部署一起（传 --ski
 阶段 2 注册时写入的 `--system-event` 指令全文（与安装器 INSTRUCTION 一致）：
 
 ```
-收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给主人（当前微信会话上下文）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。发送后运行 <仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。
+收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给主人（<主人 id>）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。通过 wechat-bridge 发送：curl -s --noproxy '*' -X POST http://127.0.0.1:18790/send -H 'Content-Type: application/json' -d '{"to":"<主人 id>","text":"<消息原文>"}'（返回 {"ok":true} 为成功）。发送后运行 <仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。
 ```
 
 15 分钟间隔：idle 评估不再消耗模型，决策延迟从 30min 降到 15min；daemon 内部 pacing（poisson / min_interval / quiet hours）不受影响。
+
+### 发送端点（wechat-bridge）
+
+| 项 | 值 |
+|----|----|
+| 端点 | `POST http://127.0.0.1:18790/send`（仅 127.0.0.1；端口可用 `WECHAT_BRIDGE_SEND_PORT` 覆盖） |
+| 载荷 | `{"to": "<主人 id>", "text": "<消息原文>"}` |
+| 鉴权 | 仅允许发给 `WECHAT_BRIDGE_OWNER`（默认 = toml wechat_recipient），其余 403 |
+| 返回 | `{"ok":true}` / `{"ok":false,"error":"..."}`（HTTP 200 / 403 / 500 / 405 / 413） |
+| 代理 | 本机 `http_proxy` 存在且 curl 不匹配 no_proxy 的 `127.*` 通配 → **必须带 `--noproxy '*'`** |
+
+### 部署（可移植，随 chiguo 仓库）
+
+- bridge 本体在仓库内 `wechat-bridge/`（bridge.mjs + package.json + `credentials/` 登录态目录），
+  管理脚本 `scripts/wechat-bridge.sh <install|start|stop|status|login>`；deploy.sh 第 5.5 步自动 install + start
+  （`bash deploy.sh --skip-bridge` 跳过）。
+- **依赖**：wechatbot SDK（iLink fork）克隆到机器本地 `$HOME/wechatbot`（可 `WECHATBOT_DIR`/`WECHATBOT_REPO` 覆盖），
+  `npm install "@wechatbot/wechatbot@file:<SDK>/nodejs"` 写入 `wechat-bridge/package.json`；node_modules/.env 已 gitignore。
+- **登录态"尝试保留"**：登录凭证（credentials.json + context_tokens.json + cursor.json）存于仓库
+  `wechat-bridge/credentials/` **并 git 跟踪**（chiguo 为 private 仓库）→ 新设备 clone 即带登录态，
+  SDK 启动时自动复用（`Loaded stored credentials`）；若服务端失效 → `session:expired` → 自动打印新二维码重登。
+  凭证绝不写入 wechatbot 仓库（它是第三方 fork）。强制重登：`bash scripts/wechat-bridge.sh login`。
+- 环境变量：`.env` 由 install 生成（端口/OWNER/daemon 路径/storage），启动用 `node --env-file=.env bridge.mjs`；
+  也可手动 `WECHAT_BRIDGE_*` 覆盖。
+- 注意：该 fork 的 `bot.start()` 长轮询挂起不返回 → 发送端点必须先于 start 启动（已处理）。
+
+bridge（`wechat-bridge/bridge.mjs`，node，依赖 wechatbot fork SDK）收到微信消息时还确定性跑
+`<仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --user-msg <原文>`（无分析；失败仅记日志不阻塞回复流）。
 
 ---
 
@@ -81,7 +115,8 @@ bash deploy.sh                                  # 或随部署一起（传 --ski
 
 实现要点：
 
-- 执行：`tools.call('exec', {command})` 跑 `<仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --compact`（仓库路径来自环境变量 `CHIGUO_REPO`，缺省为脚本所在目录的上级）。
+- 执行：`tools.call('exec', {command})` 跑 `<仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --compact`。
+- **沙箱约束（OpenClaw 2026.7.1-2 实测）**：trigger 脚本在 QuickJS WASM VM 中求值，`require(`/`import` 静态扫描禁用（报 `code mode module access is disabled`），且无 `process`/`__dirname`/`module`/`console`。仓库路径必须是字符串字面量：脚本内写 `@@CHIGUO_REPO@@` 占位符，安装器注册时 sed 替换（作业保存替换后的快照；改脚本后需 `openclaw cron edit <id> --trigger-script <新文件>` 刷新快照）。无 shebang（代码被包进 `(async () => {...})()`）。
 - 解析：优先全文 JSON，失败逐行回退（stdout 杂音泄漏防护）；`--compact` 时 idle 输出最小单行 `{"action":"idle","version":...,"time":...}`（chiguo_watch 视为 fire:false；另见 §七 调试）。
 - 纯搬运工：脚本不生成消息、不决策，只做 exec + 解析 + fire（决策/生成分离铁律）。
 - 单测：`node test_trigger_script.js`（mock 四路径：idle / send / 坏 JSON / 无输出或 exec 抛错）。
@@ -134,7 +169,7 @@ special / morning / night / meal / memory / follow_up / lonely_low / lonely_mid 
 
 ## 四、回复侧流程（standing order 内容全文）
 
-安装器在 `~/.openclaw/workspace/agents/main/AGENTS.md` 写入的段落（标记段幂等，重复运行不重复；写入前备份 `.bak`）：
+安装器在 `~/.openclaw/workspace/agents/main/AGENTS.md` 写入的段落（标记段幂等，重复运行不重复；写入前备份 `.bak`）。**bridge 已在消息到达时确定性记录过 `--user-msg`（无分析），standing order 的带分析调用被 daemon 的 recv_dedup 识别为同一条消息 → 只叠加分析微调**（`chiguo_state.py` CooldownState.recv_dedup，窗口 600s，同文本判定）：
 
 ```
 
@@ -230,6 +265,14 @@ bash scripts/install_integration.sh --dry-run
 
 # 端到端冒烟（观察 run --expect-final 退出码与决策日志 chiguo_decisions.jsonl 新条目判断链路）
 openclaw cron run chiguo-check --expect-final
+
+# 主动发送端点冒烟（wechat-bridge 必须已在跑；必须 --noproxy）
+curl -s --noproxy '*' -X POST http://127.0.0.1:18790/send -H 'Content-Type: application/json' -d '{"to":"x"}'            # → {"ok":false,"error":"text 必填"} (500)
+curl -s --noproxy '*' http://127.0.0.1:18790/send                                                                            # → 405
+
+# 触发器评估报错速查
+#   "code mode module access is disabled" → 快照里混入 require(/import（scripts/chiguo-watch.js 无 require；检查 openclaw cron get <id>）
+#   "cron job not found: chiguo-check"    → 作业未注册/被删，重跑安装器
 
 # 配置校验 + 官方审计
 openclaw config validate

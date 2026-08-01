@@ -287,12 +287,12 @@ Intent × Cue × Vibe three-layer system:
 1. **Cron**: `openclaw cron add chiguo-check --every 15m --trigger-script scripts/chiguo-watch.js --session main` (registered by `scripts/install_integration.sh`; `openclaw cron` is the official command — the old `automations` alias was removed 2026.7.1-2)
 2. Trigger script runs `<repo>/.venv/bin/python chiguo_daemon.py --compact` with no model execution
 3. `action: "idle"` → `{fire: false}` (~90% of evaluations never wake the agent)
-4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `openclaw-weixin` channel → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
+4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `curl --noproxy '*' -X POST http://127.0.0.1:18790/send` (wechat-bridge; openclaw-weixin channel removed 2026-08-01) → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
 
 ### Reply side — standing order (replaces v4 UserPromptSubmit hook)
 1. WeChat message arrives → agent replies normally; standing order (agents/main/AGENTS.md, installed by `install_integration.sh`) forces the flow
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
-3. Agent replies naturally using SUN2.md personality (single-record: no double recording, no hook)
+3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the standing order's `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 600s → analysis-only upgrade, no double counting)
 
 ### SUN2.md Personality Constitution (283 lines)
 - **3-layer structure**: 喧闹外壳 → 倔强中层 → 脆弱内核
