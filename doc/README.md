@@ -97,7 +97,7 @@ anniversary_manager.py   # 纪念日/倒计时 CRUD（无参构造锚定项目�
 chiguo_monitor.py        # 结构化监控（stats / alerts / health；alerts 对 state:null 等脏数据归一化不崩）
 chiguo_watchdog.py       # 独立看门狗（tick_seq 回退=重启不误报，相等>3h 才告警停滞）
 chiguo_demo.py           # 演示模式（v2 架构，非生产行为）
-scripts/chiguo-watch.js  # [v11] OpenClaw trigger-script（automations 门控：exec 跑 daemon --compact，零模型执行）
+scripts/chiguo-watch.js  # [v11] OpenClaw trigger-script（cron 门控：exec 跑 daemon --compact，零模型执行）
 scripts/install_integration.sh # [v11] OpenClaw 集成安装器（严格校验 + 旧方案残留迁移 + 幂等，deploy.sh 第 5 步接入）
 test_*.py                # 测试（19 个文件，含 test_circadian/test_followup/test_netease_proof/test_netease_service/test_envcheck）
 test_trigger_script.js   # [v11] chiguo-watch.js 契约测试（node，15 用例）
@@ -150,6 +150,14 @@ python3 chiguo_watchdog.py --notify      # stderr 告警摘要
 # 环境就绪检查（只读）
 python3 chiguo_envcheck.py               # 检查 Python/OpenClaw/LanceDB/网易云/数据，退出码 0=就绪 1=警告 2=严重
 ```
+
+## 运行时数据回流（git 跟踪策略）
+
+目标机运行产生的分析数据直接进仓库，方便本地 pull 分析（私人仓库）：
+
+- **跟踪**：`chiguo_decisions.jsonl`、`chiguo_state.json`、`chiguo_messages.jsonl`、`chiguo_state_audit.jsonl`、`chiguo_message_log.json`、`chiguo_alerts.json`、`chiguo_watchdog_state.json`、`anniversaries.json`、`break_state.json`、`holidays.json`、`solar_terms.json`、`schedule_cache.json*`、`state.json`、`netease_cache.json`
+- **忽略**：备份/临时文件（`*.bak`/`*.tmp`/`*.pid`/`*.lock`）与敏感 token（`netease_cookie.txt`——如确需入库须 `git add -f`）
+- 目标机推送节奏与方式自定（如 cron `git add -A && git commit && git push`）
 
 ## 文档
 

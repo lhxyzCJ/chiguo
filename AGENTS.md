@@ -46,7 +46,7 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 - Everything tunable in `chiguo_proactive.toml` (270 lines); hot-reloads via mtime check in `--loop` mode only (cron spawns fresh processes).
 - Output: `chiguo_decisions.jsonl` (append-only). State: `chiguo_state.json` (atomic `.tmp` → `os.replace`, `.bak` backup, SHA256 checksum, monotonic `tick_seq`). Runtime files are `.gitignore`d.
 - CLI convention: JSON to stdout, diagnostics to stderr. Always use `CST = timezone(timedelta(hours=8))` — never naive datetimes.
-- OpenClaw integration (v11): `scripts/chiguo-watch.js` trigger-script (automations 每 15 分钟零模型门控) + `scripts/install_integration.sh` 安装器 (deploy.sh 第 5 步接入; 详见 `doc/OPENCLAW_INTEGRATION.md`).
+- OpenClaw integration (v11): `scripts/chiguo-watch.js` trigger-script (cron 每 15 分钟零模型门控) + `scripts/install_integration.sh` 安装器 (deploy.sh 第 5 步接入; 详见 `doc/OPENCLAW_INTEGRATION.md`).
 
 ## Known gotchas
 

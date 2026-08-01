@@ -1,5 +1,27 @@
 # MEMORY.md
 
+## 2026-08-01 — v11 集成命令适配：automations → cron（真机 2026.7.1-2 集成从未装上的根因修复）
+
+**背景**：本地装好 OpenClaw 2026.7.1-2 后调试 chiguo 集成，发现 `openclaw automations` 命令不存在（"Unknown command: openclaw automations"），官方命令已改名为 `openclaw cron`（`cron add --trigger-script/--system-event/--every/--wake/--timeout-seconds` 契约完整）。旧 `automations` 别名在 2026.7.1-2 已移除。**远端生产机因此从未装上 v11 集成**（安装器阶段 0 探测失败 → 走降级路径退出 1；automations list 报 unknown command；standing order 也从未写入 AGENTS.md）。
+
+- **I-1** `scripts/install_integration.sh`：全量 `openclaw automations` → `openclaw cron`；作业名由 `--name` 改为位置参数（`cron add chiguo-check --every 15m ...`）；探测命令 `cron add --help | grep --trigger-script`；残留扫描 `cron list --all`；复验 `cron list`；冒烟 `cron run chiguo-check --expect-final`（`--wait --wait-timeout` 已不存在）
+- **I-2** `test_install_integration.sh`：桩分支 automations → cron；断言全量适配；修复用例 1（本机已装真 openclaw 于 /usr/bin，原 `PATH=/usr/bin:/bin` 失效）→ 隔离 sysbin 目录（软链系统工具、不含 openclaw）模拟无 openclaw 机器；dry-run 断言收紧为 `cron add chiguo-check`（避免匹配阶段 0 的 `cron add --help` 探测调用）
+- **I-3** 文档：`doc/OPENCLAW_INTEGRATION.md` 18 处命令/注释适配 + 别名说明修正（cron 为官方命令，旧 automations 别名已移除）+ docs URL 修正（/automation/cron-jobs）；`deploy.sh` 冒烟文案；`AGENTS.md`/`doc/README.md`/`README.md` 措辞；`scripts/chiguo-watch.js` 头注释
+- 验证：`bash test_install_integration.sh` 14/14；`node test_trigger_script.js` 15/15；`bash -n` 干净；真机（本地 2026.7.1-2）`--dry-run` 功能探测通过、待办清单正确（config set / cron add / standing order / on-user-msg.sh 清理）；全量 19 py runner 通过
+- 遗留：远端（182.92.218.141）集成未装——需在远端跑 `bash scripts/install_integration.sh --yes` 补装（cron add 需 gateway 在跑，远端 gateway 运行中可执行）；本地已同步 `~/.openclaw` 中 `on-user-msg.sh` 为待清理残留，远端清理动作同步
+- 文件：`scripts/install_integration.sh`、`test_install_integration.sh`、`scripts/chiguo-watch.js`、`deploy.sh`、`AGENTS.md`、`doc/OPENCLAW_INTEGRATION.md`、`doc/README.md`、`README.md`、`MEMORY.md`
+
+## 2026-08-01 — 运行时数据回流仓库化（放开日志类 git 跟踪）
+
+**背景**：本地为开发主控、目标机（182.92.218.141）运行为常态，需要把目标机产生的分析数据回流到 GitHub 仓库供本地分析（私人仓库；推送节奏由目标机自定）。容器化/迁移脚本方案经评估放弃（deploy.sh + uv 已解决环境一致性；容器化引入跨容器 exec/微信重登/uid 等净成本）。
+
+- `.gitignore`：Runtime state files 段重构——仅忽略备份/临时/锁（`chiguo_state.json.bak`/`.tmp`/`.tmp.*`、`chiguo_loop.pid`、`*.lock`）与敏感 token（`netease_cookie.txt`）；放开跟踪全部文本分析数据（decisions/state/messages/audit/alerts/watchdog/anniversaries/break/holidays/solar_terms/schedule_cache/netease_cache）
+- `doc/README.md`：新增 §运行时数据回流（跟踪清单 + 忽略清单 + token 入库须 `git add -f` 提示）
+- `doc/SYSTEM.md`：文件清单 `.gitignore` 行同步说明
+- 验证：`git check-ignore` 确认仅 cookie/bak 仍被忽略；`git status` 显示 5 个本地运行时文件由忽略转为未跟踪
+- 文件：`.gitignore`、`doc/README.md`、`doc/SYSTEM.md`、`MEMORY.md`
+- 未做：未提交（等目标机回流数据一并处理）；本地开发机运行时文件不主动入库
+
 ## 2026-08-01 — v11 集成修复轮（全分支审查 5 Important + 官方文档合规 3 doc-level，Task 6）
 
 **背景**：全分支审查发现 8 个问题——I-1 阶段 4 验证不完整（config set/AGENTS.md 写入失败仍退出 0）、I-2 旧作业/hook 解析依赖裸名单行（真机多列表格幂等被破坏）、I-3 文档 `--compact` idle 无输出与 daemon 矛盾、I-4 deploy.sh 测试链漏脚本测试、I-5 `.claude/settings.json.bak` 未忽略；D-1 `doctor --fix` 迁移清单不含 legacy handlers 键（文档误述为官方迁移工具）、D-2 "输出 idle 即链路通"无法证实、D-3 automations rm/remove 拼写未说明。

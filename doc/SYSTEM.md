@@ -688,7 +688,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `schedule_cache.json` | 课表缓存（首次运行后生成） | 无 |
 | `anniversaries.json` | 纪念日数据（首次运行后生成） | 无 |
 | `break_state.json` | 假期覆盖状态（首次 --break 后生成） | 无 |
-| `.gitignore` | 忽略运行时产物 | 无 |
+| `.gitignore` | 忽略运行时备份/临时/锁/token（分析数据跟踪入库供本地分析，见 doc/README.md §运行时数据回流） | 无 |
 | `data/xskb.xlsx` | 课表源文件（替换即更新） | 无 |
 | `data/netease_qr.png` | 网易云登录二维码（--login 生成） | 无 |
 | `test_chiguo_math.py` | 数学库单元测试（26 用例，含 sigmoid/负权重/负半衰期边界） | chiguo_math |
