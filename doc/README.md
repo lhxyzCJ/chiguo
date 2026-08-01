@@ -97,7 +97,11 @@ anniversary_manager.py   # 纪念日/倒计时 CRUD（无参构造锚定项目�
 chiguo_monitor.py        # 结构化监控（stats / alerts / health；alerts 对 state:null 等脏数据归一化不崩）
 chiguo_watchdog.py       # 独立看门狗（tick_seq 回退=重启不误报，相等>3h 才告警停滞）
 chiguo_demo.py           # 演示模式（v2 架构，非生产行为）
+scripts/chiguo-watch.js  # [v11] OpenClaw trigger-script（automations 门控：exec 跑 daemon --compact，零模型执行）
+scripts/install_integration.sh # [v11] OpenClaw 集成安装器（严格校验 + 旧方案残留迁移 + 幂等，deploy.sh 第 5 步接入）
 test_*.py                # 测试（19 个文件，含 test_circadian/test_followup/test_netease_proof/test_netease_service/test_envcheck）
+test_trigger_script.js   # [v11] chiguo-watch.js 契约测试（node，15 用例）
+test_install_integration.sh # [v11] 安装器桩测试（bash，12 用例）
 data/                    # 数据文件：课表 xskb.xlsx、手动记忆 chiguo_memories.json、网易云二维码 netease_qr.png
 ```
 
@@ -152,3 +156,5 @@ python3 chiguo_envcheck.py               # 检查 Python/OpenClaw/LanceDB/网易
 - [SYSTEM.md](SYSTEM.md) — 完整系统文档（架构、业务逻辑、配置参考）
 - [OPENCLAW_INTEGRATION.md](OPENCLAW_INTEGRATION.md) — OpenClaw 部署指南
 - [IMPROVE.md](IMPROVE.md) — 改进清单
+- [2026-08-01-openclaw-integration-design.md](2026-08-01-openclaw-integration-design.md) — v11 集成设计文档（trigger-script + standing order）
+- [2026-08-01-openclaw-integration-plan.md](2026-08-01-openclaw-integration-plan.md) — v11 集成实现计划（6 任务）

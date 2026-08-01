@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-08-01 — v11 OpenClaw 集成改造（trigger-script 门控 + standing order + 集成安装器，6 tasks）
+
+**问题**：v4 集成用 cron system-event + Claude-Code UserPromptSubmit hook——hook 触发不稳定、回复被双重记录、每 15 分钟评估都唤醒 agent（idle 也消耗模型调用）；旧机迁移无统一安装/校验流程。
+
+- **Task 1 发送侧 trigger-script**：`scripts/chiguo-watch.js` 新增——exec 跑 `daemon --compact`，`parseDecision` 兼容多行缩进 JSON（全文本+逐行双解析），send → `{fire:true,message}` / idle → `{fire:false}`（零模型执行，~90% 评估不唤醒 agent）；`test_trigger_script.js` 15 用例
+- **Task 2 集成安装器**：`scripts/install_integration.sh` 新增——阶段 0 探测（无 openclaw → 跳过退出 0；不支持 `--trigger-script` → 降级路径提示退出 1）/ 0b 残留扫描（旧 automations 作业、`.claude/settings.json` hook、on-user-msg.sh、原生 hooks、legacy handlers）/ 1 危险开关 / 2 作业注册幂等（先 rm 旧作业）/ 3 standing order 写入 AGENTS.md（marker 块 + .bak）/ 3b hook 清理 + doctor --fix / 4 验证 + `security audit --deep`；退出码 0/1/2；`--dry-run`/`--yes`/ask/`--skip-integration` 四模式；`test_install_integration.sh` 桩测试 12 用例（修复轮：ask 模式逐项确认、hook 清除失败置 PENDING）
+- **Task 3 deploy.sh 接入**：第 5 步调用安装器；横幅完成状态随安装器结果（残留/跳过不声称完成）
+- **Task 4 指南重写**：`doc/OPENCLAW_INTEGRATION.md` v11 版（架构图、安装/卸载/校验/排查、官方契约出处、v4 cron 方案降级路径）
+- **Task 5 文档同步**（本记录）：AGENTS.md 测试链补 node/bash 脚本测试（py 链前，19 py + 2 脚本）；README/doc README 补集成一句话、脚本测试与 4 个新文件；MEMORY.md 顶部 v11 条目
+- **Task 6 全量验证 + 官方文档核对 + 代码审查**（后续任务）：21 个 runner 全量回归、逐条核对官方命令、并行审查子代理，审查问题回修后补 commit 与 MEMORY 记录
+
+| # | 文件 | 改动 |
+|---|------|------|
+| 1 | `scripts/chiguo-watch.js`（新） | trigger-script：parseDecision/decide/run 三函数，零模型门控 |
+| 2 | `test_trigger_script.js`（新） | 15 用例（parseDecision 6 + decide 6 + run 3） |
+| 3 | `scripts/install_integration.sh`（新） | 集成安装器（0/0b/1/2/3/3b/4 阶段，退出码 0/1/2） |
+| 4 | `test_install_integration.sh`（新） | 桩测试 12 用例（假 openclaw + 临时 HOME） |
+| 5 | `deploy.sh` | 第 5 步接入安装器 + 横幅状态修复 |
+| 6 | `doc/OPENCLAW_INTEGRATION.md` | v11 重写（架构/安装/卸载/降级路径） |
+| 7 | `AGENTS.md` / `README.md` / `doc/README.md` / `MEMORY.md` / `doc/IMPROVE.md` | 测试链、集成一句话、文件清单、记录 |
+
+**验证**：`node test_trigger_script.js` 15/15；`bash test_install_integration.sh` 12/12（退出码 0）；`bash -n` 两脚本干净；真实 daemon 冒烟 idle → fire:false；19 个 py runner 全量回归不受影响。
+
+---
+
 ## 2026-08-01 — v10.1 最终审查修复 I-1：check_netease 退出码纳入 API 可达性
 
 **问题**：`check_netease` 的 `ok = cookie_path.is_file()`——cookie 存在但 API 宕机时仍报 ok、退出码 0、deploy.sh 打印「环境就绪 ✓」，与 spec §4.2（API 不可达 → warn）冲突。

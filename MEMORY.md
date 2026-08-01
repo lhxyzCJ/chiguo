@@ -1,5 +1,17 @@
 # MEMORY.md
 
+## 2026-08-01 — v11 OpenClaw 集成改造（trigger-script 门控 + standing order + 集成安装器）
+
+**背景**：v4 的 cron system-event + Claude-Code UserPromptSubmit hook 方案不稳定（hook 触发/回复重复记录问题）；官方 automations 提供零模型 `--trigger-script` 门控，把 ~90% 的评估（idle）挡在 agent 唤醒之外、降低模型调用成本。v11 改为 trigger-script 发送侧 + standing order 回复侧（无 hook 双重记录）+ 安装器一键部署。
+
+- **Task 1 trigger-script**：`scripts/chiguo-watch.js` 新增——`parseDecision` 全文本+逐行双解析（daemon send 输出为 indent=2 多行 JSON）、`decide` 门控（send→fire+message / idle→fire:false / 异常→fire:false+last_error）、`run` 经 exec 调 `daemon --compact`（零模型执行）；`test_trigger_script.js` 15 用例（parseDecision 6 + decide 6 + run 3）
+- **Task 2 集成安装器**：`scripts/install_integration.sh` 新增——阶段 0 环境探测（无 openclaw 跳过退出 0；不支持 `--trigger-script` 提示降级路径退出 1）/ 0b 旧方案残留扫描 / 1 危险开关（cron.triggers.enabled）/ 2 作业注册幂等 / 3 standing order 写入 AGENTS.md marker 块（.bak 备份）/ 3b hook 清理+doctor --fix / 4 验证+安全审计；退出码 0=完成 1=待办/警告 2=fatal；模式 `--dry-run`/`--yes`/ask/`--skip-integration`；`test_install_integration.sh` 桩测试 12 用例（假 openclaw + 临时 HOME；修复轮：ask 模式逐项确认 F1 + hook 清除失败置 PENDING F2）
+- **Task 3 deploy.sh 接入**：第 5 步调用安装器（`--skip-integration` 可跳过）；横幅完成状态随安装器结果（残留/跳过不声称完成）
+- **Task 4 指南重写**：`doc/OPENCLAW_INTEGRATION.md` v11 版（架构图、安装/卸载/校验、功能探测、v4 cron 方案保留为降级路径）
+- **Task 5 文档同步**（本记录）：AGENTS.md 测试链补 `node test_trigger_script.js && bash test_install_integration.sh`（py 链前）；README/doc README 补脚本测试与集成一句话、文件清单补 4 个新文件；MEMORY/IMPROVE 记录
+- 文件：`scripts/chiguo-watch.js`（新）、`test_trigger_script.js`（新）、`scripts/install_integration.sh`（新）、`test_install_integration.sh`（新）、`deploy.sh`、`doc/OPENCLAW_INTEGRATION.md`、`AGENTS.md`、`README.md`、`doc/README.md`、`MEMORY.md`、`doc/IMPROVE.md`
+- 验证：`node test_trigger_script.js` 15/15 通过；`bash test_install_integration.sh` 12/12 通过；`bash -n` 两个 shell 脚本语法干净；真实 daemon 冒烟（chiguo-watch 解析 `--compact` idle 输出 → fire:false）；文档同步不触碰任何运行时文件
+
 ## 2026-08-01 — v10.1 最终审查修复 I-1:check_netease 退出码纳入 API 可达性
 
 **问题**:`check_netease` 的 `ok = cookie_path.is_file()`——cookie 存在但 API 宕机时 severity 仍为 ok、退出码 0、deploy.sh 打印「环境就绪 ✓」,与 spec §4.2「API 不可达 → warn」冲突。
