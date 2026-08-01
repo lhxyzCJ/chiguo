@@ -281,6 +281,7 @@ elif printf '%s\n' "$CURRENT_CRON" | grep -q 'chiguo-tick'; then
     PENDING=1
     echo "  [dry-run] crontab 有旧 chiguo-tick 条目（路径已变）→ 将替换为: $CRON_LINE"
   elif confirm "替换旧 chiguo-tick 条目为: $CRON_LINE"; then
+    mkdir -p "$CHIGUO_REPO/logs"   # 重定向目标目录：缺目录 → cron 整条命令失败（tick 永不执行）
     if ( printf '%s\n' "$CURRENT_CRON" | grep -v 'chiguo-tick' || true; echo "$CRON_LINE" ) | crontab -; then
       say "crontab 旧条目已替换"
     else
@@ -292,6 +293,7 @@ else
     PENDING=1
     echo "  [dry-run] 将注册 crontab: $CRON_LINE"
   elif confirm "注册 crontab: $CRON_LINE"; then
+    mkdir -p "$CHIGUO_REPO/logs"   # 重定向目标目录：缺目录 → cron 整条命令失败（tick 永不执行）
     if ( printf '%s\n' "$CURRENT_CRON"; echo "$CRON_LINE" ) | crontab -; then
       say "crontab 已注册"
     else
