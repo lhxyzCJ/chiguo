@@ -8,7 +8,7 @@
 - baseline 记录构造时实际传入值（非 dataclass 默认值），可 reset（加载持久化基线）
 """
 
-import sys, os, json, shutil, tempfile, re, tomllib
+import sys, os, shutil, tempfile, tomllib
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -75,7 +75,7 @@ def test_baseline_recorded_from_constructed_values():
     p = PersonalityTraits(tsundere_intensity=42.0)
     p.evolve(PersonalityDeltas.WARM_REPLY)
     p.regress_to_baseline(1.0)
-    assert p.tsundere_intensity == 42.0, f"满速率应回到构造值 42.0，实际 {p.tsundere_intensity}"
+    assert abs(p.tsundere_intensity - 42.0) < 1e-9, f"满速率应回到构造值 42.0，实际 {p.tsundere_intensity}"
     print("  OK test_baseline_recorded_from_constructed_values")
 
 
@@ -85,7 +85,7 @@ def test_reset_baseline():
     p.evolve(PersonalityDeltas.SENT_NO_REPLY)
     p.reset_baseline({"tsundere_intensity": 50.0})
     p.regress_to_baseline(1.0)
-    assert p.tsundere_intensity == 50.0, f"重置基线后满速率应到 50.0，实际 {p.tsundere_intensity}"
+    assert abs(p.tsundere_intensity - 50.0) < 1e-9, f"重置基线后满速率应到 50.0，实际 {p.tsundere_intensity}"
     print("  OK test_reset_baseline")
 
 

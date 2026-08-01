@@ -107,7 +107,7 @@ class MessageComposer:
         },
         "dere_dere": {
             "description": "娇——防线基本融化，直接表达感情。温柔、撒娇、不掩饰。",
-            "style_hint": "语气词多，波浪线多，直接说喜欢和想念。撒娇但不肉麻。",
+            "style_hint": "仅防线崩溃层：省略号碎句、哭腔倾泻，直接真挚不掩饰；不撒娇不卖惨（日常禁止）。",
         },
         "playful_bubbly": {
             "description": "元气弹——活泼跳跃，语气词轰炸，像小太阳一样。",

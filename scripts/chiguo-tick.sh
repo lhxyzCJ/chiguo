@@ -12,7 +12,7 @@ except: print("")' 2>/dev/null || true)"
 # 决策 JSON 自足，无需对话连续性；值从 toml [host].send_session_id 读，缺省回退 chiguo-send）
 SEND_SESSION="$(grep -oP '(?<=send_session_id = ")[^"]+' "$REPO/chiguo_proactive.toml" | head -1 || true)"
 [ -n "$SEND_SESSION" ] || SEND_SESSION="chiguo-send"
-RES="$(PIRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/pi-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
+RES="$(CHIGUO_REPO="$REPO" PIRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/pi-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
 TEXT="$(printf '%s' "$RES" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("text",""))
 except: print("")' 2>/dev/null || true)"
