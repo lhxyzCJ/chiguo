@@ -86,8 +86,14 @@ for job in $OLD_JOBS; do
   would "openclaw cron rm $job"
 done
 if ! openclaw cron get chiguo-check >/dev/null 2>&1; then
-  INSTRUCTION="收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给主人（当前微信会话上下文）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。发送后运行 ${CHIGUO_REPO}/.venv/bin/python ${CHIGUO_REPO}/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。"
-  would "openclaw cron add chiguo-check --every 15m --trigger-script '$CHIGUO_REPO/scripts/chiguo-watch.js' --session main --wake now --timeout-seconds 120 --system-event '$INSTRUCTION'"
+  RECIPIENT="$(sed -n 's/^wechat_recipient *= *"\(.*\)"/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
+  [ -n "$RECIPIENT" ] || RECIPIENT="owner@im.wechat"
+  INSTRUCTION="收到迟菓决策结果。按 SUN2.md 人格生成 1-3 句微信消息发给主人（$RECIPIENT）。遵守 context.layer_guidance 语气指引与 context.instruction 格式约束；layer_guidance 含【安全阀】标记时语气务必温和克制。通过 wechat-bridge 发送：curl -s --noproxy '*' -X POST http://127.0.0.1:18790/send -H 'Content-Type: application/json' -d '{\"to\":\"$RECIPIENT\",\"text\":\"<消息原文>\"}'（返回 {\"ok\":true} 为成功）。发送后运行 ${CHIGUO_REPO}/.venv/bin/python ${CHIGUO_REPO}/chiguo_daemon.py --record-send <msg_id> --text <消息原文> --trigger <trigger> --intensity <intensity>；发送失败则运行 --send-result <msg_id> --send-status failed。"
+  # 触发器脚本含 @@CHIGUO_REPO@@ 占位符（QuickJS 沙箱禁 require/process/__dirname，路径必须字面量）：
+  # 注册前 sed 替换进临时文件，作业保存替换后的快照。子 shell 包裹（exit 只退子 shell），trap 清理临时文件。
+  TRIG_SRC="$CHIGUO_REPO/scripts/chiguo-watch.js"
+  [ -f "$TRIG_SRC" ] || TRIG_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/chiguo-watch.js"
+  would "( trap 'rm -f \"\$tmp\"' EXIT; tmp=\$(mktemp /tmp/chiguo-watch.XXXXXX) && sed 's|@@CHIGUO_REPO@@|$CHIGUO_REPO|g' '$TRIG_SRC' > \"\$tmp\" && openclaw cron add chiguo-check --every 15m --trigger-script \"\$tmp\" --session main --wake now --timeout-seconds 120 --system-event '$INSTRUCTION' )"
 else
   say "作业 chiguo-check 已存在，跳过注册"
 fi

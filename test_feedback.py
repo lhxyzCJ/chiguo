@@ -280,6 +280,76 @@ def test_monitor_empty_send_result():
     print("  OK test_monitor_empty_send_result")
 
 
+def test_recv_dedup_same_text_skipped():
+    """v9: 窗口内同文本重复记录（bridge 确定性记录 2 次，均无分析）→ 第二次完全跳过"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        st = engine.state
+        now = datetime.now(CST)
+        st.cooldown.current_date = now.strftime("%Y-%m-%d")
+        st.cooldown.last_message_at = now.isoformat()  # 使首次记录产生 reply_latency
+
+        engine.record_user_message("哥哥在吗")
+        e1 = st.emotion.energy
+        a1 = st.emotion.affection
+        lat1 = len(st.cooldown.reply_latencies)
+        mwr1 = st.cooldown.messages_without_reply
+
+        engine.record_user_message("哥哥在吗")  # 重复 → 应跳过
+        assert st.emotion.energy == e1, "重复记录不应二次 +10 元气"
+        assert st.emotion.affection == a1, "重复记录不应二次加好感"
+        assert len(st.cooldown.reply_latencies) == lat1, "重复记录不应二次追加延迟"
+        assert st.cooldown.messages_without_reply == mwr1
+
+        # 去重标记持久化：重新加载状态后仍在
+        engine2 = DecisionEngine(engine.config_path, engine.log_path)
+        d = engine2.state.cooldown.recv_dedup
+        assert d and d.get("analysis") is False and d.get("text_sha"), f"recv_dedup 未持久化: {d}"
+    print("  OK test_recv_dedup_same_text_skipped")
+
+
+def test_recv_dedup_analysis_upgrade():
+    """v9: bridge 先记录（无分析），standing order 补 --analysis → 只叠加分析微调，不重复基础效果"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        st = engine.state
+        now = datetime.now(CST)
+        st.cooldown.current_date = now.strftime("%Y-%m-%d")
+
+        engine.record_user_message("哥哥在吗")
+        e0, aff0 = st.emotion.energy, st.emotion.affection
+        lat0 = len(st.cooldown.reply_latencies)
+
+        engine.record_user_message("哥哥在吗", '{"warmth": 1.0, "effort": 1.0, "attention": 1.0}')
+        # 升级只应用分析维度：energy += warmth*4 + attention*4；affection += warmth*1.5 + effort*1.0
+        assert abs(st.emotion.energy - (e0 + 8.0)) < 1e-6, f"upgrade energy 异常: {st.emotion.energy - e0}"
+        assert abs(st.emotion.affection - (aff0 + 2.5)) < 1e-6, f"upgrade affection 异常: {st.emotion.affection - aff0}"
+        assert len(st.cooldown.reply_latencies) == lat0, "upgrade 不应追加回复延迟"
+        assert st.cooldown.recv_dedup.get("analysis") is True
+
+        # 日志含 recv_upgrade
+        log = Path(td) / "chiguo_decisions.jsonl"
+        kinds = [json.loads(l)["action"] for l in log.read_text().strip().splitlines()]
+        assert "recv_upgrade" in kinds, kinds
+    print("  OK test_recv_dedup_analysis_upgrade")
+
+
+def test_recv_dedup_different_text_full_record():
+    """v9: 窗口内不同文本 → 正常完整记录（不误杀真实新消息）"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        st = engine.state
+        now = datetime.now(CST)
+        st.cooldown.current_date = now.strftime("%Y-%m-%d")
+
+        engine.record_user_message("哥哥在吗")
+        st.emotion.energy = 50.0  # 留出 +10 空间（能量有 100 上限）
+        e1 = st.emotion.energy
+        engine.record_user_message("哥哥在忙吗")  # 不同文本 → 完整效果
+        assert st.emotion.energy - e1 > 9.9, "不同文本应再次完整记录"
+    print("  OK test_recv_dedup_different_text_full_record")
+
+
 if __name__ == "__main__":
     print("test_feedback.py\n")
     tests = [
@@ -292,6 +362,9 @@ if __name__ == "__main__":
         test_monitor_empty_send_result,
         test_record_send_result_idempotent,
         test_refund_then_can_send_after_min_interval,
+        test_recv_dedup_same_text_skipped,
+        test_recv_dedup_analysis_upgrade,
+        test_recv_dedup_different_text_full_record,
     ]
     failed = 0
     for t in tests:

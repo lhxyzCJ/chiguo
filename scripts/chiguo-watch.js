@@ -1,11 +1,12 @@
-#!/usr/bin/env node
 // chiguo-watch.js — OpenClaw cron trigger script（迟菓主动消息）
 // 官方契约: docs.openclaw.ai/automation/cron-jobs → "Event triggers"
 // 职责: 无模型执行 daemon --compact; 仅 action=send 时 fire 唤醒 agent。
 // 容错: daemon 崩溃/坏 JSON/超时 → fire:false + state.last_error（下次评估带出）。
+// ⚠️ 执行沙箱是 QuickJS WASM：无 require/import/process/env/__dirname/module/console。
+//    仓库路径必须是字符串字面量 —— install_integration.sh 注册作业时用 sed 替换 @@CHIGUO_REPO@@。
 'use strict';
 
-const path = require('node:path');
+const REPO = '@@CHIGUO_REPO@@';
 
 function parseDecision(stdout) {
   const text = String(stdout ?? '').trim();
@@ -40,8 +41,7 @@ function decide(decision, prevState) {
 }
 
 async function run() {
-  const repo = String(process.env.CHIGUO_REPO || path.resolve(__dirname, '..')).replace(/\/+$/, '');
-  const command = `${repo}/.venv/bin/python ${repo}/chiguo_daemon.py --compact`;
+  const command = `${REPO}/.venv/bin/python ${REPO}/chiguo_daemon.py --compact`;
   const res = await tools.call('exec', { command });
   const aggregated = String(res?.result?.details?.aggregated ?? '').trim();
   const prevState = typeof trigger !== 'undefined' && trigger.state;
