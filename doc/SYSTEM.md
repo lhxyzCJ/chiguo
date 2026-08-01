@@ -108,6 +108,8 @@ emo.dominant_layer:
   else                             → "shell"
 ```
 
+**人格模板接线（Task 7）**：`personality/tsundere.toml`（迟菓，七类 trigger_templates 全为原著例句）与 `deredere.toml`（迟菓-融化，仅内核崩溃层）由 `MessageComposer._load_cue_templates()` 启动时加载（tomllib，`personality/` 相对本文件定位，缺文件/解析失败跳过不阻断）；`tsundere_*` cue → tsundere.toml，`dere_dere` cue → deredere.toml。选中 cue 时按触发类型取关联模板（`TRIGGER_TO_TEMPLATE` 映射）作为「台词示范」注入 `compose_situation` 的风格指引；`cue_meta(key)` 按 cue 名或 toml id 查询 meta（name/id/description）。
+
 ### 2.3 时间推进（半衰期驱动）
 
 每 tick 调用 `recover(current, target, hours, half_life)`：

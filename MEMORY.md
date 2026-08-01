@@ -1,5 +1,17 @@
 # MEMORY.md
 
+## 2026-08-02 — personality/*.toml 重写为迟菓模板并接线（Phase 2 任务 7）
+
+**背景**：personality/tsundere.toml（小雪）与 deredere.toml（小樱）是通用二次元模板死文件（MEMORY.md 自认"孤立模板"，全仓库无代码加载），deredere 内容命中 SUN2 反模式（直接撒娇/黏人守候）。本次重写为迟菓专属模板并接线让 composer 启动时加载。
+
+- **`personality/tsundere.toml`**（小雪→迟菓）：meta name=迟菓/id=tsundere/description=《日光雨》迟菓——嘴硬心软的 14 岁外卖少女；七类 trigger_templates 全部换原著例句（good_morning=L1069 报单风+L3720；good_night=L2035「拜拜，迟·耀·先·生。」+L2117+L4604；loneliness=L10856「……不告诉你。」/L10864「……没有。没等你。」/L2311/L3049；attention_seek=L10418「迟菓好可怜啊——」/L8048/L2075；meal=L15302「……有什么好说的啦。不快吃的话，一会儿该凉了。」+SUN2 场景三；special_date/memory 保留原著风既有行+新增 L15278-15282 顶顶糕）；traits.speech_style 改「低频'哼'（……哼。），波浪线约 10% 对白，交易/补偿话术，行动主动。」
+- **`personality/deredere.toml`**（小樱→迟菓-融化）：meta name=迟菓-融化/description=防线融化状态——仅内核崩溃层触发；台词全部换原著崩溃段（L15498「凭什么啊。……」/L15500/L15504/L15492/L15538 哭声）+ 脆弱段（L15668/L15716）；删除旧版直接撒娇/黏人守候反模式内容（✨emoji/黏人守候/甜妹口头禅全清）；traits 注明 layer=kernel「仅 kernel 崩溃层可用，日常禁止」
+- **`chiguo_composer.py`**（接线，选方案 (a)）：新增 `PERSONALITY_TOMLS`（tsundere.toml→tsundere_*/trade_tsundere，deredere.toml→dere_dere）与 `TRIGGER_TO_TEMPLATE` 映射；`_load_cue_templates()` 启动时 tomllib 读 personality/*.toml（缺文件/解析失败跳过不阻断）；`cue_meta(key)` 按 cue 名或 toml id 查 meta（未知 KeyError）；`_template_lines_for(cue, trigger_type)` 取参考台词（无匹配类别/非 tsundere_*/dere → 空）；select_combo 选中 cue 时附带 templates，compose_situation 注入「[台词示范：…]」风格指引
+- **`test_toml_binding.py`（新）**：7 用例——toml 存在可解析、cue_meta 按 toml id/cue 名返回 name=迟菓、cue_templates 加载原著例句、_template_lines_for 映射与优雅空、compose_situation 含台词示范、select_combo 附带模板；RED 证据：改前 `AttributeError: 'MessageComposer' object has no attribute 'cue_meta'`
+- **`doc/SYSTEM.md`**：§2.2 三层人格补「人格模板接线（Task 7）」段落
+- **接线方案选择**：选 (a) composer 加载 toml（非退路 (b) 仅校验）——成本约 60 行、无新增依赖（tomllib 为 stdlib）、toml 随仓库部署与 composer 同机不涉 QuickJS/多机问题、测试确定性不受影响（toml 为静态文件）；退路 (b) 只校验存在会留下"孤立模板"问题（MEMORY.md:892 记录的原病灶），故选 (a)
+- **验证**：test_toml_binding 7/7 绿 + test_composer 10/10 + test_personality 18/18 + test_composer_trade 5/5 + test_personality_init 绿 + 全量 19 文件回归通过（integration 17/17 等）
+
 ## 2026-08-02 — composer cue 权重重排 + trade_tsundere（Phase 2 任务 6）
 
 **背景**：人格文件已按原著对齐，但 composer 的 cue 权重/风格仍偏离原著——caring_gentle 权重最高且 morning/meal ×1.5（违反"关心必带刺"）、playful_bubbly 鼓励嘻嘻高频（违反"全书仅 10 次"）、无交易思维 cue（原著核心）。本次把 cue 权重/风格对齐原著（嘴硬心软为主、温柔关心降权、禁止嘻嘻高频、新增交易式撒娇）。
