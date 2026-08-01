@@ -1,6 +1,22 @@
 # 改进清单
 
-> 版本: 2026-08-01 | 集成链路修复（v1.2）+ wechat-bridge 可移植化（v1.3）完成，见下
+> 版本: 2026-08-02 | 寄主迁移收尾（v1.4，Phase 4 Task 14）完成，见下
+
+---
+
+## 2026-08-02 — 配置/文档接线 + OpenClaw 停用：寄主迁移收尾（Phase 4 任务 14）
+
+**问题**：Phase 4 收尾遗留四项——①toml `[openclaw]` 段仍是旧架构语义（personality_source 指向 ~/.openclaw），`[host]` 段缺发送端点/发送会话键；②特殊命令（纪念日/假期 --anniversary/--break）指令链路在 standing order 停用后暂断（Task 12 遗留，pi 纯文本调用无工具权限）；③兜底默认值仍是 Task 5 修正前的 45/70/70（state/composer/trigger 与 dataclass 60/65/75 不一致）；④tick 与 bridge 共用 chiguo-main 会话的跨进程并发 turn 未评估。
+
+**方案**：
+- **toml 接线**：`[openclaw]` 整段标注已废弃（由 `[host]` 取代；wechat_recipient 保留——tick/bridge 管理脚本仍读取）；`[host]` 补 `wechat_bridge_url`（tick curl 端点，不再硬编码）与 `send_session_id = "chiguo-send"`；`chiguo_daemon.py` 人格目录改读 `[host].personality_dir`（[openclaw].personality_source 仅回退兜底）
+- **特殊命令闭环（方案 A：bridge 规则化）**：`wechat-bridge/command-detect.mjs` 新模块——消息到达先 `detectSpecialCommand`（≤40 字 + 非问句防误伤；"记住X月X日(是)XX"→anniversary、"YYYY年X月X日(是|为|要)XX / X月X日要XX"→countdown（无年份按 CST 推断：今年已过→明年）、"有哪些纪念日"→list、"放假了/放暑假了"→break on、"开学了"→break off，歧义放行给 pi 自然回复）→ 命中直接 spawn daemon CLI（stdout 保留，非零退出不丢错误 JSON）→ `buildReply` 回迟菓风确认。不选方案 B（pi 无 bash 权限，风险大）与 C（依赖 pi 输出结构化意图的稳定性）
+- **兜底默认值同步**：chiguo_state.py / chiguo_composer.py / chiguo_trigger.py 的 `get(...45/70/70)` → 60/65/75，与 PersonalityTraits dataclass 初始值一致
+- **并发评估结论**：pi 会话按 cwd+session-id 分桶，同会话跨进程并发 turn 可能交错/上下文竞争 → **会话分离**：bridge 回复=chiguo-main（进程内 TurnQueue 串行），tick 主动发送=chiguo-send（决策 JSON 自足，无需对话连续性），两进程零共享会话；toml `[host].send_session_id` 配置 + tick `PIRUN_SESSION` 注入
+- **文档**：新建 `doc/PI_INTEGRATION.md`（全流程/pi-run 契约/tick/bridge askPi/install_pi.sh/opencode-go key/memory-lancedb-pro/故障排查 401·空回复·超时）；OPENCLAW_INTEGRATION.md 加「已废弃，回退参考」头注；README/AGENTS/doc-README/SYSTEM/CLAUDE/CLAUDE_CODE_RULES（§11）同步；版本 v1.3 → v1.4
+- **OpenClaw 停用**：`openclaw cron disable chiguo-check`（gateway 停用保留给用户最终确认）
+
+**验证**：test_bridge_cmd 31/31（含防误伤矩阵）、test_pi_run 19/19、test_bridge_askpi 10/10、test_trigger_script 15/15、test_install_integration、test_wechat_bridge 8/8、test_install_pi --dry-run、23 py 全绿；daemon `--anniversary list`/`--break status` 只读冒烟正常；tick idle 路径 exit 0；OpenClaw cron disable 已确认。
 
 ---
 

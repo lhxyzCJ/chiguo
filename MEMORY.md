@@ -1,5 +1,21 @@
 # MEMORY.md
 
+## 2026-08-02 — 配置/文档接线 + OpenClaw 停用：寄主迁移收尾（Phase 4 任务 14，v1.3 → v1.4）
+
+**背景**：Phase 4 收尾——toml 接线（[openclaw] → [host]）、特殊命令闭环（Task 12 遗留）、兜底默认值同步（Task 5 遗留）、tick/bridge 并发评估、文档全面同步、OpenClaw 停用。
+
+**方案**：
+- `chiguo_proactive.toml`：`[openclaw]` 整段标已废弃（wechat_recipient 保留，tick/bridge 脚本仍读）；`[host]` 补 `wechat_bridge_url`（tick 发送端点）与 `send_session_id = "chiguo-send"`（主动发送会话）
+- `chiguo_daemon.py`：`_build_context` 人格目录改读 `[host].personality_dir`（[openclaw].personality_source 仅回退兜底，输出 personality_source 指向仓库 personality/SUN2.md）
+- **特殊命令闭环（方案 A：bridge 规则化）**：新增 `wechat-bridge/command-detect.mjs`——纪念日/假期指令由 bridge 正则检测确定性接管（防误伤：≤40 字、非问句、`今天放假了` 等歧义放行 pi），命中直接 spawn daemon CLI（stdout salvage，错误 JSON 可读）→ 迟菓风确认文案；`bridge.mjs` 消息流程插入 detect→execute→reply（不经 pi）
+- **兜底默认值**：chiguo_state.py / chiguo_composer.py / chiguo_trigger.py 的 personality 兜底 45/70/70 → 60/65/75（与 PersonalityTraits 一致）
+- **并发评估**：tick（chiguo-main 共享）与 bridge 跨进程并发 turn 风险 → 会话分离（回复=chiguo-main + TurnQueue；主动发送=chiguo-send via PIRUN_SESSION），toml `send_session_id` + `scripts/chiguo-tick.sh` 注入
+- `chiguo_version.py`：VERSION "1.3" → "1.4"
+- **文档**：新建 `doc/PI_INTEGRATION.md`（pi-run/tick/bridge askPi/install_pi.sh/opencode-go key/memory-lancedb-pro/故障排查/会话并发模型）；`doc/OPENCLAW_INTEGRATION.md` 头注已废弃；README/AGENTS.md/doc-README/SYSTEM.md（§十一重构为 pi-agent + 11.1 特殊命令 + 11.2 会话并发、§六文件清单、§十七停机场景、版本历史 v1.4 行）/IMPROVE.md/CLAUDE.md/CLAUDE_CODE_RULES.md §11 同步
+- **OpenClaw 停用**：`openclaw cron disable chiguo-check` 已执行（gateway 停用留用户最终确认；安装保留）
+
+**验证**：test_bridge_cmd 31/31（新）、test_pi_run 19/19、test_bridge_askpi 10/10、test_trigger_script 15/15、test_install_integration 通过、test_wechat_bridge 8/8、test_install_pi --dry-run、23 py 全绿；daemon 特殊命令只读冒烟（--anniversary list / --break status）；tick idle exit 0
+
 ## 2026-08-02 — Task 13 评审修复：--skip-pi 贯通 deploy/envcheck、--yes 写入断言与幂等测试、secret 传参加固
 
 **背景**：Task 13 review 发现：① `deploy.sh --skip-pi` 无效——envcheck 第 4 步无条件跑且 `check_pi` 缺 pi 即 critical，无 pi 机器在第 5.6 步跳过机制前已中止；② `test_install_pi.sh` 用例 12 只断言退出码，阶段 2/3/6 写入产物、auth.json 合并写、两遍 `--yes` 幂等均无测试；③ API key 经 argv 传 python3（ps 可见）；④ auth 检查裸 grep 与 envcheck 真值检查语义不一致；⑤ crontab 只 grep `chiguo-tick`，仓库路径变更后旧条目发现不了；⑥ `OLLAMA_URL` vs `OLLAMA_BASE` 不一致；⑦ envcheck 走 urllib 无代理绕过（本机有 http_proxy）。

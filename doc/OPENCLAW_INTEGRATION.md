@@ -1,5 +1,10 @@
 # OpenClaw 集成指南（v12）
 
+> **⚠️ 已废弃（Phase 4 Task 14，v1.4）**：本指南描述的 OpenClaw 集成架构（cron trigger-script /
+> standing order / openclaw agent）已停用——寄主迁移到 pi-agent + 系统 crontab + wechat-bridge，
+> 当前架构见 [PI_INTEGRATION.md](PI_INTEGRATION.md)。本文件保留作**回退参考**：
+> 如需恢复 OpenClaw 链路，按 §一~§九 操作并配合 `scripts/install_integration.sh`（deploy.sh 第 5 步）。
+
 > 官方文档出处: docs.openclaw.ai（automation/cron-jobs、hooks、cli、doctor；功能探测以
 > `<command> --help` 为权威清单）。旧版（v4）cron system-event + Claude-Code hook 方案见文末「降级路径」。
 >

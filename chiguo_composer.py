@@ -335,10 +335,10 @@ class MessageComposer:
         except AttributeError:
             return weights
 
-        tsundere = getattr(personality, 'tsundere_intensity', 70.0)
-        extraversion = getattr(personality, 'extraversion', 45.0)
+        tsundere = getattr(personality, 'tsundere_intensity', 75.0)
+        extraversion = getattr(personality, 'extraversion', 60.0)
         neuroticism = getattr(personality, 'neuroticism', 60.0)
-        agreeableness = getattr(personality, 'agreeableness', 70.0)
+        agreeableness = getattr(personality, 'agreeableness', 65.0)
 
         # tsundere 强度 → 调制傲娇系 vs dere 系权重
         if tsundere > 65:

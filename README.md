@@ -2,7 +2,7 @@
 
 > 一个会主动找主人聊天的 AI 角色 —— 数学驱动的决策引擎 + LLM 消息生成,微信触达。
 
-**迟菓**是一套"角色主动消息"系统:由零 LLM 的数学决策引擎(`chiguo_daemon.py`)基于**情绪模型、生物钟学习、触发评估、话题注入**等机制决定"何时、以什么心情、聊什么",输出结构化 JSON;再由 [OpenClaw](https://www.openclaw.ai) 读取 JSON 生成拟人消息并通过微信发送。
+**迟菓**是一套"角色主动消息"系统:由零 LLM 的数学决策引擎(`chiguo_daemon.py`)基于**情绪模型、生物钟学习、触发评估、话题注入**等机制决定"何时、以什么心情、聊什么",输出结构化 JSON;再由 pi-agent（Phase 4 寄主，OpenClaw 已停用）读取 JSON 生成拟人消息并通过 wechat-bridge 发送。
 
 - **决策与生成分离**:daemon 永不调用 LLM、永不生成消息文本,只输出 JSON
 - **无需外部服务**:情绪推进、发送门控、触发评估、话题选择全部本地计算
@@ -41,8 +41,9 @@ python3 chiguo_daemon.py --version
 # 交互式 Demo
 python3 chiguo_demo.py
 
-# 跑全部测试(19 个 py 文件 + 2 个脚本测试)
-node test_trigger_script.js && bash test_install_integration.sh && bash test_install_pi.sh && \
+# 跑全部测试(23 个 py 文件 + 7 个脚本测试)
+node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && node test_trigger_script.js && \
+bash test_install_integration.sh && bash test_install_pi.sh && bash test_wechat_bridge.sh && \
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \
@@ -52,12 +53,14 @@ uv run python test_escape_valve.py && uv run python test_feedback.py && \
 uv run python test_trigger.py && uv run python test_topics.py && \
 uv run python test_circadian.py && uv run python test_followup.py && \
 uv run python test_netease_proof.py && uv run python test_netease_service.py && \
-uv run python test_envcheck.py
+uv run python test_envcheck.py && uv run python test_composer_trade.py && \
+uv run python test_personality_init.py && uv run python test_toml_binding.py && \
+uv run python test_adapt_personality.py
 ```
 
 > 注意:集成测试需要当前目录存在 `chiguo_proactive.toml`,请始终从项目根目录运行。
 
-> 版本机制:项目版本号单一来源为 `chiguo_version.py` 的 `VERSION`(当前 v1),每完成一轮修改手动 +0.1(`v1 → v1.1 → v1.2`)。daemon 决策 JSON、`--version`、envcheck/monitor 报告均带版本号;状态文件 `_version` 是 schema 号(STATE_VERSION=8),与项目版本无关。
+> 版本机制:项目版本号单一来源为 `chiguo_version.py` 的 `VERSION`(当前 v1.4),每完成一轮修改手动 +0.1(`v1 → v1.1 → v1.2`)。daemon 决策 JSON、`--version`、envcheck/monitor 报告均带版本号;状态文件 `_version` 是 schema 号(STATE_VERSION=8),与项目版本无关。
 
 ## 部署到其他机器
 
@@ -65,10 +68,10 @@ uv run python test_envcheck.py
 
 ```bash
 git clone <仓库地址> && cd <仓库目录>
-bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量 19 测试 → 环境检查(pi/网易云登录) → pi 环境安装(install_pi.sh) + OpenClaw 集成安装(install_integration.sh, 旧架构) + cron 冒烟提示
+bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境检查(pi/网易云登录) → pi 环境安装(install_pi.sh) + wechat-bridge 安装启动 + cron 注册
 ```
 
-部署脚本会检查:pi-agent(`pi --version`)、扩展路径(`~/.pi/agent/settings.json`)、ollama embedding、`~/.pi/agent/auth.json` 的 opencode-go 条目、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。pi 环境(克隆构建 memory-lancedb-pro 扩展 + settings/json5/auth + crontab 注册 chiguo-tick)由 `scripts/install_pi.sh` 自动完成(可 `--skip-pi` 跳过),OpenClaw 集成(旧架构,可 `--skip-integration` 跳过)见 `doc/OPENCLAW_INTEGRATION.md`。
+部署脚本会检查:pi-agent(`pi --version`)、扩展路径(`~/.pi/agent/settings.json`)、ollama embedding、`~/.pi/agent/auth.json` 的 opencode-go 条目、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。pi 环境(克隆构建 memory-lancedb-pro 扩展 + settings/json5/auth + crontab 注册 chiguo-tick)由 `scripts/install_pi.sh` 自动完成(可 `--skip-pi` 跳过),详见 `doc/PI_INTEGRATION.md`；wechat-bridge 由 `scripts/wechat-bridge.sh` 管理。OpenClaw 集成安装器 `scripts/install_integration.sh`（旧架构，已停用，`--skip-integration` 跳过）与 `doc/OPENCLAW_INTEGRATION.md` 仅作回退参考。
 
 ## 架构
 
@@ -82,7 +85,7 @@ chiguo_daemon.py(决策引擎,零 LLM)
   ├─ 接话茬(follow_up:pending 话题续聊)
   ├─ 听歌双向联动(netease:睡眠窗口内播放反证 sleeping + 反向校正生物钟)
   ├─ 音乐话题源(netease 策略层:第 8 源 + 降级链 + peek/consume 两阶段配额)
-  └─ 输出 JSON → OpenClaw 读取 → 生成消息 → 微信发送
+  └─ 输出 JSON → pi-agent 生成消息 → wechat-bridge → 微信发送
 ```
 
 ## 核心机制
@@ -103,7 +106,7 @@ chiguo_daemon.py(决策引擎,零 LLM)
 
 ### LLM 内容分析
 
-主人回复时,OpenClaw 可传入 `--analysis` JSON(warmth/effort/attention),daemon 据此差异化情绪变化——热情回复好感大幅上升,敷衍回复几乎不涨。
+主人回复时,wechat-bridge 调 pi-agent 可传入 `--analysis` JSON(warmth/effort/attention),daemon 据此差异化情绪变化——热情回复好感大幅上升,敷衍回复几乎不涨。
 
 ## 文件结构
 
@@ -130,9 +133,13 @@ chiguo_monitor.py        # 结构化监控(stats / alerts / health)
 chiguo_watchdog.py       # 独立看门狗(停滞检测,超 3h 告警)
 chiguo_rotation.py       # 日志轮转 + 告警持久化 + 索引查询
 chiguo_envcheck.py       # 环境就绪检查(Python/pi/扩展/ollama/auth/LanceDB/网易云/数据,只读)
-chiguo_version.py        # 项目版本号单一来源(当前 v1,每轮修改 +0.1)
+chiguo_version.py        # 项目版本号单一来源(当前 v1.4,每轮修改 +0.1)
 chiguo_demo.py           # 演示模式
-test_*.py                # 测试(19 个文件,300+ 用例,独立 runner)
+scripts/pi-run.mjs       # [Phase 4] pi 调用统一封装(生成/分析;toml [host] 段配置)
+scripts/chiguo-tick.sh   # [Phase 4] 系统 crontab 入口(零模型门控,主动发送链路)
+scripts/install_pi.sh    # [Phase 4] pi 环境安装器(dry-run/yes/ask,幂等)
+wechat-bridge/           # [Phase 4] 微信桥(bridge.mjs + command-detect.mjs + credentials/)
+test_*.py                # 测试(23 个文件,独立 runner)
 data/                    # 数据文件:课表 xskb.xlsx、手动记忆 chiguo_memories.json、网易云二维码 netease_qr.png
 ```
 
@@ -176,7 +183,8 @@ python3 chiguo_envcheck.py                 # 检查 Python/pi/扩展/ollama/auth
 ## 文档
 
 - [doc/SYSTEM.md](doc/SYSTEM.md) — 完整系统文档(架构、业务逻辑、配置参考)
-- [doc/OPENCLAW_INTEGRATION.md](doc/OPENCLAW_INTEGRATION.md) — OpenClaw 部署指南
+- [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md) — pi-agent 集成指南(当前架构)
+- [doc/OPENCLAW_INTEGRATION.md](doc/OPENCLAW_INTEGRATION.md) — OpenClaw 部署指南(已废弃,回退参考)
 - [doc/IMPROVE.md](doc/IMPROVE.md) — 改进清单
 - [doc/README.md](doc/README.md) — 内部部署版说明
 - [CLAUDE.md](CLAUDE.md) / [CLAUDE_CODE_RULES.md](CLAUDE_CODE_RULES.md) — 开发约定与代码规则

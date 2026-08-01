@@ -207,11 +207,11 @@ class ChiguoState:
         self.personality = PersonalityTraits(
             openness=pers_cfg.get("openness", 55.0),
             conscientiousness=pers_cfg.get("conscientiousness", 65.0),
-            extraversion=pers_cfg.get("extraversion", 45.0),
-            agreeableness=pers_cfg.get("agreeableness", 70.0),
+            extraversion=pers_cfg.get("extraversion", 60.0),
+            agreeableness=pers_cfg.get("agreeableness", 65.0),
             neuroticism=pers_cfg.get("neuroticism", 60.0),
             tsundere_intensity=pers_cfg.get("tsundere_intensity",
-                emo_cfg.get("tsundere_index", 70.0)),
+                emo_cfg.get("tsundere_index", 75.0)),
             playfulness=pers_cfg.get("playfulness", 55.0),
             attachment_style=pers_cfg.get("attachment_style", 60.0),
         )

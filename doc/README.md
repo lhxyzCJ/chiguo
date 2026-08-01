@@ -1,6 +1,6 @@
 # 迟菓主动消息系统
 
-角色主动消息守护进程 — 数学驱动的决策引擎 + OpenClaw LLM 消息生成。
+角色主动消息守护进程 — 数学驱动的决策引擎 + pi-agent 消息生成（Phase 4 寄主，OpenClaw 已停用）。
 
 **需要 Python 3.14+**（通过 uv 安装：`uv python install 3.14`）
 
@@ -31,10 +31,11 @@ chiguo_daemon.py（决策引擎，零 LLM）
   ├─ 接话茬（follow_up：pending 话题续聊）(v7)
   ├─ 听歌双向联动（netease：睡眠窗口内播放反证 sleeping + 反向校正生物钟）(v8)
   ├─ 音乐话题源（netease 策略层：第 8 源 + 降级链 + peek/consume 两阶段配额）(v9)
-  └─ 输出 JSON → OpenClaw 读取 → 生成消息 → 微信发送
+  └─ 输出 JSON → pi-agent 生成消息 → wechat-bridge 发送微信（Phase 4；OpenClaw 停用）
 ```
 
-决策与生成分离：daemon 只输出结构化 JSON，不调用 LLM。消息生成由 OpenClaw 的 chiguo skill 完成。
+决策与生成分离：daemon 只输出结构化 JSON，不调用 LLM。消息生成由 pi-agent 完成
+（`scripts/pi-run.mjs` 注入 `personality/SUN2.md` + 迟菓语言技巧指南.md，详见 `doc/PI_INTEGRATION.md`）。
 
 ## 核心机制
 
@@ -71,7 +72,7 @@ lonely_low/mid 触发时，70% 概率从 8 个来源选自然话题破冰：
 
 ### LLM 内容分析
 
-主人回复时，OpenClaw 可传入 `--analysis` JSON（warmth/effort/attention），daemon 据此差异化情绪变化。热情回复好感大幅上升，敷衍回复几乎不涨。
+主人回复时，wechat-bridge 调 pi-agent 传入 `--analysis` JSON（warmth/effort/attention），daemon 据此差异化情绪变化。热情回复好感大幅上升，敷衍回复几乎不涨。
 
 ## 文件结构
 
@@ -97,13 +98,17 @@ anniversary_manager.py   # 纪念日/倒计时 CRUD（无参构造锚定项目�
 chiguo_monitor.py        # 结构化监控（stats / alerts / health；alerts 对 state:null 等脏数据归一化不崩）
 chiguo_watchdog.py       # 独立看门狗（tick_seq 回退=重启不误报，相等>3h 才告警停滞）
 chiguo_demo.py           # 演示模式（v2 架构，非生产行为）
-scripts/chiguo-watch.js  # [v11] OpenClaw trigger-script（cron 门控：exec 跑 daemon --compact，零模型执行）
-scripts/install_integration.sh # [v11] OpenClaw 集成安装器（严格校验 + 旧方案残留迁移 + 幂等，deploy.sh 第 5 步接入）
+scripts/chiguo-watch.js  # [v11] OpenClaw trigger-script（旧架构，已停用；回退参考）
+scripts/install_integration.sh # [v11] OpenClaw 集成安装器（旧架构，已停用；回退参考）
 scripts/pi-run.mjs      # [Phase 4] pi 调用统一封装（发送生成 + 回复分析；PIRUN_* 环境变量/toml [host] 段配置；NDJSON 解析 + <<ANALYSIS>> 提取）
-test_*.py                # 测试（22 个文件，含 test_circadian/test_followup/test_netease_proof/test_netease_service/test_envcheck 等）
+scripts/chiguo-tick.sh  # [Phase 4] 系统 crontab 入口（daemon --compact 零模型门控 → pi-run 生成 → bridge /send → --record-send）
+scripts/install_pi.sh   # [Phase 4] pi 环境安装器（memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟，dry-run/yes/ask）
+wechat-bridge/          # [Phase 4] 微信桥（bridge.mjs askPi + command-detect.mjs 特殊命令 + credentials/ 登录态）
+test_*.py                # 测试（23 个文件，含 test_circadian/test_followup/test_netease_proof/test_netease_service/test_envcheck 等）
 test_trigger_script.js   # [v11] chiguo-watch.js 契约测试（node，15 用例）
 test_pi_run.mjs          # [Phase 4] pi-run.mjs 单测（node，19 用例：解析/提取/调用链路/exec 抛错/非零退出 salvage/配置读取）
 test_bridge_askpi.mjs    # [Phase 4] bridge.mjs askPi 测试（node，10 用例：fake pi-run/daemon 真实 execFile 链路）
+test_bridge_cmd.mjs      # [Phase 4] 特殊命令检测/执行测试（node，31 用例：detect 防误伤/buildReply/executeSpecialCommand）
 test_install_integration.sh # [v11] 安装器桩测试（bash，12 用例）
 test_install_pi.sh      # [Phase 4] pi 环境安装器桩测试（bash，14 用例：dry-run 零写入/待办清单/--skip-pi/--yes 产物断言/auth 合并/两遍幂等）
 data/                    # 数据文件：课表 xskb.xlsx、手动记忆 chiguo_memories.json、网易云二维码 netease_qr.png
@@ -165,12 +170,13 @@ python3 chiguo_envcheck.py               # 检查 Python/uv/pi/LanceDB/网易云
 
 ## 版本号
 
-版本号单一来源：`chiguo_version.py` 的 `VERSION`。当前为 `v1`；每完成一轮修改由维护者手动 +0.1（`v1 → v1.1 → v1.2`，类似 Linux 次版本步进）。daemon 决策 JSON、`--version`、envcheck/monitor 报告均带版本号。
+版本号单一来源：`chiguo_version.py` 的 `VERSION`。当前为 `v1.4`；每完成一轮修改由维护者手动 +0.1（`v1 → v1.1 → v1.2`，类似 Linux 次版本步进）。daemon 决策 JSON、`--version`、envcheck/monitor 报告均带版本号。
 
 ## 文档
 
 - [SYSTEM.md](SYSTEM.md) — 完整系统文档（架构、业务逻辑、配置参考）
-- [OPENCLAW_INTEGRATION.md](OPENCLAW_INTEGRATION.md) — OpenClaw 部署指南
+- [PI_INTEGRATION.md](PI_INTEGRATION.md) — pi-agent 集成指南（当前架构）
+- [OPENCLAW_INTEGRATION.md](OPENCLAW_INTEGRATION.md) — OpenClaw 部署指南（已废弃，回退参考）
 - [IMPROVE.md](IMPROVE.md) — 改进清单
 - [2026-08-01-openclaw-integration-design.md](2026-08-01-openclaw-integration-design.md) — v11 集成设计文档（trigger-script + standing order）
 - [2026-08-01-openclaw-integration-plan.md](2026-08-01-openclaw-integration-plan.md) — v11 集成实现计划（6 任务）

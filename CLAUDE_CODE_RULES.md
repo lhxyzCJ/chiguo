@@ -1,7 +1,7 @@
 # Claude Code Rules — Chiguo Proactive Message System
 
 > Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-01. 19 py runners + 2 script tests, zero framework, pure Python stdlib.
-> **Iron law**: decision/generation separation. Daemon outputs JSON. OpenClaw generates messages.
+> **Iron law**: decision/generation separation. Daemon outputs JSON. pi-agent generates messages (Phase 4; OpenClaw deactivated).
 
 ---
 
@@ -74,7 +74,7 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 Supporting (not imported by daemon):
 ├── chiguo_demo.py          Interactive terminal demo (template-only, no LLM) (191 lines)
 ├── chiguo_watchdog.py      Standalone health checks (cron/systemd timer)
-├── chiguo_envcheck.py      Read-only env readiness check (Python/OpenClaw/LanceDB/netease/data, exit 0/1/2)
+├── chiguo_envcheck.py      Read-only env readiness check (Python/pi/ollama/auth/LanceDB/netease/data, exit 0/1/2)
 ├── anniversary_manager.py  CRUD for anniversaries/countdowns
 ├── netease_bridge.py       Netease Cloud Music API (QR login, recent plays, daily recs) (634 lines)
 ├── chiguo_netease.py       Netease strategy layer (v9): health probe/degradation chain/peek-consume quota
@@ -236,7 +236,7 @@ Intent × Cue × Vibe three-layer system:
 
 ## 9. Ship of Theseus — Config Parameters (chiguo_proactive.toml)
 
-277 lines, 19 sections: `[openclaw]` `[memory]` `[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]`. Key tunables:
+277 lines, 20 sections: `[openclaw]`（已废弃，Task 14；仅 wechat_recipient 仍读取）`[memory]` `[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]` `[host]`（pi 调用配置，见 §11）。Key tunables:
 
 | Section | Key params | Effect |
 |---------|-----------|--------|
@@ -281,15 +281,20 @@ Intent × Cue × Vibe three-layer system:
 
 ---
 
-## 11. OpenClaw Integration (v11)
+## 11. LLM Host Integration (Phase 4 — pi-agent; OpenClaw deactivated)
 
-### Send side — trigger-script gate (zero model calls on idle)
+> **DEPRECATED (Task 14)**: The OpenClaw cron trigger-script + standing order flow below is deactivated.
+> Current architecture: system crontab `chiguo-tick.sh` (send side, session `chiguo-send`) + wechat-bridge
+> `askPi` (reply side, session `chiguo-main`) + `scripts/pi-run.mjs` + `scripts/install_pi.sh`.
+> See `doc/PI_INTEGRATION.md`. The following OpenClaw flow is kept as rollback reference only.
+
+### Send side — trigger-script gate (zero model calls on idle) [DEPRECATED]
 1. **Cron**: `openclaw cron add chiguo-check --every 15m --trigger-script scripts/chiguo-watch.js --session main` (registered by `scripts/install_integration.sh`; `openclaw cron` is the official command — the old `automations` alias was removed 2026.7.1-2)
 2. Trigger script runs `<repo>/.venv/bin/python chiguo_daemon.py --compact` with no model execution
 3. `action: "idle"` → `{fire: false}` (~90% of evaluations never wake the agent)
 4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `curl --noproxy '*' -X POST http://127.0.0.1:18790/send` (wechat-bridge; openclaw-weixin channel removed 2026-08-01) → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
 
-### Reply side — standing order (replaces v4 UserPromptSubmit hook)
+### Reply side — standing order (replaces v4 UserPromptSubmit hook) [DEPRECATED]
 1. WeChat message arrives → agent replies normally; standing order (agents/main/AGENTS.md, installed by `install_integration.sh`) forces the flow
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
 3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the standing order's `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 600s → analysis-only upgrade, no double counting)
@@ -302,10 +307,11 @@ Intent × Cue × Vibe three-layer system:
 - **Self-check**: 15-item role consistency checklist
 
 ### Skill files (allowed security boundary)
-- `/root/.openclaw/workspace/skills/chiguo/SKILL.md` (133 lines)
-- `/root/.openclaw/workspace/skills/chiguo/SUN2.md` (283 lines)
-- `/root/.openclaw/workspace/skills/chiguo/references/迟菓语言技巧指南.md` (153 lines)
-- `/root/.openclaw/workspace/agents/main/` — 12 files (IDENTITY, SOUL, MEMORY, etc.; reply-side standing order lives in AGENTS.md)
+- **Repo**（Phase 4 起唯一权威）：`personality/SUN2.md`、`personality/迟菓语言技巧指南.md`（随仓库部署，pi-run 注入）
+- `/root/.openclaw/workspace/skills/chiguo/SKILL.md` (133 lines) [OpenClaw 旧路径，已停用]
+- `/root/.openclaw/workspace/skills/chiguo/SUN2.md` (283 lines) [OpenClaw 旧路径，已停用]
+- `/root/.openclaw/workspace/skills/chiguo/references/迟菓语言技巧指南.md` (153 lines) [OpenClaw 旧路径，已停用]
+- `/root/.openclaw/workspace/agents/main/` — 12 files (IDENTITY, SOUL, MEMORY, etc.; reply-side standing order lives in AGENTS.md) [OpenClaw 旧路径，已停用]
 
 Note: v4 residue `scripts/on-user-msg.sh` and `.claude/settings.json` UserPromptSubmit hooks are removed by `install_integration.sh` stage 3b (backed up to `.bak`).
 

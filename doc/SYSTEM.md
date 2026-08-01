@@ -17,7 +17,7 @@
 │  ├─ 时间（hour, weekday, week_num）                                │
 │  ├─ 节假日（holiday_parser → 2026 国务院安排）                     │
 │  ├─ 课表（schedule_parser → xskb.xlsx）                            │
-│  ├─ 记忆（memory_bridge → OpenClaw LanceDB 只读 + Ebbinghaus）     │
+│  ├─ 记忆（memory_bridge → LanceDB 只读（历史记忆库）+ Ebbinghaus）     │
 │  ├─ 交互历史（silent_hours, messages_today）                       │
 │  ├─ 情绪状态（loneliness, anxiety, affection, energy, tsundere）   │
 │  ├─ 多维人格（Big Five + 角色特质，缓慢演变）                      │
@@ -30,12 +30,13 @@
                              │ stdout JSON
                              ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                    OpenClaw（消息生成 + 发送）                      │
+│        pi-agent（消息生成 + 发送，Phase 4 寄主；OpenClaw 已停用）     │
 │                                                                    │
-│  trigger-script(15分钟,零模型) 读取 daemon 输出                    │
-│  → action=send → chiguo skill (SUN2.md) 生成消息                   │
+│  发送侧: 系统 crontab chiguo-tick.sh(15分钟,零模型门控) 读 daemon 输出 │
+│  → action=send → pi-run.mjs (SUN2.md) 生成消息                     │
 │  → curl POST wechat-bridge /send (127.0.0.1:18790) 发送           │
-│  → daemon.py --user-msg 记录交互 → --send-result 回传发送结果（v6 反馈闭环） │
+│  → daemon.py --record-send 回传发送结果（v6 反馈闭环）              │
+│  回复侧: bridge askPi（分析+回复）→ daemon --user-msg/--analysis    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -439,8 +440,8 @@ on_break:
 - `semester_end` 在 `chiguo_proactive.toml` `[schedule]` 段配置
 - 日期区间通过 CLI 管理：`--break add YYYY-MM-DD YYYY-MM-DD [备注]`
 - 手动覆盖：`--break on`（无限期）/ `--break off`（清空）
-- OpenClaw 检测到"1月12放寒假"→ `--break add 2026-01-12 2026-02-22 寒假`
-- OpenClaw 检测到"2月23开学"→ `--break remove 0`
+- bridge 检测到"放假了/放暑假了"→ `--break on`；检测到"开学了"→ `--break off`（Phase 4 规则化接管，见 §十一特殊命令）
+- 区间管理：`--break add 2026-01-12 2026-02-22 寒假` / `--break remove 0`
 
 ### 3.1 availability 决策
 
@@ -556,7 +557,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 CLI CRUD：`--anniversary "add anniversary 11-03 主人生日"` 等。
 
-OpenClaw skill 检测主人提到日期 → 自动调用 CLI 记录。详见 OPENCLAW_INTEGRATION.md §五（特殊命令）。
+bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / X月X日要XX / 有哪些纪念日"→ 自动调用 CLI 记录并回复确认（Phase 4 起不经 pi；详见 PI_INTEGRATION.md §五）。
 
 ---
 
@@ -614,9 +615,9 @@ python3 chiguo_daemon.py --user-msg "任意消息"
 
 ### 5.5 忙碌抑制
 
-用户表达忙碌/结束对话时，OpenClaw 通过 `--analysis` 回传 `suppress_hours` 字段，daemon 在抑制期内 `can_send()` 返回 False。
+用户表达忙碌/结束对话时，pi-agent 通过 `--analysis` 回传 `suppress_hours` 字段，daemon 在抑制期内 `can_send()` 返回 False。
 
-**原理**：daemon 不做语义理解（保持零 LLM 数学引擎的纯净性）。忙碌检测完全交给 OpenClaw LLM。
+**原理**：daemon 不做语义理解（保持零 LLM 数学引擎的纯净性）。忙碌检测完全交给 pi-agent（回复侧 bridge askPi 的分析 JSON）。
 
 ```bash
 # LLM 分析消息 → 设置 suppress_hours
@@ -629,7 +630,7 @@ python3 chiguo_daemon.py --user-msg "开会去了回头聊" \
 - `can_send()` 检查 `is_busy_suppressed()` → True 时禁止触发
 - 若已有抑制期 → 取两者中较晚的截止时间
 
-OpenClaw SKILL.md 建议判断标准：
+pi 分析 prompt（pi-run.mjs --analysis-mode）建议判断标准：
 - 表达忙碌/有事（"在忙""开会""有事""上课"）→ `suppress_hours: 2-4`
 - 表达结束对话（"晚安""睡了""bye""先这样"）→ `suppress_hours: 8`
 - 表达暂时离开（"回头聊""等一下""等会"）→ `suppress_hours: 1-2`
@@ -716,10 +717,17 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `test_composer_trade.py` | 组合权衡测试（5 用例：cue 权重重排、trade_tsundere 交易式撒娇） | chiguo_composer |
 | `test_personality_init.py` | 初始人格值对齐原著测试（2 用例） | chiguo_personality |
 | `test_toml_binding.py` | personality toml 接线测试（7 用例：toml 存在、meta.name、cue↔模板关联、参考台词注入） | chiguo_composer, chiguo_proactive.toml |
+| `test_adapt_personality.py` | 基线回归防漂移测试（v10，2 用例：300 次热情回复不甜妹化/200 次沉默不极端化） | chiguo_personality |
+| `scripts/pi-run.mjs` | **pi 调用统一封装**（Phase 4）：生成/分析两模式，`[host]` 配置 + PIRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage | node |
+| `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → pi-run（PIRUN_SESSION=chiguo-send）→ bridge /send → --record-send | bash, node, curl |
+| `scripts/install_pi.sh` | **pi 环境安装器**（Phase 4）：memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟（三模式幂等） | bash |
+| `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askPi 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
+| `wechat-bridge/command-detect.mjs` | **特殊命令检测/执行**（Phase 4）：纪念日/假期规则化（方案 A），daemon JSON → 迟菓风确认 | node |
+| `test_bridge_cmd.mjs` | 特殊命令测试（31 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
 | `test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 
-共计 **369** 个测试用例（22 个测试文件；另含 node 侧 test_trigger_script.js 15 用例 + test_pi_run.mjs 19 用例 + test_bridge_askpi.mjs 10 用例、bash 侧 test_install_integration.sh / test_install_pi.sh（14 用例）/ test_wechat_bridge.sh，见 doc/README.md）。
+共计 **400+** 个测试用例（23 个 py 测试文件；另含 node 侧 test_trigger_script.js 15 用例 + test_pi_run.mjs 19 用例 + test_bridge_askpi.mjs 10 用例 + test_bridge_cmd.mjs 31 用例、bash 侧 test_install_integration.sh / test_install_pi.sh（14 用例）/ test_wechat_bridge.sh，见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `test_holiday_parser.py` 7/7 用例通过。
@@ -886,7 +894,7 @@ python3 chiguo_watchdog.py --notify     # 异常时 stderr 输出告警摘要
   "intensity": "medium",
   "context": {
     "character": "迟菓",
-    "personality_source": "~/.openclaw/workspace/skills/chiguo/SUN2.md",
+    "personality_source": "/root/chiguo/personality/SUN2.md",
     "situation": "主人已经12小时没发消息了。菓菓开始焦虑不安。用嘴硬的方式联系……",
     "schedule_hint": "主人正在上工程测量实训（到14:45）。不要在上课时发消息。",
     "layer": "middle",
@@ -938,7 +946,7 @@ python3 chiguo_watchdog.py --notify     # 异常时 stderr 输出告警摘要
 }
 ```
 
-idle 输出中新增 `next_evaluation_at` 字段，预测下次可触发的最早时间。`--user-msg` 在紧凑模式（--compact）下也始终包含此字段，供 OpenClaw 调度下次心跳评估。
+idle 输出中新增 `next_evaluation_at` 字段，预测下次可触发的最早时间。`--user-msg` 在紧凑模式（--compact）下也始终包含此字段，供调度器（cron tick）安排下次心跳评估。
 
 idle reason 枚举：
 - `quiet_hours` — 00:00-08:00 静默时段/睡眠窗口（22:00-00:00 不再静默，可发消息）
@@ -956,10 +964,19 @@ idle reason 枚举：
 ## 九、配置参考（chiguo_proactive.toml）
 
 ```toml
-[openclaw]
-wechat_channel = "openclaw-weixin"      # v12 起仅作元数据（实际发送走 wechat-bridge /send，见 doc/OPENCLAW_INTEGRATION.md）
-wechat_recipient = "..."                 # 接收者 ID
-personality_source = "~/.openclaw/workspace/skills/chiguo"  # SUN2.md 目录（~ 展开为 $HOME）
+[openclaw]   # 已废弃（Phase 4 Task 14：由 [host] 取代；仅 wechat_recipient 仍被 tick/bridge 管理脚本读取）
+wechat_channel = "openclaw-weixin"      # 已废弃
+wechat_recipient = "..."                 # 仍读取：发送目标 ID
+personality_source = "/root/chiguo/personality"  # 已废弃：见 [host].personality_dir
+
+[host]       # pi 调用配置（Phase 4；scripts/pi-run.mjs 读取；PIRUN_* 环境变量可覆盖）
+provider = "opencode-go"                 # pi provider（auth.json 键名）
+model = "deepseek-v4-flash"
+thinking_level = "high"                  # off/minimal/low/medium/high/xhigh/max
+session_id = "chiguo-main"               # 回复侧会话（bridge askPi）
+send_session_id = "chiguo-send"          # 主动发送会话（chiguo-tick.sh）——与回复会话分离，消除跨进程并发 turn
+personality_dir = "/root/chiguo/personality"    # SUN2.md + 迟菓语言技巧指南.md（随仓库）
+wechat_bridge_url = "http://127.0.0.1:18790/send"  # 主动发送端点（tick curl 目标，--noproxy '*'）
 
 [character]
 name = "迟菓"
@@ -1339,7 +1356,7 @@ v5 新增完整的对话日志、归档、轮转、告警持久化和索引查�
 | `user_emotion_analysis` | object or null | LLM 分析结果（仅 in 方向有 --analysis 时） |
 
 写入时机：
-- **out 方向**：OpenClaw 生成并发送消息后，通过 `--record-send` CLI 写入
+- **out 方向**：pi/tick 生成并发送消息后，通过 `--record-send` CLI 写入
 - **in 方向**：daemon 收到 `--user-msg` 时写入
 
 #### 10.7.3 日志轮转
@@ -1491,7 +1508,7 @@ python3 chiguo_daemon.py --export                    # 导出全部对话为 JSO
 python3 chiguo_daemon.py --export --format csv       # 导出为 CSV
 python3 chiguo_daemon.py --export --days 30          # 导出最近 30 天
 
-# 记录发送（OpenClaw 回调）
+# 记录发送（tick 回调）
 python3 chiguo_daemon.py --record-send msg_20260628_143205_a1b2c3 \   # 记录菓菓发出的消息
   --text "谁、谁关心你了！" \
   --trigger lonely_mid --intensity medium   # 可选: 触发类型/消息强度
@@ -1516,14 +1533,34 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 
 ---
 
-## 十一、OpenClaw 集成
+## 十一、LLM 集成（pi-agent，Phase 4；OpenClaw 已停用）
 
-详见 `OPENCLAW_INTEGRATION.md`（v11）。关键两条链路：
+详见 `PI_INTEGRATION.md`（当前架构）与 `OPENCLAW_INTEGRATION.md`（已废弃，回退参考）。关键链路：
 
-1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（Phase 4 起替代 openclaw cron trigger-script；安装由 `scripts/install_pi.sh` 管理，本机手动注册）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/pi-run.mjs` 按 SUN2.md 生成消息 → curl bridge `/send` → `--record-send <msg_id> --text <text>` 回写
-2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ `scripts/pi-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格；Phase 4 起替代 openclaw agent standing order）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，600s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
+1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（Phase 4 起替代 openclaw cron trigger-script；安装由 `scripts/install_pi.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/pi-run.mjs`（`PIRUN_SESSION=chiguo-send`）按 SUN2.md 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
+2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/pi-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格；Phase 4 起替代 openclaw agent standing order）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，600s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
 
-pi 环境（memory-lancedb-pro 扩展 clone+build、`~/.pi/agent/settings.json` extensions、`memory-lancedb-pro.json5`（dbPath 沿用历史库 + ollama embedding）、auth.json opencode-go 条目（key 从 `OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_pi.sh` 完成（deploy.sh 第 5.6 步接入，`--skip-pi` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。OpenClaw 集成安装/校验由 `scripts/install_integration.sh`（旧架构，deploy.sh 第 5 步接入）；旧版 v4 cron system-event + hook 方案见 OPENCLAW_INTEGRATION.md §八降级路径。
+### 11.1 特殊命令（纪念日/假期，bridge 规则化）
+
+standing order 停用后由 `wechat-bridge/command-detect.mjs` 确定性接管（pi 纯文本调用无工具权限）：
+
+| 哥哥说 | 执行 |
+|--------|------|
+| 记住X月X日(是)XX | `--anniversary "add anniversary MM-DD <名称>"` |
+| YYYY年X月X日(是/为/要)XX / X月X日要XX | `--anniversary "add countdown YYYY-MM-DD <名称>"`（无年份推断：今年已过 → 明年，CST） |
+| 有哪些纪念日 / 纪念日列表 | `--anniversary list` |
+| 放假了 / 放暑假了 / 我放假了 | `--break on` |
+| 开学了 / 我开学了 | `--break off` |
+
+防误伤约束：消息 ≤40 字、非问句（末尾 吗/？/? 不拦截）、非 `你/您` 开头、`今天放假了` 等一天性陈述不拦截（交 pi 自然回复）。执行后回迟菓风确认文案。
+
+### 11.2 会话与并发模型
+
+- `chiguo-main`：回复侧会话（bridge 进程内 `TurnQueue` 串行 pi 调用，防同会话交错）
+- `chiguo-send`：主动发送会话（tick 经 `PIRUN_SESSION` 注入；决策 JSON 自足，无需对话连续性）
+- 两条链路**永不共享会话** → 消除跨进程并发 turn 风险（同会话并发在 pi 侧可能交错/上下文竞争）
+
+pi 环境（memory-lancedb-pro 扩展 clone+build、`~/.pi/agent/settings.json` extensions、`memory-lancedb-pro.json5`（dbPath 沿用历史库 + ollama embedding）、auth.json opencode-go 条目（key 从 `OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_pi.sh` 完成（deploy.sh 第 5.6 步接入，`--skip-pi` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。OpenClaw 集成安装器 `scripts/install_integration.sh`（旧架构，已停用，deploy.sh 第 5 步接入）与 OPENCLAW_INTEGRATION.md 仅作回退参考。
 
 ---
 
@@ -1603,7 +1640,7 @@ rm <仓库根目录>/chiguo_state.json
 4. **优雅降级** — LanceDB 不可用（未安装/连接失败，`memory_bridge` 惰性导入 + 60s 节流重试）→ 自动跳过，JSON 记忆兜底；课表不可用 → 默认开放
 5. **确定性优先** — 课表/节假日用确定性解析，不靠 LLM
 6. **平滑概率** — sigmoid 替代硬阈值，Hawkes 自激过程替代固定间隔，半衰期替代线性增减
-7. **决策/生成分离** — daemon 只输出结构化 JSON，消息生成由 OpenClaw 的 chiguo skill 完成
+7. **决策/生成分离** — daemon 只输出结构化 JSON，消息生成由 pi-agent 完成（Phase 4；OpenClaw 已停用）
 8. **模块正交** — 情绪（快变量）、人格（慢变量）、Bayesian（用户推断）三者正交但互相调制
 
 ---
@@ -1668,6 +1705,7 @@ rm <仓库根目录>/chiguo_state.json
 | **v8** | **2026-07-31** | **用户状态渠道增强：双作息分桶学习（工作日/周末两桶独立窗口 + 调休/假期修正，STATE_VERSION 7→8）+ 听歌双向联动（睡眠窗口内播放反证：sleeping 置信度 ×0.5 压制 + record_active 反向校正生物钟）** |
 | **v9** | **2026-07-31** | **网易云音乐渠道增强：对话内容源 + 鲁棒性 —— TopicPicker 第 8 源 netease（netease_weight=0.12）+ 网易云策略层 chiguo_netease（健康探针/登录失效检测/降级链/共享日配额 2/随机选源/peek-consume 两阶段，netease_health.json；STATE_VERSION 不变，无状态迁移）** |
 | **v10** | **2026-08-02** | **人格基线回归 + personality_history（STATE_VERSION 9→10）**：`PersonalityTraits.regress_to_baseline()` 每步 `v += (baseline - v) * regress_rate` 向构造时初始值软回归（基线随状态持久化 `personality_baseline`，旧状态回退 toml `[personality]` 初始值；速率 `regress_rate` 默认 0.01，0=关闭）——修复热情回复甜妹化/持续沉默极端化两类人格漂移；`adapt_personality` 每次追加 `{ts, dims}` 到 `personality_history`（滚动 200 条持久化） |
+| **v1.4** | **2026-08-02** | **寄主迁移收尾（Phase 4 Task 14）**：toml `[openclaw]` → `[host]`（+wechat_bridge_url/send_session_id，opencode-go provider/model/thinking/session/personality_dir）；特殊命令（纪念日/假期）由 bridge 规则化确定性接管（`wechat-bridge/command-detect.mjs`，方案 A：检测→daemon CLI→迟菓风确认，不经 pi）；会话并发模型：回复=chiguo-main（TurnQueue 串行）/主动发送=chiguo-send（PIRUN_SESSION 注入）分离消除跨进程并发 turn；兜底默认值 45/70/70→60/65/75（state/composer/trigger 与 dataclass 对齐）；daemon 人格目录改读 `[host].personality_dir`；新增 `doc/PI_INTEGRATION.md`，OPENCLAW_INTEGRATION.md/CLAUDE_CODE_RULES §11 标已废弃；OpenClaw cron `chiguo-check` 已 disable（gateway 停用留用户最终确认） |
 
 ### v3→v4 迁移
 
@@ -1747,9 +1785,9 @@ v8 新增功能：
 
 ## 十七、鲁棒性设计
 
-### OpenClaw 停机场景
+### 停机场景（cron tick / bridge 未运行）
 
-OpenClaw cron 停止时 daemon 不执行。恢复后：
+cron tick / bridge 停止时 daemon 不执行。恢复后：
 
 1. **情绪推进**：`_tick()` 读取 `last_tick` 时间戳计算间隔，≤24h 全量推进，>24h dampen (50%)
 2. **日期计数重置**：`_check_daily_reset()` 按 `current_date != today` 比较，跨多天自动归零
@@ -1771,7 +1809,7 @@ OpenClaw cron 停止时 daemon 不执行。恢复后：
 ### 已知局限
 
 - PID 锁仅 `--loop` 模式生效，cron 单次执行无需
-- 反馈闭环依赖 OpenClaw agent 主动回传 --send-result，若 agent 未配置此步骤则发送结果仍不可知
+- 反馈闭环依赖 tick/bridge 主动回传 --record-send/--send-result，若链路中断则发送结果仍不可知
 - `state_lock()` 是显式锁：`save()` 内部已持锁，但 cron 与 agent（--user-msg）各自的 read-modify-write 若未包在 `with state_lock():` 内，仍存在 lost update 窗口
 - watchdog 的 `stall_since` 检测对 state 文件重建（tick_seq 归零）会误报 —— **2026-07-31 已修复**：tick_seq 回退（< prev_seq）视为重启（重置 `stall_since`、不告警、输出 `tick_restarted` 标记）；仅相等且 >3h 不增才告警停滞；下一次运行自动自愈清除旧误报（现网 `stall_since=16:41` 误报已实测清除）
 - 生物钟学习依赖主人回复样本：冷启动（<7 个有回复日或置信度 <0.5）该桶回退配置默认静默窗口 0-8；学习窗口是统计估计，异常作息（考试周熬夜/时区变化）由置信度门槛与滚动窗口自动衰减
@@ -1782,4 +1820,4 @@ OpenClaw cron 停止时 daemon 不执行。恢复后：
 - 网易云每日推荐需登录 cookie（MUSIC_U），匿名账号无每日推荐权限；红心歌单/听歌情绪分析 YAGNI 暂缓（需 LLM，违背零 LLM 铁律）
 - 热重载非法 `retry_count` 会抛异常（Minor）：`set_api_retry_policy` 的 int()/float() 强转对非数值配置未兜底（`NeteaseService` 构造即调用，仅配置错误时触发）
 - `_in_quiet_window` 双份拷贝：`chiguo_daemon` 与 `chiguo_netease` 各一份（同语义跨午夜），`chiguo_topics` 复用 chiguo_netease 版——语义修改需两处同步
-- 接话茬素材依赖 OpenClaw 传入 `--analysis` 的 topic 字段；未传 topic 时仅剩记忆兜底路径
+- 接话茬素材依赖 bridge/pi 传入 `--analysis` 的 topic 字段；未传 topic 时仅剩记忆兜底路径

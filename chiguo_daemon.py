@@ -688,11 +688,14 @@ class DecisionEngine:
         return None
 
     def _build_context(self, trigger, now: datetime) -> dict:
-        """构建给 OpenClaw 生成消息的上下文。v4: 使用 MessageComposer + 人格注入。"""
+        """构建给 pi-agent 生成消息的上下文。v4: 使用 MessageComposer + 人格注入。"""
         emo = self.state.emotion
         silent_h = self.state.cooldown.silent_hours(now)
+        # v14: 人格目录以 [host].personality_dir 为准（随仓库部署）；[openclaw].personality_source 仅作回退兼容
+        host_cfg = self.config.get("host", {})
         oc_cfg = self.config.get("openclaw", {})
-        personality_dir = os.path.expanduser(oc_cfg.get("personality_source", "~/.openclaw/workspace/skills/chiguo"))
+        personality_dir = os.path.expanduser(
+            host_cfg.get("personality_dir", oc_cfg.get("personality_source", "~/.openclaw/workspace/skills/chiguo")))
 
         # 按人格层映射语气指引
         layer_guidance = {
