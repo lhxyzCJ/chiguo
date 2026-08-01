@@ -1,5 +1,20 @@
 # MEMORY.md
 
+## 2026-08-01 — v11 集成修复轮（全分支审查 5 Important + 官方文档合规 3 doc-level，Task 6）
+
+**背景**：全分支审查发现 8 个问题——I-1 阶段 4 验证不完整（config set/AGENTS.md 写入失败仍退出 0）、I-2 旧作业/hook 解析依赖裸名单行（真机多列表格幂等被破坏）、I-3 文档 `--compact` idle 无输出与 daemon 矛盾、I-4 deploy.sh 测试链漏脚本测试、I-5 `.claude/settings.json.bak` 未忽略；D-1 `doctor --fix` 迁移清单不含 legacy handlers 键（文档误述为官方迁移工具）、D-2 "输出 idle 即链路通"无法证实、D-3 automations rm/remove 拼写未说明。
+
+- **I-1** `scripts/install_integration.sh`：`would()` 不再丢弃 eval 失败状态（失败 → PENDING=1 + 警告）；阶段 4（非 dry-run）新增复验——`config get cron.triggers.enabled` 必须 true、`grep CHIGUO-STANDING-ORDER-START $SO_FILE` 必须命中，任一失败 PENDING=1 → 退出 1
+- **I-2** 同文件：旧作业/原生 hook 解析先 `awk '{print $1}'` 取第一列再整行排除 `chiguo-check`（格式无关，兼容多列表格）
+- **I-3** `doc/OPENCLAW_INTEGRATION.md`：三处 "idle 无输出" → "idle 输出最小单行 JSON"（对应 chiguo_daemon.py:1576-1578 实际行为）；错误表加注脚本不读退出码
+- **I-4** `deploy.sh`：步骤 3 补 `node test_trigger_script.js` + `bash test_install_integration.sh`（失败中止），标题 19 py + 2 脚本
+- **I-5** `.gitignore`：补 `.claude/settings.json.bak` / `.claude/settings.json.bak.*`
+- **D-1** 安装器 + 文档：移除 legacy handlers 自动 `doctor --fix` → 检测告警（"官方建议迁移到 discovery 系统，本次未自动处理"）+ PENDING=1；测试用例 8 改断言迁移提示与退出 1
+- **D-2** 文档：冒烟步骤改描述性（观察 run --wait 退出码与 chiguo_decisions.jsonl 新条目）
+- **D-3** 文档：§六 补 remove/rm 等效说明（automations=cron 别名）
+- 文件：`scripts/install_integration.sh`、`test_install_integration.sh`、`deploy.sh`、`.gitignore`、`doc/OPENCLAW_INTEGRATION.md`、`doc/IMPROVE.md`、`MEMORY.md`
+- 验证：`bash test_install_integration.sh` 14/14（新增用例 13 表格式 list、14 triggers set 失败；用例 8 调整为 D-1）；`node test_trigger_script.js` 15/15；`bash -n` 3 脚本干净；`bash scripts/install_integration.sh --dry-run`（本机无 openclaw）退出 0；19 个 py runner 全量回归通过
+
 ## 2026-08-01 — v11 OpenClaw 集成改造（trigger-script 门控 + standing order + 集成安装器）
 
 **背景**：v4 的 cron system-event + Claude-Code UserPromptSubmit hook 方案不稳定（hook 触发/回复重复记录问题）；官方 automations 提供零模型 `--trigger-script` 门控，把 ~90% 的评估（idle）挡在 agent 唤醒之外、降低模型调用成本。v11 改为 trigger-script 发送侧 + standing order 回复侧（无 hook 双重记录）+ 安装器一键部署。

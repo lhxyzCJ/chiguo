@@ -53,8 +53,8 @@ bash deploy.sh                                  # 或随部署一起（传 --ski
 | 1 开关 | 开启官方危险自动化开关（脚本以 agent 权限无头执行，安装器仅注册 chiguo-watch.js 一条命令） | `openclaw config set cron.triggers.enabled true`；修改后 `openclaw config validate` |
 | 2 注册 | 先移除旧作业，再注册 trigger-script 作业（已存在则跳过，幂等） | `openclaw automations rm <旧作业>`；`openclaw automations add --name chiguo-check --every 15m --trigger-script '<仓库目录>/scripts/chiguo-watch.js' --session main --wake now --timeout-seconds 120 --system-event '<指令>'` |
 | 3 standing order | 回复侧流程写入 `~/.openclaw/workspace/agents/main/AGENTS.md`（`# CHIGUO-STANDING-ORDER-START/END` 标记段，幂等：已存在跳过；写入前备份 .bak） | 见 §四全文 |
-| 3b 清理 | 清除 v4 残留：`.claude/settings.json` hook 条目（备份后 JSON 编辑，保留其他 hook）；on-user-msg.sh → `.bak` 后移除；OpenClaw 原生 chiguo hook 禁用；legacy handlers 迁移 | `openclaw hooks disable <name>`；`openclaw doctor --fix`（官方迁移工具） |
-| 4 验证 | 配置合法 / 作业在册 / 官方审计（--yes 模式）/ 端到端冒烟 | `openclaw config validate`；`openclaw automations list \| grep chiguo-check`；`openclaw security audit --deep`；`openclaw automations run chiguo-check --wait --wait-timeout 10m`（输出 idle 即链路通） |
+| 3b 清理 | 清除 v4 残留：`.claude/settings.json` hook 条目（备份后 JSON 编辑，保留其他 hook）；on-user-msg.sh → `.bak` 后移除；OpenClaw 原生 chiguo hook 禁用；legacy handlers 检测并告警（官方建议迁移到 discovery 系统；doctor --fix 迁移清单不含该键 → 不自动处理，残留计入待办 PENDING） | `openclaw hooks disable <name>`；`openclaw config get hooks.internal.handlers`（检测） |
+| 4 验证 | 配置合法 / 作业在册 / 开关与 standing order 复验（config set / AGENTS.md 写入失败兜底 → PENDING）/ 官方审计（--yes 模式）/ 端到端冒烟 | `openclaw config validate`；`openclaw automations list \| grep chiguo-check`；`openclaw config get cron.triggers.enabled`（必须 true）；`grep CHIGUO-STANDING-ORDER-START ~/.openclaw/workspace/agents/main/AGENTS.md`；`openclaw security audit --deep`；`openclaw automations run chiguo-check --wait --wait-timeout 10m`（观察 run 的 --wait 退出码与决策日志 chiguo_decisions.jsonl 新条目判断链路） |
 
 阶段 2 注册时写入的 `--system-event` 指令全文（与安装器 INSTRUCTION 一致）：
 
@@ -75,14 +75,16 @@ bash deploy.sh                                  # 或随部署一起（传 --ski
 |------|------|
 | `action=send` | `{fire: true, message: <完整决策 JSON>}`（清空 last_error） |
 | `action=idle` | `{fire: false}`（零模型调用，清空 last_error） |
-| daemon 崩溃 / 非零退出 / 坏 JSON / 超时 / 未知 action | `{fire: false, state: {last_error: ...}}`，持久留到下次评估带出 |
+| daemon 崩溃（exec 抛错）/ stdout 无决策 JSON / 坏 JSON / 超时 / 未知 action | `{fire: false, state: {last_error: ...}}`，持久留到下次评估带出 |
+
+> 注：脚本只读 exec 返回的 stdout 内容（以及 exec 调用本身抛错），不读取 daemon 退出码——"非零退出"只要 stdout 仍是合法 JSON 就按 JSON 处理；反之退出码为 0 但 stdout 无 JSON 也判为失败。
 
 实现要点：
 
 - 执行：`tools.call('exec', {command})` 跑 `<仓库目录>/.venv/bin/python <仓库目录>/chiguo_daemon.py --compact`（仓库路径来自环境变量 `CHIGUO_REPO`，缺省为脚本所在目录的上级）。
-- 解析：优先全文 JSON，失败逐行回退（stdout 杂音泄漏防护）；`--compact` 保证 idle 时 stdout 无输出。
+- 解析：优先全文 JSON，失败逐行回退（stdout 杂音泄漏防护）；`--compact` 时 idle 输出最小单行 `{"action":"idle","time":...}`（chiguo_watch 视为 fire:false；另见 §七 调试）。
 - 纯搬运工：脚本不生成消息、不决策，只做 exec + 解析 + fire（决策/生成分离铁律）。
-- 单测：`node test_trigger_script.js`（mock 四路径：idle / send / 坏 JSON / daemon 非零退出）。
+- 单测：`node test_trigger_script.js`（mock 四路径：idle / send / 坏 JSON / 无输出或 exec 抛错）。
 
 ### 决策输出参考（fire:true 时 message 的完整内容）
 
@@ -197,7 +199,7 @@ openclaw automations edit chiguo-check ...             # 修改参数
 openclaw automations disable chiguo-check              # 暂停（不删除，调度器不再触发）
 openclaw automations enable chiguo-check               # 恢复
 openclaw automations run chiguo-check --wait --wait-timeout 10m   # 手动触发并等待结果（端到端冒烟）
-openclaw automations rm chiguo-check                   # 删除
+openclaw automations rm chiguo-check                   # 删除（官方叙述文档写 remove、命令树为 rm，等效；automations 即 cron 别名）
 ```
 
 ---
@@ -205,7 +207,7 @@ openclaw automations rm chiguo-check                   # 删除
 ## 七、调试
 
 ```bash
-# 手动决策（JSON 到 stdout，idle 也有输出；--compact 时 idle 无输出）
+# 手动决策（JSON 到 stdout；--compact 时 idle 输出最小单行 JSON）
 uv run python chiguo_daemon.py
 uv run python chiguo_daemon.py --compact
 
@@ -225,7 +227,7 @@ node test_trigger_script.js
 # 安装器只读扫描（改完安装器后先跑这个）
 bash scripts/install_integration.sh --dry-run
 
-# 端到端冒烟（输出 idle 即链路通）
+# 端到端冒烟（观察 run 的 --wait 退出码与决策日志 chiguo_decisions.jsonl 新条目判断链路）
 openclaw automations run chiguo-check --wait --wait-timeout 10m
 
 # 配置校验 + 官方审计
@@ -257,7 +259,7 @@ openclaw automations add --name chiguo-check --cron "*/30 * * * *" --tz Asia/Sha
 
 - Automations / trigger-script / event triggers：`/automation`、`/automation/cron-jobs`
 - 危险自动化开关 `cron.triggers.enabled`：`/automation/cron-jobs`（Warning 段）
-- Internal hooks / 事件表 / legacy handlers / doctor --fix：`/automation/hooks`
+- Internal hooks / 事件表 / legacy handlers（兼容性说明与迁移到 discovery 系统的建议）：`/automation/hooks`
 - Standing orders：`/automation`（Quick decision guide）
 - CLI 参考（config get/set/validate、automations、hooks、security audit、doctor）：`/cli`
 - `<command> --help` 权威性：`/cli`（Command tree 段）
