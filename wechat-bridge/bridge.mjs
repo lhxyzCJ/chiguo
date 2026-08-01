@@ -45,7 +45,7 @@ const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? '/root/chiguo/chiguo_d
 const DEFAULT_STORAGE = new URL('./credentials/', import.meta.url).pathname
 
 /** 串行化 pi 调用（同一 pi 会话 chiguo-main 不允许并发 turn，含 chiguo-tick 的周期调用）。 */
-class TurnQueue {
+export class TurnQueue {
   constructor() {
     this.tail = Promise.resolve()
   }
@@ -151,6 +151,54 @@ function startSendServer(bot) {
   })
 }
 
+/** 单条微信消息处理链路（onMessage 委托；导出供测试）：
+ * 1) recordUserMsg 确定性回传 daemon（无分析）
+ * 2) detectSpecialCommand 命中特殊命令 → executeSpecialCommand 直接执行 daemon 并回复，不经 pi
+ * 3) 否则 askPi（pi-run --analysis-mode 一次完成分析+回复）→ upgradeAnalysis 升级 → 回复
+ * bot 需提供 reply(msg, text)/sendTyping(userId)；queue 提供 run(task)。 */
+export async function handleMessage(text, msg, bot, queue) {
+  if (!text?.trim()) return null
+
+  await recordUserMsg(text)  // 确定性回传 daemon（先于 askPi 分析；analysis 稍后经 upgradeAnalysis 升级）
+
+  // 特殊命令（纪念日/假期）确定性接管：命中则直接执行 daemon，不经 pi（Phase 4 Task 14）
+  const special = detectSpecialCommand(text)
+  if (special) {
+    await queue.run(async () => {
+      try {
+        const r = await executeSpecialCommand(spawn, special, DAEMON_PY, DAEMON_SCRIPT)
+        console.log(`[special] ${special.daemon.join(' ')} → ok=${r.ok}`)
+        await bot.reply(msg, r.reply)
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        console.error('[special error]', reason)
+        await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
+      }
+    })
+    return 'special'
+  }
+
+  try {
+    await bot.sendTyping(msg.userId).catch(() => {})
+  } catch {}
+
+  await queue
+    .run(async () => {
+      try {
+        const { text: reply, analysis } = await askPi(text)
+        await upgradeAnalysis(text, analysis)  // recv_dedup 升级语义，不重复记账
+        console.log(`[out] ${reply.slice(0, 80)}`)
+        await bot.reply(msg, reply)
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        console.error('[pi error]', reason)
+        await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
+      }
+    })
+    .catch((err) => console.error('[queue error]', err))
+  return 'pi'
+}
+
 async function main() {
   const bot = new WeChatBot({
     storage: 'file',
@@ -177,45 +225,7 @@ async function main() {
     const text = msg.text
     if (!text?.trim()) return
     console.log(`[in] ${msg.userId}: ${text.slice(0, 80)}`)
-
-    await recordUserMsg(text)  // 确定性回传 daemon（先于 askPi 分析；analysis 稍后经 upgradeAnalysis 升级）
-
-    // 特殊命令（纪念日/假期）确定性接管：命中则直接执行 daemon，不经 pi（Phase 4 Task 14）
-    const special = detectSpecialCommand(text)
-    if (special) {
-      queue.run(async () => {
-        try {
-          const r = await executeSpecialCommand(spawn, special, DAEMON_PY, DAEMON_SCRIPT)
-          console.log(`[special] ${special.daemon.join(' ')} → ok=${r.ok}`)
-          await bot.reply(msg, r.reply)
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err)
-          console.error('[special error]', reason)
-          await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
-        }
-      })
-        .catch((err) => console.error('[queue error]', err))
-      return
-    }
-
-    try {
-      await bot.sendTyping(msg.userId).catch(() => {})
-    } catch {}
-
-    queue
-      .run(async () => {
-        try {
-          const { text: reply, analysis } = await askPi(text)
-          await upgradeAnalysis(text, analysis)  // recv_dedup 升级语义，不重复记账
-          console.log(`[out] ${reply.slice(0, 80)}`)
-          await bot.reply(msg, reply)
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err)
-          console.error('[pi error]', reason)
-          await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
-        }
-      })
-      .catch((err) => console.error('[queue error]', err))
+    await handleMessage(text, msg, bot, queue)
   })
 
   bot.on('error', (err) => {

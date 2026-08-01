@@ -60,7 +60,7 @@ uv run python test_adapt_personality.py
 
 > 注意:集成测试需要当前目录存在 `chiguo_proactive.toml`,请始终从项目根目录运行。
 
-> 版本机制:项目版本号单一来源为 `chiguo_version.py` 的 `VERSION`(当前 v1.4),每完成一轮修改手动 +0.1(`v1 → v1.1 → v1.2`)。daemon 决策 JSON、`--version`、envcheck/monitor 报告均带版本号;状态文件 `_version` 是 schema 号(STATE_VERSION=8),与项目版本无关。
+> 版本机制:项目版本号单一来源为 `chiguo_version.py` 的 `VERSION`(当前 v1.4),每完成一轮修改手动 +0.1(`v1 → v1.1 → v1.2`)。daemon 决策 JSON、`--version`、envcheck/monitor 报告均带版本号;状态文件 `_version` 是 schema 号(STATE_VERSION=10),与项目版本无关。
 
 ## 部署到其他机器
 

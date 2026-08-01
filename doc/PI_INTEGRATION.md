@@ -113,6 +113,10 @@ openclaw standing order 停用后，纪念日/假期指令由 **bridge 确定性
 `你/您` 开头的对 bot 提问不拦截；`今天放假了` 等一天性陈述不拦截。
 执行后 bridge 回迟菓风确认文案（daemon JSON 驱动），失败回「处理失败：<原因>」。
 
+> ⚠️ **裸「放假了」= 无限期假期**：`--break on` 置 `manual_override=True`（无限期，直到手动关闭，
+> availability 恒 0.85，chiguo_monitor.py 会持续告警）。误触发后执行 `--break off` 或
+> `--anniversary "remove <id>"` 式手动关闭：`uv run python chiguo_daemon.py --break off`。
+
 ## 六、opencode-go key 配置
 
 - pi 读 `~/.pi/agent/auth.json` 的 `opencode-go` 条目（`{"type":"api_key","key":...}`，chmod 600）

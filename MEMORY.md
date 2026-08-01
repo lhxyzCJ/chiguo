@@ -1,5 +1,17 @@
 # MEMORY.md
 
+## 2026-08-02 — 任务 14 评审修复：真实 daemon shape 验证固化 + bridge 链路测试 + 检测边界收紧
+
+**背景**：Task 14 评审 2 项 Important + 6 项 Minor 修复。
+
+**方案**：
+- **Important #1（真实 shape 验证）**：隔离临时目录实测 `chiguo_daemon.py --anniversary add/list/remove` + `--break on`（add 输出 flat `{action,ok,id,name,date,type}`，list 含 `note/created_at`，与 buildReply 读取一致，无需改代码）→ 真实 shape 固化进 test_bridge_cmd.mjs fake daemon（add 回显命令内 name/date 同真 daemon 契约）；新增 add anniversary 真实 shape 渲染、list 双行（倒计时标记+count）、break off 用例
+- **Important #2（bridge 链路测试）**：bridge.mjs onMessage 内联逻辑抽为 `export handleMessage(text,msg,bot,queue)`（recordUserMsg → detect → execute+reply 不经 pi / askPi+upgrade+reply），`TurnQueue` 导出；test_bridge_askpi.mjs 补 4 链路用例（特殊命令不调 pi + daemon argv + 确认文案、break 链路、普通消息 askPi 全序、空文本短路）——fake daemon 补真实 shape JSON 输出
+- **Minor**：① PI_INTEGRATION.md §五 注明裸「放假了」= 无限期 `--break on`（`--break off` 关闭）；② 记住 正则加 `(?:哥哥|主人)?` 前缀（哥哥记住X月X日命中）；③ 尾标点剥离表加「了」（记住5月11日了→不拦截、记住5月11日是生日了→名称"生日"）；④ buildReply 删除 anniversary_removed 死分支；⑤ 列表正则第二分支加 ^ 锚定（"今天是纪念日列表"不命中）；⑥ README.md STATE_VERSION=8→10 同步
+- 真实 daemon 冒烟未污染数据：隔离临时目录运行后删除，仓库无 anniversaries.json/break_state.json 残留
+
+**验证**：test_bridge_cmd 37/37（+6）、test_bridge_askpi 14/14（+4）、test_pi_run 19/19、test_trigger_script 15/15、test_wechat_bridge 通过、node --check 干净；真实 daemon add 输出 shape 与 buildReply 匹配
+
 ## 2026-08-02 — 配置/文档接线 + OpenClaw 停用：寄主迁移收尾（Phase 4 任务 14，v1.3 → v1.4）
 
 **背景**：Phase 4 收尾——toml 接线（[openclaw] → [host]）、特殊命令闭环（Task 12 遗留）、兜底默认值同步（Task 5 遗留）、tick/bridge 并发评估、文档全面同步、OpenClaw 停用。
