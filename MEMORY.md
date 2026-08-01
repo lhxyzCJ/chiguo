@@ -1,5 +1,14 @@
 # MEMORY.md
 
+## 2026-08-02 — chiguo-tick.sh 系统 crontab 入口（Phase 4 任务 11）
+
+**背景**：Phase 4 寄主迁移，openclaw cron trigger-script 由系统 crontab 直接替代。`scripts/chiguo-tick.sh` 每 15 分钟零模型门控：daemon `--compact` 判定 → idle 静默退出 / send → pi-run 生成 → bridge `/send` → `--record-send` 回写。
+
+- **`scripts/chiguo-tick.sh`（新，+x）**：`set -euo pipefail`；REPO 支持 `CHIGUO_REPO` 覆盖（默认脚本目录 `..`）；daemon/pi-run/bridge 全链路。对 brief 骨架的调优：① curl 用 `-sf`（HTTP 500 视为失败，防止假成功回写 record-send）且失败只记 stderr 后 `exit 0`（瞬时故障不干扰 cron，下个 tick 重试；pi-run 未生成消息仍 `exit 1` 保证错误可观察）；② TEXT 经 `python3 json.dumps` 转义构造 body（LLM 文本含引号/换行不再破坏 JSON）；③ OWNER 缺失显式报错退出（set -e 下 grep 失败原本静默 exit 1）；④ OWNER/`python3`/`node` 均在 /usr/bin，cron 默认 PATH 够用（实测确认）
+- **冒烟**：idle 路径 `bash scripts/chiguo-tick.sh` → 静默 exit 0；`bash -n` 语法通过；send 路径分步验证——多行决策 JSON 解析 action/msg_id、body 转义、curl `-sf` 对 bridge 403 返回 exit 22（失败分支正确触发）；真调 pi-run → `{ok:false,"No API key found for opencode-go"}` 快速失败，脚本错误路径日志可见；全链路 send 留给 Task 15 集成冒烟
+- **crontab**：手动注册 `*/15 * * * * /root/chiguo/scripts/chiguo-tick.sh >> /root/chiguo/logs/cron-tick.log 2>&1`（幂等 grep 检查，任务前无 crontab；`logs/` 已建）
+- **`doc/SYSTEM.md`**：§十一发送侧链路改写为 cron + chiguo-tick.sh；`doc/IMPROVE.md` 变更记录
+
 ## 2026-08-02 — scripts/pi-run.mjs pi 调用统一封装 + 单测（Phase 4 任务 10）
 
 **背景**：Phase 4 寄主从 OpenClaw 迁移到 pi-agent。pi-run.mjs 是 chiguo 的 pi 调用统一封装——所有 LLM 调用（发送侧生成 + 回复侧分析）都走它。

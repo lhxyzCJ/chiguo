@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-08-02 — chiguo-tick.sh 系统 crontab 入口（Phase 4 任务 11）
+
+**问题**：Phase 4 寄主迁移后，openclaw cron trigger-script（chiguo-watch.js + install_integration.sh）将由系统 crontab 直接替代，需要零模型门控的入口脚本。
+
+**方案**：
+- `scripts/chiguo-tick.sh`（新，+x）：`daemon --compact` 门控 → idle 静默退出；send → `pi-run.mjs` 生成 → curl bridge `/send` → `--record-send` 回写。对计划骨架的调优：curl `-sf` 识别 HTTP 500 假成功（原 `|| exit 1` 抓不到 500），失败仅记 stderr 并 `exit 0`（不干扰 cron，下个 tick 重试）；TEXT 用 `json.dumps` 转义防 LLM 文本破坏 JSON；OWNER 缺失显式报错
+- crontab 注册 `*/15 * * * *`（幂等；install_pi.sh 接管后统一管理）；冒烟验证 idle 路径 exit 0、send 路径分步验证、pi-run 无 key 快速失败错误路径可见
+
 ## 2026-08-02 — scripts/pi-run.mjs pi 调用统一封装 + 单测（Phase 4 任务 10）
 
 **问题**：Phase 4 寄主从 OpenClaw 迁移到 pi-agent，但 pi 调用无统一封装——发送侧生成 + 回复侧分析需要同一套「pi 参数构造 + NDJSON 解析 + 人格注入 + 情绪分析提取」逻辑。

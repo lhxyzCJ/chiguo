@@ -1517,7 +1517,7 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 
 详见 `OPENCLAW_INTEGRATION.md`（v11）。关键两条链路：
 
-1. **发送侧（trigger-script 门控）**：`openclaw cron add chiguo-check --every 15m --trigger-script scripts/chiguo-watch.js --session main` → 脚本零模型执行 `chiguo_daemon.py --compact` → idle 返回 `{fire:false}`（~90% 评估不唤醒 agent），send 返回 `{fire:true, message:<决策 JSON>}` → agent 按 SUN2.md 生成消息发送 → `--record-send <msg_id> --text <text> [--trigger] [--intensity]` 回写
+1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（Phase 4 起替代 openclaw cron trigger-script；安装由 `scripts/install_pi.sh` 管理，本机手动注册）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/pi-run.mjs` 按 SUN2.md 生成消息 → curl bridge `/send` → `--record-send <msg_id> --text <text>` 回写
 2. **回复侧（standing order）**：微信消息到达 → agent 正常回复；standing order（agents/main/AGENTS.md）强制 LLM 情绪分析 → `--user-msg --analysis` 更新 daemon → SUN2.md 回复（替代 v4 的 UserPromptSubmit hook，无双重记录）
 
 安装/卸载/校验由 `scripts/install_integration.sh` 完成（deploy.sh 第 5 步接入）；旧版 v4 cron system-event + hook 方案见 OPENCLAW_INTEGRATION.md §八降级路径。
