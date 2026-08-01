@@ -6,7 +6,9 @@
 # ============================================================
 
 import random
+import tomllib
 from datetime import datetime
+from pathlib import Path
 
 
 class MessageComposer:
@@ -146,6 +148,29 @@ class MessageComposer:
         "exam_season": "考试季的紧张和理解",
     }
 
+    # ── personality/*.toml 接线：cue 名 → 模板文件（Task 7）──
+    PERSONALITY_TOMLS = {
+        "tsundere.toml": ["tsundere_classic", "tsundere_soft", "tsundere_cool", "trade_tsundere"],
+        "deredere.toml": ["dere_dere"],
+    }
+
+    # ── 触发类型 → toml 模板类别 ──
+    TRIGGER_TO_TEMPLATE = {
+        "morning": "good_morning",
+        "night": "good_night",
+        "lonely_low": "loneliness",
+        "lonely_mid": "loneliness",
+        "lonely_high": "loneliness",
+        "anxiety": "loneliness",
+        "meal": "meal",
+        "special": "special_date",
+        "memory": "memory",
+        "playful": "attention_seek",
+        "compensate": "attention_seek",
+        "longing": "attention_seek",
+        "reflect": "attention_seek",
+    }
+
     def __init__(self, state, config: dict = None):
         """
         Args:
@@ -174,6 +199,62 @@ class MessageComposer:
             "trade_tsundere": self.config.get("cue_trade_weight", 0.15),
             "cool_mysterious": self.config.get("cue_cool_weight", 0.00),
         }
+
+        # personality toml 接线（Task 7）：cue ↔ 原著台词模板
+        self.cue_templates = self._load_cue_templates()
+
+    def _load_cue_templates(self) -> dict:
+        """
+        启动时读 personality/*.toml 的 trigger_templates，与 cue 风格关联。
+
+        tsundere.toml → tsundere_* cue；deredere.toml → dere_dere。
+        文件缺失/解析失败时跳过，不阻断 composer 启动。
+        """
+        templates: dict = {}
+        meta_index: dict = {}
+        personality_dir = Path(__file__).resolve().parent / "personality"
+        for filename, cue_ids in self.PERSONALITY_TOMLS.items():
+            toml_path = personality_dir / filename
+            if not toml_path.exists():
+                continue
+            try:
+                with toml_path.open("rb") as f:
+                    data = tomllib.load(f)
+            except (tomllib.TOMLDecodeError, OSError):
+                continue
+            meta = data.get("meta", {})
+            entry = {
+                "meta": meta,
+                "trigger_templates": data.get("trigger_templates", {}),
+            }
+            for cue_id in cue_ids:
+                templates[cue_id] = entry
+            if meta.get("id"):
+                meta_index[meta["id"]] = entry
+        self._toml_meta_index = meta_index
+        return templates
+
+    def cue_meta(self, key: str) -> dict:
+        """
+        按 cue 名或 toml id 查询人格模板 meta（name/id/description）。
+
+        Raises:
+            KeyError: 无对应模板（未接线/文件缺失）
+        """
+        entry = self.cue_templates.get(key) or self._toml_meta_index.get(key)
+        if entry is None:
+            raise KeyError(f"no personality template for {key}")
+        return entry["meta"]
+
+    def _template_lines_for(self, cue_name: str, trigger_type: str) -> list[str]:
+        """该 cue 在该触发类型下的参考台词（来自关联 toml 的 trigger_templates）。"""
+        entry = self.cue_templates.get(cue_name)
+        if entry is None:
+            return []
+        category = self.TRIGGER_TO_TEMPLATE.get(trigger_type)
+        if category is None:
+            return []
+        return list(entry["trigger_templates"].get(category, []))[:3]
 
     def select_combo(self, trigger_type: str, now: datetime) -> dict:
         """
@@ -218,6 +299,7 @@ class MessageComposer:
                 cue = {
                     "name": chosen_cue_name,
                     **self.CUES[chosen_cue_name],
+                    "templates": self._template_lines_for(chosen_cue_name, trigger_type),
                 }
 
         # Step 4: 选择 Vibe（如果 k≥3）
@@ -384,6 +466,9 @@ class MessageComposer:
         cue = combo.get("cue")
         if cue:
             parts.append(f"\n[风格指引：{cue['description']} {cue['style_hint']}]")
+            templates = cue.get("templates") or []
+            if templates:
+                parts.append(f"\n[台词示范：{' '.join(templates)}]")
 
         # Layer 3: Vibe（氛围）
         vibe = combo.get("vibe")

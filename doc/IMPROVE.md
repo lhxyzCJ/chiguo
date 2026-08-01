@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-08-02 — personality/*.toml 重写为迟菓模板并接线（Phase 2 任务 7）
+
+**问题**：`personality/tsundere.toml`（小雪）与 `deredere.toml`（小樱）是通用二次元模板死文件——全仓库无代码加载（MEMORY.md 自认"孤立模板"），deredere 内容命中 SUN2 反模式（直接撒娇/黏人守候）。
+
+**方案**：
+- `tsundere.toml` 重写为迟菓专属模板（meta name=迟菓；七类 trigger_templates 全部换原著例句：L1069 报单风早安 / L2035「拜拜，迟·耀·先·生。」晚安 / L10856+L10864 被冷落嘴硬 / L10418「迟菓好可怜啊——」求关注 / L15302 关心带刺 / L15278-15282 顶顶糕记忆；speech_style 对齐 SUN2：低频哼（……哼。）、波浪线约 10%、交易/补偿话术、行动主动）
+- `deredere.toml` 重写为「迟菓-融化」防线融化状态（仅 kernel 崩溃层触发；台词全部换原著崩溃段 L15492-15538 + 脆弱段 L15668/L15716；删除全部直接撒娇/黏人守候反模式内容；traits 注明 layer=kernel 日常禁止）
+- **接线（选方案 (a) 非退路 (b)）**：`chiguo_composer.py` 新增 `_load_cue_templates()`（tomllib stdlib 启动时读 personality/*.toml，缺文件/解析失败跳过）、`cue_meta()`（cue 名或 toml id 查 meta）、`_template_lines_for()`（cue+触发类型→参考台词）；select_combo 选中 cue 附带 templates，compose_situation 注入「[台词示范：…]」。选择理由：成本约 60 行、零新依赖、toml 与 composer 同机随仓库部署（不涉 QuickJS/多机）、静态文件不影响测试确定性；退路 (b) 仅校验存在会把"孤立模板"病灶留在原地
+- `test_toml_binding.py`（新 7 用例）：toml 存在可解析 / cue_meta name=迟菓 / cue 名映射 / 原著例句加载 / _template_lines_for 映射与优雅空 / situation 含台词示范 / select_combo 附带模板
+
+**验证**：RED 证据 `AttributeError: 'MessageComposer' object has no attribute 'cue_meta'` → GREEN 7/7；test_composer 10/10 + test_personality 18/18 + test_composer_trade 5/5 + test_personality_init 绿 + 全量 19 文件回归通过
+
+---
+
 ## 2026-08-01 — wechat-bridge 可移植化 + 登录态随仓库保留（v1.3）
 
 **问题**：bridge 原先硬编码在 `/root/wechat-bridge`（非 git、独立于仓库），daemon 路径/主人 ID/端口全部是单机值；凭证目录 `~/.wechatbot` 未展开（字面目录落在 cwd 下）。用户要求可移植部署，登录态"尝试保留"，且 token 不得进入 wechatbot 仓库。
