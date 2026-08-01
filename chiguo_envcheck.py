@@ -156,7 +156,8 @@ def run_checks(home: Path = None, base_dir: Path = None) -> dict:
     for c in checks:
         summary[c["severity"]] = summary.get(c["severity"], 0) + 1
     ready = summary["critical"] == 0
-    return {"checks": checks, "summary": summary, "ready": ready}
+    from chiguo_version import VERSION
+    return {"app_version": VERSION, "checks": checks, "summary": summary, "ready": ready}
 
 
 def exit_code(report: dict) -> int:

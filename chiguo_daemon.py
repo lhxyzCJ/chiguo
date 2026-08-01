@@ -38,6 +38,7 @@ from chiguo_trigger import evaluate_triggers
 from chiguo_topics import TopicPicker
 from chiguo_netease import NeteaseService
 from chiguo_composer import MessageComposer
+from chiguo_version import VERSION
 from chiguo_math import longing_accumulate
 from chiguo_eventbus import get_eventbus
 from chiguo_circadian import bucket_for
@@ -321,6 +322,7 @@ class DecisionEngine:
 
             decision = {
                 "action": "idle",
+                "version": VERSION,
                 "reason": reason,
                 "state": self.state.snapshot(now, user_state),
             }
@@ -369,6 +371,7 @@ class DecisionEngine:
 
             decision = {
                 "action": "idle",
+                "version": VERSION,
                 "reason": "no_trigger",
                 "state": self.state.snapshot(now, user_state),
             }
@@ -431,6 +434,7 @@ class DecisionEngine:
 
         decision = {
             "action": "send",
+            "version": VERSION,
             "msg_id": msg_id,
             "trigger": trigger.type,
             "intensity": trigger.intensity,
@@ -1052,6 +1056,7 @@ class DecisionEngine:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="迟菓主动消息 决策引擎")
+    parser.add_argument("--version", action="version", version=f"chiguo v{VERSION} (规则: 每轮修改 +0.1)")
     parser.add_argument("--loop", type=int, nargs="?", const=300, metavar="SECONDS",
                         help="循环评估间隔秒数（最小60）")
     parser.add_argument("--user-msg", type=str, default=None,
@@ -1546,7 +1551,7 @@ def main():
             elif not args.compact:
                 print(json.dumps(decision, ensure_ascii=False))
             else:
-                print(json.dumps({"action": "idle", "time": datetime.now(CST).isoformat()}, ensure_ascii=False))
+                print(json.dumps({"action": "idle", "version": VERSION, "time": datetime.now(CST).isoformat()}, ensure_ascii=False))
             sys.stdout.flush()
             return decision
 
@@ -1575,7 +1580,7 @@ def main():
     decision = engine.evaluate()
     if args.compact and decision["action"] == "idle":
         # 紧凑模式 idle 时输出最小 heartbeat（用于 cron 健康检查）
-        print(json.dumps({"action": "idle", "time": datetime.now(CST).isoformat()}, ensure_ascii=False))
+        print(json.dumps({"action": "idle", "version": VERSION, "time": datetime.now(CST).isoformat()}, ensure_ascii=False))
         return
     print(json.dumps(decision, ensure_ascii=False, indent=2))
 

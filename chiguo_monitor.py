@@ -799,7 +799,9 @@ class ChiguoMonitor:
 
     def report(self, days: int = 7) -> dict:
         """完整监控报告：stats + alerts + health"""
+        from chiguo_version import VERSION
         return {
+            "app_version": VERSION,
             "stats": self.stats(days=days),
             "alerts": self.alerts(),
             "health": self.health(),
