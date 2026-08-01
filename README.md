@@ -38,7 +38,8 @@ python3 chiguo_daemon.py
 # 交互式 Demo
 python3 chiguo_demo.py
 
-# 跑全部测试(19 个文件)
+# 跑全部测试(19 个 py 文件 + 2 个脚本测试)
+node test_trigger_script.js && bash test_install_integration.sh && \
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \
@@ -59,10 +60,10 @@ uv run python test_envcheck.py
 
 ```bash
 git clone <仓库地址> && cd <仓库目录>
-bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量 19 测试 → 环境检查(OpenClaw skill/网易云登录) → cron 提示
+bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量 19 测试 → 环境检查(OpenClaw skill/网易云登录) → OpenClaw 集成安装(install_integration.sh) + automations 冒烟提示
 ```
 
-部署脚本会检查:OpenClaw skill 目录(`~/.openclaw/workspace/skills/chiguo/`)、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。定时任务经 `openclaw cron` 注册,见 `doc/OPENCLAW_INTEGRATION.md`。
+部署脚本会检查:OpenClaw skill 目录(`~/.openclaw/workspace/skills/chiguo/`)、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。OpenClaw 集成(trigger-script 门控 + standing order)由 `scripts/install_integration.sh` 自动完成,定时作业经 `openclaw automations --trigger-script` 注册,完整指南见 `doc/OPENCLAW_INTEGRATION.md`。
 
 ## 架构
 

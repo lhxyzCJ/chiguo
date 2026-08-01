@@ -15,6 +15,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
+node test_trigger_script.js && bash test_install_integration.sh && \
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \
@@ -24,7 +25,7 @@ uv run python test_escape_valve.py && uv run python test_feedback.py && \
 uv run python test_trigger.py && uv run python test_topics.py && \
 uv run python test_circadian.py && uv run python test_followup.py && \
 uv run python test_netease_proof.py && uv run python test_netease_service.py && \
-uv run python test_envcheck.py   # full suite (19 files)
+uv run python test_envcheck.py   # full suite (19 py + 2 script tests)
 
 uv run python test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout
@@ -45,6 +46,7 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 - Everything tunable in `chiguo_proactive.toml` (270 lines); hot-reloads via mtime check in `--loop` mode only (cron spawns fresh processes).
 - Output: `chiguo_decisions.jsonl` (append-only). State: `chiguo_state.json` (atomic `.tmp` → `os.replace`, `.bak` backup, SHA256 checksum, monotonic `tick_seq`). Runtime files are `.gitignore`d.
 - CLI convention: JSON to stdout, diagnostics to stderr. Always use `CST = timezone(timedelta(hours=8))` — never naive datetimes.
+- OpenClaw integration (v11): `scripts/chiguo-watch.js` trigger-script (automations 每 15 分钟零模型门控) + `scripts/install_integration.sh` 安装器 (deploy.sh 第 5 步接入; 详见 `doc/OPENCLAW_INTEGRATION.md`).
 
 ## Known gotchas
 
