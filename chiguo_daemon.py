@@ -9,7 +9,7 @@
 # 用法：
 #   python3 chiguo_daemon.py              # 检查并输出决策 JSON
 #   python3 chiguo_daemon.py --status     # 查看状态
-#   python3 chiguo_daemon.py --user-msg "…"  # 记录主人消息
+#   python3 chiguo_daemon.py --user-msg "…"  # 记录哥哥消息
 #   python3 chiguo_daemon.py --loop 120   # 持续运行（调试用）
 #
 # cron 集成：
@@ -746,7 +746,7 @@ class DecisionEngine:
         if safety_lvl >= 2:
             safety_note += (
                 "\n【安全阀】48h 内多次崩溃触发。语气务必温和克制，"
-                "不要质问不要崩溃不要负面。主人可能只是在忙。"
+                "不要质问不要崩溃不要负面。哥哥可能只是在忙。"
                 "用关心代替不安，用日常代替质问。"
             )
         elif safety_lvl >= 1:
@@ -763,7 +763,7 @@ class DecisionEngine:
             src = trigger.data.get("source", "")
             age = trigger.data.get("age_hours", 0)
             guidance += (
-                f"\n【接话茬】约{age:.0f}小时前和主人聊到「{tpc}」"
+                f"\n【接话茬】约{age:.0f}小时前和哥哥聊到「{tpc}」"
                 f"(来源:{'对话分析' if src == 'analysis' else '回忆'}),"
                 "后来没有下文。像真人突然想起一样自然接续这个话题——"
                 "聊天式提起,不要汇报腔,不要生硬转场。"
@@ -820,22 +820,22 @@ class DecisionEngine:
         sch = self.state.schedule_status(now)
         schedule_hint = ""
         if sch and sch.get("holiday"):
-            schedule_hint = f"今天是{sch['holiday']}假期，主人放假。"
+            schedule_hint = f"今天是{sch['holiday']}假期，哥哥放假。"
         elif sch and sch.get("weekend"):
-            schedule_hint = "今天是周末，主人休息。"
+            schedule_hint = "今天是周末，哥哥休息。"
         elif sch and sch.get("makeup_day"):
             schedule_hint = f"{sch.get('makeup_reason', '调休日')}，虽然是周末但要上课。"
         elif sch and sch.get("in_class"):
             c = sch["current_course"]
-            schedule_hint = f"主人正在上{c['course']}（到{c['time'][1]}）。不要在上课时发消息。"
+            schedule_hint = f"哥哥正在上{c['course']}（到{c['time'][1]}）。不要在上课时发消息。"
         elif sch and sch.get("class_load") == "free":
-            schedule_hint = "主人今天没课。"
+            schedule_hint = "哥哥今天没课。"
         elif sch and sch.get("remaining_classes", 0) == 0:
-            schedule_hint = "主人今天的课上完了。"
+            schedule_hint = "哥哥今天的课上完了。"
 
         # ── 构造指令 ──
         instruction = (
-            f"请以迟菓（{personality_dir}/SUN2.md 设定）的身份，用上述语气发一条微信消息给主人。"
+            f"请以迟菓（{personality_dir}/SUN2.md 设定）的身份，用上述语气发一条微信消息给哥哥。"
             "1-3句话。自然。允许适当的动作/神态描写。不打破第四面墙。"
             "每句话最多一个感叹号。一句话里波浪线和感叹号不同时出现。问号最多一个。"
         )
@@ -843,7 +843,7 @@ class DecisionEngine:
             instruction += (
                 f"\n用以下话题自然破冰，不要让话题显得刻意："
                 f"{topic_data['hint']}。"
-                "让主人感受到你是真的关心他的生活，而不是因为孤独才找他。"
+                "让哥哥感受到你是真的关心他的生活，而不是因为孤独才找他。"
                 "不要话题一转就直接表达情感需求——先好好聊话题。"
             )
 
@@ -1094,7 +1094,7 @@ def main():
     parser.add_argument("--loop", type=int, nargs="?", const=300, metavar="SECONDS",
                         help="循环评估间隔秒数（最小60）")
     parser.add_argument("--user-msg", type=str, default=None,
-                        help="记录主人消息")
+                        help="记录哥哥消息")
     parser.add_argument("--analysis", type=str, default=None,
                         help="LLM情感分析JSON（配合 --user-msg 使用）")
     # ── v6: 文件传参（避免 shell 转义问题，SKILL.md 已采用此路径）──
@@ -1415,7 +1415,7 @@ def main():
             print(json.dumps({
                 "action": "tune",
                 "error": f"需要至少 5 次交互数据，当前 {len(latencies)} 次",
-                "hint": "发送几条消息并等待主人回复，积累数据后再试",
+                "hint": "发送几条消息并等待哥哥回复，积累数据后再试",
             }, ensure_ascii=False))
         else:
             import statistics
@@ -1428,11 +1428,11 @@ def main():
             if median_h < 0.3:
                 suggestion = "increase"
                 new_base = min(0.5, current_base * 1.3)
-                reason = f"主人回复很快（中位数 {median_h:.1f}h），可以更频繁"
+                reason = f"哥哥回复很快（中位数 {median_h:.1f}h），可以更频繁"
             elif median_h > 3.0:
                 suggestion = "decrease"
                 new_base = max(0.05, current_base * 0.7)
-                reason = f"主人回复较慢（中位数 {median_h:.1f}h），减少频率"
+                reason = f"哥哥回复较慢（中位数 {median_h:.1f}h），减少频率"
             else:
                 suggestion = "keep"
                 new_base = current_base
