@@ -308,18 +308,17 @@ elif [ "$MODE" = ask ] && ! confirm "执行冒烟（memory-pro stats + pi 实调
   :
 else
   SMOKE_BAD=0
-  if [ -x "$CLONE/node_modules/.bin/memory-pro" ]; then
-    if timeout 60 "$CLONE/node_modules/.bin/memory-pro" stats >/dev/null 2>&1; then
-      say "memory-pro stats OK（历史库 ~/.openclaw/memory/lancedb-pro 可读）"
-    else
-      SMOKE_BAD=1; warn "memory-pro stats 失败（见上方错误）"
-    fi
+  # memory-pro bin 链接可能未生成（npm allow-scripts 拦截）→ 直接 node 跑 cli-main.js
+  MEMORY_PRO="$CLONE/node_modules/.bin/memory-pro"
+  [ -x "$MEMORY_PRO" ] || MEMORY_PRO="node $CLONE/dist/pi-adapter/cli-main.js"
+  if timeout 60 bash -c "$MEMORY_PRO stats" >/dev/null 2>&1; then
+    say "memory-pro stats OK（历史库 ~/.openclaw/memory/lancedb-pro 可读）"
   else
-    SMOKE_BAD=1; warn "memory-pro CLI 缺失（阶段 1 clone/build 未完成?）"
+    SMOKE_BAD=1; warn "memory-pro stats 失败（见上方错误）"
   fi
   if auth_has_key; then
-    PROVIDER="$(sed -n 's/^provider *= *"\(.*\)"/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
-    MODEL="$(sed -n 's/^model *= *"\(.*\)"/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
+    PROVIDER="$(sed -n 's/^provider *= *"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
+    MODEL="$(sed -n 's/^model *= *"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
     [ -n "$PROVIDER" ] || PROVIDER=opencode-go
     [ -n "$MODEL" ] || MODEL=deepseek-v4-flash
     if SMOKE_OUT="$(timeout 120 "$PI_BIN" -p --provider "$PROVIDER" --model "$MODEL" \

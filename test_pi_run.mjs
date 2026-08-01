@@ -88,6 +88,17 @@ t('run: --analysis-mode → 剥离分析块 + analysis 字段', async () => {
   assert.deepStrictEqual(r.analysis, { warmth: -0.2, effort: 0.8 })
   assert.strictEqual(r.text, '哥哥……今天有点累。')
 })
+t('run: --send-mode → 决策指令包装（发送侧生成消息）', async () => {
+  let captured = null
+  const spyExec = async (_bin, args) => { captured = args; return { stdout: '' } }
+  const decision = JSON.stringify({ action: 'send', msg_id: 'm1', context: { layer: 'middle' } })
+  await run(spyExec, { prompt: decision, sendMode: true })
+  const last = captured[captured.length - 1]
+  assert.ok(last.includes('主动消息决策结果'), 'send-mode 应含决策指令')
+  assert.ok(last.includes('按 SUN2.md 人格'), 'send-mode 应要求按人格生成')
+  assert.ok(last.includes('1-3 句'), 'send-mode 应要求 1-3 句')
+  assert.ok(last.includes('action=send'), 'send-mode 应标注 action=send')
+})
 t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json）', async () => {
   let captured = null
   const spyExec = async (_bin, args) => { captured = { bin: _bin, args }; return { stdout: '' } }
