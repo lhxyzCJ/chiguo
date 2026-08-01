@@ -1133,10 +1133,10 @@ ritual_weight_scale = 1.0                # 仪式触发权重缩放（特殊日�
 # v4: 多维人格初始值（0-100 量表）
 openness = 55.0                        # 开放性
 conscientiousness = 65.0               # 尽责性
-extraversion = 45.0                    # 外向性
-agreeableness = 70.0                   # 宜人性
+extraversion = 60.0                    # 外向性（小太阳人设）
+agreeableness = 65.0                   # 宜人性（毒舌但善良）
 neuroticism = 60.0                     # 神经质
-tsundere_intensity = 70.0              # 傲娇强度
+tsundere_intensity = 75.0              # 傲娇强度
 playfulness = 55.0                     # 贪玩程度
 attachment_style = 60.0                # 依恋风格（高=焦虑型，低=回避型）
 

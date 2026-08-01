@@ -225,10 +225,10 @@ ritual_weight_scale = 1.0               # 默认 1.0；调低可减少仪式触�
 [personality]
 openness = 55.0
 conscientiousness = 65.0
-extraversion = 45.0
-agreeableness = 70.0
+extraversion = 60.0
+agreeableness = 65.0
 neuroticism = 60.0
-tsundere_intensity = 70.0
+tsundere_intensity = 75.0
 playfulness = 55.0
 attachment_style = 60.0
 

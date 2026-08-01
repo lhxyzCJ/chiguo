@@ -24,17 +24,17 @@ class PersonalityTraits:
     conscientiousness: float = 65.0
     """尽责性：高→更关心主人细节（课表、健康）、更准时（早安晚安）"""
 
-    extraversion: float = 45.0
+    extraversion: float = 60.0
     """外向性：高→更活泼、话多、语气词多、主动发起互动"""
 
-    agreeableness: float = 70.0
+    agreeableness: float = 65.0
     """宜人性：高→更温柔、更容易妥协、更少嘴硬攻击"""
 
     neuroticism: float = 60.0
     """神经质：高→更容易焦虑、敏感、情绪波动大、防线更容易崩溃"""
 
     # ── 角色特有维度 ──
-    tsundere_intensity: float = 70.0
+    tsundere_intensity: float = 75.0
     """傲娇强度：高→嘴更硬、更不愿直接表达感情。替代旧版 tsundere_index"""
 
     playfulness: float = 55.0
@@ -104,7 +104,7 @@ class PersonalityTraits:
         根据 tsundere_intensity 和 agreeableness 判断傲娇风格。
         返回 MessageComposer.CUES 的合法键，用于消息组合系统的 Cue 选择。
         """
-        if self.tsundere_intensity > 70:
+        if self.tsundere_intensity >= 70:
             if self.agreeableness < 50:
                 return "tsundere_classic"  # 经典傲娇——嘴硬攻击型
             else:
@@ -208,10 +208,10 @@ def default_personality() -> PersonalityTraits:
     return PersonalityTraits(
         openness=55.0,
         conscientiousness=65.0,
-        extraversion=45.0,
-        agreeableness=70.0,
+        extraversion=60.0,
+        agreeableness=65.0,
         neuroticism=60.0,
-        tsundere_intensity=70.0,
+        tsundere_intensity=75.0,
         playfulness=55.0,
         attachment_style=60.0,
     )

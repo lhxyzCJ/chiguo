@@ -1,5 +1,17 @@
 # MEMORY.md
 
+## 2026-08-02 — personality 初始值修正 + 测试（Phase 2 任务 5）
+
+**背景**：初始 tsundere_intensity=70 不满足 `tsundere_style()` 的 `>70` 分支 → 初始人格实际落入 `tsundere_cool`（酷娇），与主导画像 tsundere_heavy 矛盾。代码层 8 维初始值未对齐原著（Phase 1 SUN2.md 已对齐）。
+
+- **`chiguo_personality.py`**：dataclass 默认值 + `default_personality()` 同步——extraversion 45→60（原著小太阳外向，L6042）、agreeableness 70→65（毒舌但善良）、tsundere_intensity 70→75；`tsundere_style()` 阈值 `> 70` → `>= 70`（70+ 落入经典傲娇分支，双保险）
+- **`chiguo_proactive.toml [personality]`**：同步 extraversion=60.0 / agreeableness=65.0 / tsundere_intensity=75.0（daemon 首次运行读 toml；已有 state 文件时人格为慢变量按设计保留运行值）
+- **`test_personality_init.py`（新）**：初始人格须为傲娇分支（classic/soft、非 cool）+ 初始值合理范围断言；RED 证据：改前 `AssertionError: 初始人格应为傲娇分支，实际 tsundere_cool`
+- **`test_personality.py`**：`test_serialization_missing_fields` 旧断言 `extraversion == 45.0`（默认值）随初始值有意变更更新为 60.0
+- **`doc/SYSTEM.md`**：配置表 [personality] 初始值同步
+- **验证**：test_personality_init 绿 + test_personality 18/18 + composer 10/10 + trigger 15/15 + topics 22/22 + integration 17/17 + escape_valve 15/15 + 其余 12 文件全绿；test_monitor 40/41（test_health_ok 为既有环境性失败，stash 验证与本改动无关）
+- 文件：chiguo_personality.py、chiguo_proactive.toml、test_personality_init.py（新）、test_personality.py、doc/SYSTEM.md、MEMORY.md
+
 ## 2026-08-02 — 「主人」→「哥哥」代码层全清（Phase 2 任务 4）
 
 **背景**：原著中迟菓从未称呼对方「主人」（哥哥才是正确称呼），但 daemon 注入 LLM 的文本里仍有「主人」残留。SUN2.md（Phase 1）已归正，本任务清理代码层。
