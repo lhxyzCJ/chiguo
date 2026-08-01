@@ -79,7 +79,7 @@ fi
 cat <<EOF
 
 ────────────────── 部署完成 ──────────────────
-OpenClaw 集成: 已由本脚本自动完成（trigger-script 门控 + standing order）
+OpenClaw 集成: 已由本脚本自动完成（--skip-integration 跳过时未安装）
   手动重跑/排查: bash scripts/install_integration.sh --dry-run（扫描）| --yes（自动修复）
   端到端冒烟:   openclaw automations run chiguo-check --wait --wait-timeout 10m
   完整指南:     doc/OPENCLAW_INTEGRATION.md
