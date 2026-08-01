@@ -15,7 +15,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_trigger_script.js && bash test_install_integration.sh && bash test_wechat_bridge.sh && \
+node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_trigger_script.js && bash test_install_integration.sh && bash test_install_pi.sh && bash test_wechat_bridge.sh && \
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \

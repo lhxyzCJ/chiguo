@@ -58,7 +58,7 @@ set -e
 case $EC in
     0) say "环境就绪 ✓" ;;
     1) warn "环境存在警告(见上方 JSON,系统可运行但部分降级)" ;;
-    2) fail "环境存在严重问题(见上方 JSON),请先修复再继续" ;;
+    2) fail "环境存在严重问题(见上方 JSON),请先修复再继续(若为 pi 缺失: 请先安装 pi-agent,或 --skip-pi 跳过 pi 环境)" ;;
 esac
 
 # ── 5. OpenClaw 集成安装（可跳过: bash deploy.sh --skip-integration）──
@@ -101,6 +101,22 @@ if [[ "$*" != *--skip-bridge* ]]; then
     esac
 fi
 
+# ── 5.6 pi 环境安装（可跳过: bash deploy.sh --skip-pi）──────────
+PI_OK=0
+if [[ "$*" != *--skip-pi* ]]; then
+    say "安装 pi 环境（memory-lancedb-pro 扩展 + settings/json5/auth + crontab）..."
+    set +e
+    bash "$PROJECT_DIR/scripts/install_pi.sh" "$@"
+    PC=$?
+    set -e
+    [ "$PC" = 0 ] && PI_OK=1
+    case $PC in
+        0) say "pi 环境安装完成 ✓" ;;
+        1) warn "pi 环境有警告/残留未处理（见上方输出），消息生成可能受影响" ;;
+        2) fail "pi 环境严重问题（pi-agent 未安装?），请先修复后重试（或 --skip-pi 跳过）" ;;
+    esac
+fi
+
 # ── 6. 迁移提示 ─────────────────────────────────────────────
 if [ ! -f chiguo_state.json ]; then
     warn "chiguo_state.json 不存在 → 若从旧运行机迁移,请拷贝 state/decisions 等运行时文件"
@@ -114,7 +130,10 @@ OpenClaw 集成: $( [ "$INTEG_OK" = 1 ] && echo "已由本脚本自动完成" ||
   手动重跑/排查: bash scripts/install_integration.sh --dry-run（扫描）| --yes（自动修复）
   端到端冒烟:   openclaw cron run chiguo-check --expect-final
   完整指南:     doc/OPENCLAW_INTEGRATION.md
-微信桥:        $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态随仓库保留; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && start 排查）")
+ 微信桥:        $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态随仓库保留; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && start 排查）")
+pi 环境:       $( [ "$PI_OK" = 1 ] && echo "已由本脚本自动完成（memory-lancedb-pro 扩展 + crontab + opencode-go）" || echo "未安装或未完全安装（bash scripts/install_pi.sh --dry-run 排查）")
+  手动重跑/排查: bash scripts/install_pi.sh --dry-run（扫描）| --yes（自动修复）
+  端到端冒烟:   bash scripts/chiguo-tick.sh（tick 手动触发 → 微信收到）
 
 手动验证:
   $PROJECT_DIR/.venv/bin/python chiguo_daemon.py            # 单次决策 → JSON
