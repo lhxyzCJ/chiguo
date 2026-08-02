@@ -1,13 +1,13 @@
 {
   "_version": 10,
   "emotion": {
-    "loneliness": 45.22830362174143,
+    "loneliness": 47.322742290121205,
     "affection": 55.24487370961934,
-    "anxiety": 81.79145219804656,
-    "energy": 68.34661268912568,
-    "tsundere_index": 78.86436610801553,
-    "loneliness_rate": 0.9553150963800272,
-    "anxiety_rate": 0.21126724135203673
+    "anxiety": 82.2586517275686,
+    "energy": 73.95316116319229,
+    "tsundere_index": 79.24670513945179,
+    "loneliness_rate": 0.9227856179951026,
+    "anxiety_rate": 0.20644311562877132
   },
   "cooldown": {
     "last_message_at": "2026-08-02T14:30:01.557270+08:00",
@@ -147,7 +147,7 @@
       }
     }
   ],
-  "last_tick": "2026-08-02T15:15:01.334909+08:00",
-  "tick_seq": 77,
-  "_checksum": "40e103ba7e20489abd32739531e571caa5dea0fba9338ddfbe42524b61ed2a7d"
+  "last_tick": "2026-08-02T15:45:01.658675+08:00",
+  "tick_seq": 79,
+  "_checksum": "66f9ff8911b5176325999f8ed68d7b8364ce839192e44986d7c8ef3f7ca53fa2"
 }
