@@ -29,7 +29,7 @@ from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
     personality_to_dict, personality_from_dict,
 )
-from schedule_parser import ScheduleParser
+from schedule import ScheduleParser
 from holiday_parser import HolidayParser
 from memory_bridge import MemoryBridge
 from chiguo_circadian import CircadianTracker, bucket_for
