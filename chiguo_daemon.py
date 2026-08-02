@@ -40,19 +40,12 @@ from chiguo_topics import TopicPicker
 from chiguo_netease import NeteaseService
 from chiguo_composer import MessageComposer
 from chiguo_version import VERSION
-from chiguo_math import longing_accumulate
+from chiguo_math import in_quiet_window, longing_accumulate
 from chiguo_eventbus import get_eventbus
 from chiguo_circadian import bucket_for
 import netease_bridge
 
 CST = timezone(timedelta(hours=8))
-
-
-def _in_quiet_window(dt: datetime, start: int, end: int) -> bool:
-    """dt.hour 是否落在静默窗口内(跨午夜语义与 can_send/_idle_reason 一致)。"""
-    if end < start:
-        return dt.hour >= start or dt.hour < end
-    return start <= dt.hour < end
 
 
 class DecisionEngine:
@@ -529,7 +522,7 @@ class DecisionEngine:
         if not self.config.get("netease", {}).get("enabled", True):
             return False  # 网易云可选来源未启用 → 不拉取
         qs, qe = self.state.cooldown.quiet_window()
-        if not _in_quiet_window(now, qs, qe):
+        if not in_quiet_window(now, qs, qe):
             return False
         try:
             ncfg = self.config.get("netease", {})
@@ -549,7 +542,7 @@ class DecisionEngine:
                         if not pt:
                             continue
                         dt = datetime.fromtimestamp(pt / 1000, tz=CST)
-                        if _in_quiet_window(dt, qs, qe):
+                        if in_quiet_window(dt, qs, qe):
                             # 按播放时刻分桶(非评估时刻):跨午夜/周五窗口边缘
                             # (如 19:30 播放、21:30 评估)避免记错桶污染双桶学习
                             p_bucket = bucket_for(dt, self.state.holiday_parser.is_holiday,

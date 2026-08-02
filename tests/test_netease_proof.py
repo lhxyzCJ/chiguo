@@ -377,7 +377,7 @@ import re
 from pathlib import Path
 
 import chiguo_daemon
-from chiguo_daemon import _in_quiet_window
+from chiguo_math import in_quiet_window
 from chiguo_circadian import bucket_for
 
 DAEMON_NOW = datetime(2026, 8, 1, 1, 30, 0, tzinfo=CST)  # 周六 01:30(窗口 0-8 内)
@@ -437,13 +437,13 @@ def _sleeping_state(engine, now):
 
 def test_in_quiet_window_boundaries():
     """_in_quiet_window 跨午夜语义:0-8 → 0:00 True/8:00 False/23:00 False;22-8 → 23:00/7:00 True/8:00/12:00 False"""
-    assert _in_quiet_window(datetime(2026, 8, 1, 0, 0, tzinfo=CST), 0, 8)
-    assert not _in_quiet_window(datetime(2026, 8, 1, 8, 0, tzinfo=CST), 0, 8)
-    assert not _in_quiet_window(datetime(2026, 8, 1, 23, 0, tzinfo=CST), 0, 8)
-    assert _in_quiet_window(datetime(2026, 8, 1, 23, 0, tzinfo=CST), 22, 8)
-    assert _in_quiet_window(datetime(2026, 8, 1, 7, 0, tzinfo=CST), 22, 8)
-    assert not _in_quiet_window(datetime(2026, 8, 1, 8, 0, tzinfo=CST), 22, 8)
-    assert not _in_quiet_window(datetime(2026, 8, 1, 12, 0, tzinfo=CST), 22, 8)
+    assert in_quiet_window(datetime(2026, 8, 1, 0, 0, tzinfo=CST), 0, 8)
+    assert not in_quiet_window(datetime(2026, 8, 1, 8, 0, tzinfo=CST), 0, 8)
+    assert not in_quiet_window(datetime(2026, 8, 1, 23, 0, tzinfo=CST), 0, 8)
+    assert in_quiet_window(datetime(2026, 8, 1, 23, 0, tzinfo=CST), 22, 8)
+    assert in_quiet_window(datetime(2026, 8, 1, 7, 0, tzinfo=CST), 22, 8)
+    assert not in_quiet_window(datetime(2026, 8, 1, 8, 0, tzinfo=CST), 22, 8)
+    assert not in_quiet_window(datetime(2026, 8, 1, 12, 0, tzinfo=CST), 22, 8)
     print("  OK test_in_quiet_window_boundaries")
 
 
