@@ -1,3 +1,17 @@
+## 2026-08-02 — README 开源化重构 + 项目整洁化（TDD 之外的文档类改动，验证清单驱动）
+
+**问题**：README 面向"自用已部署机器"——版本号/测试数过期（v1.4 vs 实际 v1.6；23py+7script vs 24py+9script）、无定位边界/由来说明/架构总览/人格自定义/配置示例/FAQ/贡献，快速开始对全新机器跑不通（无 pyproject.toml）。
+
+**方案（grilling 收敛 10+ 决策）**：
+- **README 16 节重写**（中英精炼段双语）：定位边界含组件依赖表 + 公开前清理警示（登录态/对话 git 跟踪）+ 隐私实话；迟菓由来（三色绘恋系列官方角色，维基查证）+ 合规声明（非官方/版权/异议即移除）；mermaid 双链路；脱敏示例；uv sync 快速开始；FAQ 7 条；轻量贡献节
+- **pyproject.toml**：核心零依赖（查证 memory_bridge/schedule_parser 惰性导入）；extras memory=[lancedb]/schedule=[openpyxl]；**坑**：`uv sync`（dependencies=[]）会卸载 venv 里未声明的 openpyxl——生产 venv 需 `uv sync --all-extras` 恢复完整模式（顺带记忆启用）
+- **归档迁移**：15 个 spec/plan → `~/chiguo-meta/`（项目外不进 git）；AGENTS.md 约定"spec/plan 一律写项目外"
+- **目录清理**：`.superpowers/` 台账、`archive/openclaw.json`、`.claude/` 移出 git
+- **示例消息口径坑**：赛博生命无现实互动——初稿的"外卖单""路过书店""奶茶+转账"均被用户纠正为纯消息域表达
+- **文档**：README.md（重构）、doc/README.md（运维速查）、doc/SYSTEM.md（v1.7 版本行 + pandas 幽灵依赖修正）、AGENTS.md（归档约定 + 测试计数）、MEMORY.md
+
+---
+
 ## 2026-08-02 — 后端 provider 去绑定：接入任意模型 API（TDD 红→绿）
 
 **问题**：文档与脚本多处把后端表述为 opencode-go 绑定（4 处硬编码：tick/wechat-bridge.sh 注入、install_pi.sh 阶段 5+冒烟、envcheck check_pi_auth 默认参数）。用户要求：允许各种模型 API 接入，完全依赖 pi-agent 接入能力。
