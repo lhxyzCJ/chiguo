@@ -25,9 +25,13 @@ try: print(json.load(sys.stdin).get("action",""))
 except: print("")' 2>/dev/null || true)"
 [ "$ACTION" = "send" ] || exit 0
 # 发送目标/端点（提前解析：失败分支记账告警也要用）
-OWNER="$(grep -oP '(?<=wechat_recipient = ")[^"]+' "$REPO/chiguo_proactive.toml" | head -1 || true)"
-if [ -z "$OWNER" ]; then
-  echo "[chiguo-tick] toml 缺 wechat_recipient" >&2
+# 收件人解析链：登录后的 ~/.chiguo/auth/wechat/credentials.json userId（真实）→ toml wechat_recipient（用户手配）→ 失败提示 login
+OWNER="$(sed -n 's/.*"userId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$HOME/.chiguo/auth/wechat/credentials.json" 2>/dev/null | head -1 || true)"
+if [ -z "$OWNER" ] || [ "$OWNER" = "owner@im.wechat" ]; then
+  OWNER="$(grep -oP '(?<=wechat_recipient = ")[^"]+' "$REPO/chiguo_proactive.toml" | head -1 || true)"
+fi
+if [ -z "$OWNER" ] || [ "$OWNER" = "owner@im.wechat" ]; then
+  echo "[chiguo-tick] 未检测到收件人（登录后自动注入：bash scripts/wechat-bridge.sh login；或 toml 配 wechat_recipient）" >&2
   exit 1
 fi
 BRIDGE_URL="$(grep -oP '(?<=wechat_bridge_url = ")[^"]+' "$REPO/chiguo_proactive.toml" | head -1 || true)"

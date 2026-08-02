@@ -123,6 +123,13 @@ if [[ "$*" != *--skip-pi* ]]; then
 fi
 
 # ── 6. 迁移提示 ─────────────────────────────────────────────
+# 6.5 集中认证目录（可迁移：拷贝 ~/.chiguo/auth/ 到新机器即自动接入；
+#      微信/网易云登录态跨设备可能失效 → 自动重登兜底；pi key 100% 可用）
+if [ -d "$HOME/.chiguo/auth" ]; then
+    say "检测到集中认证目录 ~/.chiguo/auth/ → 微信登录态/网易云 cookie/pi key 自动接入"
+else
+    warn "未检测到 ~/.chiguo/auth/ 集中认证目录 → 登录需手动（bash scripts/wechat-bridge.sh login / uv run python netease_bridge.py --login / install_pi.sh 阶段 5）"
+fi
 if [ ! -f chiguo_state.json ]; then
     warn "chiguo_state.json 不存在 → 若从旧运行机迁移,请手动拷贝 state/decisions 等运行时文件(不进 git)"
     warn "  (旧机的 chiguo_state.json/chiguo_decisions.jsonl/netease_cookie.txt)"

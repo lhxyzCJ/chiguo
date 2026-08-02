@@ -143,4 +143,26 @@ HOME="$TMP/home" CHIGUO_REPO="$REPO" env -u OPENCODE_API_KEY bash "$REAL_TICK" >
 grep -q "KEY=sk-ds" "$KEY_LOG" || fail "无 opencode-go 条目时应回退 deepseek key: $(cat "$KEY_LOG")"
 pass "OPENCODE_API_KEY 注入：优先 opencode-go、回退 [host].provider"
 
+# ── 用例 6: 登录后收件人注入——~/.chiguo/auth/wechat/credentials.json 的 userId 生效 ──
+cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+send_session_id = "chiguo-send"
+wechat_recipient = "owner@im.wechat"
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+provider = "deepseek"
+model = "deepseek-chat"
+
+[health]
+fail_threshold = 3
+TOML
+mkdir -p "$TMP/home/.chiguo/auth/wechat"
+printf '{"token":"t","userId":"real_openid@im.wechat","accountId":"a"}' > "$TMP/home/.chiguo/auth/wechat/credentials.json"
+: > "$POST_LOG"
+echo success > "$FAKE_PI_MODE_FILE"
+HOME="$TMP/home" CHIGUO_REPO="$REPO" env -u OPENCODE_API_KEY bash "$REAL_TICK" >/dev/null 2>&1 \
+  || fail "收件人注入用例 tick 应退出 0"
+grep -q "real_openid@im.wechat" "$POST_LOG" || fail "主动消息应发往真实 userId: $(cat "$POST_LOG")"
+grep -q '"to": "owner@im.wechat"' "$POST_LOG" && fail "不应发往占位符" || true
+pass "登录后收件人自动注入（credentials userId 生效）"
+
 echo "test_tick_health: 全部通过"

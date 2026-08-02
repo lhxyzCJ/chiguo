@@ -270,4 +270,13 @@ unset PI_API_KEY
 rm -f "$CHIGUO_REPO_OVERRIDE/chiguo_proactive.toml"
 pass "toml provider=deepseek + PI_API_KEY → deepseek 条目 + 冒烟 --provider deepseek"
 
+# ── 用例 16: 集中认证目录 ~/.chiguo/auth/pi-auth.json → auth.json 导入（目标已有则不动）──
+clean_home
+mkdir -p "$TMP/home/.chiguo/auth"
+printf '{"opencode-go":{"type":"api_key","key":"sk-migrated"}}' > "$TMP/home/.chiguo/auth/pi-auth.json"
+set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" env -u OPENCODE_API_KEY -u PI_API_KEY bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
+[ -f "$TMP/home/.pi/agent/auth.json" ] || fail "集中认证导入未生成 auth.json"
+grep -q "sk-migrated" "$TMP/home/.pi/agent/auth.json" || fail "导入的 key 不对: $(cat "$TMP/home/.pi/agent/auth.json")"
+pass "集中认证目录 pi-auth.json → auth.json 导入"
+
 echo "test_install_pi: 通过"

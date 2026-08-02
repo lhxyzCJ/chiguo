@@ -46,7 +46,7 @@ const PI_HEALTH_SCRIPT = process.env.WECHAT_BRIDGE_PI_HEALTH
   ?? new URL('../scripts/pi_health.py', import.meta.url).pathname
 // pi_health 解释器独立于 DAEMON_PY（测试可能把后者换成 node 跑 fake daemon）
 const PI_HEALTH_PY = process.env.WECHAT_BRIDGE_PI_HEALTH_PY ?? '/root/chiguo/.venv/bin/python'
-// 登录态目录：默认随仓库（wechat-bridge/credentials/，git 跟踪）；可用 WECHAT_BRIDGE_STORAGE 覆盖
+// 登录态目录：默认仓库内回退；wechat-bridge.sh 注入集中认证目录 ~/.chiguo/auth/wechat（可迁移）；可用 WECHAT_BRIDGE_STORAGE 覆盖
 const DEFAULT_STORAGE = new URL('./credentials/', import.meta.url).pathname
 
 /** 串行化 pi 调用（同一 pi 会话 chiguo-main 不允许并发 turn，含 chiguo-tick 的周期调用）。 */
