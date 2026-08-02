@@ -32,7 +32,7 @@ else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
 
-# ── 3. 全量自检(22 py + 2 脚本测试,任一失败即中止) ──────────
+# ── 3. 全量自检(22 py + 3 脚本测试,任一失败即中止) ──────────
 TESTS=(test_chiguo_math test_holiday_parser test_integration test_monitor
        test_eventbus test_personality test_bayesian test_composer
        test_ebbinghaus test_longing test_escape_valve test_feedback
@@ -42,6 +42,7 @@ TESTS=(test_chiguo_math test_holiday_parser test_integration test_monitor
 say "运行脚本测试(2 个文件) ..."
 bash tests/test_install_pi.sh >/dev/null || fail "test_install_pi.sh 失败,中止部署"
 bash tests/test_wechat_bridge.sh >/dev/null || fail "test_wechat_bridge.sh 失败,中止部署"
+bash tests/test_netease_api.sh >/dev/null || fail "test_netease_api.sh 失败,中止部署"
 say "运行全量 Python 测试(${#TESTS[@]} 个文件) ..."
 for t in "${TESTS[@]}"; do
     uv run python "tests/$t.py" >/dev/null || fail "$t.py 失败,中止部署"
@@ -104,13 +105,28 @@ if [[ "$*" != *--skip-pi* ]]; then
     esac
 fi
 
+# ── 5.6 网易云 API 服务（可跳过: bash deploy.sh --skip-netease）──
+NETEASE_OK=0
+if [[ "$*" != *--skip-netease* ]]; then
+    say "安装网易云 API 服务（api-enhanced，可选来源；扫码登录: uv run python netease_bridge.py --login）..."
+    set +e
+    bash "$PROJECT_DIR/scripts/netease-api.sh" install
+    NC=$?
+    set -e
+    case $NC in
+        0) NETEASE_OK=1; say "网易云 API 服务就绪 ✓" ;;
+        1) warn "网易云 API 服务未就绪（可选来源，降级不影响运行；bash scripts/netease-api.sh install 排查）" ;;
+        2) warn "网易云 API 服务安装失败（可选来源；--skip-netease 跳过）" ;;
+    esac
+fi
+
 # ── 6. 迁移提示 ─────────────────────────────────────────────
 # 6.5 集中认证目录（可迁移：拷贝 ~/.chiguo/auth/ 到新机器即自动接入；
 #      微信/网易云登录态跨设备可能失效 → 自动重登兜底；pi key 100% 可用）
 if [ -d "$HOME/.chiguo/auth" ]; then
     say "检测到集中认证目录 ~/.chiguo/auth/ → 微信登录态/网易云 cookie/pi key 自动接入"
 else
-    warn "未检测到 ~/.chiguo/auth/ 集中认证目录 → 登录需手动（bash scripts/wechat-bridge.sh login / uv run python netease_bridge.py --login / install_pi.sh 阶段 5）"
+    warn "未检测到 ~/.chiguo/auth/ 集中认证目录 → 登录需手动（bash scripts/wechat-bridge.sh login / uv run python netease_bridge.py --login / install_pi.sh 阶段 5；网易云 API 服务: bash scripts/netease-api.sh install）"
 fi
 if [ ! -f chiguo_state.json ]; then
     warn "chiguo_state.json 不存在 → 若从旧运行机迁移,请手动拷贝 state/decisions 等运行时文件(不进 git)"
@@ -121,7 +137,8 @@ cat <<EOF
 
 ────────────────── 部署完成 ──────────────────
  微信桥:        $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态本地保留不进 git; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && start 排查）")
-pi 环境:       $( [ "$PI_OK" = 1 ] && echo "已由本脚本自动完成（memory-lancedb-pro 扩展 + crontab + provider key，随 toml [host].provider）" || echo "未安装或未完全安装（bash scripts/install_pi.sh --dry-run 排查）")
+ pi 环境:       $( [ "$PI_OK" = 1 ] && echo "已由本脚本自动完成（memory-lancedb-pro 扩展 + crontab + provider key，随 toml [host].provider）" || echo "未安装或未完全安装（bash scripts/install_pi.sh --dry-run 排查）")
+ 网易云 API:    $( [ "$NETEASE_OK" = 1 ] && echo "已安装并常驻（api-enhanced v4.39.0，systemd: netease-api.service；bash scripts/netease-api.sh status）" || echo "未安装/未就绪（bash scripts/netease-api.sh install 排查；--skip-netease 跳过）")
   手动重跑/排查: bash scripts/install_pi.sh --dry-run（扫描）| --yes（自动修复）
   端到端冒烟:   bash scripts/chiguo-tick.sh（tick 手动触发 → 微信收到）
 
