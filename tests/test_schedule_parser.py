@@ -75,6 +75,81 @@ def test_parse_cell_empty():
     assert ScheduleParser._parse_cell("  ") == []
     print("  OK test_parse_cell_empty")
 
+# ── 查询层（手构 schedule,不经 xlsx）──
+
+def _mk(weeks, course="高数", teacher="刘洋", loc="尚行楼"):
+    return {"course": course, "teacher": teacher,
+            "weeks": set(weeks), "weeks_raw": "", "location": loc}
+
+def _parser_with(schedule, semester_start=date(2026, 2, 23)):
+    p = ScheduleParser.__new__(ScheduleParser)
+    p.enabled = True
+    p.available = True
+    p._schedule = schedule
+    p._parsed_at = 0
+    p.xlsx_path = None
+    p.cache_path = None
+    p.semester_start = semester_start
+    p._ensure_parsed = lambda: None  # 查询层单测:跳过文件刷新
+    return p
+
+def test_query_in_class():
+    p = _parser_with({0: {3: _mk([2, 17])}})
+    r = p.query(dt(2026, 6, 15, 10, 30))  # 周一第3节（10:00-10:45）,学期第17周
+    assert r["in_class"] is True
+    assert r["current_course"]["course"] == "高数"
+    assert r["current_course"]["period"] == 3
+    assert r["current_course"]["minutes_remaining"] == 15
+    print("  OK test_query_in_class")
+
+def test_query_not_in_class_break():
+    p = _parser_with({0: {3: _mk([2, 17])}})
+    r = p.query(dt(2026, 6, 15, 10, 47))  # 课间
+    assert r["in_class"] is False
+    print("  OK test_query_not_in_class_break")
+
+def test_query_next_course():
+    p = _parser_with({0: {3: _mk([2, 17]), 4: _mk([2, 17], course="英语")}})
+    r = p.query(dt(2026, 6, 15, 9, 0))
+    assert r["in_class"] is False
+    assert r["next_course"]["course"] == "高数"
+    assert r["periods_today"][0]["period"] == 3
+    print("  OK test_query_next_course")
+
+def test_query_alternates_week_filter():
+    # 合并单元格:2-17 周主课 vs 19 周备选
+    entry = {**_mk([2, 17]), "alternates": [_mk([19], course="实训")]}
+    p = _parser_with({0: {3: entry}})
+    r = p.query(dt(2026, 6, 29, 10, 30))  # 2026-06-29 = 第19周（Jul 6 是第20周!）
+    assert r["current_course"]["course"] == "实训", r["current_course"]
+    r2 = p.query(dt(2026, 6, 15, 10, 30))  # 第17周 → 主课
+    assert r2["current_course"]["course"] == "高数"
+    print("  OK test_query_alternates_week_filter")
+
+def test_query_class_load():
+    p = _parser_with({0: {1: _mk([2, 17]), 2: _mk([2, 17]), 3: _mk([2, 17]),
+                          4: _mk([2, 17]), 5: _mk([2, 17]), 6: _mk([2, 17])}})
+    assert p.query(dt(2026, 6, 15, 8, 0))["class_load"] == "heavy"
+    p2 = _parser_with({0: {1: _mk([2, 17])}})
+    assert p2.query(dt(2026, 6, 15, 8, 0))["class_load"] == "light"
+    p3 = _parser_with({})
+    r = p3.query(dt(2026, 6, 15, 8, 0))
+    assert r["class_load"] == "free" and r["in_class"] is False
+    print("  OK test_query_class_load")
+
+def test_query_week_boundary():
+    p = _parser_with({0: {1: _mk([17])}})
+    assert p.query(dt(2026, 6, 15, 8, 0))["in_class"] is True   # 第17周
+    assert p.query(dt(2026, 6, 22, 8, 0))["in_class"] is False  # 第18周,无课
+    print("  OK test_query_week_boundary")
+
+def test_current_period_boundaries():
+    assert ScheduleParser._current_period(dt(2026, 6, 15, 8, 0)) == 1
+    assert ScheduleParser._current_period(dt(2026, 6, 15, 8, 47)) is None  # 课间
+    assert ScheduleParser._current_period(dt(2026, 6, 15, 20, 40)) == 11
+    assert ScheduleParser._current_period(dt(2026, 6, 15, 22, 0)) is None  # 晚课后
+    print("  OK test_current_period_boundaries")
+
 
 if __name__ == "__main__":
     print("test_schedule_parser.py\n")
@@ -84,6 +159,9 @@ if __name__ == "__main__":
         test_parse_cell_single_hyphen, test_parse_cell_single_space,
         test_parse_cell_merged_two_courses, test_parse_cell_trailing_location_fragment,
         test_parse_cell_truncated_course, test_parse_cell_empty,
+        test_query_in_class, test_query_not_in_class_break, test_query_next_course,
+        test_query_alternates_week_filter, test_query_class_load,
+        test_query_week_boundary, test_current_period_boundaries,
     ]
     for t in tests:
         t()
