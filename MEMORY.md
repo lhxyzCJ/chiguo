@@ -1,3 +1,16 @@
+## 2026-08-02 — openid 全链路去标识 + 集中认证目录（版本不步进）
+
+**背景**：用户要求仓库零隐私信息（含真实微信 openid PII），并设想认证信息单独存放、换新机器拷贝即用。查证：wechatbot SDK Authenticator.login() 先 loadCredentials()——SDK 层无设备/IP 校验（纯 token 复用，服务端黑盒校验未知，session:expired 自动重登兜底）；网易云 MUSIC_U cookie 无本地绑定（跨 IP 大概率可用）；pi API key 无绑定 100% 可迁移。
+
+**方案（多 agent 保障）**：
+- **历史补清**：filter-repo 第二次重写——`--path schedule_cache.json`（上轮遗漏：git rm --cached 只清当前树，历史仍有）+ `--replace-text` 真实 openid → 占位符（先精确串后前缀规则，清掉 MEMORY.md 缩写变体）；全历史 openid/schedule_cache 零残留
+- **openid 注入链**（占位符 → 登录后自动注入）：仓库 6 处 → `owner@im.wechat`；wechat-bridge.sh resolve_owner 三链（credentials.json userId → toml 非占位符 → 占位符）→ .env 写 WECHAT_BRIDGE_OWNER（.env gitignore）；tick OWNER 解析链相同（占位符 → exit 1 提示 login）
+- **集中认证目录 `~/.chiguo/auth/`**（权限 700，独立于仓库，可迁移）：wechat/（SDK storage，WECHAT_BRIDGE_STORAGE 指向）+ netease_cookie.txt（netease_bridge _cookie_path 解析链：集中目录 → 仓库根回退）+ pi-auth.json（install_pi.sh 阶段 5 导入 ~/.pi/agent/，目标已有则不动）；deploy.sh 6.5 认证迁移提示
+- **坑**：① set -euo pipefail 下 sed 读不存在文件退出码 2 触发 set -e → 解析链 sed 需 `|| true`；② filter-repo 重写后 remote 需重建 + branch -u；③ 旧测试断言路径过期需同步（STORAGE 指向集中目录）
+- **测试**：test_wechat_bridge +2（登录后真实 userId 注入 .env/占位符）、test_tick_health +1（真实 ID 发送）、test_install_pi +1（auth 导入）；全量回归绿
+- **复核**：终审 agent 6 项 PASS（历史零残留/占位符/注入链/测试/权限/remote），force-with-lease push 后远端历史敏感数据清除
+- **README 双文件**：部署节补充认证迁移说明（拷贝 ~/.chiguo/auth/ 即用；微信/网易云失效自动重登）
+
 ## 2026-08-02 — 隐私数据移出 git + 历史重写（security pass，版本不步进）
 
 **背景**：用户要求 git 不再追踪隐私信息（微信登录态 token、网易云、对话等）。Pre-audit agent 全历史扫描（76 commits）发现：credentials 3 文件（真实微信凭证）+ chiguo_messages.jsonl（对话原文）+ chiguo_decisions.jsonl（message_text）+ archive 两个决策日志（含用户原文）+ data/ 个人文件（课表 xskb/记忆/二维码）+ schedule_cache.json.v1.bak（历史）+ openclaw.json（历史）——全历史无真实 API key（sk-/ghp_ 模式 0 命中）。
