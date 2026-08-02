@@ -47,8 +47,8 @@ energy_regen_half_life = 8.0         # 元气恢复：8h 恢复一半空缺
 
 # ── 事件半衰期（小时）──
 # 收到/发出消息时的情绪骤降速度。越小降得越猛。
-loneliness_decay_on_reply = 0.35     # 主人回复：孤独 0.35h 减半（~21分钟）
-anxiety_decay_on_reply = 0.5         # 主人回复：不安 0.5h 减半（~30分钟）
+loneliness_decay_on_reply = 0.35     # 用户回复：孤独 0.35h 减半（~21分钟）
+anxiety_decay_on_reply = 0.5         # 用户回复：不安 0.5h 减半（~30分钟）
 loneliness_decay_on_send = 2.0       # 自己发消息：孤独 2h 减半（表达欲满足，缓慢）
 anxiety_gain_on_send = 2.0           # 自己发消息：不安小幅上升
 energy_cost_per_message = 20.0       # 发一条消耗元气
@@ -177,7 +177,7 @@ semester_end = "2026-07-04"           # 学期结束日期，之后自动视为�
 exam_weeks = []                       # 考试周日期范围，如 ["2026-06-22,2026-07-03"]
 
 [circadian]
-# ── v7: 生物钟学习 — 从主人回复时间学习睡眠时段,动态调整静默窗口 ──
+# ── v7: 生物钟学习 — 从用户回复时间学习睡眠时段,动态调整静默窗口 ──
 history_days = 14        # 回复记录滚动窗口(天)
 min_sample_days = 7      # 最少有数据天数才计算学习窗口
 min_confidence = 0.5     # 学习置信度低于此值 → 回退配置默认窗口(0-8);默认与 min_sample_days=7 天满安静时的置信度 0.5 匹配
@@ -262,7 +262,7 @@ cue_cool_weight = 0.00
 cue_trade_weight = 0.15
 
 
-# ── 安全阀：防止连续崩溃吓到主人 ──
+# ── 安全阀：防止连续崩溃吓到用户 ──
 [safety]
 enabled = true
 crash_cooldown_hours = 24      # lonely_high 触发后 24h 内禁止再次崩溃
@@ -283,7 +283,7 @@ retention_months = 12        # 归档保留月数（0 = 永不删除）
 archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 
 # ────────────────────────────────────────────────────────────
-# [host] 主机/主人（哥哥）运维约束 + pi 调用配置（Phase 4 起由 scripts/pi-run.mjs 读取）
+# [host] 主机/用户（哥哥）运维约束 + pi 调用配置（Phase 4 起由 scripts/pi-run.mjs 读取）
 # 运维约束沿用历史 USER.md 迁移内容（Task 3）；Task 14 对齐为正式配置段。
 # 配置键：provider/model/thinking_level/session_id/send_session_id/personality_dir/wechat_bridge_url
 # （PIRUN_* 环境变量可覆盖：PIRUN_PROVIDER/PIRUN_MODEL/PIRUN_THINKING/PIRUN_SESSION/PIRUN_PERSONALITY/PIRUN_GUIDE）

@@ -2,7 +2,7 @@
 
 # 🎀 迟菓
 
-**一个会主动找主人聊天的角色扮演 AI 妹妹**
+**一个会主动找用户聊天的角色扮演 AI 妹妹**
 
 零 LLM 数学决策引擎 · LLM 消息生成 · 微信触达
 
@@ -16,7 +16,7 @@
 
 </div>
 
-**迟菓**是一个角色扮演类聊天机器人：角色出自国产 Galgame《三色△绘恋》系列（绘恋企划屋出品）。她会主动找主人聊天——零 LLM 的数学决策引擎决定**何时、以什么心情、聊什么**，LLM 再按人格设定把决定变成傲娇嘴硬的微信消息。
+**迟菓**是一个角色扮演类聊天机器人：角色出自国产 Galgame《三色△绘恋》系列（绘恋企划屋出品）。她会主动找用户聊天——零 LLM 的数学决策引擎决定**何时、以什么心情、聊什么**，LLM 再按人格设定把决定变成傲娇嘴硬的微信消息。
 
 - **决策与生成分离**：`chiguo_daemon.py` 永不调用 LLM、永不生成消息文本，只输出结构化 JSON
 - **零依赖核心**：情绪推进、发送门控、触发评估、话题选择全部本地计算，纯 Python stdlib 可跑
@@ -29,6 +29,7 @@
 - [🏗 架构](#-架构)
 - [💬 效果示例](#-效果示例)
 - [🚀 快速开始](#-快速开始)
+- [🧩 组件](#-组件)
 - [🧠 接入模型后端](#-接入模型后端)
 - [🎭 自定义人格](#-自定义人格)
 - [🛠 部署与运维](#-部署与运维)
@@ -47,24 +48,13 @@
 >
 > 🔒 **隐私说明**：微信登录态、真实对话日志与个人数据（课表/记忆/二维码）**均不进 git**，只保存在本机；全部计算本地完成，不经过任何第三方云服务（模型 API 与网易云接口调用除外）。公开仓库无需清理。
 
-### 组件依赖
-
-| 组件 | 必需性 | 缺失时的降级 |
-|------|--------|--------------|
-| Python 3.14+ / uv | 必需 | — |
-| pi-agent（模型后端，任意 provider） | 必需 | 消息无法生成 |
-| wechat-bridge（微信桥） | 可选 | 无微信触达，daemon 仍可 CLI 直跑 |
-| 记忆系统（LanceDB + ollama embedding） | 可选 | 记忆话题源减少（JSON 兜底），`envcheck` 报 warn |
-| 网易云音乐桥 | 可选 | 完全不介入（话题源少 1 个） |
-| 课表 xlsx | 可选 | 按空闲处理（availability=1.0） |
-
 ---
 
 ## ✨ 特性一览
 
 | 特性 | 说明 |
 |------|------|
-| 🧭 5 维情绪引擎 | 孤独/好感/不安/元气/傲娇，半衰期推进，主人回复实时响应 |
+| 🧭 5 维情绪引擎 | 孤独/好感/不安/元气/傲娇，半衰期推进，用户回复实时响应 |
 | 🌙 生物钟学习 | 双作息双桶分桶学习，动态静默窗口（深夜不打扰） |
 | 🎯 13 种触发 | sigmoid 权重 + 加权随机，替代硬阈值与优先级排序 |
 | 💡 8 大话题来源 | 课表/假期、记忆回忆、节气、纪念日、天气、网易云音乐… |
@@ -87,13 +77,14 @@ flowchart LR
         TICK[crontab chiguo-tick.sh<br/>每 15 分钟] --> D[chiguo_daemon.py 决策<br/>零 LLM 纯数学 JSON]
         D -->|action=send| PI1[pi-run.mjs<br/>LLM 生成消息]
         PI1 --> B[wechat-bridge /send]
-        B --> WX[(微信)]
     end
     subgraph 回复 Reply
-        WX -->|主人消息| BR[bridge askPi<br/>情绪分析 + 回复]
-        BR --> D2[daemon --user-msg 记账<br/>情绪实时响应]
-        BR -->|回复文本| WX
+        BR[bridge askPi<br/>情绪分析 + 回复]
     end
+    B --> WX[(微信)]
+    WX -->|用户发消息| BR
+    BR -. 记账 .-> D
+    BR -->|回复文本| WX
 ```
 
 决策引擎内部（`chiguo_daemon.py`，零 LLM）：
@@ -154,6 +145,60 @@ uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 ```
 
 > 注意：`uv sync` 默认不安装 lancedb（记忆降级 JSON 模式运行）；`uv sync --all-extras` 启用完整记忆与课表解析。集成测试需要当前目录存在 `chiguo_proactive.toml`，请始终从项目根目录运行。
+
+---
+
+## 🧩 组件
+
+一个完整可用的迟菓由下面这些组件拼起来。核心只有两样：**Python 环境和模型后端**；其余都是可选增强，缺了照样能跑，只是少点能力。
+
+### Python 3.14+ / uv
+
+**作用**：整套系统的最小运行环境。决策引擎零第三方依赖（纯 stdlib），uv 统一管理解释器与虚拟环境，保证任何机器上 `uv run` 出来的行为一致。
+
+**安装/配置**：`deploy.sh` 第一步自动安装；手动装的话见 [docs.astral.sh/uv](https://docs.astral.sh/uv/)。
+
+**缺失影响**：直接跑不起来——它是唯一必需项。
+
+### pi-agent（模型后端）
+
+**作用**：所有 LLM 能力都从这里来：主动消息的生成、回复时的情绪分析与回复文本，全部经 pi-agent 调用模型 API。支持任意 provider（OpenAI / DeepSeek / Anthropic / 自建网关…），由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定。
+
+**安装/配置**：`export PI_API_KEY=... && bash scripts/install_pi.sh --yes`，或 `pi` 交互式 `/login <provider>`。详见 [🧠 接入模型后端](#-接入模型后端) 与 [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md)。
+
+**缺失影响**：消息无法生成——决策引擎照常评估"该不该发"，但没有 LLM 就没有话可说。
+
+### wechat-bridge（微信桥）
+
+**作用**：消息的最后一段路——把生成好的文本真正发到微信，并接收用户的消息回传给 daemon 记账。常驻本机，登录态仅存本地（扫码一次）。
+
+**安装/配置**：`bash scripts/wechat-bridge.sh install`；登录 `bash scripts/wechat-bridge.sh login`。
+
+**缺失影响**：没有微信触达。daemon 依然可以 `chiguo_daemon.py` CLI 直跑——决策、情绪、记账全部正常，只是消息发不出去。
+
+### 记忆系统（LanceDB + ollama embedding）
+
+**作用**：长期记忆库。对话中的回忆、随机浮现的旧事，都来自这里；也是 8 大话题源之一。
+
+**安装/配置**：`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`（含记忆库初始化）。
+
+**缺失影响**：记忆话题源减少，退回 JSON 兜底模式；`chiguo_envcheck.py` 会报 warn（不影响运行）。
+
+### 网易云音乐桥
+
+**作用**：听歌状态联动——用户睡窗口内播放音乐可反证"没睡"并反向校正生物钟，同时提供音乐话题。
+
+**安装/配置**：部署时随 `install_pi.sh` 引导（扫码登录网易云）。
+
+**缺失影响**：完全不介入，少一个话题来源，其余一切照旧。
+
+### 课表 xlsx
+
+**作用**：让迟菓知道用户在不在上课——上课中/满课日会调整情绪推进与触发权重，也会在触发上下文里注入课程信息。
+
+**安装/配置**：把课表 Excel 放进 `data/` 即可（文件名与格式见 `chiguo_proactive.toml` 配置）。
+
+**缺失影响**：按空闲处理（availability=1.0），行为保守但不会出错。
 
 ---
 
@@ -225,7 +270,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 
 欢迎任何形式的贡献——尤其是"她"的成长：
 
-- **测试先行（TDD）**：铁律是先写失败测试再实现（红→绿），每个 `test_*.py` 是独立 runner
+- **测试先行（TDD）**：铁律是先写失败测试再实现（红→绿），`tests/` 下每个 `test_*.py` 是独立 runner
 - **改完跑全链**：完整测试链见 `AGENTS.md`（24 py + 7 脚本），全绿再提交
 - **文档同步**：行为变化必须同步 `doc/SYSTEM.md`
 - **Commit 风格**：`feat:` / `fix:` / `docs:` / `chore:` 前缀 + 中文描述
@@ -268,7 +313,7 @@ scripts/                 # tick 入口 / pi 封装 / 环境安装 / 假死检测
 wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs）
 personality/             # 人格设定（SUN2.md + 语言指南 + 档位 toml）
 doc/                     # 系统文档（SYSTEM.md / PI_INTEGRATION.md / 日光雨剧本）
-test_*.py / .mjs / .sh   # 测试（独立 runner）
+tests/                   # 测试（独立 runner）
 data/                    # 数据文件（课表/手动记忆/网易云二维码，不进 git）
 ```
 

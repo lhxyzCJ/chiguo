@@ -84,7 +84,7 @@ chiguo_daemon.py (DecisionEngine)
 
 | 维度 | 范围 | 初始 | 含义 |
 |------|------|------|------|
-| `loneliness` | 0-100 | 15 | 孤独值。越高越想联系主人 |
+| `loneliness` | 0-100 | 15 | 孤独值。越高越想联系用户 |
 | `affection` | 5-100 | 55 | 好感度。越高越甜，越低越冷淡 |
 | `anxiety` | 0-100 | 40 | 不安值。越高越卑微试探 |
 | `loneliness_rate` | 0.0-1.0 | 0.0 | 孤独变化率（Δ/h）。驱动触发加速和能量覆写 |
@@ -130,12 +130,12 @@ new_value = target - (target - current) × 2^(-hours / half_life)
 
 | 情境 | 焦虑半衰期 | 理由 |
 |------|-----------|------|
-| 节假日 | ×2.5 | 主人放假，完全放松 |
-| 周末 | ×2.0 | 主人休息 |
-| 上课中 | ×1.8 | 知道主人在上课 |
-| 满课日 | ×1.4 | 知道主人忙 |
+| 节假日 | ×2.5 | 用户放假，完全放松 |
+| 周末 | ×2.0 | 用户休息 |
+| 上课中 | ×1.8 | 知道用户在上课 |
+| 满课日 | ×1.4 | 知道用户忙 |
 
-**睡眠窗口扣除**：`silent_hours()` 计算清醒沉默时长时，自动扣除每日睡眠窗口（0:00-8:00）。迟菓知道主人在睡觉，不把睡眠时间算作"真正的沉默"。公式：清醒沉默 = 墙钟小时 - 睡眠窗口重叠小时。Bayesian 推断使用 `silent_hours_wall()`（原始墙钟），保持分类器阈值准确性——"睡了 8 小时"本身是有意义的用户状态信号。
+**睡眠窗口扣除**：`silent_hours()` 计算清醒沉默时长时，自动扣除每日睡眠窗口（0:00-8:00）。迟菓知道用户在睡觉，不把睡眠时间算作"真正的沉默"。公式：清醒沉默 = 墙钟小时 - 睡眠窗口重叠小时。Bayesian 推断使用 `silent_hours_wall()`（原始墙钟），保持分类器阈值准确性——"睡了 8 小时"本身是有意义的用户状态信号。
 
 > 健壮性：`last_user_message_at` 缺失或不可解析（如手改损坏）时，两个函数均返回 `999.0`（与"从未交互"语义一致），不抛异常——daemon 不会因脏时间戳硬崩溃。
 
@@ -143,7 +143,7 @@ new_value = target - (target - current) × 2^(-hours / half_life)
 
 | 事件 | 孤独 | 不安 | 好感 | 元气 |
 |------|------|------|------|------|
-| 收到主人消息 | 0.35h 减半 | 0.5h 减半 | +0.8~1.2 | +10 |
+| 收到用户消息 | 0.35h 减半 | 0.5h 减半 | +0.8~1.2 | +10 |
 | 发送主动消息 | 2h 减半 | +2 | — | -20 |
 
 ### 2.5 Hawkes 自激事件率
@@ -308,7 +308,7 @@ evaluate():
 
 ### 2.9 生物钟学习（circadian，v7/v8 双作息）
 
-从主人回复时间学习睡眠/活跃时段，动态调整静默窗口（`chiguo_circadian.py`，纯函数为主）。v8 起按**双作息分桶**学习：工作日/周末两套窗口独立估计、独立应用，叠加节假日调休修正。
+从用户回复时间学习睡眠/活跃时段，动态调整静默窗口（`chiguo_circadian.py`，纯函数为主）。v8 起按**双作息分桶**学习：工作日/周末两套窗口独立估计、独立应用，叠加节假日调休修正。
 
 **数据流**：
 
@@ -352,7 +352,7 @@ on_user_message(now)
 **数据流**：
 
 ```
-主人回复 + --analysis JSON
+用户回复 + --analysis JSON
   → on_user_message 摄入：analysis.topic（非空）→ pending_topics 追加 {topic, source, created_at, attempted}
   → analysis.topic_resolved=true → resolve_pending_topic()（同话题移除，活跃对话不触发）
 
@@ -556,7 +556,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 **路径锚定（2026-07-31）**：无参构造时，若 cwd 已存在同名 `anniversaries.json` 则沿用（兼容旧版/隔离目录），否则锚定模块目录（项目根），防止从其他 cwd（如 /tmp）运行把数据写散；显式传绝对路径仍原样生效。
 
-CLI CRUD：`--anniversary "add anniversary 11-03 主人生日"` 等。
+CLI CRUD：`--anniversary "add anniversary 11-03 用户生日"` 等。
 
 bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / X月X日要XX / 有哪些纪念日"→ 自动调用 CLI 记录并回复确认（Phase 4 起不经 pi；详见 PI_INTEGRATION.md §五）。
 
@@ -564,7 +564,7 @@ bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / 
 
 ## 五、LLM 内容分析
 
-主人回复时，pi-agent（Phase 4 迁移后）调用 LLM 分析消息内容，产出 `--analysis` 参数实现差异化情绪变化。所有 LLM 调用统一走 `scripts/pi-run.mjs`（发送侧生成 + 回复侧分析）。
+用户回复时，pi-agent（Phase 4 迁移后）调用 LLM 分析消息内容，产出 `--analysis` 参数实现差异化情绪变化。所有 LLM 调用统一走 `scripts/pi-run.mjs`（发送侧生成 + 回复侧分析）。
 
 ### 5.1 分析维度
 
@@ -731,7 +731,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_bridge_cmd.mjs` | 特殊命令测试（31 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
 | `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
-| `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟主人消息/`s` 刷新状态 | 无 |
+| `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟用户消息/`s` 刷新状态 | 无 |
 | `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → pi 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
 | `scripts/wechat-bridge.sh` | 微信桥管理脚本：install/start/stop/status/login（新设备扫码兜底） | bash |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
@@ -760,8 +760,8 @@ python3 chiguo_daemon.py --compact
 # 显示状态
 python3 chiguo_daemon.py --status
 
-# 记录主人消息
-python3 chiguo_daemon.py --user-msg "主人发的消息原文"
+# 记录用户消息
+python3 chiguo_daemon.py --user-msg "用户发的消息原文"
 
 # 持续运行（调试用，每 N 秒评估一次；最小间隔 60 秒，低于 60 自动按 60 处理并 stderr 提示）
 python3 chiguo_daemon.py --loop 120
@@ -806,7 +806,7 @@ python3 chiguo_demo.py
 #   t N     推进 N 分钟
 #   h N     推进 N 小时
 #   d N     推进 N 天
-#   m 文本  模拟主人发消息
+#   m 文本  模拟用户发消息
 #   s       刷新状态显示
 #   r       重置状态
 #   q       退出
@@ -904,8 +904,8 @@ python3 chiguo_watchdog.py --notify     # 异常时 stderr 输出告警摘要
   "context": {
     "character": "迟菓",
     "personality_source": "/root/chiguo/personality/SUN2.md",
-    "situation": "主人已经12小时没发消息了。菓菓开始焦虑不安。用嘴硬的方式联系……",
-    "schedule_hint": "主人正在上工程测量实训（到14:45）。不要在上课时发消息。",
+    "situation": "哥哥已经12小时没发消息了。菓菓开始焦虑不安。用嘴硬的方式联系……",
+    "schedule_hint": "哥哥正在上工程测量实训（到14:45）。不要在上课时发消息。",
     "layer": "middle",
     "layer_guidance": "嘴硬心软，表面强硬（「不·需·要。」「不用你瞎操心」），但话里有话，试探性联系。",
     "emotion": {
@@ -922,7 +922,7 @@ python3 chiguo_watchdog.py --notify     # 异常时 stderr 输出告警摘要
     "composer_intent": "嘴硬关心——用攻击性语言包装的关心",
     "composer_cue": "tsundere",
     "composer_vibe": "afternoon_silent",
-    "instruction": "请以迟菓（SUN2.md 设定）的身份，用上述语气发一条微信消息给主人。1-3句话。自然。"
+    "instruction": "请以迟菓（SUN2.md 设定）的身份，用上述语气发一条微信消息给哥哥。1-3句话。自然。"
   },
   "state": { ... },
   "bayesian": {
@@ -1118,14 +1118,14 @@ morning_start = 8
 morning_end = 10
 night_start = 20
 night_end = 21
-special_dates = ["05-11", "11-03"]     # 菓菓生日, 主人生日
+special_dates = ["05-11", "11-03"]     # 菓菓生日, 用户生日
 xlsx_path = "data/xskb.xlsx"              # 课表文件
 semester_start = "2026-02-23"          # 学期起始日
 semester_end = "2026-07-04"            # 学期结束日，之后自动视为假期
 exam_weeks = []                        # 考试周日期范围，如 ["2026-06-22,2026-07-03"]
 
 [circadian]
-# v7/v8: 生物钟学习 — 从主人回复时间学习睡眠时段,动态调整静默窗口
+# v7/v8: 生物钟学习 — 从用户回复时间学习睡眠时段,动态调整静默窗口
 # v8: 双作息双桶（weekday/weekend 两套窗口独立估计与应用），以下参数两桶共用
 history_days = 14        # 回复记录滚动窗口(天)
 min_sample_days = 7      # 最少有数据天数才计算学习窗口（每桶各自判断）
@@ -1144,8 +1144,8 @@ retry_backoff_seconds = 2.0    # 重试退避（秒）
 reprobe_minutes = 30           # 登录失效后重探间隔（分钟）
 
 [cooldown]
-max_daily_active = 4                   # 主人活跃时日上限
-max_daily_silent = 2                   # 主人沉默时日上限
+max_daily_active = 4                   # 用户活跃时日上限
+max_daily_silent = 2                   # 用户沉默时日上限
 min_interval_minutes = 30              # 最小发送间隔
 no_reply_lambda_decay = 0.7            # 无回复 λ 衰减因子
 # v4: 概率累积参数
@@ -1251,7 +1251,7 @@ python3 chiguo_monitor.py --health
 | activity | by_hour / by_weekday | 时段/星期分布 |
 | activity | by_layer | 人格层分布 (shell/middle/kernel) |
 | activity | daily_counts | 每日发送量序列 |
-| replies | reply_rate | 主人回复率（基于 mwr 变化推断）|
+| replies | reply_rate | 用户回复率（基于 mwr 变化推断）|
 | replies | max_unreplied_streak | 最长连续无回复 |
 | emotions | current | 当前5维情绪值 |
 | emotions | trends | rising/stable/falling 趋势 |
@@ -1271,7 +1271,7 @@ python3 chiguo_monitor.py --health
 |---------|------|:--:|
 | `crash_gap` | 无 tick > 6h | critical |
 | `no_state` | 状态文件缺失或无 last_tick | critical |
-| `consecutive_no_reply` | 主人连续 ≥5 条未回复 | warn |
+| `consecutive_no_reply` | 用户连续 ≥5 条未回复 | warn |
 | `emotion_stuck_high` | 孤独/不安 >90 持续 24h | warn |
 | `frequent_crash` | kernel 层占比 >40% | warn |
 | `low_reply_rate` | 14天回复率 <30% | warn |
@@ -1309,7 +1309,7 @@ v5 新增完整的对话日志、归档、轮转、告警持久化和索引查�
 
 `chiguo_decisions.jsonl` 新增两种记录类型：
 
-**recv action** — 记录收到的主人消息：
+**recv action** — 记录收到的用户消息：
 
 ```json
 {
@@ -1355,7 +1355,7 @@ v5 新增完整的对话日志、归档、轮转、告警持久化和索引查�
 |------|------|------|
 | `msg_id` | string | 唯一消息 ID，与 decisions 中 send 条目对应 |
 | `ts` | ISO 8601 | 消息时间戳 |
-| `direction` | `"in"` / `"out"` | 方向：in=主人发送，out=菓菓发送 |
+| `direction` | `"in"` / `"out"` | 方向：in=用户发送，out=菓菓发送 |
 | `text` | string | 消息原文 |
 | `trigger` | string or null | 触发类型（仅 out 方向），in 方向为 null |
 | `intensity` | string or null | 触发强度（soft/medium/intense），in 方向为 null |
@@ -1533,9 +1533,9 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 **conversation 输出格式**（人类可读）：
 
 ```
-2026-06-28 14:32 | 菓菓 → 主人 | 谁、谁关心你中午吃什么了！只是刚好看到外卖单……
-2026-06-28 14:28 | 主人 → 菓菓 | 菓菓中午吃的什么
-2026-06-28 09:15 | 菓菓 → 主人 | 早安……今天有课别忘了
+2026-06-28 14:32 | 菓菓 → 哥哥 | 谁、谁关心你中午吃什么了！只是刚好看到外卖单……
+2026-06-28 14:28 | 哥哥 → 菓菓 | 菓菓中午吃的什么
+2026-06-28 09:15 | 菓菓 → 哥哥 | 早安……今天有课别忘了
 ```
 
 ---
@@ -1601,7 +1601,7 @@ holidays.json 格式：
 [
   {
     "type": "reminder",
-    "content": "每周五晚上提醒主人看新番更新",
+    "content": "每周五晚上提醒用户看新番更新",
     "trigger_at": "2026-06-26T19:00:00"
   },
   {
@@ -1769,7 +1769,7 @@ v6 新增功能：
 - 更新 `_version` 为 7
 
 v7 新增功能：
-- **生物钟学习**（`chiguo_circadian.py`）：每次主人回复记录小时 → 滚动 14 天 → 环形滑动窗口（宽度 5-12h）取回复最少时段为睡眠窗口；置信度 = 完整度 × 安静度，≥ `min_confidence`（0.5）才应用到静默窗口，否则回退配置默认 0-8
+- **生物钟学习**（`chiguo_circadian.py`）：每次用户回复记录小时 → 滚动 14 天 → 环形滑动窗口（宽度 5-12h）取回复最少时段为睡眠窗口；置信度 = 完整度 × 安静度，≥ `min_confidence`（0.5）才应用到静默窗口，否则回退配置默认 0-8
 - **接话茬**（follow_up）：`on_user_message` 摄入 analysis topic/topic_resolved → `pending_topics` 管理（add/resolve/mark_attempted/prune，上限 20）；触发评估年龄 [2h, 48h] 窗口 + 钟形权重，单次尝试，过期清理；无 pending 时近期用户相关记忆兜底
 - **热重载同步**：`_maybe_reload_config()` 热重载后重新 `_sync_quiet_window()`，学习窗口不因配置重载而陈旧
 
@@ -1822,7 +1822,7 @@ cron tick / bridge 停止时 daemon 不执行。恢复后：
 - 反馈闭环依赖 tick/bridge 主动回传 --record-send/--send-result，若链路中断则发送结果仍不可知
 - `state_lock()` 是显式锁：`save()` 内部已持锁，但 cron 与 agent（--user-msg）各自的 read-modify-write 若未包在 `with state_lock():` 内，仍存在 lost update 窗口
 - watchdog 的 `stall_since` 检测对 state 文件重建（tick_seq 归零）会误报 —— **2026-07-31 已修复**：tick_seq 回退（< prev_seq）视为重启（重置 `stall_since`、不告警、输出 `tick_restarted` 标记）；仅相等且 >3h 不增才告警停滞；下一次运行自动自愈清除旧误报（现网 `stall_since=16:41` 误报已实测清除）
-- 生物钟学习依赖主人回复样本：冷启动（<7 个有回复日或置信度 <0.5）该桶回退配置默认静默窗口 0-8；学习窗口是统计估计，异常作息（考试周熬夜/时区变化）由置信度门槛与滚动窗口自动衰减
+- 生物钟学习依赖用户回复样本：冷启动（<7 个有回复日或置信度 <0.5）该桶回退配置默认静默窗口 0-8；学习窗口是统计估计，异常作息（考试周熬夜/时区变化）由置信度门槛与滚动窗口自动衰减
 - 双作息迁移是启发式：历史无 bucket 字段的条目按 `weekday() < 5` 补桶，无节假日判定——节假日/调休日的历史回复可能被补入错误桶，随滚动窗口自然衰减
 - 周末数据天然稀疏（每周仅 2/7 天）：周末桶的 sample_days 累积慢，约 3-4 周才可能激活周末学习窗口；未达标时周末回退配置默认 0-8（不影响工作日桶）
 - 听歌反证依赖网易云登录态与网络：未登录/API 不可用时本轮跳过反证（不阻塞、不告警），sleeping 推断回到纯 Bayesian；反证只在评估时点生效，不持久化"醒着"状态
