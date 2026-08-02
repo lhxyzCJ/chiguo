@@ -2,7 +2,7 @@
 """test_personality_init.py — 初始人格值对齐原著测试（Task 5）"""
 
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from chiguo_personality import default_personality
 

@@ -11,23 +11,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Run all tests (Python 3.14+ required) — 23 py + 5 script tests
-node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && \
-bash test_install_pi.sh && bash test_wechat_bridge.sh && \
-uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
-uv run python test_integration.py && uv run python test_monitor.py && \
-uv run python test_eventbus.py && uv run python test_personality.py && \
-uv run python test_bayesian.py && uv run python test_composer.py && \
-uv run python test_ebbinghaus.py && uv run python test_longing.py && \
-uv run python test_escape_valve.py && uv run python test_feedback.py && \
-uv run python test_trigger.py && uv run python test_topics.py && \
-uv run python test_circadian.py && uv run python test_followup.py && \
-uv run python test_netease_proof.py && uv run python test_netease_service.py && \
-uv run python test_envcheck.py && uv run python test_composer_trade.py && \
-uv run python test_personality_init.py && uv run python test_toml_binding.py && \
-uv run python test_adapt_personality.py   # full suite (23 py + 5 script tests)
+node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && \
+bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && \
+uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
+uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
+uv run python tests/test_eventbus.py && uv run python tests/test_personality.py && \
+uv run python tests/test_bayesian.py && uv run python tests/test_composer.py && \
+uv run python tests/test_ebbinghaus.py && uv run python tests/test_longing.py && \
+uv run python tests/test_escape_valve.py && uv run python tests/test_feedback.py && \
+uv run python tests/test_trigger.py && uv run python tests/test_topics.py && \
+uv run python tests/test_circadian.py && uv run python tests/test_followup.py && \
+uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
+uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
+uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
+uv run python tests/test_adapt_personality.py   # full suite (23 py + 5 script tests)
 
 # Or individually
-uv run python test_monitor.py
+uv run python tests/test_monitor.py
 
 # Decision engine (single evaluation, prints JSON to stdout)
 uv run python chiguo_daemon.py
@@ -47,7 +47,7 @@ uv venv
 uv pip install openpyxl lancedb
 
 # Run tests or scripts
-uv run python test_chiguo_math.py
+uv run python tests/test_chiguo_math.py
 uv run python chiguo_daemon.py
 ```
 
@@ -138,7 +138,7 @@ All auto-generated at first run, all in `.gitignore`:
 - **Emotion trends**: first-half vs second-half mean comparison; no heavy regression needed.
 - **Reply rate estimation**: inferred from `messages_without_reply` deltas between consecutive sends (no explicit reply tracking in logs).
 - **Config hot-reload**: `_maybe_reload_config()` checks toml mtime before each `evaluate()` call. Only matters for `--loop` mode; cron spawns fresh processes.
-- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 23 py test runners (+ 6 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
+- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 23 py test runners (+ 6 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
 
 ## 安全边界
 

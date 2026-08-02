@@ -149,8 +149,8 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: 24 py + 8 script standalone runners)
-uv run python test_chiguo_math.py && node test_pi_run.mjs
+# Core tests (full suite: 24 py + 7 script standalone runners)
+uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 ```
 
 > Note: `uv sync` does not install lancedb by default (memory runs in JSON-fallback mode); `uv sync --all-extras` enables full memory and schedule parsing. Integration tests require `chiguo_proactive.toml` in the current directory — always run from the project root.
@@ -226,7 +226,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 Any contribution is welcome — especially ones that help *her* grow:
 
 - **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each `test_*.py` is a standalone runner, exit-code driven.
-- **Run the full suite before submitting**: see `AGENTS.md` (24 py + 8 script tests), all green before commit.
+- **Run the full suite before submitting**: see `AGENTS.md` (24 py + 7 script tests), all green before commit.
 - **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md` (repo rule).
 - **Commit style**: `feat:` / `fix:` / `docs:` / `chore:` prefix + Chinese description.
 - **Design docs**: for major changes, write a design doc under `~/chiguo-meta/specs/` (outside the repo) and get it reviewed first.

@@ -9,19 +9,19 @@
 
 ```bash
 # Run ALL tests: 19 py runners (every runner exits non-zero on failure)
-python3 test_chiguo_math.py && python3 test_holiday_parser.py && \
-python3 test_integration.py && python3 test_monitor.py && \
-python3 test_eventbus.py && python3 test_personality.py && \
-python3 test_bayesian.py && python3 test_composer.py && \
-python3 test_ebbinghaus.py && python3 test_longing.py && \
-python3 test_escape_valve.py && python3 test_feedback.py && \
-python3 test_trigger.py && python3 test_topics.py && \
-python3 test_circadian.py && python3 test_followup.py && \
-python3 test_netease_proof.py && python3 test_netease_service.py && \
-python3 test_envcheck.py
+python3 tests/test_chiguo_math.py && python3 tests/test_holiday_parser.py && \
+python3 tests/test_integration.py && python3 tests/test_monitor.py && \
+python3 tests/test_eventbus.py && python3 tests/test_personality.py && \
+python3 tests/test_bayesian.py && python3 tests/test_composer.py && \
+python3 tests/test_ebbinghaus.py && python3 tests/test_longing.py && \
+python3 tests/test_escape_valve.py && python3 tests/test_feedback.py && \
+python3 tests/test_trigger.py && python3 tests/test_topics.py && \
+python3 tests/test_circadian.py && python3 tests/test_followup.py && \
+python3 tests/test_netease_proof.py && python3 tests/test_netease_service.py && \
+python3 tests/test_envcheck.py
 
 # Single file
-python3 test_monitor.py
+python3 tests/test_monitor.py
 
 # Decision engine (single eval → JSON to stdout)
 python3 chiguo_daemon.py
@@ -219,7 +219,7 @@ Intent × Cue × Vibe three-layer system:
 - Only matters for `--loop` mode; cron spawns fresh processes
 
 ### Test Isolation
-- `test_monitor.py` uses `tempfile.TemporaryDirectory`; other test files are pure-function tests with no shared state
+- `tests/test_monitor.py` uses `tempfile.TemporaryDirectory`; other test files are pure-function tests with no shared state
 - No test framework: plain `assert` statements, `if __name__ == "__main__"` runner
 - `sys.path.insert(0, ...)` to find sibling modules
 - `random.seed(42)` for determinism in integration tests

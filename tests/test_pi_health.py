@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 PI_HEALTH = ROOT / "scripts" / "pi_health.py"
 
 passed = 0

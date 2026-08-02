@@ -6,7 +6,7 @@
 """
 
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import tomllib
 
@@ -58,7 +58,7 @@ def test_cue_weights_rebalanced():
 
 def test_toml_composer_weights():
     """toml [composer] 段权重与代码默认一致且含 cue_trade_weight（daemon 实际读这里）"""
-    toml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chiguo_proactive.toml")
+    toml_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chiguo_proactive.toml")
     with open(toml_path, "rb") as f:
         cfg = tomllib.load(f)
     comp = cfg["composer"]

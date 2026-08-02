@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs'
 process.stdout.write(readFileSync(process.env.FAKE_PI_RESPONSE, 'utf8'))
 `)
 writeFileSync(FAKE_DAEMON, 'import sys\nsys.exit(0)\n')
-cpSync(new URL('./scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
+cpSync(new URL('../scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
 const PH_REAL_CONTENT = readFileSync(PH_SCRIPT, 'utf8')
 
 process.env.WECHAT_BRIDGE_PI_RUN = FAKE_PI
@@ -28,7 +28,7 @@ process.env.WECHAT_BRIDGE_DAEMON_PY = '/root/chiguo/.venv/bin/python'
 process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
 process.env.WECHAT_BRIDGE_PI_HEALTH_PY = '/root/chiguo/.venv/bin/python'
 
-const { handleMessage, TurnQueue } = await import('./wechat-bridge/bridge.mjs')
+const { handleMessage, TurnQueue } = await import('../wechat-bridge/bridge.mjs')
 
 let passed = 0
 const tests = []

@@ -14,7 +14,7 @@ const DAEMON_LOG = join(tmp, 'daemon.log')
 
 // pi 假死记账隔离：真 pi_health.py 拷贝到 tmp（状态落 tmp，绝不写真实 pi_health.json）
 const PH_SCRIPT = join(tmp, 'pi_health.py')
-cpSync(new URL('./scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
+cpSync(new URL('../scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
 process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
 process.env.WECHAT_BRIDGE_PI_HEALTH_PY = '/root/chiguo/.venv/bin/python'
 
@@ -47,7 +47,7 @@ process.env.WECHAT_BRIDGE_DAEMON_PY = '/usr/bin/node'
 process.env.WECHAT_BRIDGE_DAEMON = FAKE_DAEMON
 process.env.FAKE_PI_LOG = PI_LOG
 process.env.FAKE_DAEMON_LOG = DAEMON_LOG
-const { askPi, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue } = await import('./wechat-bridge/bridge.mjs')
+const { askPi, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue } = await import('../wechat-bridge/bridge.mjs')
 
 let passed = 0
 const tests = []
