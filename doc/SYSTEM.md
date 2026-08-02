@@ -383,7 +383,7 @@ _build_context()
 
 ```
 evaluate(now)
-  → _in_quiet_window(now, qs, qe)？否 → 本轮不拉取（白天无意义）
+  → in_quiet_window(now, qs, qe)？否 → 本轮不拉取（白天无意义）
   → _check_play_proof(now)：
       NeteaseService.fetch_play_proof(now)（netease/service.py 单入口）
         → NeteaseBridge.fetch_recent_play(limit=20, ttl_minutes=15)
@@ -542,7 +542,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 | netease | 0.12 | NeteaseService (netease/service.py) | v9: 网易云音乐话题（策略层委托） |
 
 - `chiguo_topics.py`: TopicPicker 类，`pick(now)` → weighted_trigger_choice
-- v9: `TopicPicker.__init__(state, config, netease_service=None)` — 策略层可注入可省略（None → 静默跳过，向后兼容）；daemon 构造（chiguo_daemon.py:73-75）与热重载分支（:121-124）均已注入 `NeteaseService`（v9 已接线）；`_netease_music_topic(now)` 计算上课/睡眠门控（schedule_status + cooldown.quiet_window + `_in_quiet_window` 跨午夜语义；门控信息异常 → fail-closed 不发）后委托 `peek_music_topic`（不消费配额），抽选命中 netease_music/netease_fault 后才 consume——配额只在真正发出时消耗；未注入/异常 → 返回 None 不阻塞话题选择；委托细节见 §2.12
+- v9: `TopicPicker.__init__(state, config, netease_service=None)` — 策略层可注入可省略（None → 静默跳过，向后兼容）；daemon 构造（chiguo_daemon.py:73-75）与热重载分支（:121-124）均已注入 `NeteaseService`（v9 已接线）；`_netease_music_topic(now)` 计算上课/睡眠门控（schedule_status + cooldown.quiet_window + `in_quiet_window` 跨午夜语义；门控信息异常 → fail-closed 不发）后委托 `peek_music_topic`（不消费配额），抽选命中 netease_music/netease_fault 后才 consume——配额只在真正发出时消耗；未注入/异常 → 返回 None 不阻塞话题选择；委托细节见 §2.12
 - 连续 3 次孤独触发 → 强制注入话题
 - `topic_probability=0.70` 控制注入概率
 - v4: 人格调制话题多样性。高开放性（openness）→ 更多 memory/anniversary 话题；低开放性 → 更多 schedule/general 话题
