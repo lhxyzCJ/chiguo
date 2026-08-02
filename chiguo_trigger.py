@@ -342,10 +342,10 @@ def _is_free_time(state: ChiguoState, now: datetime) -> bool:
         return True
     if not state.holiday_parser.is_school_day(now):
         return True
-    # 上课中 → 非空闲
+    # 上课中 → 非空闲（schedule_status 门面:课表不可用 → None → 空闲）
     try:
-        sch = state.schedule_parser.query(now)
-        if sch.get("in_class"):
+        sch = state.schedule_status(now)
+        if sch and sch.get("in_class"):
             return False
     except Exception:
         pass
