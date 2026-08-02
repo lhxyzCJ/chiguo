@@ -46,7 +46,7 @@
 
 > ⚠️ **合规声明**：本项目为官方 IP 的**非官方同人二次演绎**，与绘恋企划屋/山百合文化无关。剧本全文仅作个人学习与同人交流参考，角色形象与剧本文本版权归原作者所有；如权利方提出异议，本项目将按通知移除相关素材。
 >
-> 🔒 **隐私说明**：微信登录态、真实对话日志与个人数据（课表/记忆/二维码）**均不进 git**，只保存在本机；全部计算本地完成，不经过任何第三方云服务（模型 API 与网易云接口调用除外）。公开仓库无需清理。
+> 🔒 **隐私说明**：微信登录态、真实对话日志与个人数据（课表/记忆/二维码）**均不进 git**，只保存在本机；全部计算本地完成，不经过任何第三方云服务（模型 API 与本地自建的网易云 API 服务除外）。公开仓库无需清理。
 
 ---
 
@@ -69,7 +69,7 @@
 
 ## 🏗 架构
 
-系统由两条消息链路组成，全部本地运行，模型 API 与网易云接口是仅有的外部调用。
+系统由两条消息链路组成，全部本地运行，模型 API 与本地自建的网易云 API 服务是仅有的外部调用。
 
 **主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh` → 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/pi-run.mjs --send-mode` 让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）。
 
@@ -214,7 +214,9 @@ uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 
 **作用**：听歌状态联动——用户睡窗口内播放音乐可反证"没睡"并反向校正生物钟，同时提供音乐话题。
 
-**安装/配置**：部署时随 `install_pi.sh` 引导（扫码登录网易云）。
+**上游与依赖**：网易云数据来自本地自建的第三方 Node.js API 服务 —— [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)（原 Binaryify/NeteaseCloudMusicApi 因版权 2024-04 归档后的社区继承版，锁 `v4.39.0` tag）。它由 systemd 托管常驻 `localhost:3000`；chiguo 仅经 `netease_bridge.py` 以 HTTP 调用 6 个端点（QR 登录链 / 登录状态 / 每日推荐 / 播放记录）。登录 cookie（MUSIC_U）只存本机 `~/.chiguo/auth/netease_cookie.txt`（权限 600），不离开本机。
+
+**安装/配置**：`deploy.sh` 可选步骤自动安装（`--skip-netease` 跳过），随后扫码登录：`uv run python netease_bridge.py --login`；服务管理见 `bash scripts/netease-api.sh status`。
 
 **缺失影响**：完全不介入，少一个话题来源，其余一切照旧。
 
@@ -268,6 +270,8 @@ bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境�
 ```
 
 **认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态/网易云 cookie/pi key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。pi key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。
+
+**网易云 API 服务**（可选来源）：systemd 托管（`systemctl status netease-api`），健康检查 `uv run python netease_bridge.py --test`；管理脚本 `bash scripts/netease-api.sh status`。
 
 部署后系统自动运行：crontab 每 15 分钟评估一次"要不要主动发消息"；微信桥常驻接收你的消息。
 
