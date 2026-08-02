@@ -25,7 +25,7 @@ installed_version() {
 }
 
 check_health() {
-  curl -s -m 5 "$NETEASE_API_BASE/login/status" 2>/dev/null | grep -q '"code"'
+  curl -s -m 5 "$NETEASE_API_BASE/login/status" 2>/dev/null | grep -q '"code":200'
 }
 
 write_unit() {
@@ -91,7 +91,13 @@ do_install() {
   systemctl daemon-reload || warn "daemon-reload 失败"
   systemctl enable --now netease-api || warn "enable/start 失败"
 
-  if check_health; then
+  local tries=1 ok=0
+  while [ $tries -le 5 ]; do
+    if check_health; then ok=1; break; fi
+    sleep 2
+    tries=$((tries + 1))
+  done
+  if [ "$ok" = 1 ]; then
     say "API 服务健康 ✓（$NETEASE_API_BASE 响应正常）"
   else
     warn "服务已启动但健康检查未通过（curl $NETEASE_API_BASE/login/status 排查）"

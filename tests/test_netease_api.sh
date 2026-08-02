@@ -48,6 +48,14 @@ STUB
 cat > "$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 echo "curl $*" >> "$CURL_LOG"
+if [ -n "${FAKE_CURL_FAIL_FILE:-}" ] && [ -f "$FAKE_CURL_FAIL_FILE" ]; then
+  N=$(cat "$FAKE_CURL_FAIL_FILE")
+  if [ "$N" -gt 0 ]; then
+    echo "$((N - 1))" > "$FAKE_CURL_FAIL_FILE"
+    echo '{"code":500}'
+    exit 0
+  fi
+fi
 case "$*" in
   *login/status*) echo '{"code":200,"data":{}}' ;;
   *) echo '{}' ;;
@@ -100,3 +108,13 @@ export FAKE_ACTIVE=1
 set +e; bash scripts/netease-api.sh status >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "status 运行中期望 0 实得 $RC"
 pass "status 退出码：未运行 1 / 运行中 0"
+
+# ── 用例 5: 健康检查首次失败 → 重试退避后成功 ──
+: > "$CURL_LOG"
+echo 2 > "$TMP/failcnt"
+export FAKE_CURL_FAIL_FILE="$TMP/failcnt"
+set +e; bash scripts/netease-api.sh install >/dev/null 2>&1; RC=$?; set -e
+unset FAKE_CURL_FAIL_FILE
+[ "$RC" = 0 ] || fail "健康重试期望 0 实得 $RC"
+[ "$(wc -l < "$CURL_LOG")" -ge 3 ] || fail "应重试 ≥3 次 curl，实得 $(wc -l < "$CURL_LOG") 次"
+pass "健康检查重试：首次失败后重试成功"
