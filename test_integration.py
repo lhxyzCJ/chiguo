@@ -163,12 +163,47 @@ def test_7_in_class_availability(cfg):
     s = make_state(cfg)
     # 周一上午第一节课（08:30）
     avail = s.availability(dt(2026, 6, 15, 8, 30))
-    # 上课中 availability 应在 0.05-0.20；课表缺失时回退到 0.85
+    # 上课中 availability 应在 0.05-0.20；on_break(8月=暑假,on_break 用真实今天判定)时兜底 0.85
     assert avail <= 0.20 or avail == 0.85, \
-        f"expected in-class (<=0.20) or fallback (0.85), got {avail}"
+        f"expected in-class (<=0.20) or on_break fallback (0.85), got {avail}"
     print("  OK test_7_in_class: availability =", avail)
 
 
+
+def test_7b_schedule_disabled_availability(cfg):
+    """课表可选来源 enabled=false → 不解析、availability=1.0（按空闲）"""
+    cfg = dict(cfg)
+    cfg.setdefault("schedule", {})["enabled"] = False
+    import tempfile as _tf
+    from pathlib import Path as _P
+    s = make_state(cfg)
+    # 清 break 状态（on_break 用真实今天=8月暑假判定）→ 走课表层
+    import chiguo_state as _cs
+    _orig = _cs.ChiguoState.break_state_path
+    _cs.ChiguoState.break_state_path = property(lambda self: _P(_tf.mkdtemp()) / "no-break.json")
+    s.semester_end = date(2099, 12, 31)  # 未来学期 → 非假期，走课表层
+    sch = s.schedule_status(dt(2026, 6, 15, 8, 30))
+    assert sch is None, f"课表未启用时 schedule_status 应为 None, got {sch}"
+    avail = s.availability(dt(2026, 6, 15, 8, 30))
+    assert avail == 1.0, f"enabled=false 应 availability=1.0, got {avail}"
+    _cs.ChiguoState.break_state_path = _orig
+    print("  OK test_7b: schedule disabled → status None + availability 1.0")
+
+def test_7c_schedule_parser_disabled(cfg):
+    """ScheduleParser(enabled=False) → 不解析、query available=False"""
+    from schedule_parser import ScheduleParser
+    import tempfile
+    from pathlib import Path
+    from datetime import date as date_cls
+    with tempfile.TemporaryDirectory() as td:
+        p = ScheduleParser(xlsx_path=str(Path(td) / "none.xlsx"),
+                           cache_path=str(Path(td) / "cache.json"),
+                           semester_start=date_cls(2026, 2, 23),
+                           enabled=False)
+        r = p.query(datetime(2026, 6, 15, 8, 30))
+        assert r["available"] is False, r
+        assert r["in_class"] is False, r
+        print("  OK test_7c: ScheduleParser(enabled=False) → available=False")
 def test_8_morning_window(cfg):
     """早安窗口 (09:00) → 应有触发，且 type 合法"""
     s = make_state(cfg, loneliness=40)
@@ -361,6 +396,8 @@ if __name__ == "__main__":
             test_5_low_energy,
             test_6_holiday_availability,
             test_7_in_class_availability,
+            test_7b_schedule_disabled_availability,
+            test_7c_schedule_parser_disabled,
             test_8_morning_window,
             test_9_user_msg_reduces_loneliness,
             test_10_semester_end,

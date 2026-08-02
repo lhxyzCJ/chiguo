@@ -40,11 +40,12 @@ def _plays():
     return [{"playTime": 1722441600000, "name": "夜曲", "artist": "周杰伦"}]
 
 
-def _make_service(td, quota=2, fault_quota=1, weights=None):
+def _make_service(td, quota=2, fault_quota=1, weights=None, enabled=True):
     """构造 NeteaseService:重试 0 次/backoff 0(测试不真实 sleep)"""
     cfg = {
         "netease": {
             "retry_count": 0, "retry_backoff_seconds": 0.0, "reprobe_minutes": 30.0,
+            "enabled": enabled,
         },
         "topic_picker": {
             "netease_daily_quota": quota, "netease_fault_daily_quota": fault_quota,
@@ -81,6 +82,26 @@ def _down_health():
 
 # ── 1. 健康文件 ─────────────────────────────────────────────
 
+
+
+
+def test_disabled_returns_none():
+    """网易云可选来源 enabled=false → music_topic 直接 None（不拉取不消费）"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        svc = _make_service(td, enabled=False)
+        assert svc.music_topic(NOW) is None
+        assert svc.music_topic(NOW, in_class=False, in_quiet_window=False) is None
+    print("  OK test_disabled_returns_none")
+
+
+def test_enabled_default_true():
+    """enabled 缺省默认 true（向后兼容）"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        svc = _make_service(td)  # enabled 未传 → True
+        assert svc.enabled is True
+    print("  OK test_enabled_default_true")
 
 def test_health_file_default_when_missing():
     """无健康文件 → _default_health 结构(全部 schema 键),不崩溃"""

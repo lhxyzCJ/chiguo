@@ -137,12 +137,12 @@ def check_ollama(base_url: str = "http://localhost:11434") -> dict:
         if any(n.startswith("qwen3-embedding") for n in names):
             return {"name": "ollama", "ok": True, "severity": "ok",
                     "detail": f"ollama embedding OK ({base_url} 有 qwen3-embedding)"}
-        return {"name": "ollama", "ok": False, "severity": "warn",
-                "detail": f"ollama({base_url}) 无 qwen3-embedding 模型 → 记忆 embedding 降级"
+        return {"name": "ollama", "ok": False, "severity": "info",
+                "detail": f"ollama({base_url}) 无 qwen3-embedding 模型 → 记忆 embedding 未启用(可选)"
                           f"(ollama pull qwen3-embedding:0.6b)"}
     except Exception as e:
-        return {"name": "ollama", "ok": False, "severity": "warn",
-                "detail": f"ollama 不可达({base_url}): {e} → 记忆 embedding 降级"
+        return {"name": "ollama", "ok": False, "severity": "info",
+                "detail": f"ollama 不可达({base_url}): {e} → 记忆 embedding 未启用(可选)"
                           f"(启动 ollama 后 bash scripts/install_pi.sh --yes)"}
 
 
@@ -180,11 +180,11 @@ def check_lancedb(db_path: Path) -> dict:
     try:
         import lancedb
     except ImportError:
-        return {"name": "lancedb", "ok": False, "severity": "warn",
-                "detail": "lancedb 未安装 → 记忆降级 JSON 模式(可运行: uv pip install lancedb)"}
+        return {"name": "lancedb", "ok": False, "severity": "info",
+                "detail": "lancedb 未安装 → 记忆未启用(可选,JSON 兜底)"}
     if not db_path.is_dir():
-        return {"name": "lancedb", "ok": False, "severity": "warn",
-                "detail": f"{db_path} 不存在 → 记忆降级 JSON 模式(memory-lancedb-pro 未初始化?)"}
+        return {"name": "lancedb", "ok": False, "severity": "info",
+                "detail": f"{db_path} 不存在 → 记忆未启用(可选,JSON 兜底)"}
     try:
         db = lancedb.connect(str(db_path))
         table = db.open_table("memories")
@@ -192,8 +192,8 @@ def check_lancedb(db_path: Path) -> dict:
         return {"name": "lancedb", "ok": True, "severity": "ok",
                 "detail": f"LanceDB OK ({db_path}/memories)"}
     except Exception as e:
-        return {"name": "lancedb", "ok": False, "severity": "warn",
-                "detail": f"LanceDB 不可用: {e}"}
+        return {"name": "lancedb", "ok": False, "severity": "info",
+                "detail": f"LanceDB 不可用: {e}(可选,JSON 兜底)"}
 
 
 def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
@@ -215,26 +215,26 @@ def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
     if cookie_path.is_file():
         issues.append("已登录(netease_cookie.txt)")
     else:
-        issues.append("未登录 → 需 uv run python netease_bridge.py --login 扫码")
+        issues.append("未登录(可选来源,未启用不介入;启用需 uv run python netease_bridge.py --login 扫码)")
     if health_path.is_file():
         issues.append("netease_health.json 存在")
     else:
         issues.append("netease_health.json 缺失(daemon 运行后自动生成)")
     ok = api_ok and cookie_path.is_file()
-    return {"name": "netease", "ok": ok, "severity": "ok" if ok else "warn",
+    return {"name": "netease", "ok": ok, "severity": "ok" if ok else "info",
             "detail": "; ".join(issues)}
 
 
 def check_data(xlsx_path: Path, memories_path: Path) -> dict:
-    """课表 + 手动记忆存在且可读。缺失 → warn(均有降级路径)。"""
+    """课表 + 手动记忆存在且可读。缺失 → info(可选来源,未启用不介入)。"""
     missing = []
     for label, p in (("课表", xlsx_path), ("手动记忆", memories_path)):
         if p.is_file():
             pass
         else:
-            missing.append(f"{label} {p} 缺失(有降级:课表→availability=0.85,记忆→空)")
+            missing.append(f"{label} 未启用(可选来源,缺了按无课表/空记忆处理)")
     if missing:
-        return {"name": "data", "ok": False, "severity": "warn", "detail": "; ".join(missing)}
+        return {"name": "data", "ok": False, "severity": "info", "detail": "; ".join(missing)}
     return {"name": "data", "ok": True, "severity": "ok",
             "detail": f"课表/手动记忆 OK ({xlsx_path.name}, {memories_path.name})"}
 
@@ -266,7 +266,7 @@ def run_checks(base_dir: Path = None, skip_pi: bool = False, home: Path = None) 
         check_netease(api_base, base / "netease_cookie.txt", base / "netease_health.json"),
         check_data(xlsx, mem),
     ]
-    summary = {"ok": 0, "warn": 0, "critical": 0}
+    summary = {"ok": 0, "info": 0, "warn": 0, "critical": 0}
     for c in checks:
         summary[c["severity"]] = summary.get(c["severity"], 0) + 1
     ready = summary["critical"] == 0

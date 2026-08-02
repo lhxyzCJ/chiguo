@@ -67,6 +67,7 @@ class NeteaseService:
                     self.source_weights = [w0, w1]
             except TypeError, ValueError:
                 pass
+        self.enabled = bool(net.get("enabled", True))   # 可选来源开关
         self.base_dir = Path(base_dir)
         self.health_file = self.base_dir / DEFAULT_HEALTH_FILE
         netease_bridge.set_api_retry_policy(self.retry_count, self.retry_backoff)
@@ -244,6 +245,8 @@ class NeteaseService:
                     in_quiet_window: bool = False) -> dict | None:
         """探测+消费一体(peek + consume):返回话题即已消费配额。
         供非 TopicPicker 调用方使用(语义与既有版本一致)。"""
+        if not self.enabled:
+            return None
         topic = self.peek_music_topic(now, in_class=in_class, in_quiet_window=in_quiet_window)
         if topic:
             if topic.get("type") == "netease_fault":

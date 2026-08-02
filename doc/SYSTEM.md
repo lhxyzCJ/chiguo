@@ -449,6 +449,7 @@ on_break:
 availability(now):
   ├─ on_break? ── yes → 0.85（寒暑假，跳过一切）
   ├─ is_holiday? ── yes → 0.85（跳过课表）
+  ├─ 课表可选来源（enabled=false 或缺 xlsx）→ 无课表信息 → availability=1.0（按空闲）
   ├─ is_school_day? ── no → 0.85（普通周末）
   └─ yes（含调休）→ schedule_parser.query()
        ├─ in_class → 0.05(heavy) / 0.08(normal) / 0.12(light)

@@ -12,6 +12,7 @@ chiguo_state.json.tmp
 chiguo_state.json.tmp.*
 chiguo_loop.pid
 *.lock
+!uv.lock
 
 # Netease music bridge — cookie is an auth token (keep ignored); cache is tracked
 netease_cookie.txt
@@ -45,4 +46,3 @@ chiguo_messages.jsonl
 archive/
 data/
 schedule_cache.json
-chiguo_state.json

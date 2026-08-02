@@ -136,10 +136,10 @@ def test_run_checks_pi_auth_provider_from_toml():
     print("  OK test_run_checks_pi_auth_provider_from_toml")
 
 
-def test_check_ollama_unreachable_warn():
+def test_check_ollama_unreachable_info():
     r = ec.check_ollama("http://127.0.0.1:1")
-    assert r["severity"] == "warn" and not r["ok"]
-    print("  OK test_check_ollama_unreachable_warn")
+    assert r["severity"] == "info" and not r["ok"]
+    print("  OK test_check_ollama_unreachable_info")
 
 
 def test_check_ollama_proxy_bypassed():
@@ -185,25 +185,25 @@ def test_check_ollama_proxy_bypassed():
 def test_check_lancedb_missing_db_warn():
     with tempfile.TemporaryDirectory() as td:
         r = ec.check_lancedb(db_path=Path(td) / "no_such_lancedb")
-        # lancedb 未装或路径不存在 → 均为 warn,不崩
-        assert r["severity"] == "warn" and not r["ok"]
-    print("  OK test_check_lancedb_missing_db_warn")
+        # lancedb 未装或路径不存在 → 均为 info,不崩
+        assert r["severity"] == "info" and not r["ok"]
+    print("  OK test_check_lancedb_missing_db_info")
 
 
-def test_check_netease_no_cookie_warn():
+def test_check_netease_no_cookie_info():
     with tempfile.TemporaryDirectory() as td:
         r = ec.check_netease("http://127.0.0.1:1/", Path(td) / "netease_cookie.txt",
                              Path(td) / "netease_health.json")
-        assert r["severity"] == "warn" and not r["ok"]
+        assert r["severity"] == "info" and not r["ok"]
         assert "login" in r["detail"]
-    print("  OK test_check_netease_no_cookie_warn")
+    print("  OK test_check_netease_no_cookie_info")
 
 
-def test_check_data_missing_warn():
+def test_check_data_missing_info():
     with tempfile.TemporaryDirectory() as td:
         r = ec.check_data(Path(td) / "xskb.xlsx", Path(td) / "mem.json")
-        assert r["severity"] == "warn" and not r["ok"]
-    print("  OK test_check_data_missing_warn")
+        assert r["severity"] == "info" and not r["ok"]
+    print("  OK test_check_data_missing_info")
 
 
 def test_check_data_ok():
@@ -233,7 +233,7 @@ def test_run_checks_never_crashes():
                               cfg.read_text()))
         report = ec.run_checks(base_dir=td)
         assert len(report["checks"]) == 8
-        assert report["summary"]["ok"] + report["summary"]["warn"] + report["summary"]["critical"] == 8
+        assert report["summary"]["ok"] + report["summary"]["info"] + report["summary"]["warn"] + report["summary"]["critical"] == 8
         # netease/ollama 检查会尝试连 localhost —— 只要求不崩(超时 5s 内失败 → warn)
         json.dumps(report)
         report2 = ec.run_checks(base_dir=td, skip_pi=True)
@@ -269,11 +269,11 @@ if __name__ == "__main__":
     test_check_pi_auth_ok()
     test_check_pi_auth_custom_provider()
     test_run_checks_pi_auth_provider_from_toml()
-    test_check_ollama_unreachable_warn()
+    test_check_ollama_unreachable_info()
     test_check_ollama_proxy_bypassed()
     test_check_lancedb_missing_db_warn()
-    test_check_netease_no_cookie_warn()
-    test_check_data_missing_warn()
+    test_check_netease_no_cookie_info()
+    test_check_data_missing_info()
     test_check_data_ok()
     test_exit_code_mapping()
     test_run_checks_never_crashes()

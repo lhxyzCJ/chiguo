@@ -45,8 +45,8 @@ Chiguo is a **personal project shared as open source**: actively used by its aut
 | pi-agent (model backend, any provider) | Required | Messages cannot be generated |
 | wechat-bridge (WeChat bridge) | Optional | No WeChat delivery; daemon still runs via CLI |
 | Memory system (pi extension memory-lancedb-pro + LanceDB store + ollama embedding + Python `lancedb` package) | Optional | Memory topic sources reduced (JSON fallback); `envcheck` reports a warning |
-| NetEase Music bridge | Optional | Music topics and listening-proof unavailable |
-| Class schedule xlsx | Optional | Class state degrades to availability=0.85 |
+| NetEase Music bridge | Optional | Not configured/disabled → fully inactive (one fewer topic source) |
+| Class schedule xlsx | Optional | Not configured/disabled → fully inactive (availability=1.0, treated as free) |
 
 > ⚠️ **Privacy**: WeChat login state (`wechat-bridge/credentials/`), real conversation logs (`chiguo_messages.jsonl` / `chiguo_decisions.jsonl`), and personal data (`data/` schedule/memories/QR) are **never committed to git** — kept locally only (history was rewritten to purge them). Making the repo public requires no cleanup.
 >
@@ -195,7 +195,8 @@ All parameters live in `chiguo_proactive.toml` (314 lines, hot-reloaded in `--lo
 [emotion]       # 5 emotion dimensions: loneliness/affection/anxiety/energy/tsundere (half-life decay)
 [cooldown]      # send gating: quiet window / daily cap / min interval
 [trigger]       # 13 trigger sigmoid weights
-[topic_picker]  # 8 topic sources and weights
+[schedule]      # class schedule (optional source: disabled or missing xlsx → treated as free)
+[netease]       # NetEase (optional source: disabled or missing cookie → fully inactive)
 [composer]      # message composition Intent × Cue × Vibe
 [host]          # pi-agent backend: provider/model/thinking/session
 [health]        # backend liveness threshold

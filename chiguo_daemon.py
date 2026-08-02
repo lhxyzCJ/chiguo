@@ -526,6 +526,8 @@ class DecisionEngine:
         反证成立时把窗口内播放时间记入活跃(active_days,按播放时刻分桶),
         重算生物钟学习窗口并同步门禁(_sync_quiet_window)。"""
         play_proof = False
+        if not self.config.get("netease", {}).get("enabled", True):
+            return False  # 网易云可选来源未启用 → 不拉取
         qs, qe = self.state.cooldown.quiet_window()
         if not _in_quiet_window(now, qs, qe):
             return False
