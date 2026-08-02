@@ -118,3 +118,13 @@ unset FAKE_CURL_FAIL_FILE
 [ "$RC" = 0 ] || fail "健康重试期望 0 实得 $RC"
 [ "$(wc -l < "$CURL_LOG")" -ge 3 ] || fail "应重试 ≥3 次 curl，实得 $(wc -l < "$CURL_LOG") 次"
 pass "健康检查重试：首次失败后重试成功"
+
+# ── 用例 6: start 同样带启动竞态重试 ──
+: > "$CURL_LOG"
+echo 2 > "$TMP/failcnt"
+export FAKE_CURL_FAIL_FILE="$TMP/failcnt"
+set +e; bash scripts/netease-api.sh start >/dev/null 2>&1; RC=$?; set -e
+unset FAKE_CURL_FAIL_FILE
+[ "$RC" = 0 ] || fail "start 重试期望 0 实得 $RC"
+[ "$(wc -l < "$CURL_LOG")" -ge 3 ] || fail "start 应重试 ≥3 次 curl，实得 $(wc -l < "$CURL_LOG") 次"
+pass "start 重试：首次失败后重试成功"
