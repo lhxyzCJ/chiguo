@@ -731,6 +731,10 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `test_bridge_cmd.mjs` | 特殊命令测试（31 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
 | `test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
+| `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟主人消息/`s` 刷新状态 | 无 |
+| `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → pi 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
+| `scripts/wechat-bridge.sh` | 微信桥管理脚本：install/start/stop/status/login（新设备扫码兜底） | bash |
+| `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
 
 共计 **400+** 个测试用例（23 个 py 测试文件；另含 node 侧 test_trigger_script.js 15 用例 + test_pi_run.mjs 19 用例 + test_bridge_askpi.mjs 10 用例 + test_bridge_cmd.mjs 31 用例、bash 侧 test_install_integration.sh / test_install_pi.sh（14 用例）/ test_wechat_bridge.sh，见 doc/README.md）。
 
