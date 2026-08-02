@@ -68,7 +68,7 @@ No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python �
 - Send side: system crontab `*/15 * * * * scripts/chiguo-tick.sh` — runs `chiguo_daemon.py --compact` with zero model calls; idle → silent exit, send → `scripts/pi-run.mjs` (session `chiguo-send`) generates message per SUN2.md → curl `[host].wechat_bridge_url` → `--record-send` writes back
 - Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askPi` (pi-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
 - Sessions: reply=`chiguo-main`, proactive send=`chiguo-send` — separate sessions eliminate cross-process concurrent turns
-- Environment: `scripts/install_pi.sh` bootstraps pi (memory-lancedb-pro extension, settings/json5, ollama embedding, opencode-go auth, crontab)
+- Environment: `scripts/install_pi.sh` bootstraps pi (memory-lancedb-pro extension, settings/json5, ollama embedding, provider auth via toml [host].provider (default opencode-go), crontab)
 - OpenClaw flow (cron trigger-script + standing order) is **deactivated** (`openclaw cron disable chiguo-check`); `doc/OPENCLAW_INTEGRATION.md` kept as rollback reference
 
 **v4 (2026-06-27)** adds: Bayesian user state inference, multi-dimensional personality (Big Five + character-specific), Ebbinghaus forgetting curves, message composition system (Intent × Cue × Vibe), probability accumulation with anxiety blocking, EventBus decoupling, personality adaptation, and dynamic sleep scheduling.

@@ -71,7 +71,7 @@ git clone <仓库地址> && cd <仓库目录>
 bash deploy.sh      # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境检查(pi/网易云登录) → pi 环境安装(install_pi.sh) + wechat-bridge 安装启动 + cron 注册
 ```
 
-部署脚本会检查:pi-agent(`pi --version`)、扩展路径(`~/.pi/agent/settings.json`)、ollama embedding、`~/.pi/agent/auth.json` 的 opencode-go 条目、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。pi 环境(克隆构建 memory-lancedb-pro 扩展 + settings/json5/auth + crontab 注册 chiguo-tick)由 `scripts/install_pi.sh` 自动完成(可 `--skip-pi` 跳过),详见 `doc/PI_INTEGRATION.md`；wechat-bridge 由 `scripts/wechat-bridge.sh` 管理。记忆库位于 `~/.pi-agent/memory/lancedb-pro`（OpenClaw 已停用，`~/.openclaw` 可整体删除）。OpenClaw 集成安装器 `scripts/install_integration.sh`（旧架构，已停用，`--skip-integration` 跳过）与 `doc/OPENCLAW_INTEGRATION.md` 仅作回退参考。
+部署脚本会检查:pi-agent(`pi --version`)、扩展路径(`~/.pi/agent/settings.json`)、ollama embedding、`~/.pi/agent/auth.json` 的 `[host].provider` 条目、网易云登录(`netease_cookie.txt`,首次需 `uv run python netease_bridge.py --login` 扫码)、以及迁移旧机运行时文件(`chiguo_state.json`/`chiguo_decisions.jsonl` 等,如从旧运行机迁移)。pi 环境(克隆构建 memory-lancedb-pro 扩展 + settings/json5/auth(provider 可配,opencode-go 为默认) + crontab 注册 chiguo-tick)由 `scripts/install_pi.sh` 自动完成(可 `--skip-pi` 跳过),详见 `doc/PI_INTEGRATION.md`；wechat-bridge 由 `scripts/wechat-bridge.sh` 管理。记忆库位于 `~/.pi-agent/memory/lancedb-pro`（OpenClaw 已停用，`~/.openclaw` 可整体删除）。OpenClaw 集成安装器 `scripts/install_integration.sh`（旧架构，已停用，`--skip-integration` 跳过）与 `doc/OPENCLAW_INTEGRATION.md` 仅作回退参考。
 
 ## 架构
 

@@ -1,6 +1,6 @@
-# pi-agent 集成指南（Phase 4，v1.4）
+# pi-agent 集成指南（Phase 4，v1.6）
 
-> 寄主迁移后的当前架构：**消息生成与情绪分析全部走 pi-agent**（opencode-go provider），
+> 寄主迁移后的当前架构：**消息生成与情绪分析全部走 pi-agent**（provider 可配，opencode-go 为默认示例；
 > 定时触发走系统 crontab（chiguo-tick），微信收发走 wechat-bridge，记忆走 memory-lancedb-pro
 > （pi 版扩展 + ollama embedding，复用历史 LanceDB 库）。OpenClaw 链路已停用，
 > 回退参考见 [OPENCLAW_INTEGRATION.md](OPENCLAW_INTEGRATION.md)（已废弃头注）。
@@ -50,9 +50,9 @@ bash deploy.sh                         # 或随部署一起（传 --skip-pi 跳�
 | 2 settings.json | `extensions` 写 `~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`（修正 Windows 残留路径） |
 | 3 json5 配置 | 写 `~/.pi/agent/memory-lancedb-pro.json5`（dbPath=~/.pi-agent/memory/lancedb-pro + ollama embedding + deepseek llm + autoCapture/autoRecall/smartExtraction） |
 | 4 ollama | `curl localhost:11434/api/tags` 有 `qwen3-embedding:0.6b`（缺 → 提示/`ollama pull`） |
-| 5 auth.json | `opencode-go` 条目（key 从 `OPENCODE_API_KEY` 环境变量读，不落盘明文，chmod 600） |
+| 5 auth.json | `[host].provider` 条目（key 从 `PI_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文，chmod 600） |
 | 6 crontab | 注册 `*/15 * * * * scripts/chiguo-tick.sh >> logs/cron-tick.log 2>&1`（幂等，旧条目整行替换） |
-| 7 冒烟 | `memory-pro stats` + `pi -p --provider opencode-go ...`（仅 --yes/ask） |
+| 7 冒烟 | `memory-pro stats` + `pi -p --provider <[host].provider> ...`（仅 --yes/ask） |
 
 ## 二、pi-run 契约（scripts/pi-run.mjs）
 
@@ -117,13 +117,61 @@ openclaw standing order 停用后，纪念日/假期指令由 **bridge 确定性
 > availability 恒 0.85，chiguo_monitor.py 会持续告警）。误触发后执行 `--break off` 或
 > `--anniversary "remove <id>"` 式手动关闭：`uv run python chiguo_daemon.py --break off`。
 
-## 六、opencode-go key 配置
+## 六、provider key 配置
 
-- pi 读 `~/.pi/agent/auth.json` 的 `opencode-go` 条目（`{"type":"api_key","key":...}`，chmod 600）
-- 写入途径：`export OPENCODE_API_KEY=... && bash scripts/install_pi.sh --yes`（阶段 5）
-- key **不落盘明文到仓库**；`chiguo_envcheck.py` 的 `check_pi_auth` 校验该条目存在且有真值
+- pi 读 `~/.pi/agent/auth.json` 的 **`[host].provider` 名**条目（`{"type":"api_key","key":...}`，chmod 600；键名 = provider 名，opencode-go 为默认示例）
+- 写入途径：`export PI_API_KEY=... && bash scripts/install_pi.sh --yes`（阶段 5；兼容回退 `OPENCODE_API_KEY`）
+- key **不落盘明文到仓库**；`chiguo_envcheck.py` 的 `check_pi_auth` 校验该条目存在且有真值（自动跟随 toml provider）
 
-## 七、memory-lancedb-pro 配置（记忆）
+## 七、接入任意模型 API（provider 可配）
+
+chiguo 对后端模型不做绑定：**消息生成/情绪分析全部走 pi-agent，provider 由 `[host].provider` 单一来源决定**
+（= `pi --provider` 名与 auth.json 键名）。opencode-go 只是默认示例，可换成 pi 支持的任何接入方式：
+
+**方式 A：内置 provider（零代码）**
+
+1. 配 key（chiguo 工具链以 auth.json 为唯一校验源）：
+   - `pi` 交互式 `/login <provider>` 存入 `~/.pi/agent/auth.json`（键名 = provider 名；pi 官方方式）
+   - 或 `export PI_API_KEY=<provider 的 key> && bash scripts/install_pi.sh --yes`（阶段 5 写入；兼容回退 `OPENCODE_API_KEY`）
+   - 注：`DEEPSEEK_API_KEY`/`OPENAI_API_KEY` 等 provider 专用环境变量对 pi 运行时有效，但 install/envcheck 只认 auth.json——两者都配才全绿
+2. 改 toml：
+   ```toml
+   [host]
+   provider = "openai"          # 或 deepseek / anthropic / google / openrouter …
+   model = "gpt-5"              # 或 provider/id 前缀
+   ```
+3. 重启相关链路（bridge `bash scripts/wechat-bridge.sh restart`；tick 随 crontab 每 15 分钟新进程生效）；
+   `uv run python chiguo_envcheck.py` 复核（pi_auth 检查自动跟随 provider）
+
+**方式 B：自定义 OpenAI 兼容端点（自建网关/私有部署，pi 官方 models.json 机制）**
+
+写 `~/.pi/agent/models.json`（示例：本地 ollama/vLLM/LM Studio 或任意 OpenAI 兼容网关）：
+
+```json
+{
+  "providers": {
+    "my-gateway": {
+      "baseUrl": "http://192.168.1.10:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "$MY_GATEWAY_KEY",
+      "models": [{ "id": "qwen2.5-coder:7b" }]
+    }
+  }
+}
+```
+
+然后 toml `[host] provider = "my-gateway"` + `model = "qwen2.5-coder:7b"`。更复杂场景（代理/特殊鉴权/OAuth）
+用 pi 扩展 `pi.registerProvider()`，见 pi 官方 [custom-provider.md](https://github.com/earendil-works/pi-mono/blob/main/docs/custom-provider.md)。
+
+**注意事项**
+
+- `chiguo-tick.sh` / `wechat-bridge.sh` 注入的 `OPENCODE_API_KEY`（memory 扩展 smart extraction 固定 env 名）**优先取
+  auth.json 的 `opencode-go` 条目**（扩展 json5 llm 端点固定 opencode 网关），无该条目时回退 `[host].provider` 条目
+  （best effort）——换对话 provider 无需改脚本；若不再有 opencode-go key，smart extraction 降级为正则（pi 启动日志可见）
+- install_pi.sh 的 auth 写入与冒烟自动跟随 `[host].provider`（key 环境变量用通用名 `PI_API_KEY`，兼容回退 `OPENCODE_API_KEY`）
+- 换 provider 后会话记忆（chiguo-main/chiguo-send）保留；模型能力差异（thinking 档位等）按 pi 侧 model 配置生效
+
+## 八、memory-lancedb-pro 配置（记忆）
 
 - 扩展：`~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`
   （settings.json `extensions` 注册；安装器修正 Windows 残留路径）
@@ -134,20 +182,20 @@ openclaw standing order 停用后，纪念日/假期指令由 **bridge 确定性
 - 降级：ollama 不可达 → 记忆 embedding 降级（自动捕获/召回不可用，不影响 daemon 主链路）；
   daemon 侧 LanceDB 仍经 `memory_bridge.py` 只读（缺 lancedb → `available=False` JSON 兜底）
 
-## 八、故障排查
+## 九、故障排查
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
-| `pi exited 1: ... No API key found` | auth.json 无 opencode-go 条目 | install_pi.sh 阶段 5（OPENCODE_API_KEY） |
-| `401 Unauthorized` | opencode-go key 失效 | 换 key 重写 auth.json；`chiguo_envcheck.py` 复核 |
-| `{"ok":false,"error":"empty reply"}` | pi 无 message_end 文本（空回复/坏 JSON） | 重试；检查 provider/model 是否可生成中文文本；`pi -p --provider opencode-go ... --mode json '测试'` 手动验证 |
+| `pi exited 1: ... No API key found` | auth.json 无 [host].provider 对应条目 | install_pi.sh 阶段 5（PI_API_KEY/OPENCODE_API_KEY） |
+| `401 Unauthorized` | provider key 失效 | 换 key 重写 auth.json；`chiguo_envcheck.py` 复核 |
+| `{"ok":false,"error":"empty reply"}` | pi 无 message_end 文本（空回复/坏 JSON） | 重试；检查 provider/model 是否可生成中文文本；`pi -p --provider <[host].provider> ... --mode json '测试'` 手动验证 |
 | 超时（120s kill） | 网关慢/thinking 过高 | 调低 `[host].thinking_level`（off/minimal/low/medium/high/xhigh/max） |
 | `[chiguo-tick] pi-run 未生成消息` | pi-run 失败（多数是 key/网络） | 看 logs/cron-tick.log；先手动跑一次 pi-run 复现 |
 | bridge 回复「⚠️ 处理失败」 | askPi 抛错（pi-run 非 JSON/失败） | bridge 日志（logs/wechat-bridge.log）看具体 error |
 | 特殊命令回「处理失败」 | daemon CLI 报错（如日期格式错） | 命令 JSON 输出含 error；对照 §五 命令表手跑验证 |
 | memory-pro stats 失败 | 扩展未 build/ollama 停 | install_pi.sh 阶段 1/4；`ollama serve` 后重跑 |
 
-## 九、维护速查
+## 十、维护速查
 
 ```bash
 # 手动决策 + 生成 + 发送链路（分步）

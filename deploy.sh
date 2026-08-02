@@ -136,7 +136,7 @@ OpenClaw 集成: $( [ "$INTEG_OK" = 1 ] && echo "已由本脚本自动完成" ||
   端到端冒烟:   openclaw cron run chiguo-check --expect-final
   完整指南:     doc/OPENCLAW_INTEGRATION.md
  微信桥:        $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态随仓库保留; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && start 排查）")
-pi 环境:       $( [ "$PI_OK" = 1 ] && echo "已由本脚本自动完成（memory-lancedb-pro 扩展 + crontab + opencode-go）" || echo "未安装或未完全安装（bash scripts/install_pi.sh --dry-run 排查）")
+pi 环境:       $( [ "$PI_OK" = 1 ] && echo "已由本脚本自动完成（memory-lancedb-pro 扩展 + crontab + provider key，随 toml [host].provider）" || echo "未安装或未完全安装（bash scripts/install_pi.sh --dry-run 排查）")
   手动重跑/排查: bash scripts/install_pi.sh --dry-run（扫描）| --yes（自动修复）
   端到端冒烟:   bash scripts/chiguo-tick.sh（tick 手动触发 → 微信收到）
 
