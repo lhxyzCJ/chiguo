@@ -1,3 +1,15 @@
+## 2026-08-02 — README 全面美化（wechatbot 式，版本不步进）
+
+**背景**：用户要求 README 更美观直接（参考 wechatbot 项目 README 设计），并明确：定位为"角色扮演类聊天机器人"（非"另一种可能"同人叙事），出处一句带过不列出场履历。
+
+**方案（经 brainstorming 评审通过）**：
+- **双 README 重写**：hero 居中（大标题 + 标语 + 静态 shields badges 行——仓库私有故不用 GitHub 统计类 badge）+ emoji 分节 + 表格化；16 节精简至 10 节（定位/由来/隐私合并进"她是谁"，文档/贡献合并，CLI 全量参考与详细文件清单改为链接 doc/SYSTEM.md §七/§六）
+- **双语策略变更**：README.md 改为中文单语（原逐节中英并列废弃），README_EN.md 英文镜像；保留"英文版可能滞后、以中文版为准"声明（符合 AGENTS.md"中文默认"约定）
+- **定位表述**：hero 标语"一个会主动找主人聊天的角色扮演 AI 妹妹"；出处一句带过（《三色△绘恋》系列，绘恋企划屋出品）；合规声明 + 隐私说明合并为 hero 下两个引用块
+- **doc/SYSTEM.md §六**：文件清单补充 4 个缺失条目（chiguo_demo.py/deploy.sh/scripts/wechat-bridge.sh/personality/）
+- **验证**：TOC 锚点用 github-slugger 逐一核对（emoji 标题 → `#-` 前缀锚点，中英全对）；所有相对链接可达；双 README 章节 13×13 对齐
+- **文档**：设计文档存档 ~/chiguo-meta/specs/2026-08-02-readme-redesign-design.md（不进 git）
+
 ## 2026-08-02 — 课表/网易云可选化 + 第四轮 PII 清除（版本不步进）
 
 **背景**：用户要求课表/网易云成为"可选来源"而非"强制来源"（缺了完全无感，不告警、不介入）；并确认真实课表不随 git 提交（上轮已完成）。多 agent 审视（A 全历史/B 跟踪树/C 远程）发现 3 处新 PII：网易云账号（昵称+数字 ID，遍布全历史）、3 个 commit 的 QQ 邮箱 author、/mnt/c/Users/<USER> Windows 路径 + 教师名注释。
