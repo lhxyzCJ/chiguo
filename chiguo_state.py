@@ -226,12 +226,14 @@ class ChiguoState:
         # 课表解析器（v6.1: xlsx/cache 路径锚定 _base_dir，不依赖 cwd）
         sched = config.get("schedule", {})
         xlsx_path = sched.get("xlsx_path", "data/xskb.xlsx")
-        sem_start_str = sched.get("semester_start", "2026-02-23")
+        sem_start_str = sched.get("semester_start", "")
         sem_end_str = sched.get("semester_end", "")
         try:
             sem_start = date_type.fromisoformat(sem_start_str)
         except (ValueError, TypeError):
             sem_start = date_type(2026, 2, 23)
+            print(f"[warn] [schedule].semester_start 缺失/非法（{sem_start_str!r}），回退默认 {sem_start}；请更新 chiguo_proactive.toml",
+                  file=sys.stderr)
         self.semester_start = sem_start
         self.semester_end = None
         if sem_end_str:
