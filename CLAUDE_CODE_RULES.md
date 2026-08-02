@@ -75,7 +75,7 @@ Supporting (not imported by daemon):
 ├── chiguo_watchdog.py      Standalone health checks (cron/systemd timer)
 ├── chiguo_envcheck.py      Read-only env readiness check (Python/pi/ollama/auth/LanceDB/netease/data, exit 0/1/2)
 ├── anniversary_manager.py  CRUD for anniversaries/countdowns
-├── netease_bridge.py       Netease Cloud Music API (QR login, recent plays, daily recs) (634 lines)
+├── netease_bridge.py       Netease Cloud Music API bridge (upstream: api-enhanced v4.39.0, localhost:3000) (634 lines)
 ├── chiguo_netease.py       Netease strategy layer (v9): health probe/degradation chain/peek-consume quota
 ├── solar_terms.py          24 solar terms lookup (±1 day window) (85 lines)
 └── update_holidays.py      Generate holidays.json + solar_terms.json for any year

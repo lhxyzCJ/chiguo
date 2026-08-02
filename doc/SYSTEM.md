@@ -423,6 +423,8 @@ evaluate(now)
 
 **素材安全**：fault/daily/recent 话题 data 仅 `{source, reason}` / `{source, name, artist}`，不含 share_url/链接（链接由发送层按需拼接）。
 
+**上游与部署**：网易云数据来自本地自建的第三方 Node.js API 服务 **NeteaseCloudMusicApiEnhanced/api-enhanced**（原 Binaryify/NeteaseCloudMusicApi 因版权 2024-04 归档后的社区继承版，锁 `v4.39.0` tag），由 `scripts/netease-api.sh` 安装、systemd（`netease-api.service`）托管常驻 `localhost:3000`（`NETEASE_API_BASE` 可覆盖，默认即此）；deploy.sh 第 5.6 步可选接入（`--skip-netease` 跳过）。chiguo 侧仅依赖 6 个端点路径与 `{code,data,...}` 响应包装，契约不匹配时按既有降级链处理。
+
 ---
 
 ## 三、决策树
