@@ -46,7 +46,7 @@ Chiguo comes from the *Tricolour Lovestory* series (a Chinese galgame by 绘恋�
 
 > ⚠️ **Compliance notice**: this project is an **unofficial fan re-imagining of an official IP**, unrelated to 绘恋企划屋 / Shanybai Culture. The script text is bundled for personal study and fan-community reference only; character and script copyrights belong to the original creators. If the rights holders object, the project will remove the relevant material upon notice.
 >
-> 🔒 **Privacy**: WeChat login state, real conversation logs, and personal data (schedule/memories/QR codes) are **never committed to git** — kept on this machine only. All computation is local; no third-party cloud services are involved (except model API and NetEase API calls). Making the repo public requires no cleanup.
+> 🔒 **Privacy**: WeChat login state, real conversation logs, and personal data (schedule/memories/QR codes) are **never committed to git** — kept on this machine only. All computation is local; no third-party cloud services are involved (except the model API and the self-hosted NetEase API service). Making the repo public requires no cleanup.
 
 ---
 
@@ -69,7 +69,7 @@ Chiguo comes from the *Tricolour Lovestory* series (a Chinese galgame by 绘恋�
 
 ## 🏗 Architecture
 
-The system is two message pipelines, all running locally — model API and NetEase API are the only external calls.
+The system is two message pipelines, all running locally — the model API and the self-hosted NetEase API service are the only external calls.
 
 **Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/pi-run.mjs --send-mode` turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`).
 
@@ -212,11 +212,13 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ### NetEase Music bridge
 
-**Role**: music linkage — playback inside the sleep window disproves "asleep" and reverse-calibrates the circadian model, and provides music topics.
+**Role**: listening-state coupling — music played inside the quiet window disproves "asleep" and corrects the circadian clock, plus a music topic source.
 
-**Setup**: guided during `install_pi.sh` (QR login to NetEase).
+**Upstream & dependency**: NetEase data comes from a self-hosted third-party Node.js API service — [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) (community successor of Binaryify/NeteaseCloudMusicApi, archived 2024-04 over copyright; pinned to tag `v4.39.0`). It runs as a systemd service on `localhost:3000`; chiguo only calls 6 endpoints via `netease_bridge.py` (QR login chain / login status / daily recommendations / play records). The login cookie (MUSIC_U) lives only on this machine at `~/.chiguo/auth/netease_cookie.txt` (mode 600), never leaving it.
 
-**Missing**: fully inactive — one fewer topic source, everything else unchanged.
+**Setup**: installed by an optional `deploy.sh` step (skip with `--skip-netease`), then scan the QR: `uv run python netease_bridge.py --login`; manage via `bash scripts/netease-api.sh status`.
+
+**If missing**: fully inactive — one fewer topic source, everything else unchanged.
 
 ### Class schedule xlsx
 
@@ -268,6 +270,8 @@ bash deploy.sh   # install uv/Python 3.14 → create venv → full test → env 
 ```
 
 **Auth migration**: credentials live in `~/.chiguo/auth/` (WeChat login state / NetEase cookie / pi keys, mode 700, outside the repo). Moving to a new machine: copy that directory → run `deploy.sh` and everything hooks up automatically. pi keys migrate 100%; WeChat/NetEase web sessions may trigger an automatic re-login (QR scan) on a different device.
+
+**NetEase API service** (optional): managed by systemd (`systemctl status netease-api`); health check `uv run python netease_bridge.py --test`; management via `bash scripts/netease-api.sh status`.
 
 After deployment, the system runs on its own: crontab evaluates "should she message proactively?" every 15 minutes; the WeChat bridge stays online for your messages.
 
