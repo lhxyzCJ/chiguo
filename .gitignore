@@ -47,3 +47,4 @@ chiguo_decisions.jsonl
 chiguo_messages.jsonl
 archive/
 data/
+schedule_cache.json
