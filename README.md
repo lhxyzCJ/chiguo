@@ -77,43 +77,11 @@
 
 **共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（LanceDB）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` / `chiguo_watchdog.py` 独立巡检。两条链的 pi 调用成败都记入 `pi_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
-```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 100, "curve": "basis", "fontSize": 16}}}%%
-flowchart TB
-    subgraph 主动发送链
-        CRON[系统 crontab<br/>每 15 分钟] --> TICK[chiguo-tick.sh]
-        TICK --> DC[chiguo_daemon.py --compact<br/>零 LLM 决策门控]
-        DC -->|action≠send| X1((本轮不发))
-        DC -->|action=send| PI[pi-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
-        PI --> SEND[POST 127.0.0.1:18790/send]
-        SEND --> WX[(微信)]
-        PI -. 发送结果回传 .-> DC
-    end
-    subgraph 被动回复链
-        WX -->|新消息| BR[bridge 收消息<br/>TurnQueue 串行<br/>会话 chiguo-main]
-        BR --> UR[daemon --user-msg<br/>确定性记账 recv_dedup]
-        UR --> SP{command-detect<br/>特殊命令?}
-        SP -->|纪念日/假期| SC[daemon CLI 执行<br/>直接回复]
-        SP -->|普通消息| AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
-        AP --> UA[daemon --analysis<br/>去重升级]
-        SC -->|回复文本| RPL((回复发回微信))
-        UA -->|回复文本| RPL((回复发回微信))
-    end
-    subgraph 共享基础设施
-        direction TB
-        DC <-->|读| ST[(chiguo_state.json<br/>原子写)]
-        DC -->|追加| DEC[(chiguo_decisions.jsonl)]
-        DC <-->|记忆话题| MEM[(LanceDB 记忆)]
-        DC <-->|音乐话题| NE[(网易云)]
-        MON[chiguo_monitor / watchdog] -. 巡检 .-> ST
-        ST ~~~ DEC
-        DEC ~~~ MEM
-        MEM ~~~ NE
-    end
-    PI -. 成败记账 .-> PH[pi_health.py<br/>假死状态机]
-    AP -. 成败记账 .-> PH
-    PH -. 告警/恢复 .-> WX
-```
+<p align="center">
+  <img src="doc/architecture.png" alt="迟菓架构图：主动发送链 / 被动回复链 / 共享基础设施" width="100%">
+</p>
+
+> 图源 [doc/architecture.mmd](doc/architecture.mmd)（改图后重新渲染 PNG 同步更新）。GitHub 内联显示受容器宽度压缩，**点击图片可查看高清大图**。
 
 决策引擎内部（`chiguo_daemon.py`，零 LLM）：
 
@@ -206,11 +174,11 @@ uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 
 ### 记忆系统（LanceDB + ollama embedding）
 
-**作用**：长期记忆库。对话中的回忆、随机浮现的旧事，都来自这里；也是 8 大话题源之一。
+**作用**：迟菓的长期记忆——比情绪更持久的"记得"。对话中值得记的内容由 pi-agent 的 memory-lancedb-pro 扩展自动沉淀进记忆库（回忆、旧事、你的偏好），决策引擎经 `memory_bridge.py` **只读召回**（BM25 全文搜索，零 token、零额外调用），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
 
-**安装/配置**：`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`（含记忆库初始化）。
+**安装/配置**：`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`（初始化记忆库）。记忆库位于 `~/.pi-agent/memory/lancedb-pro`（迟菓侧只读，写入由 pi 扩展完成）；`data/chiguo_memories.json` 是手动记忆文件，**始终生效**作为补充。
 
-**缺失影响**：记忆话题源减少，退回 JSON 兜底模式；`chiguo_envcheck.py` 会报 warn（不影响运行）。
+**缺失影响**：LanceDB 不可用时优雅降级（`available=False`，查询返回空、不抛异常）——记忆话题源减少，`chiguo_envcheck.py` 报 warn（不影响运行）；手动 JSON 记忆不受影响。装与不装的差异见 [❓ FAQ](#-faq)。
 
 ### 网易云音乐桥
 
