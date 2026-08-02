@@ -236,6 +236,8 @@ personality/
 bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境检查 → pi 环境安装 + wechat-bridge + cron 注册
 ```
 
+**认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态 / 网易云 cookie / pi key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。pi key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。
+
 部署后系统自动运行：crontab 每 15 分钟评估一次"要不要主动发消息"；微信桥常驻接收你的消息。管理命令：
 
 ```bash
