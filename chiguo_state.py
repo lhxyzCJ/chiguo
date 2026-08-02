@@ -254,6 +254,7 @@ class ChiguoState:
             self._anchored(xlsx_path),
             cache_path=self._anchored("schedule_cache.json"),
             semester_start=sem_start,
+            enabled=bool(sched.get("enabled", True)),
         )
 
         # 节假日判断器（优先级高于课表）
@@ -895,9 +896,11 @@ class ChiguoState:
                 try:
                     sch = self.schedule_parser.query(now)
                 except Exception:
-                    base = 0.85
+                    base = 1.0  # 课表不可用（可选来源）→ 按完全空闲处理
                 else:
-                    if sch["in_class"]:
+                    if not sch.get("available", True):
+                        base = 1.0  # 课表未启用/无数据 → 无课表信息，按空闲
+                    elif sch["in_class"]:
                         load = sch.get("class_load", "normal")
                         base = {"heavy": 0.05, "normal": 0.08, "light": 0.12}.get(load, 0.08)
                     else:
@@ -998,6 +1001,8 @@ class ChiguoState:
             }
         try:
             result = self.schedule_parser.query(now)
+            if not result.get("available", True):
+                return None  # 课表可选来源未启用 → 不注入课表信息
             if hq["is_makeup_workday"]:
                 result["makeup_day"] = True
                 result["makeup_reason"] = hq["hint"]

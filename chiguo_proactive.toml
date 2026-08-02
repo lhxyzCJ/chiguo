@@ -167,6 +167,7 @@ force_topic_threshold = 3       # 连续N次都是孤独触发时，强制注入
 trigger_history_max = 6         # 触发历史记录最大长度
 
 [schedule]
+enabled = true                   # 可选来源：false 时完全不解析课表（缺 xlsx 亦自动禁用，按空闲处理）
 quiet_start = 0
 quiet_end = 8
 morning_start = 8
@@ -190,6 +191,7 @@ min_width = 5            # 学习窗口最小宽度(小时)
 max_width = 12           # 学习窗口最大宽度(小时)
 
 [netease]
+enabled = true                   # 可选来源：false 时完全不拉取/告警（缺 cookie 亦自动禁用）
 # ── v8: 听歌状态双向联动(夜间活跃反证)──
 play_cache_ttl_minutes = 15     # 播放记录缓存 TTL
 play_proof_window_hours = 2.0   # 播放证据时间窗(距评估时点)

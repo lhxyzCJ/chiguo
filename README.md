@@ -50,8 +50,8 @@
 | pi-agent（模型后端，任意 provider） | 必需 | 消息无法生成 |
 | wechat-bridge（微信桥） | 可选 | 无微信触达，daemon 仍可 CLI 直跑 |
 | 记忆系统（pi 扩展 memory-lancedb-pro + LanceDB 库 + ollama embedding + Python `lancedb` 包） | 可选 | 记忆话题源减少（JSON 兜底），`envcheck` 报 warn |
-| 网易云音乐桥 | 可选 | 音乐话题源与听歌反证不可用 |
-| 课表 xlsx | 可选 | 上课状态降级为 availability=0.85 |
+| 网易云音乐桥 | 可选 | 未配置/未启用 → 完全不介入（话题源少 1 个） |
+| 课表 xlsx | 可选 | 未配置/未启用 → 完全不介入（按空闲 availability=1.0） |
 
 > ⚠️ **隐私说明**：微信登录态（`wechat-bridge/credentials/`）、真实对话日志（`chiguo_messages.jsonl`/`chiguo_decisions.jsonl`）与个人数据（`data/` 课表/记忆/二维码）**均不进入 git**（本地保留，历史已重写清除）——公开仓库无需清理。
 >
@@ -204,7 +204,8 @@ model = "gpt-5"
 [emotion]       # 5 维情绪：孤独/好感/不安/元气/傲娇（半衰期推进）
 [cooldown]      # 发送门控：静默窗口/每日上限/最小间隔
 [trigger]       # 13 种触发 sigmoid 权重
-[topic_picker]  # 8 大话题来源与权重
+[schedule]      # 课表（可选来源：enabled=false 或缺 xlsx → 按空闲处理）
+[netease]       # 网易云（可选来源：enabled=false 或缺 cookie → 不介入）
 [composer]      # 消息组合 Intent × Cue × Vibe
 [host]          # pi-agent 后端：provider/model/thinking/session
 [health]        # pi 假死检测阈值

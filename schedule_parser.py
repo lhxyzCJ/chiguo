@@ -35,9 +35,12 @@ class ScheduleParser:
 
     def __init__(self, xlsx_path: str = "data/xskb.xlsx",
                  cache_path: str = "schedule_cache.json",
-                 semester_start: date = None):
+                 semester_start: date = None,
+                 enabled: bool = True):
         self.xlsx_path = Path(xlsx_path)
         self.cache_path = Path(cache_path)
+        self.enabled = enabled          # 可选来源开关（false → 完全不解析，query 返回空课表）
+        self.available = False          # 课表数据是否可用（enabled 且有解析/缓存）
         # 学期起始日期，默认 2026-02-23（可配置）
         self.semester_start = semester_start or date(2026, 2, 23)
         self._schedule: dict = {}   # {weekday: {period: course_info}}
@@ -48,6 +51,8 @@ class ScheduleParser:
 
     def _ensure_parsed(self):
         """如果 xlsx 被更新，重新解析"""
+        if not self.enabled:
+            return
         self._load_cache()
         if not self.xlsx_path.exists():
             # xlsx 缺失时保留缓存课表（缓存不存在则保持空课表）
@@ -57,6 +62,7 @@ class ScheduleParser:
             return  # 缓存新鲜，直接复用
         if self._parse():
             self._parsed_at = xlsx_mtime
+            self.available = True
             self._save_cache()
         else:
             # 解析失败（xlsx 损坏/openpyxl 缺失等）：降级空课表，但保留旧缓存
@@ -305,6 +311,7 @@ class ScheduleParser:
             return
         self._parsed_at = parsed_at
         self._schedule = schedule
+        self.available = True
         # v2: 旧版本缓存（合并单元格课被吞进 location）→ 强制重解析（xlsx 存在时）
         if data.get("cache_version", 1) < 2:
             self._parsed_at = 0
@@ -397,6 +404,7 @@ class ScheduleParser:
             "class_load": class_load,
             "remaining_classes": remaining,
             "total_classes": total_periods,
+            "available": self.available,
         }
 
     @staticmethod

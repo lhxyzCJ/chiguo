@@ -1,3 +1,17 @@
+## 2026-08-02 — 课表/网易云可选化 + 第四轮 PII 清除（多 agent 审视，版本不步进）
+
+**问题**：课表/网易云是"隐式降级"而非"明确可选"——envcheck 缺失报 warn（deploy 提示未就绪）、文案祈使式、无显式开关；多 agent 审视又发现 3 处新 PII（网易云账号/QQ 邮箱 author/Windows 路径+教师名）。
+
+**方案**：
+- 显式开关 `[schedule].enabled` / `[netease].enabled`（默认 true）+ 隐式降级（缺文件/缺 cookie 自动禁用）
+- availability 无课表 0.85 → 1.0（按空闲）；schedule_status 不注入；netease 禁用短路
+- envcheck 可选组件缺失 → info（新计数，不影响退出码 0/1/2）
+- 第四轮 filter-repo：10 个 PII 模式全历史 0；mailmap 统一 author
+- 测试：+6 用例（含 on_break 绕过技巧）
+- 文档：README 双文件/SYSTEM/MEMORY
+
+---
+
 ## 2026-08-02 — openid 去标识 + 集中认证目录（多 agent 终审，版本不步进）
 
 **问题**：上轮安全整改后仍有真实微信 openid（PII）在 6 个跟踪文件（toml 收件人/脚本默认值/测试 fixture）；schedule_cache.json 历史残留（上轮 git rm --cached 只清当前树）。

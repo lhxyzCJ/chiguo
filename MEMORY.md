@@ -1,3 +1,17 @@
+## 2026-08-02 — 课表/网易云可选化 + 第四轮 PII 清除（版本不步进）
+
+**背景**：用户要求课表/网易云成为"可选来源"而非"强制来源"（缺了完全无感，不告警、不介入）；并确认真实课表不随 git 提交（上轮已完成）。多 agent 审视（A 全历史/B 跟踪树/C 远程）发现 3 处新 PII：网易云账号（昵称+数字 ID，遍布全历史）、3 个 commit 的 QQ 邮箱 author、/mnt/c/Users/USER Windows 路径 + 教师名注释。
+
+**方案（多 agent 保障）**：
+- **第四轮 filter-repo**：replace-text（网易云账号→netease_user/数字 ID→占位、QQ 邮箱→author@example.com、/mnt/c/Users/USER→/mnt/c/Users/USER、教师名 4 个→虚构名）+ mailmap（QQ 邮箱→noreply）；10 个 PII 模式全历史 0 命中，author 邮箱统一 noreply
+- **课表可选化**：`[schedule] enabled`（默认 true 向后兼容）；ScheduleParser 加 `enabled`/`available`（false 时不解析，query 返回 available=False）；availability 无课表 → **1.0**（按空闲，替代原 0.85 隐式猜测）；schedule_status 无课表 → None（不注入）
+- **网易云可选化**：`[netease] enabled`；NeteaseService.music_topic 禁用短路；daemon `_check_play_proof` 禁用不拉取（消除 warn 噪音）
+- **envcheck**：可选组件（课表/记忆/网易云/ollama/lancedb）缺失 → severity **info**（新增 info 计数，退出码不受影响）；文案陈述式"未启用不介入"；必需项（env/pi/pi_ext/auth）保持 warn/critical
+- **坑**：① on_break 用真实今天（8 月=暑假）判定，测试需覆盖 semester_end 绕过；② test_7 原 0.85 兜底实为 on_break 分支非课表分支；③ music_topic 编辑产生重复 docstring
+- **测试**：test_envcheck 4 用例 warn→info + 计数断言；test_integration +2（enabled=false → availability 1.0/status None、ScheduleParser available=False）；test_netease_service +2（禁用 None/默认 true）；全量回归绿
+- **清理**：/tmp/opencode/restore 临时 clone（含旧敏感历史）已删；备份 bundle 保留；gitignore 小修（!uv.lock、chiguo_state.json 去重）
+- **文档**：README 双文件（组件表可选语义/配置注释）、doc/SYSTEM.md（availability 1.0）
+
 ## 2026-08-02 — openid 全链路去标识 + 集中认证目录（版本不步进）
 
 **背景**：用户要求仓库零隐私信息（含真实微信 openid PII），并设想认证信息单独存放、换新机器拷贝即用。查证：wechatbot SDK Authenticator.login() 先 loadCredentials()——SDK 层无设备/IP 校验（纯 token 复用，服务端黑盒校验未知，session:expired 自动重登兜底）；网易云 MUSIC_U cookie 无本地绑定（跨 IP 大概率可用）；pi API key 无绑定 100% 可迁移。
