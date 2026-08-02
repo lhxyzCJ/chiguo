@@ -73,7 +73,7 @@ No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python �
 
 **v7 (2026-07-31)** adds: circadian sleep-window learning (生物钟学习 — learns the user's quiet hours from reply times, applies only when confidence ≥ 0.5, falls back to config default 0-8) and the follow_up trigger (接话茬 — continues unfinished topics from `--analysis` topic ingestion, bell-shaped age weighting, single attempt, memory fallback). STATE_VERSION 6→7.
 
-**v8 (2026-07-31)** adds: dual-schedule circadian learning (双作息 — weekday/weekend buckets with separate learned windows, `bucket_for()` handles 调休上班日→weekday / 节假日→weekend / Fri 20:00+ & Sat & Sun before 20:00→weekend; v7 state auto-migrates by backfilling buckets) and NetEase play proof (听歌双向联动 — `netease_bridge.fetch_recent_play()` fetches recent plays only inside the active quiet window, play within the 2h proof window suppresses Bayesian sleeping confidence ×0.5 and records active times back into the circadian tracker). STATE_VERSION 7→8.
+**v8 (2026-07-31)** adds: dual-schedule circadian learning (双作息 — weekday/weekend buckets with separate learned windows, `bucket_for()` handles 调休上班日→weekday / 节假日→weekend / Fri 20:00+ & Sat & Sun before 20:00→weekend; v7 state auto-migrates by backfilling buckets) and NetEase play proof (听歌双向联动 — `netease.bridge` 的 `NeteaseBridge.fetch_recent_play()` fetches recent plays only inside the active quiet window, play within the 2h proof window suppresses Bayesian sleeping confidence ×0.5 and records active times back into the circadian tracker). STATE_VERSION 7→8.
 
 ```
 chiguo_daemon.py (DecisionEngine)
@@ -86,8 +86,8 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_bayesian.py  → Bayesian user state estimation (6 states, online learning) (v4)
   ├─ chiguo_eventbus.py  → lightweight pub/sub event bus (v4)
   ├─ chiguo_circadian.py → circadian sleep-window learning (dual-bucket: weekday/weekend independent windows + active-time merging) (v7, v8 dual-bucket)
-  ├─ netease_bridge.py  → NetEase API bridge (fetch_recent_play: recent-play proof inside quiet window, cached) (v8)
-  ├─ chiguo_netease.py  → NetEase strategy layer (v9): health probe/login-expiry/degradation chain/peek-consume quota/music topic material
+  ├─ netease/bridge.py  → NetEase API bridge 数据面 (NeteaseBridge 实例化: fetch_recent_play/fetch_daily_songs/QR 登录;运行时文件锚定 netease/ 子目录) (v8→重构)
+  ├─ netease/service.py → NetEase strategy layer 策略层 (v9, DI: health probe/degradation chain/peek-consume quota/music topic/fetch_play_proof 单入口)
   ├─ schedule_parser.py  → xskb.xlsx → schedule_cache.json
   ├─ holiday_parser.py   → Chinese holiday detection (State Council schedule)
   ├─ solar_terms.py      → 24 solar terms

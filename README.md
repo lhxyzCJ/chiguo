@@ -214,9 +214,9 @@ uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 
 **作用**：听歌状态联动——用户睡窗口内播放音乐可反证"没睡"并反向校正生物钟，同时提供音乐话题。
 
-**上游与依赖**：网易云数据来自本地自建的第三方 Node.js API 服务 —— [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)（原 Binaryify/NeteaseCloudMusicApi 因版权 2024-04 归档后的社区继承版，锁 `v4.39.0` tag）。它由 systemd 托管常驻 `localhost:3000`；chiguo 仅经 `netease_bridge.py` 以 HTTP 调用 6 个端点（QR 登录链 / 登录状态 / 每日推荐 / 播放记录）。登录 cookie（MUSIC_U）只存本机 `~/.chiguo/auth/netease_cookie.txt`（权限 600），不离开本机。
+**上游与依赖**：网易云数据来自本地自建的第三方 Node.js API 服务 —— [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)（原 Binaryify/NeteaseCloudMusicApi 因版权 2024-04 归档后的社区继承版，锁 `v4.39.0` tag）。它由 systemd 托管常驻 `localhost:3000`；chiguo 仅经 `netease/` 包（NeteaseBridge 数据面）以 HTTP 调用 6 个端点（QR 登录链 / 登录状态 / 每日推荐 / 播放记录）。登录 cookie（MUSIC_U）只存本机 `~/.chiguo/auth/netease_cookie.txt`（权限 600），不离开本机。运行时文件（健康/缓存/cookie/二维码）统一存放 `netease/` 目录，随仓库迁移。
 
-**安装/配置**：`deploy.sh` 可选步骤自动安装（`--skip-netease` 跳过），随后扫码登录：`uv run python netease_bridge.py --login`；服务管理见 `bash scripts/netease-api.sh status`。
+**安装/配置**：`deploy.sh` 可选步骤自动安装（`--skip-netease` 跳过），随后扫码登录：`uv run python -m netease.bridge --login`；服务管理见 `bash scripts/netease-api.sh status`。
 
 **缺失影响**：完全不介入，少一个话题来源，其余一切照旧。
 
@@ -271,7 +271,7 @@ bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境�
 
 **认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态/网易云 cookie/pi key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。pi key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。
 
-**网易云 API 服务**（可选来源）：systemd 托管（`systemctl status netease-api`），健康检查 `uv run python netease_bridge.py --test`；管理脚本 `bash scripts/netease-api.sh status`。
+**网易云 API 服务**（可选来源）：systemd 托管（`systemctl status netease-api`），健康检查 `uv run python -m netease.bridge --test`；管理脚本 `bash scripts/netease-api.sh status`。
 
 部署后系统自动运行：crontab 每 15 分钟评估一次"要不要主动发消息"；微信桥常驻接收你的消息。
 
