@@ -455,7 +455,8 @@ def test_health_netease_faulty():
         state.write_text(json.dumps({"_version": 2, "last_tick": datetime.now(CST).isoformat()}))
         cfg = Path(td) / "chiguo_proactive.toml"
         cfg.write_text("[monitor]\ndisk_warn_mb = 500\ndisk_critical_mb = 100\n")
-        nh = Path(td) / "netease_health.json"
+        nh = Path(td) / "netease" / "netease_health.json"
+        nh.parent.mkdir(exist_ok=True)
         nh.write_text(json.dumps({
             "faulty": True, "failure_reason": "login_expired",
             "api_alive": True, "logged_in": False,
@@ -482,7 +483,8 @@ def test_health_netease_healthy():
         state.write_text(json.dumps({"_version": 2, "last_tick": datetime.now(CST).isoformat()}))
         cfg = Path(td) / "chiguo_proactive.toml"
         cfg.write_text("[monitor]\ndisk_warn_mb = 500\ndisk_critical_mb = 100\n")
-        nh = Path(td) / "netease_health.json"
+        nh = Path(td) / "netease" / "netease_health.json"
+        nh.parent.mkdir(exist_ok=True)
         nh.write_text(json.dumps({"faulty": False}))
 
         mon = ChiguoMonitor(str(log), str(state), config_path=str(cfg))

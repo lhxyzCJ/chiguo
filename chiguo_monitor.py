@@ -693,10 +693,10 @@ class ChiguoMonitor:
                 issues.append("cannot stat decisions log")
 
         # 4. 网易云音乐桥健康(只读 netease_health.json;缺失/损坏 → 跳过不告警)
-        nh_candidates = [self.config_path.parent / "netease_health.json"]
+        nh_candidates = [self.config_path.parent / "netease" / "netease_health.json"]
         if not self.config_path.is_absolute():
             nh_candidates.append(
-                Path(__file__).resolve().parent / "netease_health.json")
+                Path(__file__).resolve().parent / "netease" / "netease_health.json")
         for nh_path in nh_candidates:
             try:
                 with open(nh_path, encoding="utf-8") as f:
