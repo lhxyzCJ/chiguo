@@ -32,8 +32,10 @@ SRV_PID=$!
 cat > "$REPO/chiguo_proactive.toml" <<TOML
 [host]
 send_session_id = "chiguo-send"
-wechat_recipient = "owner_test@im.wechat"
 wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+
+[wechat]
+wechat_recipient = "owner_test@im.wechat"
 
 [health]
 fail_threshold = 3
@@ -111,10 +113,12 @@ printf '{"opencode-go":{"type":"api_key","key":"sk-og"},"deepseek":{"type":"api_
 cat > "$REPO/chiguo_proactive.toml" <<TOML
 [host]
 send_session_id = "chiguo-send"
-wechat_recipient = "owner_test@im.wechat"
 wechat_bridge_url = "http://127.0.0.1:$PORT/send"
 provider = "deepseek"
 model = "deepseek-chat"
+
+[wechat]
+wechat_recipient = "owner_test@im.wechat"
 
 [health]
 fail_threshold = 3
@@ -147,10 +151,12 @@ pass "OPENCODE_API_KEY 注入：优先 opencode-go、回退 [host].provider"
 cat > "$REPO/chiguo_proactive.toml" <<TOML
 [host]
 send_session_id = "chiguo-send"
-wechat_recipient = "owner@im.wechat"
 wechat_bridge_url = "http://127.0.0.1:$PORT/send"
 provider = "deepseek"
 model = "deepseek-chat"
+
+[wechat]
+wechat_recipient = "owner@im.wechat"
 
 [health]
 fail_threshold = 3

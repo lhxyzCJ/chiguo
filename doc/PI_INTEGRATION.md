@@ -2,8 +2,7 @@
 
 > 寄主迁移后的当前架构：**消息生成与情绪分析全部走 pi-agent**（provider 可配，opencode-go 为默认示例；
 > 定时触发走系统 crontab（chiguo-tick），微信收发走 wechat-bridge，记忆走 memory-lancedb-pro
-> （pi 版扩展 + ollama embedding，复用历史 LanceDB 库）。OpenClaw 链路已停用，
-> 回退参考见 [OPENCLAW_INTEGRATION.md](OPENCLAW_INTEGRATION.md)（已废弃头注）。
+> （pi 版扩展 + ollama embedding，复用历史 LanceDB 库）。
 
 ## 架构总览
 
@@ -32,7 +31,7 @@ crontab */15 * * * * scripts/chiguo-tick.sh
 
 ## 一、安装（install_pi.sh）
 
-任意机器 pull 仓库后，pi 环境由 `scripts/install_pi.sh` 一键引导（幂等，deploy.sh 第 5.6 步接入）：
+任意机器 pull 仓库后，pi 环境由 `scripts/install_pi.sh` 一键引导（幂等，deploy.sh 第 5.5 步接入）：
 
 ```bash
 bash scripts/install_pi.sh --dry-run   # 只扫描报告（只读，非 TTY 默认也是它）
@@ -41,7 +40,7 @@ bash scripts/install_pi.sh             # 交互 ask：逐项确认
 bash deploy.sh                         # 或随部署一起（传 --skip-pi 跳过）
 ```
 
-模式与退出码同 install_integration.sh 约定：`0`=完成，`1`=有待办/警告/残留，`2`=严重问题。
+模式与退出码约定：`0`=完成，`1`=有待办/警告/残留，`2`=严重问题。
 
 | 阶段 | 内容 |
 |------|------|
@@ -97,7 +96,7 @@ node scripts/pi-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + 回�
 
 ## 五、特殊命令（纪念日/假期，方案 A：bridge 规则化）
 
-openclaw standing order 停用后，纪念日/假期指令由 **bridge 确定性接管**（pi 纯文本调用无工具权限，
+纪念日/假期指令由 **bridge 确定性接管**（pi 纯文本调用无工具权限，
 不依赖 pi 输出稳定性）。`wechat-bridge/command-detect.mjs` 在消息到达时正则检测：
 
 | 哥哥说 | 执行 |
@@ -176,7 +175,7 @@ chiguo 对后端模型不做绑定：**消息生成/情绪分析全部走 pi-age
 - 扩展：`~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`
   （settings.json `extensions` 注册；安装器修正 Windows 残留路径）
 - 配置：`~/.pi/agent/memory-lancedb-pro.json5` —— `dbPath=~/.pi-agent/memory/lancedb-pro`
-  （**历史 LanceDB 库**，OpenClaw 已停用，`~/.openclaw` 可整体删除；只读语义不变）、embedding=ollama `qwen3-embedding:0.6b`（1024 维，localhost:11434）、
+  （**历史 LanceDB 库**，位于 `~/.pi-agent/memory/lancedb-pro`；只读语义不变）、embedding=ollama `qwen3-embedding:0.6b`（1024 维，localhost:11434）、
   llm=deepseek、autoCapture/autoRecall/smartExtraction 开、sessionMemory 关
 - CLI 冒烟：`~/.pi-agent/.../node_modules/.bin/memory-pro stats`
 - 降级：ollama 不可达 → 记忆 embedding 降级（自动捕获/召回不可用，不影响 daemon 主链路）；
@@ -217,6 +216,6 @@ uv run python chiguo_envcheck.py
 
 # 测试
 node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && \
-node test_trigger_script.js && bash test_install_integration.sh && bash test_install_pi.sh --dry-run && \
+bash test_install_pi.sh --dry-run && \
 bash test_wechat_bridge.sh && uv run python test_*.py   # 全量见 AGENTS.md
 ```

@@ -296,7 +296,8 @@ def test_health_ok():
         state = Path(td) / "state.json"
         state.write_text(json.dumps({"_version": 2, "last_tick": datetime.now(CST).isoformat()}))
 
-        mon = ChiguoMonitor(str(log), str(state))
+        mon = ChiguoMonitor(str(log), str(state), config_path=str(Path(td) / "chiguo_proactive.toml"))
+        (Path(td) / "chiguo_proactive.toml").write_text("")
         h = mon.health()
         assert h["healthy"] == True
         assert h["hours_since_tick"] is not None

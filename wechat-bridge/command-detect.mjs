@@ -2,8 +2,8 @@
 /**
  * command-detect — 特殊命令检测 + daemon 执行（Phase 4 Task 14 闭环）
  *
- * 背景：openclaw standing order 停用后，纪念日/假期（--anniversary/--break）指令链路
- * 一度断开（pi 为纯文本调用，无工具权限）。方案 A：bridge 规则化接管——
+ * 背景：pi 为纯文本调用无工具权限，纪念日/假期（--anniversary/--break）指令链路
+ * 由 bridge 确定性接管。方案 A：bridge 规则化接管——
  * 收到消息先正则检测命令意图，命中则直接执行 daemon CLI 并回复确认，不经过 pi。
  * 确定性优先：检测保守（短消息 + 非问句），歧义消息放行给 pi 自然回复。
  *

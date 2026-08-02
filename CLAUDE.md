@@ -6,14 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 所有子代理（Agent/Workflow）开工前必须继承主模型，不得通过 model 参数覆盖（如 opus/haiku/fable），除非任务明确需要专用模型。
 ## 修改代码或开 agents 时，如需要调用 opus 模型，必须立即中断并提示用户授权，不得擅自使用。
 每次修改代码后必须：
-1. 更新相关文档（`doc/SYSTEM.md`、`doc/IMPROVE.md`、`doc/README.md` 中受影响的章节）
-2. 在 `MEMORY.md` 中简要记录本次改动（日期、修改的文件、功能描述）
+1. 更新相关文档（`doc/SYSTEM.md`、`doc/README.md` 中受影响的章节）
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required) — 23 py + 7 script tests
-node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && node test_trigger_script.js && \
-bash test_install_integration.sh && bash test_install_pi.sh && bash test_wechat_bridge.sh && \
+# Run all tests (Python 3.14+ required) — 23 py + 5 script tests
+node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && \
+bash test_install_pi.sh && bash test_wechat_bridge.sh && \
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \
@@ -25,7 +24,7 @@ uv run python test_circadian.py && uv run python test_followup.py && \
 uv run python test_netease_proof.py && uv run python test_netease_service.py && \
 uv run python test_envcheck.py && uv run python test_composer_trade.py && \
 uv run python test_personality_init.py && uv run python test_toml_binding.py && \
-uv run python test_adapt_personality.py   # full suite (23 py + 7 script tests)
+uv run python test_adapt_personality.py   # full suite (23 py + 5 script tests)
 
 # Or individually
 uv run python test_monitor.py
@@ -62,14 +61,13 @@ No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python �
 
 ## Architecture
 
-**Decision/generation separation** — the core design principle. `chiguo_daemon.py` is a zero-LLM math engine that evaluates state and outputs structured JSON. Message generation happens externally via **pi-agent** (Phase 4 host; OpenClaw deactivated), which reads that JSON, generates text per `personality/SUN2.md`, and sends via wechat-bridge.
+**Decision/generation separation** — the core design principle. `chiguo_daemon.py` is a zero-LLM math engine that evaluates state and outputs structured JSON. Message generation happens externally via **pi-agent** (Phase 4 host), which reads that JSON, generates text per `personality/SUN2.md`, and sends via wechat-bridge.
 
 **pi-agent integration** (see `doc/PI_INTEGRATION.md`, Phase 4):
 - Send side: system crontab `*/15 * * * * scripts/chiguo-tick.sh` — runs `chiguo_daemon.py --compact` with zero model calls; idle → silent exit, send → `scripts/pi-run.mjs` (session `chiguo-send`) generates message per SUN2.md → curl `[host].wechat_bridge_url` → `--record-send` writes back
 - Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askPi` (pi-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
 - Sessions: reply=`chiguo-main`, proactive send=`chiguo-send` — separate sessions eliminate cross-process concurrent turns
 - Environment: `scripts/install_pi.sh` bootstraps pi (memory-lancedb-pro extension, settings/json5, ollama embedding, provider auth via toml [host].provider (default opencode-go), crontab)
-- OpenClaw flow (cron trigger-script + standing order) is **deactivated** (`openclaw cron disable chiguo-check`); `doc/OPENCLAW_INTEGRATION.md` kept as rollback reference
 
 **v4 (2026-06-27)** adds: Bayesian user state inference, multi-dimensional personality (Big Five + character-specific), Ebbinghaus forgetting curves, message composition system (Intent × Cue × Vibe), probability accumulation with anxiety blocking, EventBus decoupling, personality adaptation, and dynamic sleep scheduling.
 
@@ -105,7 +103,7 @@ chiguo_daemon.py (DecisionEngine)
   State:  chiguo_state.json (atomic write: .tmp → os.replace)
 ```
 
-**Config**: `chiguo_proactive.toml` — all parameters (309 lines). `[openclaw]` deprecated (Task 14, superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
+**Config**: `chiguo_proactive.toml` — all parameters (309 lines). Legacy host section from Task 14 (superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
 **Version**: `chiguo_version.py` is the single source (`VERSION="1.4"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
 
@@ -140,10 +138,10 @@ All auto-generated at first run, all in `.gitignore`:
 - **Emotion trends**: first-half vs second-half mean comparison; no heavy regression needed.
 - **Reply rate estimation**: inferred from `messages_without_reply` deltas between consecutive sends (no explicit reply tracking in logs).
 - **Config hot-reload**: `_maybe_reload_config()` checks toml mtime before each `evaluate()` call. Only matters for `--loop` mode; cron spawns fresh processes.
-- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 23 py test runners (+ 7 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
+- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 23 py test runners (+ 6 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
 
 ## 安全边界
 
-**OpenClaw 已停用**：`/root/.openclaw/` 是旧宿主运行时目录（LanceDB 数据库、插件、配置等），已不再使用，可整体删除——本项目不得恢复对其的引用。记忆库已迁至 `~/.pi-agent/memory/lancedb-pro`，本项目只通过 `memory_bridge.py` 进行只读查询。
+**安全边界**：记忆库位于 `~/.pi-agent/memory/lancedb-pro`，本项目只通过 `memory_bridge.py` 进行只读查询。
 
 

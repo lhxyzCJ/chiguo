@@ -805,7 +805,7 @@ class ChiguoMonitor:
         }
 
     def summary(self, days: int = 7) -> str:
-        """人类可读摘要，适合 OpenClaw 展示。"""
+        """人类可读摘要，适合人类阅读。"""
         s = self.stats(days=days)
         a = self.alerts()
         h = self.health()

@@ -11,4 +11,4 @@ bash scripts/wechat-bridge.sh status                        # 微信桥状态
 tail -f logs/cron-tick.log                                  # 主动发送日志
 ```
 
-完整 CLI 参考与配置说明见根 README「CLI 参考 / 配置」节。
+完整 CLI 参考见 [doc/SYSTEM.md](SYSTEM.md) 七、CLI 参考；配置参考见九、配置参考。

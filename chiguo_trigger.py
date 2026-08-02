@@ -82,7 +82,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime) -> Trigger | None:
             })
 
     # LanceDB 随机浮现（低概率，仅在主人沉默时）
-    # 如果 LanceDB 不可用（OpenClaw 更新/路径变化），自动跳过
+    # 如果 LanceDB 不可用（路径变化），自动跳过
     silent_h = state.cooldown.silent_hours(now)
     if silent_h > 6 and random.random() < 0.08 and state.memory_bridge.available:
         lancedb_mem = state.memory_bridge.random_memory(min_importance=0.4)

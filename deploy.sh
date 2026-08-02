@@ -25,23 +25,21 @@ if [ ! -x .venv/bin/python ]; then
 fi
 say "Python: $(uv run python --version)($(uv run python -c 'import sys;print(sys.executable)'))"
 
-# ── 2. 可选依赖 lancedb(OpenClaw 记忆,缺省优雅降级 JSON) ────
+# ── 2. 可选依赖 lancedb(记忆库,缺省优雅降级 JSON) ────
 if uv run python -c "import lancedb" >/dev/null 2>&1; then
     say "lancedb OK → 将读取 \$HOME/.pi-agent/memory/lancedb-pro"
 else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
 
-# ── 3. 全量自检(22 py + 4 脚本测试,任一失败即中止) ──────────
+# ── 3. 全量自检(22 py + 2 脚本测试,任一失败即中止) ──────────
 TESTS=(test_chiguo_math test_holiday_parser test_integration test_monitor
        test_eventbus test_personality test_bayesian test_composer
        test_ebbinghaus test_longing test_escape_valve test_feedback
        test_trigger test_topics test_circadian test_followup
        test_netease_proof test_netease_service test_envcheck
        test_composer_trade test_personality_init test_toml_binding)
-say "运行脚本测试(4 个文件) ..."
-node test_trigger_script.js >/dev/null || fail "test_trigger_script.js 失败,中止部署"
-bash test_install_integration.sh >/dev/null || fail "test_install_integration.sh 失败,中止部署"
+say "运行脚本测试(2 个文件) ..."
 bash test_install_pi.sh >/dev/null || fail "test_install_pi.sh 失败,中止部署"
 bash test_wechat_bridge.sh >/dev/null || fail "test_wechat_bridge.sh 失败,中止部署"
 say "运行全量 Python 测试(${#TESTS[@]} 个文件) ..."
@@ -66,23 +64,7 @@ case $EC in
     2) fail "环境存在严重问题(见上方 JSON),请先修复再继续(若为 pi 缺失: 请先安装 pi-agent,或 --skip-pi 跳过 pi 环境)" ;;
 esac
 
-# ── 5. OpenClaw 集成安装（可跳过: bash deploy.sh --skip-integration）──
-INTEG_OK=0
-if [[ "$*" != *--skip-integration* ]]; then
-    say "安装 OpenClaw 集成（trigger-script 门控 + standing order）..."
-    set +e
-    bash "$PROJECT_DIR/scripts/install_integration.sh" "$@"
-    IC=$?
-    set -e
-    [ "$IC" = 0 ] && INTEG_OK=1
-    case $IC in
-        0) say "集成安装完成 ✓" ;;
-        1) warn "集成安装有警告/残留未处理（见上方输出），daemon 部署不受影响" ;;
-        2) fail "集成安装严重问题，请修复后重试（或 --skip-integration 跳过）" ;;
-    esac
-fi
-
-# ── 5.5 微信桥 wechat-bridge 安装+启动（可跳过: bash deploy.sh --skip-bridge）──
+# ── 5 微信桥 wechat-bridge 安装+启动（可跳过: bash deploy.sh --skip-bridge）──
 BRIDGE_OK=0
 if [[ "$*" != *--skip-bridge* ]]; then
     say "安装微信桥（wechat-bridge，发送端点 + 回复回传）..."
@@ -106,7 +88,7 @@ if [[ "$*" != *--skip-bridge* ]]; then
     esac
 fi
 
-# ── 5.6 pi 环境安装（可跳过: bash deploy.sh --skip-pi）──────────
+# ── 5.5 pi 环境安装（可跳过: bash deploy.sh --skip-pi）──────────
 PI_OK=0
 if [[ "$*" != *--skip-pi* ]]; then
     say "安装 pi 环境（memory-lancedb-pro 扩展 + settings/json5/auth + crontab）..."
@@ -138,10 +120,6 @@ fi
 cat <<EOF
 
 ────────────────── 部署完成 ──────────────────
-OpenClaw 集成: $( [ "$INTEG_OK" = 1 ] && echo "已由本脚本自动完成" || echo "未安装或未完全安装（见上方输出; bash scripts/install_integration.sh --dry-run 排查）")
-  手动重跑/排查: bash scripts/install_integration.sh --dry-run（扫描）| --yes（自动修复）
-  端到端冒烟:   openclaw cron run chiguo-check --expect-final
-  完整指南:     doc/OPENCLAW_INTEGRATION.md
  微信桥:        $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态本地保留不进 git; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && start 排查）")
 pi 环境:       $( [ "$PI_OK" = 1 ] && echo "已由本脚本自动完成（memory-lancedb-pro 扩展 + crontab + provider key，随 toml [host].provider）" || echo "未安装或未完全安装（bash scripts/install_pi.sh --dry-run 排查）")
   手动重跑/排查: bash scripts/install_pi.sh --dry-run（扫描）| --yes（自动修复）

@@ -262,7 +262,7 @@ class ChiguoState:
             data_path=str(self._anchored("holidays.json"))
         )
 
-        # 记忆桥接（只读 OpenClaw LanceDB）
+        # 记忆桥接（只读 LanceDB 记忆库）
         mem_cfg = config.get("memory", {})
         self.memory_bridge = MemoryBridge(
             db_path=mem_cfg.get("lancedb_path"),
@@ -1313,7 +1313,7 @@ class ChiguoState:
 
     def _apply_emotion_impact(self, analysis: dict, now: datetime | None = None):
         """
-        根据 OpenClaw LLM 分析结果微调情绪状态。
+        根据 pi 情绪分析结果微调情绪状态。
         三个维度：warmth（温暖度）、effort（用心度）、attention（关注度）。
         所有系数从配置文件注入，可调参。
         """

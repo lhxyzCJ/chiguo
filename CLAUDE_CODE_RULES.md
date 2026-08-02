@@ -1,15 +1,14 @@
 # Claude Code Rules — Chiguo Proactive Message System
 
-> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-01. 19 py runners + 2 script tests, zero framework, pure Python stdlib.
-> **Iron law**: decision/generation separation. Daemon outputs JSON. pi-agent generates messages (Phase 4; OpenClaw deactivated).
+> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-01. 19 py runners, zero framework, pure Python stdlib.
+> **Iron law**: decision/generation separation. Daemon outputs JSON. pi-agent generates messages (Phase 4).
 
 ---
 
 ## 1. Build & Test
 
 ```bash
-# Run ALL tests: 19 py runners + 2 script tests (every runner exits non-zero on failure)
-node test_trigger_script.js && bash test_install_integration.sh && \
+# Run ALL tests: 19 py runners (every runner exits non-zero on failure)
 python3 test_chiguo_math.py && python3 test_holiday_parser.py && \
 python3 test_integration.py && python3 test_monitor.py && \
 python3 test_eventbus.py && python3 test_personality.py && \
@@ -236,7 +235,7 @@ Intent × Cue × Vibe three-layer system:
 
 ## 9. Ship of Theseus — Config Parameters (chiguo_proactive.toml)
 
-277 lines, 20 sections: `[openclaw]`（已废弃，Task 14；仅 wechat_recipient 仍读取）`[memory]` `[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]` `[host]`（pi 调用配置，见 §11）。Key tunables:
+277 lines, 20 sections: 遗留 section（已废弃，Task 14；仅 wechat_recipient 仍读取）`[memory]` `[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]` `[host]`（pi 调用配置，见 §11）。Key tunables:
 
 | Section | Key params | Effect |
 |---------|-----------|--------|
@@ -281,23 +280,22 @@ Intent × Cue × Vibe three-layer system:
 
 ---
 
-## 11. LLM Host Integration (Phase 4 — pi-agent; OpenClaw deactivated)
+## 11. LLM Host Integration (Phase 4 — pi-agent)
 
-> **DEPRECATED (Task 14)**: The OpenClaw cron trigger-script + standing order flow below is deactivated.
 > Current architecture: system crontab `chiguo-tick.sh` (send side, session `chiguo-send`) + wechat-bridge
 > `askPi` (reply side, session `chiguo-main`) + `scripts/pi-run.mjs` + `scripts/install_pi.sh`.
-> See `doc/PI_INTEGRATION.md`. The following OpenClaw flow is kept as rollback reference only.
+> See `doc/PI_INTEGRATION.md`.
 
-### Send side — trigger-script gate (zero model calls on idle) [DEPRECATED]
-1. **Cron**: `openclaw cron add chiguo-check --every 15m --trigger-script scripts/chiguo-watch.js --session main` (registered by `scripts/install_integration.sh`; `openclaw cron` is the official command — the old `automations` alias was removed 2026.7.1-2)
+### Send side — trigger-script gate (zero model calls on idle)
+1. **Cron**: system crontab `*/15 * * * *` runs `scripts/chiguo-tick.sh` (send side, session `chiguo-send`; registered by `scripts/install_pi.sh`)
 2. Trigger script runs `<repo>/.venv/bin/python chiguo_daemon.py --compact` with no model execution
 3. `action: "idle"` → `{fire: false}` (~90% of evaluations never wake the agent)
-4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `curl --noproxy '*' -X POST http://127.0.0.1:18790/send` (wechat-bridge; openclaw-weixin channel removed 2026-08-01) → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
+4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `curl --noproxy '*' -X POST http://127.0.0.1:18790/send` (wechat-bridge) → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
 
-### Reply side — standing order (replaces v4 UserPromptSubmit hook) [DEPRECATED]
-1. WeChat message arrives → agent replies normally; standing order (agents/main/AGENTS.md, installed by `install_integration.sh`) forces the flow
+### Reply side — bridge askPi
+1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askPi` (`pi-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
-3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the standing order's `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 600s → analysis-only upgrade, no double counting)
+3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askPi `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 600s → analysis-only upgrade, no double counting)
 
 ### SUN2.md Personality Constitution (283 lines)
 - **3-layer structure**: 喧闹外壳 → 倔强中层 → 脆弱内核
@@ -308,9 +306,8 @@ Intent × Cue × Vibe three-layer system:
 
 ### Skill files (allowed security boundary)
 - **Repo**（Phase 4 起唯一权威）：`personality/SUN2.md`、`personality/迟菓语言技巧指南.md`（随仓库部署，pi-run 注入）
-- `/root/.openclaw/workspace/skills/chiguo/` 与 `/root/.openclaw/workspace/agents/main/` — OpenClaw 旧路径，已停用（OpenClaw 整体可删，勿恢复引用）
 
-Note: v4 residue `scripts/on-user-msg.sh` and `.claude/settings.json` UserPromptSubmit hooks are removed by `install_integration.sh` stage 3b (backed up to `.bak`).
+Note: v4 residue `scripts/on-user-msg.sh` and `.claude/settings.json` UserPromptSubmit hooks have been removed (backed up to `.bak`).
 
 ---
 
@@ -399,8 +396,6 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 
 ## 16. Security Boundary
 
-**OpenClaw 已停用**：`/root/.openclaw/` 是旧宿主运行时目录，已不再使用、可整体删除——本项目不得恢复对其的引用。
-
 **READ-ONLY**: `~/.pi-agent/memory/lancedb-pro` LanceDB — accessed only via `memory_bridge.py`.
 
 ---
@@ -411,6 +406,4 @@ After ANY code change:
 1. Run affected test files
 2. Run full suite if touching math/state/daemon
 3. Update `doc/SYSTEM.md` if architecture/CLI/config changed
-4. Update `doc/IMPROVE.md` if fixing a documented issue
-5. Update `MEMORY.md` with date, files modified, description
-6. Update relevant memory files in `/root/.claude/projects/-root-character-test/memory/`
+4. Update relevant memory files in `/root/.claude/projects/-root-character-test/memory/`

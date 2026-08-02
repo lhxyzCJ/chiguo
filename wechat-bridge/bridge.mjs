@@ -17,13 +17,13 @@
  *  - 所有路径/端口/主人 ID 可用 WECHAT_BRIDGE_* 环境变量覆盖（scripts/wechat-bridge.sh 生成 .env）。
  *
  * v4（Phase 4 寄主迁移）:
- *  - 回复侧从 openclaw agent 改为 pi-agent：askPi 调 scripts/pi-run.mjs
+ *  - 回复侧由 pi-agent 完成情绪分析与回复：askPi 调 scripts/pi-run.mjs
  *    （--prompt <原文> --analysis-mode），一次完成「情绪分析 JSON + 回复」。
  *  - 分析接线：askPi 返回 analysis 后 → daemon --user-msg <原文> --analysis '<JSON>'
  *    （recv_dedup 升级语义——bridge 已确定性 --user-msg 过，不重复记账）。
  *  - 特殊命令（纪念日/假期）确定性接管：收到消息先 detectSpecialCommand（规则化，
  *    不依赖 pi 输出稳定性），命中 → 直接执行 daemon --anniversary/--break 并回复确认，
- *    不再经 pi（pi 为纯文本调用无工具权限；对应 openclaw standing order 第 4 步）。
+ *    不再经 pi（pi 为纯文本调用，无工具权限）。
  */
 import { createServer } from 'node:http'
 import { WeChatBot } from '@wechatbot/wechatbot'
