@@ -1,9 +1,22 @@
+## 2026-08-02 — 隐私数据移出 git + 历史重写（security pass，版本不步进）
+
+**背景**：用户要求 git 不再追踪隐私信息（微信登录态 token、网易云、对话等）。Pre-audit agent 全历史扫描（76 commits）发现：credentials 3 文件（真实微信凭证）+ chiguo_messages.jsonl（对话原文）+ chiguo_decisions.jsonl（message_text）+ archive 两个决策日志（含用户原文）+ data/ 个人文件（课表 xskb/记忆/二维码）+ schedule_cache.json.v1.bak（历史）+ openclaw.json（历史）——全历史无真实 API key（sk-/ghp_ 模式 0 命中）。
+
+**方案（多 agent 保障）**：
+- **Agent A（Pre-audit）**：全历史扫描输出最终清除清单 + 敏感模式清单（供复核复用）
+- **filter-repo 重写**：清除 11 路径（credentials/、decisions/messages jsonl、archive jsonl、data/ 个人文件、历史残留），76 commits → 77（+security commit）；reflog expire + gc --aggressive
+- **本地文件恢复**：⚠️ filter-repo 会删工作树文件——登录态/课表/记忆从备份 bundle 恢复（credentials 600 权限），gitignore 后仅本地保留
+- **Agent C（Post-audit）**：独立复核 10 项全过——路径/内容零残留（message_text 匹配为 schema 字段名假阳性）、77 commits、fsck 干净、无 API key、bundle 可恢复；补充建议已采纳：schedule_cache.json（个人课表缓存）也移出跟踪
+- **Agent D（Doc-sync）**：8 处文档同步——AGENTS.md（登录态机制：新设备需重新扫码）、README/README_EN（警示段改为"不进 git，公开无需清理"）、CLAUDE_CODE_RULES、.gitignore 注释、MEMORY/IMPROVE
+- 保留项：真实 openid（`owner…@im.wechat`）在 toml/脚本/测试 fixture 中为运行必需配置（非凭证），未去标识
+- 备份：~/chiguo-meta/backup-chiguo-2026-08-02.bundle（重打含最新 commit）
+
 ## 2026-08-02 — README 开源化重构 + 项目整洁化（版本 v1.6 → v1.7）
 
 **背景**：用户考虑将 chiguo 作为 GitHub 开源项目面向其他开发者。经 brainstorming + grilling 收敛：现 README 版本/测试数过期、无定位边界/由来/架构图/人格自定义/配置示例/FAQ/贡献，且快速开始对全新机器跑不通（无 pyproject.toml、依赖未声明）。
 
 **方案（已批准设计，~/chiguo-meta/specs/2026-08-02-readme-oss-rework-design.md）**：
-- **README.md 重写（371 行，16 节）**：中文为主 + 每节英文精炼段 + 双语 TOC；定位边界（个人项目声明 + 组件依赖表 + **公开前清理警示**（登录态/对话随 git 跟踪）+ 隐私实话）；迟菓的由来（查证维基：源自《三色绘恋》2017 初登场（迟耀的妹妹）→ 官方续作《三色绘恋S / SunnyRain Lovestory》2020 主角化（打工妹初中生）→ 本项目二次演绎；**合规声明**：非官方、版权归绘恋企划屋/山百合、仅个人学习、异议即移除）；mermaid 双链路架构图；脱敏示例（决策 JSON + 3 条消息）；快速开始（uv sync）；接入任意模型；配置/人格自定义/部署/文件结构/CLI/FAQ(7)/贡献/文档/License
+- **README.md 重写（371 行，16 节）**：中文为主 + 每节英文精炼段 + 双语 TOC；定位边界（个人项目声明 + 组件依赖表 + **隐私说明**（登录态/对话/个人数据不进 git）+ 隐私实话）；迟菓的由来（查证维基：源自《三色绘恋》2017 初登场（迟耀的妹妹）→ 官方续作《三色绘恋S / SunnyRain Lovestory》2020 主角化（打工妹初中生）→ 本项目二次演绎；**合规声明**：非官方、版权归绘恋企划屋/山百合、仅个人学习、异议即移除）；mermaid 双链路架构图；脱敏示例（决策 JSON + 3 条消息）；快速开始（uv sync）；接入任意模型；配置/人格自定义/部署/文件结构/CLI/FAQ(7)/贡献/文档/License
 - **pyproject.toml（新增）**：核心**零依赖**（纯 stdlib，memory_bridge.py:15 与 schedule_parser.py:71 均惰性导入已查证）+ `[project.optional-dependencies] memory=["lancedb"]`、`schedule=["openpyxl"]`；**生产 venv 迁移到 `uv sync --all-extras`**：lancedb 0.36 装上后记忆从降级恢复启用（envcheck LanceDB OK）
 - **spec/plan 归档迁移**：全部 15 个 spec/plan 移至项目外 `~/chiguo-meta/`（specs/ + plans/，不进 git），AGENTS.md 新增归档约定
 - **目录清理**：删除 `.superpowers/`（50 文件未跟踪台账）、`archive/openclaw.json`（OpenClaw 已停用）；`.claude/settings.local.json` 移出 git 跟踪（本地工具配置，.gitignore 加 .claude/）

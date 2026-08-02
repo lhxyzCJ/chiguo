@@ -1,9 +1,23 @@
+## 2026-08-02 — 隐私数据移出 git + 历史重写（多 agent 保障，版本不步进）
+
+**问题**：仓库 git 跟踪微信登录态（credentials 3 文件）、真实对话日志（messages/decisions jsonl）、个人数据（data/ 课表/记忆/二维码）——用户要求 git 不追踪隐私。
+
+**方案（多 agent 交叉验证）**：
+- Pre-audit（Agent A）全历史扫描 → 11 项清除清单（含历史残留 schedule_cache.json.v1.bak、archive/openclaw.json）；确认全历史无真实 API key
+- `git filter-repo --invert-paths` 重写 76 commits；reflog expire + gc --aggressive
+- **坑**：filter-repo 重写 checkout 会删除工作树敏感文件（登录态/课表/记忆）——必须先从备份 bundle 恢复再 gitignore（credentials chmod 600）
+- Post-audit（Agent C）独立复核：路径/内容零残留、提交数符合、fsck 干净、无 API key、bundle 可恢复；补充发现 schedule_cache.json（课表缓存）仍跟踪 → 一并移出
+- Doc-sync（Agent D）8 处文档同步（登录态机制/警示段/隐私表述/中英双 README）
+- 保留：真实 openid 为运行必需配置（非凭证）；历史 changelog 条目保留原表述（历史记录）
+
+---
+
 ## 2026-08-02 — README 开源化重构 + 项目整洁化（TDD 之外的文档类改动，验证清单驱动）
 
 **问题**：README 面向"自用已部署机器"——版本号/测试数过期（v1.4 vs 实际 v1.6；23py+7script vs 24py+9script）、无定位边界/由来说明/架构总览/人格自定义/配置示例/FAQ/贡献，快速开始对全新机器跑不通（无 pyproject.toml）。
 
 **方案（grilling 收敛 10+ 决策）**：
-- **README 16 节重写**（中英精炼段双语）：定位边界含组件依赖表 + 公开前清理警示（登录态/对话 git 跟踪）+ 隐私实话；迟菓由来（三色绘恋系列官方角色，维基查证）+ 合规声明（非官方/版权/异议即移除）；mermaid 双链路；脱敏示例；uv sync 快速开始；FAQ 7 条；轻量贡献节
+- **README 16 节重写**（中英精炼段双语）：定位边界含组件依赖表 + 隐私说明（登录态/对话/个人数据不进 git）+ 隐私实话；迟菓由来（三色绘恋系列官方角色，维基查证）+ 合规声明（非官方/版权/异议即移除）；mermaid 双链路；脱敏示例；uv sync 快速开始；FAQ 7 条；轻量贡献节
 - **pyproject.toml**：核心零依赖（查证 memory_bridge/schedule_parser 惰性导入）；extras memory=[lancedb]/schedule=[openpyxl]；**坑**：`uv sync`（dependencies=[]）会卸载 venv 里未声明的 openpyxl——生产 venv 需 `uv sync --all-extras` 恢复完整模式（顺带记忆启用）
 - **归档迁移**：15 个 spec/plan → `~/chiguo-meta/`（项目外不进 git）；AGENTS.md 约定"spec/plan 一律写项目外"
 - **目录清理**：`.superpowers/` 台账、`archive/openclaw.json`、`.claude/` 移出 git

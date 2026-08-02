@@ -53,9 +53,9 @@
 | 网易云音乐桥 | 可选 | 音乐话题源与听歌反证不可用 |
 | 课表 xlsx | 可选 | 上课状态降级为 availability=0.85 |
 
-> ⚠️ **公开仓库前必读**：本仓库**故意 git 跟踪**微信登录态（`wechat-bridge/credentials/`，新设备 clone 即保留登录）与真实对话日志（`chiguo_messages.jsonl`）。**公开前必须清理这些文件并重写 git 历史**。
+> ⚠️ **隐私说明**：微信登录态（`wechat-bridge/credentials/`）、真实对话日志（`chiguo_messages.jsonl`/`chiguo_decisions.jsonl`）与个人数据（`data/` 课表/记忆/二维码）**均不进入 git**（本地保留，历史已重写清除）——公开仓库无需清理。
 >
-> **隐私实话**：你的对话与系统状态数据随 git 跟踪并推送至你配置的远端（默认私有仓库）。数据全部本地计算，不经过任何第三方云服务（模型 API 与网易云接口调用除外）。
+> **隐私实话**：你的对话与系统状态数据仅保存在本机（不进 git、不推送远端）；仓库只含代码、配置与文档。数据全部本地计算，不经过任何第三方云服务（模型 API 与网易云接口调用除外）。
 
 ---
 
@@ -335,13 +335,13 @@ uv run python chiguo_envcheck.py                # 退出码 0=就绪 1=警告 2=
 不用。改 `chiguo_proactive.toml` 的 `[host].provider/model` + 配 key 即可；自定义 OpenAI 兼容端点见 [PI_INTEGRATION.md](doc/PI_INTEGRATION.md)。
 
 **数据存在哪里？**
-仓库内 JSONL（决策/对话/状态，随 git 跟踪推送私有远端）+ LanceDB 记忆库（`~/.pi-agent/memory/lancedb-pro`）。全部本地计算。
+决策/对话 JSONL 与系统状态仅保存在本机（不进 git）+ LanceDB 记忆库（`~/.pi-agent/memory/lancedb-pro`）。全部本地计算。
 
 **为什么她不主动找我？**
 门控机制在工作：静默窗口（深夜）、每日上限、最小间隔、触发评估。`--status` / `--stats 30` 可以看到她被什么挡住了。
 
 **微信怎么登录？**
-`bash scripts/wechat-bridge.sh login` 扫码；登录态随仓库保留（私有仓库，新设备 clone 即复用）。
+`bash scripts/wechat-bridge.sh login` 扫码；登录态仅本地保留（不进 git），新设备需重新扫码。
 
 ---
 

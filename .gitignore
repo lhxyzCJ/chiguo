@@ -4,9 +4,9 @@ __pycache__/
 *.pyo
 .venv/
 
-# Runtime state files — only backups/temp/lock/sensitive tokens are ignored;
-# analysis-relevant runtime data (decisions/state/monitor logs) is tracked so
-# the target machine can push it to GitHub for local analysis.
+# Runtime state files — 隐私数据（状态/决策/对话）本地保留不进 git（历史已重写清除）；
+# 监控/健康类（netease_health/pi_health/audit）仍跟踪供分析
+chiguo_state.json
 chiguo_state.json.bak
 chiguo_state.json.tmp
 chiguo_state.json.tmp.*
@@ -16,8 +16,6 @@ chiguo_loop.pid
 # Netease music bridge — cookie is an auth token (keep ignored); cache is tracked
 netease_cookie.txt
 
-*.lock
-
 # Git worktrees
 .worktrees/
 
@@ -25,8 +23,7 @@ netease_cookie.txt
 .claude/settings.json.bak
 .claude/settings.json.bak.*
 
-# wechat-bridge — 依赖/本地配置忽略；登录态 credentials/ 目录**故意 git 跟踪**
-# （登录态随私有仓库走 → 新设备 clone 即保留登录，绝不写入 wechatbot 仓库）
+# wechat-bridge — 依赖/本地配置忽略；登录态 credentials/ 目录仅本地保留（隐私，历史已重写清除）
 wechat-bridge/node_modules/
 wechat-bridge/.env
 wechat-bridge/package-lock.json
@@ -48,3 +45,4 @@ chiguo_messages.jsonl
 archive/
 data/
 schedule_cache.json
+chiguo_state.json

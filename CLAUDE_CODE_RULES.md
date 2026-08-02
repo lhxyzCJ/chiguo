@@ -314,9 +314,9 @@ Note: v4 residue `scripts/on-user-msg.sh` and `.claude/settings.json` UserPrompt
 
 ---
 
-## 12. Runtime Files (.gitignore policy: only backups/temp/locks/tokens ignored)
+## 12. Runtime Files (privacy data — login state/conversation logs/personal data — is never committed; kept locally only)
 
-Note: analysis-relevant runtime data (decisions/state/monitor logs) is **tracked** in git so the target machine can push it to GitHub for local analysis; `.gitignore` ignores only `*.bak`/`*.tmp`/`*.pid`/`*.lock`/`netease_cookie.txt` and caches (see doc/README.md §运行时数据回流).
+Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl`/`chiguo_decisions.jsonl`, `data/` personal files) is **never committed** — kept locally only, history rewritten (2026-08-02 security pass).
 
 | File | Writer | Purpose |
 |------|--------|---------|

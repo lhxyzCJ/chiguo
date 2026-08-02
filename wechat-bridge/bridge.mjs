@@ -12,7 +12,7 @@
  *    standing order 随后由 agent 补 --analysis（daemon recv_dedup 升级语义，不重复记账）。
  *
  * v3 可移植化（随 chiguo 仓库部署）:
- *  - storageDir 默认 = 本文件同目录 credentials/（git 跟踪 → 登录态随仓库走；
+ *  - storageDir 默认 = 本文件同目录 credentials/（仅本地保留，不进 git（隐私）；
  *    失效时 SDK 打印二维码重新扫码，即"尝试保留"）。绝不写入 wechatbot 仓库。
  *  - 所有路径/端口/主人 ID 可用 WECHAT_BRIDGE_* 环境变量覆盖（scripts/wechat-bridge.sh 生成 .env）。
  *
