@@ -245,6 +245,11 @@ elif confirm "ollama pull qwen3-embedding:0.6b（约 600MB）"; then
 fi
 
 # ── 阶段 5: auth.json $PROVIDER 条目（key 从环境变量读，不落盘明文）──
+# 集中认证迁移源：~/.chiguo/auth/pi-auth.json → ~/.pi/agent/auth.json（目标已有则不动，本地为准）
+if [ ! -f "$AUTH" ] && [ -f "$HOME/.chiguo/auth/pi-auth.json" ]; then
+  cp -a "$HOME/.chiguo/auth/pi-auth.json" "$AUTH" && chmod 600 "$AUTH" \
+    && say "已从 ~/.chiguo/auth/pi-auth.json 导入认证（集中认证目录迁移）"
+fi
 say "阶段 5: ~/.pi/agent/auth.json $PROVIDER 条目..."
 if auth_has_key; then
   say "auth.json OK（已含 $PROVIDER key）"

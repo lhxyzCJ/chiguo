@@ -29,7 +29,15 @@ from datetime import datetime, timezone, timedelta
 
 CST = timezone(timedelta(hours=8))
 API_BASE = os.environ.get("NETEASE_API_BASE", "http://localhost:3000")
-COOKIE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "netease_cookie.txt")
+def _cookie_path():
+    """cookie 解析链：集中认证目录 ~/.chiguo/auth/（可迁移）→ 仓库根回退。"""
+    auth_cookie = os.path.expanduser("~/.chiguo/auth/netease_cookie.txt")
+    if os.path.isfile(auth_cookie):
+        return auth_cookie
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "netease_cookie.txt")
+
+
+COOKIE_FILE = _cookie_path()
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "netease_cache.json")
 CACHE_TTL_HOURS = 6  # 同一天内缓存有效
 RECENT_PLAY_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recent_play_cache.json")

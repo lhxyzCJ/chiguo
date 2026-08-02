@@ -11,7 +11,8 @@
 # ────────────────────────────────────────────────────────────
 [openclaw]
 wechat_channel = "openclaw-weixin"      # 已废弃：微信收发由 wechat-bridge 承担
-wechat_recipient = "owner@im.wechat"   # 仍读取：发送目标（tick/bridge 管理脚本）
+wechat_recipient = "owner@im.wechat"   # 发送目标占位符：登录后自动注入真实 openid（~/.chiguo/auth/wechat/credentials.json 的 userId）；
+#                                  # 也可在此手动配真实值（非占位符即生效）
 personality_source = "/root/chiguo/personality"  # 已废弃：见 [host].personality_dir（随仓库部署）
 llm_base_url = "http://localhost:11434/v1"       # 已废弃：OpenClaw 本地 ollama；pi 侧见 [host].provider
 llm_model = "qwen3:14b"                          # 已废弃

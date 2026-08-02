@@ -15,14 +15,25 @@ LOG_FILE="${WECHAT_BRIDGE_LOG:-/tmp/opencode/wechat-bridge.log}"
 WECHATBOT_DIR="${WECHATBOT_DIR:-$HOME/wechatbot}"
 WECHATBOT_REPO="${WECHATBOT_REPO:-https://github.com/lhxyzCJ/wechatbot.git}"
 SEND_PORT="${WECHAT_BRIDGE_SEND_PORT:-18790}"
-OWNER_ID="$(sed -n 's/^wechat_recipient *= *"\(.*\)"/\1/p' "$PROJECT_DIR/chiguo_proactive.toml" | head -1)"
-[ -n "$OWNER_ID" ] || OWNER_ID="owner@im.wechat"
+# 集中认证目录（可迁移：拷贝 ~/.chiguo/auth/ 到新机器即可接入；微信登录态失效会自动重登）
+AUTH_DIR="${CHIGUO_AUTH_DIR:-$HOME/.chiguo/auth}"
+WX_STORAGE="$AUTH_DIR/wechat"
+# 收件人解析链：登录后的 credentials.json userId（真实）→ toml wechat_recipient（用户手配）→ 占位符
+resolve_owner() {
+  local uid toml_owner
+  uid="$(sed -n 's/.*"userId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WX_STORAGE/credentials.json" 2>/dev/null | head -1 || true)"
+  [ -n "$uid" ] && { echo "$uid"; return; }
+  toml_owner="$(sed -n 's/^wechat_recipient *= *"\(.*\)"/\1/p' "$PROJECT_DIR/chiguo_proactive.toml" | head -1)"
+  if [ -n "$toml_owner" ] && [ "$toml_owner" != "owner@im.wechat" ]; then echo "$toml_owner"; return; fi
+  echo "owner@im.wechat"
+}
+OWNER_ID="$(resolve_owner)"
 
 say() { printf '\033[1;32m[wechat-bridge]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[wechat-bridge]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[wechat-bridge]\033[0m %s\n' "$*"; exit 2; }
 
-has_credentials() { [ -f "$BRIDGE_DIR/credentials/credentials.json" ]; }
+has_credentials() { [ -f "$WX_STORAGE/credentials.json" ]; }
 
 write_env() {
     mkdir -p "$BRIDGE_DIR"
@@ -44,7 +55,7 @@ WECHAT_BRIDGE_OWNER=$OWNER_ID
 WECHAT_BRIDGE_DAEMON_PY=$PROJECT_DIR/.venv/bin/python
 WECHAT_BRIDGE_DAEMON=$PROJECT_DIR/chiguo_daemon.py
 WECHAT_BRIDGE_PI_RUN=$PROJECT_DIR/scripts/pi-run.mjs
-WECHAT_BRIDGE_STORAGE=$BRIDGE_DIR/credentials
+WECHAT_BRIDGE_STORAGE=$WX_STORAGE
 OPENCODE_API_KEY=$PI_KEY
 EOF
     chmod 600 "$ENV_FILE"
@@ -53,7 +64,7 @@ EOF
 do_install() {
     say "安装 wechat-bridge（可移植：wechatbot SDK 克隆到 \$HOME/wechatbot，登录态随 chiguo 仓库）..."
     [ -x "$PROJECT_DIR/.venv/bin/python" ] || fail "chiguo .venv 不存在，请先跑 deploy.sh"
-    [ -d "$BRIDGE_DIR/credentials" ] || mkdir -p "$BRIDGE_DIR/credentials"
+    mkdir -p "$WX_STORAGE" && chmod 700 "$AUTH_DIR" "$WX_STORAGE" 2>/dev/null || true
     if [ ! -d "$WECHATBOT_DIR/.git" ]; then
         say "克隆 wechatbot SDK → $WECHATBOT_DIR ..."
         git clone --depth 1 "$WECHATBOT_REPO" "$WECHATBOT_DIR" || fail "git clone wechatbot 失败（$WECHATBOT_REPO）"
@@ -68,7 +79,7 @@ do_install() {
     ( cd "$BRIDGE_DIR" && npm install "@wechatbot/wechatbot@file:$WECHATBOT_DIR/nodejs" --no-fund --no-audit >/dev/null ) \
         || fail "npm install 失败"
     write_env
-    say "install 完成（.env 已生成；登录态目录: $BRIDGE_DIR/credentials）"
+    say "install 完成（.env 已生成；登录态目录: $WX_STORAGE（集中认证，可随 ~/.chiguo/auth/ 迁移））"
     if has_credentials; then
         say "检测到已有登录态 → 启动后将自动复用（失效则自动打印二维码重登）"
     else
@@ -125,7 +136,7 @@ do_status() {
     fi
     if has_credentials; then
         local acct
-        acct="$(sed -n 's/.*"userId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$BRIDGE_DIR/credentials/credentials.json" 2>/dev/null | head -1)"
+        acct="$(sed -n 's/.*"userId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WX_STORAGE/credentials.json" 2>/dev/null | head -1)"
         say "登录态存在${acct:+（账号 $acct）}（仅本地保留，不进 git）"
     else
         warn "无登录态（start 后扫码登录）"
@@ -138,7 +149,7 @@ do_login() {
     # 强制重新扫码：删除登录态后 start（旧会话服务端可能已失效）
     say "清除登录态并重启（打印新二维码）..."
     do_stop
-    rm -f "$BRIDGE_DIR/credentials/"*.json
+    rm -f "$WX_STORAGE/"*.json
     do_start
 }
 

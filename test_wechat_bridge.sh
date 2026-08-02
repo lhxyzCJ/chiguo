@@ -54,7 +54,7 @@ grep -q "git clone --depth 1 https://github.com/lhxyzCJ/wechatbot.git $TMP/wecha
 grep -q "npm install @wechatbot/wechatbot@file:$TMP/wechatbot/nodejs" "$NPM_LOG" || fail "npm install file: 参数不对"
 [ -d "$TMP/repo/wechat-bridge/node_modules/@wechatbot" ] || fail "node_modules 未生成"
 grep -q "WECHAT_BRIDGE_OWNER=owner_test@im.wechat" "$TMP/repo/wechat-bridge/.env" || fail ".env 未从 toml 读 OWNER"
-grep -q "WECHAT_BRIDGE_STORAGE=$TMP/repo/wechat-bridge/credentials" "$TMP/repo/wechat-bridge/.env" || fail ".env STORAGE 路径不对"
+grep -q "WECHAT_BRIDGE_STORAGE=$TMP/home/.chiguo/auth/wechat" "$TMP/repo/wechat-bridge/.env" || fail ".env STORAGE 路径不对（应指向集中认证目录）"
 pass "首次 install：clone + npm file: + .env 生成"
 
 # ── 用例 3: 重跑 install 幂等 → 不重复 clone（走 pull）──
@@ -72,8 +72,8 @@ echo "$OUT" | grep -q "无登录态" || fail "缺少无登录态提示"
 pass "无登录态 status → 退出 1"
 
 # ── 用例 5: 有登录态 → status 退出 0 且显示账号 ──
-mkdir -p "$TMP/repo/wechat-bridge/credentials"
-printf '{"userId":"owner_test@im.wechat"}' > "$TMP/repo/wechat-bridge/credentials/credentials.json"
+mkdir -p "$TMP/home/.chiguo/auth/wechat"
+printf '{"userId":"owner_test@im.wechat"}' > "$TMP/home/.chiguo/auth/wechat/credentials.json"
 set +e; OUT=$(FAKE_PID=123 bash scripts/wechat-bridge.sh status 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "有凭证 status 期望 0 实得 $RC"
 echo "$OUT" | grep -q "owner_test@im.wechat" || fail "status 未显示账号"
@@ -91,12 +91,12 @@ bash scripts/wechat-bridge.sh install >/dev/null 2>&1
 : > "$PKILL_LOG"
 set +e; OUT=$(FAKE_PID=123 bash scripts/wechat-bridge.sh login 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "login 期望 0 实得 $RC（$OUT）"
-[ -f "$TMP/repo/wechat-bridge/credentials/credentials.json" ] && fail "login 未清除凭证" || true
+[ -f "$TMP/home/.chiguo/auth/wechat/credentials.json" ] && fail "login 未清除凭证" || true
 grep -q "pkill" "$PKILL_LOG" || fail "login 未调用 stop"
 pass "login：清凭证 + stop"
 
 # ── 用例 8: 已有进程 → start 不重复启动 ──
-printf '{"userId":"u"}' > "$TMP/repo/wechat-bridge/credentials/credentials.json"
+printf '{"userId":"u"}' > "$TMP/home/.chiguo/auth/wechat/credentials.json"
 : > "$NPM_LOG"
 set +e; OUT=$(FAKE_PID=999 bash scripts/wechat-bridge.sh start 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "已运行 start 期望 0 实得 $RC"
@@ -123,5 +123,28 @@ set +e; OUT=$(HOME="$TMP/home" bash scripts/wechat-bridge.sh install 2>&1); RC=$
 grep -q "OPENCODE_API_KEY=sk-ds" "$TMP/repo/wechat-bridge/.env" \
   || fail ".env 未回退注入 deepseek key: $(cat "$TMP/repo/wechat-bridge/.env")"
 pass "OPENCODE_API_KEY 注入：优先 opencode-go、回退 [host].provider"
+
+# ── 用例 10: 集中认证目录 ~/.chiguo/auth/wechat —— 登录后 .env 注入真实 userId + STORAGE 指向 ──
+cat > "$TMP/repo/chiguo_proactive.toml" <<'TOML'
+[host]
+wechat_recipient = "owner@im.wechat"
+TOML
+mkdir -p "$TMP/home/.chiguo/auth/wechat"
+printf '{"token":"t","userId":"real_openid@im.wechat","accountId":"a"}' > "$TMP/home/.chiguo/auth/wechat/credentials.json"
+set +e; OUT=$(HOME="$TMP/home" bash scripts/wechat-bridge.sh install 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "集中认证 install 期望 0 实得 $RC"
+grep -q "WECHAT_BRIDGE_OWNER=real_openid@im.wechat" "$TMP/repo/wechat-bridge/.env" \
+  || fail ".env 未注入真实 userId: $(cat "$TMP/repo/wechat-bridge/.env")"
+grep -q "WECHAT_BRIDGE_STORAGE=$TMP/home/.chiguo/auth/wechat" "$TMP/repo/wechat-bridge/.env" \
+  || fail ".env STORAGE 未指向集中认证目录"
+pass "集中认证目录：登录后 .env 注入真实 userId + STORAGE 指向"
+
+# ── 用例 11: 未登录（无集中目录）→ .env 用占位符收件人 ──
+rm -rf "$TMP/home/.chiguo"
+set +e; OUT=$(HOME="$TMP/home" bash scripts/wechat-bridge.sh install 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "无登录态 install 期望 0 实得 $RC"
+grep -q "WECHAT_BRIDGE_OWNER=owner@im.wechat" "$TMP/repo/wechat-bridge/.env" \
+  || fail "未登录时应注入占位符: $(cat "$TMP/repo/wechat-bridge/.env")"
+pass "未登录 → .env 占位符收件人"
 
 echo "test_wechat_bridge: 通过"
