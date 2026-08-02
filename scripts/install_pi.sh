@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================
 # chiguo pi-agent 环境安装/校验器（可移植：任意 pull 仓库的机器）
-# Phase 4 新架构：LLM 消息生成走 pi-agent（opencode-go provider）+ memory-lancedb-pro
+# Phase 4 新架构：LLM 消息生成走 pi-agent（provider 可配，见 [host].provider；opencode-go 为默认示例）
+# + memory-lancedb-pro
 # （pi 版扩展，ollama embedding）+ 系统 crontab（chiguo-tick）。
 # 模式: --dry-run（只扫描报告，只读）/ --yes（自动全部）/ 默认交互 ask（逐项确认；
 #       非 TTY 等价 --dry-run）
@@ -31,6 +32,19 @@ DRY=0; [ "$MODE" = dry-run ] && DRY=1
 PENDING=0    # 1 = 有待办/残留（dry-run 报告；yes/ask 完成后仍存在则退出 1）
 PY="$(command -v python3 || echo "$REPO_DIR/.venv/bin/python")"   # JSON 编辑（stdlib 即可）
 
+# provider 单一来源：toml [host].provider（= pi --provider 名与 auth.json 键名；
+# 支持 pi 全部内置 provider 与 models.json 注册的自定义 provider；缺省回退 opencode-go）
+PROVIDER="$(sed -n 's/^provider *= *"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1 || true)"
+[ -n "$PROVIDER" ] || PROVIDER=opencode-go
+# key 来源：PI_API_KEY（通用名）优先，OPENCODE_API_KEY 兼容回退
+if [ -n "${PI_API_KEY:-}" ]; then
+  KEY_VAR=PI_API_KEY; KEY_VAL="$PI_API_KEY"
+elif [ -n "${OPENCODE_API_KEY:-}" ]; then
+  KEY_VAR=OPENCODE_API_KEY; KEY_VAL="$OPENCODE_API_KEY"
+else
+  KEY_VAR=OPENCODE_API_KEY; KEY_VAL=""
+fi
+
 # 交互模式（ask）：每个写操作前逐项确认；回答 y 执行，n/其他 跳过并把 PENDING=1（残留未处理）
 confirm() { [ "$MODE" = ask ] || return 0
   printf '  [ask] %s\n' "$1"
@@ -42,16 +56,16 @@ confirm() { [ "$MODE" = ask ] || return 0
 }
 
 # auth.json 含 provider 且有真值 key（与 envcheck check_pi_auth 语义一致；
-# 裸 grep 'opencode-go' 会把注释/残缺条目误判为已配置）
+# 裸 grep provider 名会把注释/残缺条目误判为已配置）
 auth_has_key() {
   [ -f "$AUTH" ] || return 1
-  "$PY" - "$AUTH" <<'PYC' >/dev/null 2>&1
-import json, sys
+  AUTH_PROVIDER="$PROVIDER" "$PY" - "$AUTH" <<'PYC' >/dev/null 2>&1
+import json, os, sys
 try:
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))
 except Exception:
     sys.exit(1)
-entry = cfg.get("opencode-go")
+entry = cfg.get(os.environ.get("AUTH_PROVIDER", "opencode-go"))
 sys.exit(0 if isinstance(entry, dict) and entry.get("key") else 1)
 PYC
 }
@@ -73,10 +87,10 @@ if [ -z "$PI_BIN" ]; then
   fail "未检测到 pi → 请先安装 pi-agent（本脚本只配置不安装 pi 本体；Phase 4 消息生成端缺失）"
 fi
 say "pi $(pi --version 2>&1 | head -1)"
-if [ -n "${OPENCODE_API_KEY:-}" ]; then
-  say "OPENCODE_API_KEY 已设置 → 阶段 5 可写入 opencode-go key"
+if [ -n "$KEY_VAL" ]; then
+  say "$KEY_VAR 已设置 → 阶段 5 可写入 $PROVIDER key"
 else
-  warn "OPENCODE_API_KEY 未设置 → opencode-go key 无法写入（auth.json 已有该条目则不受影响）"
+  warn "$KEY_VAR 未设置 → $PROVIDER key 无法写入（auth.json 已有该条目则不受影响）"
 fi
 
 # ── 阶段 1: memory-lancedb-pro（clone + build）─────────────
@@ -230,24 +244,25 @@ elif confirm "ollama pull qwen3-embedding:0.6b（约 600MB）"; then
   fi
 fi
 
-# ── 阶段 5: auth.json opencode-go 条目（key 从环境变量读，不落盘明文）──
-say "阶段 5: ~/.pi/agent/auth.json opencode-go 条目..."
+# ── 阶段 5: auth.json $PROVIDER 条目（key 从环境变量读，不落盘明文）──
+say "阶段 5: ~/.pi/agent/auth.json $PROVIDER 条目..."
 if auth_has_key; then
-  say "auth.json OK（已含 opencode-go key）"
-elif [ -z "${OPENCODE_API_KEY:-}" ]; then
+  say "auth.json OK（已含 $PROVIDER key）"
+elif [ -z "$KEY_VAL" ]; then
   PENDING=1
-  warn "auth.json 缺 opencode-go 且 OPENCODE_API_KEY 未设置 → 无法写入 key；export OPENCODE_API_KEY=... 后重跑（或手工编辑 $AUTH）"
+  warn "auth.json 缺 $PROVIDER 且 $KEY_VAR 未设置 → 无法写入 key；export $KEY_VAR=... 后重跑（或手工编辑 $AUTH）"
 else
   if [ "$DRY" = 1 ]; then
     PENDING=1
-    echo "  [dry-run] 将写 opencode-go 条目到 $AUTH（key 从 OPENCODE_API_KEY 读，chmod 600，含 .bak 备份）"
-  elif confirm "写入 $AUTH 的 opencode-go 条目（key 来自 OPENCODE_API_KEY）"; then
+    echo "  [dry-run] 将写 $PROVIDER 条目到 $AUTH（key 从 $KEY_VAR 读，chmod 600，含 .bak 备份）"
+  elif confirm "写入 $AUTH 的 $PROVIDER 条目（key 来自 $KEY_VAR）"; then
     [ -f "$AUTH" ] && cp -a "$AUTH" "$AUTH.bak"
     # key 经环境变量传给 python3（argv 会被 ps 看到，明文泄露面更大）
-    if OPENCODE_API_KEY="${OPENCODE_API_KEY:-}" "$PY" - "$AUTH" <<'PYJ'; then
+    if KEY_VAL="$KEY_VAL" AUTH_PROVIDER="$PROVIDER" "$PY" - "$AUTH" <<'PYJ'; then
 import json, os, sys
 p = sys.argv[1]
-key = os.environ["OPENCODE_API_KEY"]
+key = os.environ["KEY_VAL"]
+provider = os.environ.get("AUTH_PROVIDER", "opencode-go")
 cfg = {}
 if os.path.exists(p):
     try:
@@ -258,12 +273,12 @@ if os.path.exists(p):
     if not isinstance(cfg, dict):
         cfg = {}
 os.makedirs(os.path.dirname(p), exist_ok=True)
-cfg["opencode-go"] = {"type": "api_key", "key": key}
+cfg[provider] = {"type": "api_key", "key": key}
 with open(p, "w", encoding="utf-8") as f:
     json.dump(cfg, f, ensure_ascii=False, indent=2)
 os.chmod(p, 0o600)
 PYJ
-      say "auth.json 已写入 opencode-go 条目"
+      say "auth.json 已写入 $PROVIDER 条目"
     else
       PENDING=1; warn "auth.json 写入失败（.bak 已保留，请手工处理）"
     fi
@@ -319,9 +334,7 @@ else
     SMOKE_BAD=1; warn "memory-pro stats 失败（见上方错误）"
   fi
   if auth_has_key; then
-    PROVIDER="$(sed -n 's/^provider *= *"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
     MODEL="$(sed -n 's/^model *= *"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
-    [ -n "$PROVIDER" ] || PROVIDER=opencode-go
     [ -n "$MODEL" ] || MODEL=deepseek-v4-flash
     if SMOKE_OUT="$(timeout 120 "$PI_BIN" -p --provider "$PROVIDER" --model "$MODEL" \
         --session-id chiguo-install-smoke --no-context-files \
@@ -332,7 +345,7 @@ else
       SMOKE_BAD=1; warn "pi 冒烟失败: $(printf '%s' "$SMOKE_OUT" | tail -c 300 | tr '\n' ' ')"
     fi
   else
-    warn "无 opencode-go key → 跳过 pi 冒烟（设置 OPENCODE_API_KEY 后重跑）"
+    warn "无 $PROVIDER key → 跳过 pi 冒烟（设置 $KEY_VAR 后重跑）"
   fi
   [ "$SMOKE_BAD" = 1 ] && PENDING=1
 fi

@@ -13,7 +13,7 @@
 wechat_channel = "openclaw-weixin"      # 已废弃：微信收发由 wechat-bridge 承担
 wechat_recipient = "owner@im.wechat"   # 仍读取：发送目标（tick/bridge 管理脚本）
 personality_source = "/root/chiguo/personality"  # 已废弃：见 [host].personality_dir（随仓库部署）
-llm_base_url = "http://localhost:11434/v1"       # 已废弃：OpenClaw 本地 ollama，pi 侧走 opencode-go 网关
+llm_base_url = "http://localhost:11434/v1"       # 已废弃：OpenClaw 本地 ollama；pi 侧见 [host].provider
 llm_model = "qwen3:14b"                          # 已废弃
 
 [memory]
@@ -301,8 +301,9 @@ archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 # 环境：Debian Linux, root 用户；OpenClaw 已停用（~/.openclaw 待删），记忆库在 ~/.pi-agent/memory/；
 #       常用工具 rsync/systemctl/nano/tar
 
-provider = "opencode-go"        # pi provider（auth.json 键名；key 由 install_pi.sh 从 OPENCODE_API_KEY 写入）
-model = "deepseek-v4-flash"
+provider = "opencode-go"        # pi provider：= pi --provider 名与 auth.json 键名（缺省示例；支持 pi 全部内置 provider 与
+                                 # ~/.pi/agent/models.json 注册的自定义 OpenAI 兼容端点，见 doc/PI_INTEGRATION.md「接入任意模型 API」）
+model = "deepseek-v4-flash"     # 对应 provider 的模型（pi --model 支持 provider/id 前缀）
 thinking_level = "high"
 session_id = "chiguo-main"      # 回复侧会话（bridge askPi；进程内 TurnQueue 串行）
 send_session_id = "chiguo-send" # 主动发送会话（chiguo-tick.sh 经 PIRUN_SESSION 注入；与回复会话分离 → 消除跨进程并发 turn）

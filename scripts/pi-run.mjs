@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url'
 const REPO = process.env.CHIGUO_REPO ?? '/root/chiguo'
 const HOST = readToml(`${REPO}/chiguo_proactive.toml`)?.host ?? {}
 const PI_BIN = process.env.PI_BIN ?? 'pi'
-const PROVIDER = process.env.PIRUN_PROVIDER ?? HOST.provider ?? 'opencode-go'
+const PROVIDER = process.env.PIRUN_PROVIDER ?? HOST.provider ?? 'opencode-go'  // provider 可配：pi --provider 名（内置或 models.json 自定义）
 const MODEL = process.env.PIRUN_MODEL ?? HOST.model ?? 'deepseek-v4-flash'
 const THINKING = process.env.PIRUN_THINKING ?? HOST.thinking_level ?? 'high'
 const SESSION_ID = process.env.PIRUN_SESSION ?? HOST.session_id ?? 'chiguo-main'

@@ -26,12 +26,16 @@ has_credentials() { [ -f "$BRIDGE_DIR/credentials/credentials.json" ]; }
 
 write_env() {
     mkdir -p "$BRIDGE_DIR"
-    # memory-lancedb-pro smart extraction 的 opencode-go key：从 ~/.pi/agent/auth.json 读（单一来源）
-    PI_KEY="$(python3 -c "
+    # memory-lancedb-pro smart extraction 的 key：~/.pi/agent/auth.json——优先 opencode-go 条目
+    # （扩展 json5 llm 端点固定 opencode 网关），无则回退 [host].provider 条目（install_pi.sh 写入）
+    PI_FALLBACK_PROVIDER="$(sed -n 's/^[[:space:]]*provider *= *"\([^"]*\)".*/\1/p' "$PROJECT_DIR/chiguo_proactive.toml" | head -1 || true)"
+    [ -n "$PI_FALLBACK_PROVIDER" ] || PI_FALLBACK_PROVIDER=opencode-go
+    PI_KEY="$(PI_FALLBACK_PROVIDER="$PI_FALLBACK_PROVIDER" python3 -c "
 import json,os
 try:
     d=json.load(open(os.path.expanduser('~/.pi/agent/auth.json')))
-    print(d.get('opencode-go',{}).get('key',''))
+    key = (d.get('opencode-go') or {}).get('key') or (d.get(os.environ.get('PI_FALLBACK_PROVIDER','opencode-go')) or {}).get('key','')
+    print(key or '')
 except Exception: print('')
 " 2>/dev/null || true)"
     cat > "$ENV_FILE" <<EOF
@@ -43,6 +47,7 @@ WECHAT_BRIDGE_PI_RUN=$PROJECT_DIR/scripts/pi-run.mjs
 WECHAT_BRIDGE_STORAGE=$BRIDGE_DIR/credentials
 OPENCODE_API_KEY=$PI_KEY
 EOF
+    chmod 600 "$ENV_FILE"
 }
 
 do_install() {

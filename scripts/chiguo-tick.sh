@@ -3,14 +3,18 @@
 set -euo pipefail
 REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
 PY="$REPO/.venv/bin/python"
-# memory-lancedb-pro 扩展的 smart extraction 需要 opencode-go key（cron 环境无该变量）
-# 来源单一：~/.pi/agent/auth.json 的 opencode-go 条目（install_pi.sh 阶段 5 写入）
+# memory-lancedb-pro 扩展的 smart extraction 需要 key（cron 环境无该变量）
+# 来源单一：~/.pi/agent/auth.json——优先 opencode-go 条目（扩展 json5 llm 端点固定 opencode 网关），
+# 无则回退 [host].provider 对应条目（install_pi.sh 写入；缺省 opencode-go）
 if [ -z "${OPENCODE_API_KEY:-}" ] && [ -f "$HOME/.pi/agent/auth.json" ]; then
-  OPENCODE_API_KEY="$(python3 -c "
+  TICK_FALLBACK_PROVIDER="$(sed -n 's/^[[:space:]]*provider *= *"\([^"]*\)".*/\1/p' "$REPO/chiguo_proactive.toml" | head -1 || true)"
+  [ -n "$TICK_FALLBACK_PROVIDER" ] || TICK_FALLBACK_PROVIDER=opencode-go
+  OPENCODE_API_KEY="$(TICK_FALLBACK_PROVIDER="$TICK_FALLBACK_PROVIDER" python3 -c "
 import json,os
 try:
     d=json.load(open(os.path.expanduser('~/.pi/agent/auth.json')))
-    print(d.get('opencode-go',{}).get('key',''))
+    key = (d.get('opencode-go') or {}).get('key') or (d.get(os.environ.get('TICK_FALLBACK_PROVIDER','opencode-go')) or {}).get('key','')
+    print(key or '')
 except Exception: print('')
 " 2>/dev/null || true)"
   export OPENCODE_API_KEY
