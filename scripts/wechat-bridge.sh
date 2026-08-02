@@ -72,7 +72,7 @@ do_install() {
     if has_credentials; then
         say "检测到已有登录态 → 启动后将自动复用（失效则自动打印二维码重登）"
     else
-        warn "无登录态（首次部署）→ start 后按提示扫码登录；登录态写入仓库 credentials/ 随 git 保留"
+        warn "无登录态（首次部署）→ start 后按提示扫码登录；登录态仅本地保留（不进 git）"
     fi
 }
 
@@ -126,7 +126,7 @@ do_status() {
     if has_credentials; then
         local acct
         acct="$(sed -n 's/.*"userId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$BRIDGE_DIR/credentials/credentials.json" 2>/dev/null | head -1)"
-        say "登录态存在${acct:+（账号 $acct）}（随 git 保留）"
+        say "登录态存在${acct:+（账号 $acct）}（仅本地保留，不进 git）"
     else
         warn "无登录态（start 后扫码登录）"
         rc=1

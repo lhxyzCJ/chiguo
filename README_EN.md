@@ -48,9 +48,9 @@ Chiguo is a **personal project shared as open source**: actively used by its aut
 | NetEase Music bridge | Optional | Music topics and listening-proof unavailable |
 | Class schedule xlsx | Optional | Class state degrades to availability=0.85 |
 
-> ⚠️ **Before making this repository public, read this**: the repo **intentionally tracks** the WeChat login state (`wechat-bridge/credentials/` — clones of a private repo keep the login) and real conversation logs (`chiguo_messages.jsonl`). **You must remove these files and rewrite git history before going public.**
+> ⚠️ **Privacy**: WeChat login state (`wechat-bridge/credentials/`), real conversation logs (`chiguo_messages.jsonl` / `chiguo_decisions.jsonl`), and personal data (`data/` schedule/memories/QR) are **never committed to git** — kept locally only (history was rewritten to purge them). Making the repo public requires no cleanup.
 >
-> **Privacy, honestly**: conversation and system-state data are tracked in git and pushed to the remote you configure (default: a private repo). All computation is local; no third-party cloud services are involved (except model API and NetEase API calls).
+> **Privacy, honestly**: conversation and system-state data stay on this machine only (not in git, not pushed anywhere); the repo contains code, config, and docs. All computation is local; no third-party cloud services are involved (except model API and NetEase API calls).
 
 ---
 
@@ -326,13 +326,13 @@ Edit the `personality/` directory — `SUN2.md` is the authoritative definition,
 No. Change `[host].provider` / `[host].model` in `chiguo_proactive.toml` and configure the key; custom OpenAI-compatible endpoints see [PI_INTEGRATION.md](doc/PI_INTEGRATION.md).
 
 **Where is the data stored?**
-JSONL files in the repo (decisions/conversations/state, git-tracked and pushed to your remote) + the LanceDB memory store at `~/.pi-agent/memory/lancedb-pro`. All computation is local.
+Decision/conversation JSONL and system state stay on this machine only (never committed) + the LanceDB memory store at `~/.pi-agent/memory/lancedb-pro`. All computation is local.
 
 **Why isn't she messaging me?**
 Send gating is working: quiet window (late night), daily cap, min interval, trigger evaluation. `--status` / `--stats 30` shows what's blocking her.
 
 **How do I log into WeChat?**
-`bash scripts/wechat-bridge.sh login` and scan the QR code; the login state is kept with the repo (private repo; a fresh clone reuses it).
+`bash scripts/wechat-bridge.sh login` and scan the QR code; the login state is kept locally only (never committed) — a fresh clone requires logging in again.
 
 ---
 
