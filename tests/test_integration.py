@@ -191,7 +191,7 @@ def test_7b_schedule_disabled_availability(cfg):
 
 def test_7c_schedule_parser_disabled(cfg):
     """ScheduleParser(enabled=False) → 不解析、query available=False"""
-    from schedule_parser import ScheduleParser
+    from schedule import ScheduleParser
     import tempfile
     from pathlib import Path
     from datetime import date as date_cls
