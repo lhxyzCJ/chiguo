@@ -214,9 +214,9 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 **Role**: listening-state coupling — music played inside the quiet window disproves "asleep" and corrects the circadian clock, plus a music topic source.
 
-**Upstream & dependency**: NetEase data comes from a self-hosted third-party Node.js API service — [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) (community successor of Binaryify/NeteaseCloudMusicApi, archived 2024-04 over copyright; pinned to tag `v4.39.0`). It runs as a systemd service on `localhost:3000`; chiguo only calls 6 endpoints via `netease_bridge.py` (QR login chain / login status / daily recommendations / play records). The login cookie (MUSIC_U) lives only on this machine at `~/.chiguo/auth/netease_cookie.txt` (mode 600), never leaving it.
+**Upstream & dependency**: NetEase data comes from a self-hosted third-party Node.js API service — [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) (community successor of Binaryify/NeteaseCloudMusicApi, archived 2024-04 over copyright; pinned to tag `v4.39.0`). It runs as a systemd service on `localhost:3000`; chiguo only calls 6 endpoints via the `netease/` package (`NeteaseBridge` data plane) (QR login chain / login status / daily recommendations / play records). The login cookie (MUSIC_U) lives only on this machine at `~/.chiguo/auth/netease_cookie.txt` (mode 600), never leaving it. Runtime files (health/cache/cookie/QR) live uniformly in the `netease/` directory, migrating with the repo.
 
-**Setup**: installed by an optional `deploy.sh` step (skip with `--skip-netease`), then scan the QR: `uv run python netease_bridge.py --login`; manage via `bash scripts/netease-api.sh status`.
+**Setup**: installed by an optional `deploy.sh` step (skip with `--skip-netease`), then scan the QR: `uv run python -m netease.bridge --login`; manage via `bash scripts/netease-api.sh status`.
 
 **If missing**: fully inactive — one fewer topic source, everything else unchanged.
 
@@ -271,7 +271,7 @@ bash deploy.sh   # install uv/Python 3.14 → create venv → full test → env 
 
 **Auth migration**: credentials live in `~/.chiguo/auth/` (WeChat login state / NetEase cookie / pi keys, mode 700, outside the repo). Moving to a new machine: copy that directory → run `deploy.sh` and everything hooks up automatically. pi keys migrate 100%; WeChat/NetEase web sessions may trigger an automatic re-login (QR scan) on a different device.
 
-**NetEase API service** (optional): managed by systemd (`systemctl status netease-api`); health check `uv run python netease_bridge.py --test`; management via `bash scripts/netease-api.sh status`.
+**NetEase API service** (optional): managed by systemd (`systemctl status netease-api`); health check `uv run python -m netease.bridge --test`; management via `bash scripts/netease-api.sh status`.
 
 After deployment, the system runs on its own: crontab evaluates "should she message proactively?" every 15 minutes; the WeChat bridge stays online for your messages.
 

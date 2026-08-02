@@ -53,13 +53,13 @@ chiguo_daemon.py (DecisionEngine)
   │     ├─ memory_bridge.py    → LanceDB 只读桥接 + Ebbinghaus 遗忘
   │     └─ chiguo_circadian.py → 生物钟学习（双作息双桶分桶学习：工作日/周末独立窗口 + 置信度，
   │                             听歌活跃合并计数）(v7 NEW, v8 双桶)
-  ├─ netease_bridge.py → 网易云桥接：fetch_recent_play 最近播放记录（睡眠窗口内夜间活跃反证，
-  │                      recent_play_cache.json 缓存）(v8 NEW)；fetch_daily_songs 每日推荐 +
-  │                      _api_get 有限重试（瞬时/5xx 重试 retry_count 次 + 退避，4xx/解析失败直接 None）
-  │                      与每日推荐 schema 过滤 (v9)
-  ├─ chiguo_netease.py → 网易云策略层：健康状态/登录失效检测/降级链/共享日配额/随机选源/
-  │                      音乐话题素材组装（netease_health.json，零 LLM 输出结构化话题 dict；
-  │                      peek/consume 两阶段接口——未选中不消费配额）(v9 NEW)
+  ├─ netease/ 包 → 数据面 bridge.py（NeteaseBridge 实例）+ 策略层 service.py（NeteaseService DI）：
+  │              健康探针/登录失效检测/降级链/共享日配额/随机选源/播放反证单入口 fetch_play_proof；
+  │              fetch_recent_play 最近播放记录（睡眠窗口内夜间活跃反证，netease/recent_play_cache.json
+  │              缓存）(v8) 与 fetch_daily_songs 每日推荐（_api_get 有限重试：瞬时/5xx 重试 retry_count 次
+  │              + 退避，4xx/解析失败直接 None + schema 过滤，v9）+ QR 登录；音乐话题素材组装
+  │              （netease/netease_health.json，零 LLM 输出结构化话题 dict；peek/consume 两阶段接口——
+  │              未选中不消费配额）(v9 NEW)；运行时文件锚定 <base_dir>/netease/，随仓库迁移
   ├─ chiguo_trigger.py  → sigmoid 加权随机触发（13 种类型 + v6 逃生阀直接触发 + v7 follow_up 接话茬）
   ├─ chiguo_topics.py   → 8 源话题选择器（v9 含 netease 委托）+ 人格调制 + Ebbinghaus 加权
   ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 (v4 NEW)
@@ -385,7 +385,8 @@ _build_context()
 evaluate(now)
   → _in_quiet_window(now, qs, qe)？否 → 本轮不拉取（白天无意义）
   → _check_play_proof(now)：
-      netease_bridge.fetch_recent_play(limit=20, ttl_minutes=15)
+      NeteaseService.fetch_play_proof(now)（netease/service.py 单入口）
+        → NeteaseBridge.fetch_recent_play(limit=20, ttl_minutes=15)
         → GET /user/record?type=1&limit=20（近一周播放记录）
         → 缓存 recent_play_cache.json（原子写；TTL 内命中直接复用，负年龄/损坏缓存不命中，失败不缓存）
       → 取播放时刻 ∈ [now - play_proof_window_hours(2h), now] 且落在睡眠窗口内的条目
@@ -405,7 +406,7 @@ evaluate(now)
 
 ### 2.12 音乐话题源（netease，v9）
 
-网易云音乐内容作为话题注入**第 8 源**（破冰素材）：`chiguo_netease.py` 策略层提供，`chiguo_topics.py` 委托接入（`netease_weight=0.12`，来源权重表见 §4.1；策略层可注入可省略——未注入 → 静默跳过不阻塞话题选择）。
+网易云音乐内容作为话题注入**第 8 源**（破冰素材）：`netease/service.py` 策略层提供，`chiguo_topics.py` 委托接入（`netease_weight=0.12`，来源权重表见 §4.1；策略层可注入可省略——未注入 → 静默跳过不阻塞话题选择）。
 
 **两阶段配额（peek/consume）**：候选生成阶段 `pick()` 调 `peek_music_topic(now, in_class, in_quiet_window)` **只探测不消费配额**（fault 分支内联、配额检查只读；拉取成功仍 `_sync_success` 恢复健康——「拉取成功=API 正常」是事实且不消费配额；两源全失败仍 `refresh_health` 探针）；抽选命中 `netease_music`/`netease_fault` 后才调 `consume_music_topic`/`consume_fault_topic` 确认消费——**配额只在真正发出时消耗**，避免每天 ~6 次 pick 把配额耗尽（未选中不消费）；`music_topic` = peek + consume 包装（返回话题即已消费，供非 TopicPicker 调用方）。
 
@@ -487,7 +488,7 @@ data/xskb.xlsx（替换即更新）
   → query(now) → {in_class, current_course, class_load, ...}
 ```
 
-xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂移不会静默空课表）。v10.1 起数据文件统一收进 `data/` 子目录：课表源文件 `data/xskb.xlsx`、手动记忆 `data/chiguo_memories.json`、网易云二维码 `data/netease_qr.png`；toml 中的相对路径（如 `xlsx_path = "data/xskb.xlsx"`、`manual_path = "data/chiguo_memories.json"`）与代码默认值均经 `_anchored`（`_base_dir` + 相对路径拼接，绝对路径原样保留）解析为项目根下路径，与 cwd 无关。解析失败（xlsx 损坏等）降级空课表但**不覆盖已有有效缓存**：`_parse()` 返回 bool，仅成功才 `_save_cache()`。
+xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂移不会静默空课表）。v10.1 起数据文件统一收进 `data/` 子目录：课表源文件 `data/xskb.xlsx`、手动记忆 `data/chiguo_memories.json`、网易云二维码 `netease/netease_qr.png`（重构后随 netease/ 包迁移）；toml 中的相对路径（如 `xlsx_path = "data/xskb.xlsx"`、`manual_path = "data/chiguo_memories.json"`）与代码默认值均经 `_anchored`（`_base_dir` + 相对路径拼接，绝对路径原样保留）解析为项目根下路径，与 cwd 无关。解析失败（xlsx 损坏等）降级空课表但**不覆盖已有有效缓存**：`_parse()` 返回 bool，仅成功才 `_save_cache()`。
 
 缓存带 `cache_version=2`：旧版本缓存（含合并单元格吞课的脏数据）启动时强制重解析（`_parsed_at=0`）；`_parse_cell` 按 2+ 连续空白拆分课程段，合并课存 `alternates`，`_parse_weeks` 支持后缀单双周。
 
@@ -538,7 +539,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 | anniversary | 0.15 | anniversary_manager | 纪念日/倒计时 |
 | solar_terms | 0.10 | solar_terms | 24节气 |
 | preference_followup | 0.10 | memory_bridge (LanceDB) | 偏好追问 |
-| netease | 0.12 | NeteaseService (chiguo_netease) | v9: 网易云音乐话题（策略层委托） |
+| netease | 0.12 | NeteaseService (netease/service.py) | v9: 网易云音乐话题（策略层委托） |
 
 - `chiguo_topics.py`: TopicPicker 类，`pick(now)` → weighted_trigger_choice
 - v9: `TopicPicker.__init__(state, config, netease_service=None)` — 策略层可注入可省略（None → 静默跳过，向后兼容）；daemon 构造（chiguo_daemon.py:73-75）与热重载分支（:121-124）均已注入 `NeteaseService`（v9 已接线）；`_netease_music_topic(now)` 计算上课/睡眠门控（schedule_status + cooldown.quiet_window + `_in_quiet_window` 跨午夜语义；门控信息异常 → fail-closed 不发）后委托 `peek_music_topic`（不消费配额），抽选命中 netease_music/netease_fault 后才 consume——配额只在真正发出时消耗；未注入/异常 → 返回 None 不阻塞话题选择；委托细节见 §2.12
@@ -668,10 +669,10 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_daemon.py` | **主入口**。决策引擎，输出 JSON | state, trigger, topics, composer, eventbus |
 | `chiguo_state.py` | 情绪引擎 + 多维人格 + Bayesian + 课表 + 节假日 + 记忆 + circadian/pending_topics + 双作息迁移 (v8) | math, personality, bayesian, schedule_parser, holiday_parser, memory_bridge, chiguo_circadian |
 | `chiguo_circadian.py` | 生物钟学习：双作息双桶分桶（weekday_*/weekend_* 独立估计 + 听歌活跃合并计数）（v7 新增，v8 双桶，纯函数） | 无 |
-| `netease_bridge.py` | 网易云 API 桥接：`fetch_recent_play` 最近播放记录（睡眠窗口内夜间活跃反证 + recent_play_cache.json 缓存）（v8）；`fetch_daily_songs` 每日推荐 + `_api_get` 有限重试（瞬时/5xx 重试 retry_count 次 + 退避）与每日推荐 schema 过滤（v9） | 无（requests） |
-| `chiguo_netease.py` | 网易云策略层（v9）：`NeteaseService` 健康探针/登录失效检测/故障降级链（netease_fault 话题）/音乐+故障双日配额（netease_health.json 原子写）/加权随机选源+换源兜底/peek-consume 两阶段（未选中不消费配额）/话题素材组装（不含链接，零 LLM）；测试 `tests/test_netease_service.py` | netease_bridge |
+| `netease/bridge.py` | 网易云 API 桥接 数据面（NeteaseBridge 实例化）：`fetch_recent_play` 最近播放记录（睡眠窗口内夜间活跃反证 + netease/recent_play_cache.json 缓存）（v8）；`fetch_daily_songs` 每日推荐 + `_api_get` 有限重试（瞬时/5xx 重试 retry_count 次 + 退避）与每日推荐 schema 过滤 + QR 登录（v9） | 无（requests） |
+| `netease/service.py` | 网易云策略层（v9，DI）：`NeteaseService` 健康探针/登录失效检测/故障降级链（netease_fault 话题）/音乐+故障双日配额（netease/netease_health.json 原子写）/加权随机选源+换源兜底/peek-consume 两阶段（未选中不消费配额）/话题素材组装（不含链接，零 LLM）+ 播放反证单入口 `fetch_play_proof`；测试 `tests/test_netease_service.py` | netease.bridge |
 | `chiguo_trigger.py` | 触发评估（13 种，含 v7 follow_up 接话茬）+ 加权随机选择 | state, math |
-| `chiguo_topics.py` | 话题选择器（8 来源 + 人格调制 + v9 netease 委托） | math, solar_terms, anniversary_manager, chiguo_netease |
+| `chiguo_topics.py` | 话题选择器（8 来源 + 人格调制 + v9 netease 委托） | math, solar_terms, anniversary_manager, netease.service |
 | `chiguo_composer.py` | Intent × Cue × Vibe 三层消息组合（v4） | 无 |
 | `chiguo_math.py` | 纯数学库：sigmoid/decay/recover/Hawkes/longing/Ebbinghaus | 无 |
 | `chiguo_personality.py` | Big Five + 角色特质（8 维人格）（v4） | 无 |
@@ -691,14 +692,14 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
 | `chiguo_state.json` | 运行时状态（STATE_VERSION=10，首次运行后生成；v10 含 `personality_baseline`/`personality_history`） | 无 |
 | `chiguo_decisions.jsonl` | 决策日志（首次运行后生成） | 无 |
-| `recent_play_cache.json` | 最近播放记录缓存（v8，netease fetch_recent_play 原子写，TTL 15 分钟） | 无 |
-| `netease_health.json` | 网易云健康状态文件（v9，chiguo_netease 原子写：api 存活/登录态/故障原因/音乐+故障双日配额） | 无 |
+| `netease/recent_play_cache.json` | 最近播放记录缓存（v8，netease/bridge.py fetch_recent_play 原子写，TTL 15 分钟） | 无 |
+| `netease/netease_health.json` | 网易云健康状态文件（v9，netease/service.py 原子写：api 存活/登录态/故障原因/音乐+故障双日配额） | 无 |
 | `schedule_cache.json` | 课表缓存（首次运行后生成） | 无 |
 | `anniversaries.json` | 纪念日数据（首次运行后生成） | 无 |
 | `break_state.json` | 假期覆盖状态（首次 --break 后生成） | 无 |
 | `.gitignore` | 忽略运行时备份/临时/锁/token（分析数据跟踪入库供本地分析，见 doc/README.md §运行时数据回流） | 无 |
 | `data/xskb.xlsx` | 课表源文件（替换即更新） | 无 |
-| `data/netease_qr.png` | 网易云登录二维码（--login 生成） | 无 |
+| `netease/netease_qr.png` | 网易云登录二维码（--login 生成） | 无 |
 | `tests/test_chiguo_math.py` | 数学库单元测试（26 用例，含 sigmoid/负权重/负半衰期边界） | chiguo_math |
 | `tests/test_holiday_parser.py` | 节假日单元测试（7 用例） | holiday_parser |
 | `tests/test_integration.py` | 集成测试（17 用例，test_1/test_8 已从纯 print 强化为真断言） | chiguo_daemon |
@@ -712,11 +713,11 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_escape_valve.py` | 逃生阀单元测试（15 用例，含 v7 sleeping_guard 降级 + 0.85 对照） | chiguo_state, chiguo_trigger |
 | `tests/test_feedback.py` | 反馈闭环测试（10 用例） | chiguo_state, chiguo_monitor |
 | `tests/test_trigger.py` | 触发器引擎单元测试（16 用例：softmax 竞争/anxiety 归一化/时间窗口/memory tz 防护） | chiguo_trigger |
-| `tests/test_topics.py` | 话题选择器单元测试（23 用例：8 源权重/人格调制/Ebbinghaus 路径/v9 netease 注入、门控参数、选中才消费、fail-closed） | chiguo_topics, memory_bridge, chiguo_netease |
+| `tests/test_topics.py` | 话题选择器单元测试（23 用例：8 源权重/人格调制/Ebbinghaus 路径/v9 netease 注入、门控参数、选中才消费、fail-closed） | chiguo_topics, memory_bridge, netease.service |
 | `tests/test_circadian.py` | 生物钟学习单元测试（34 用例：环形滑动窗口/置信度/损坏数据防护/学习窗口作用于门禁/双桶分桶/迁移/按桶选窗/record_active 合并） | chiguo_circadian |
 | `tests/test_followup.py` | 接话茬单元测试（14 用例：pending 管理/钟形权重/多话题/记忆兜底/FakeBridge） | chiguo_state, chiguo_trigger, memory_bridge |
-| `tests/test_netease_proof.py` | 听歌反证单元测试（31 用例：fetch_recent_play 解析/缓存/降级 + `_api_get` 重试策略与每日推荐 schema 过滤 + 非 dict 响应降级 + 窗口内反证 sleeping 压制/按播放时刻分桶/逃生阀放行 + netease 跨触发注入规则） | netease_bridge, chiguo_daemon |
-| `tests/test_netease_service.py` | 网易云策略层单元测试（30 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题绕过门控+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | chiguo_netease, netease_bridge |
+| `tests/test_netease_proof.py` | 听歌反证单元测试（31 用例：fetch_recent_play 解析/缓存/降级 + `_api_get` 重试策略与每日推荐 schema 过滤 + 非 dict 响应降级 + 窗口内反证 sleeping 压制/按播放时刻分桶/逃生阀放行 + netease 跨触发注入规则） | netease.bridge, chiguo_daemon |
+| `tests/test_netease_service.py` | 网易云策略层单元测试（30 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题绕过门控+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | netease.service, netease.bridge |
 | `tests/test_composer_trade.py` | 组合权衡测试（5 用例：cue 权重重排、trade_tsundere 交易式撒娇） | chiguo_composer |
 | `tests/test_personality_init.py` | 初始人格值对齐原著测试（2 用例） | chiguo_personality |
 | `tests/test_toml_binding.py` | personality toml 接线测试（7 用例：toml 存在、meta.name、cue↔模板关联、参考台词注入） | chiguo_composer, chiguo_proactive.toml |
@@ -1140,7 +1141,7 @@ max_width = 12           # 学习窗口最大宽度(小时)
 play_cache_ttl_minutes = 15     # 播放记录缓存 TTL（分钟）
 play_proof_window_hours = 2.0   # 播放证据时间窗（距评估时点的小时数）
 sleeping_confidence_factor = 0.5  # sleeping 置信度压制系数（有播放证据时 effective = raw × 此值）
-# v9: 策略层（chiguo_netease）
+# v9: 策略层（netease/service.py）
 retry_count = 1                # 瞬时失败重试次数
 retry_backoff_seconds = 2.0    # 重试退避（秒）
 reprobe_minutes = 30           # 登录失效后重探间隔（分钟）
@@ -1830,6 +1831,5 @@ cron tick / bridge 停止时 daemon 不执行。恢复后：
 - 听歌反证依赖网易云登录态与网络：未登录/API 不可用时本轮跳过反证（不阻塞、不告警），sleeping 推断回到纯 Bayesian；反证只在评估时点生效，不持久化"醒着"状态
 - 音乐话题源依赖网易云登录态与 API：未登录/API 不可用 → 策略层降级为故障话题（日配额 1）或静默跳过；登录失效后最长 `reprobe_minutes`（30）重探间隔内不出网络请求
 - 网易云每日推荐需登录 cookie（MUSIC_U），匿名账号无每日推荐权限；红心歌单/听歌情绪分析 YAGNI 暂缓（需 LLM，违背零 LLM 铁律）
-- 热重载非法 `retry_count` 会抛异常（Minor）：`set_api_retry_policy` 的 int()/float() 强转对非数值配置未兜底（`NeteaseService` 构造即调用，仅配置错误时触发）
-- `_in_quiet_window` 双份拷贝：`chiguo_daemon` 与 `chiguo_netease` 各一份（同语义跨午夜），`chiguo_topics` 复用 chiguo_netease 版——语义修改需两处同步
+- 热重载非法 `retry_count` 会抛异常（Minor）—— **已解决（重构后由 `_cfg_int`/`_cfg_float` 兜底）**：非法数值 → 默认，负值 → 0（`NeteaseService` 构造即生效，仅配置错误时触发）
 - 接话茬素材依赖 bridge/pi 传入 `--analysis` 的 topic 字段；未传 topic 时仅剩记忆兜底路径

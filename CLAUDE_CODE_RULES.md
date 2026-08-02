@@ -75,8 +75,7 @@ Supporting (not imported by daemon):
 ├── chiguo_watchdog.py      Standalone health checks (cron/systemd timer)
 ├── chiguo_envcheck.py      Read-only env readiness check (Python/pi/ollama/auth/LanceDB/netease/data, exit 0/1/2)
 ├── anniversary_manager.py  CRUD for anniversaries/countdowns
-├── netease_bridge.py       Netease Cloud Music API bridge (upstream: api-enhanced v4.39.0, localhost:3000) (634 lines)
-├── chiguo_netease.py       Netease strategy layer (v9): health probe/degradation chain/peek-consume quota
+├── netease/                Netease package: bridge.py (NeteaseBridge 数据面, upstream: api-enhanced v4.39.0, localhost:3000) + service.py (NeteaseService 策略层 DI) + 运行时文件(锚定 <base_dir>/netease/)
 ├── solar_terms.py          24 solar terms lookup (±1 day window) (85 lines)
 └── update_holidays.py      Generate holidays.json + solar_terms.json for any year
 ```
@@ -331,10 +330,10 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | `break_state.json` | chiguo_daemon.py | Vacation override (written by --break CLI) |
 | `holidays.json` | update_holidays.py | Override holiday data for future years |
 | `solar_terms.json` | update_holidays.py | Override solar terms for future years |
-| `netease_cache.json` | netease_bridge.py | Daily song recommendations cache |
-| `netease_cookie.txt` | netease_bridge.py | Netease API auth cookie (chmod 600) |
-| `recent_play_cache.json` | netease_bridge.py | Recent-play cache (v8, atomic write, 15-min TTL) |
-| `netease_health.json` | chiguo_netease.py | Netease health/quota state (v9, atomic write) |
+| `netease/netease_cache.json` | netease/bridge.py | Daily song recommendations cache |
+| `netease/netease_cookie.txt` | netease/bridge.py | Netease API auth cookie (chmod 600) |
+| `netease/recent_play_cache.json` | netease/bridge.py | Recent-play cache (v8, atomic write, 15-min TTL) |
+| `netease/netease_health.json` | netease/service.py | Netease health/quota state (v9, atomic write) |
 
 ---
 
@@ -386,8 +385,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | holiday_parser.py | 187 | Holidays | HolidayParser |
 | solar_terms.py | 85 | Solar terms | SolarTerms |
 | anniversary_manager.py | 216 | Anniversaries | AnniversaryManager |
-| netease_bridge.py | 634 | Music API | login_qr_flow(), fetch_recent_play(), fetch_daily_songs() |
-| chiguo_netease.py | 305 | Netease strategy | NeteaseService |
+| netease/ | 939 | Netease package | bridge.py: NeteaseBridge (login/fetch_recent_play/fetch_daily_songs); service.py: NeteaseService (DI) |
 | chiguo_envcheck.py | 178 | Env readiness | run_checks() |
 | update_holidays.py | 234 | Holiday gen | generate() |
 | chiguo_proactive.toml | 277 | Config | All parameters |
