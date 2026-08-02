@@ -28,7 +28,7 @@ pi-run.mjs 本就透传 toml [host].provider/model → 换 provider 无需改 pi
 - **审查修复**：M1 bot.reply 失败不误记 pi 假死（reply 移出 try，补回归用例）；M2 告警投递失败打日志不静默；m3 锁失败不写（宁丢一次记账）；m4 阈值严格校验（bool/float/非整/0/负→回退 3）；m7 tick 记账解析单次 python3 调用；恢复后原因重捕获 + 特殊命令不记账 + reply 失败不误记 补 3 条测试
 - **坑**：① JSON 转义中文导致 grep 失配→测试用 python 解码再断言；② DAEMON_PY 被测试换成 node 会劫持 pi_health 解释器→独立 `WECHAT_BRIDGE_PI_HEALTH_PY`
 - **既有失败**：test_monitor `test_health_ok` 预先失败（真实 netease_health.json faulty:true，与本次无关）
-- **配置**：toml 新增 `[health] fail_threshold = 3`；设计文档 docs/superpowers/specs/2026-08-02-pi-health-alert-design.md
+- **配置**：toml 新增 `[health] fail_threshold = 3`；设计文档 ~/chiguo-meta/specs/2026-08-02-pi-health-alert-design.md（项目外归档）
 - **盲区（用户接受）**：长期空闲期 pi 假死 → 告警延迟到下次真实交互
 
 # MEMORY.md
