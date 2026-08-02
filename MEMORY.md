@@ -1,3 +1,20 @@
+## 2026-08-02 — 后端 provider 去绑定：接入任意模型 API（TDD 红→绿；版本 v1.5 → v1.6）
+
+**背景**：用户要求后端表述不绑定 opencode-go，应允许各种模型 API 接入、完全依赖 pi-agent 的接入能力。
+查 pi 0.83.0 官方文档（providers.md / models.md / custom-provider.md）：`--provider` 名 = auth.json 键名；
+自定义 OpenAI 兼容端点用 `~/.pi/agent/models.json` 声明式注册（baseUrl/api/apiKey/models），高级场景才写扩展 registerProvider。
+pi-run.mjs 本就透传 toml [host].provider/model → 换 provider 无需改 pi-run。
+
+**方案（TDD 红→绿）**：
+- **chiguo_envcheck.py**：check_pi_auth provider 化（`_key_env_hint` 已知 provider 环境变量名表）；run_checks 新增 `home` 注入参数（测试隔离）；pi_auth 检查随 toml [host].provider
+- **install_pi.sh**：PROVIDER 顶层解析（toml [host].provider，缺省 opencode-go）；key 环境变量通用名 `PI_API_KEY` 优先、`OPENCODE_API_KEY` 兼容回退；auth_has_key/阶段 5/阶段 7 冒烟全部 provider 化
+- **chiguo-tick.sh + wechat-bridge.sh**：OPENCODE_API_KEY 注入（memory 扩展 smart extraction 固定 env 名）优先 opencode-go 条目（扩展 json5 llm 端点固定 opencode 网关）、无则回退 [host].provider 条目
+- **测试**：test_envcheck.py +2、test_install_pi.sh +1（用例 15）、test_tick_health.sh +1（用例 5：优先 opencode-go/回退 provider）、test_wechat_bridge.sh +1（用例 9）
+- **审查修复**：M1 memory 扩展 json5 llm 端点固定 opencode 网关 → 注入优先 opencode-go 条目（回退 provider）；M2 _key_env_hint 与 install 读取的 env 名不一致 → 统一返回 PI_API_KEY；m1 shell 解析统一 sed（grep -oP 会误匹配注释行）；m3 测试计数/编号修正；m4 PI_INTEGRATION 版本标题与阶段 0 提示；m5 .env 写后 chmod 600
+- **文档**：toml 注释、doc/PI_INTEGRATION.md 新增「七、接入任意模型 API」（方式 A 内置 provider 切换步骤 / 方式 B models.json 自定义端点示例 + 注意事项）、README/AGENTS/CLAUDE/SYSTEM/deploy.sh/install_pi.sh 头注释表述全部去绑定；SYSTEM.md v1.6 版本行
+- **坑**：test_install_pi.sh 新用例忘清 CALLS_LOG（上一用例冒烟记录残留误判）；test_envcheck 回退断言写成 not ok（auth 恰含 opencode-go 条目时回退应 ok）
+- **不做**：不改 OPENCODE_API_KEY 变量名（memory 扩展硬编码依赖；注入策略=优先 opencode-go 回退 provider）
+
 ## 2026-08-02 — pi 假死检测与微信告警（TDD 红→绿：零新增 token、pi 零修改；版本 v1.4 → v1.5）
 
 **背景**：bridge（微信接入）与 pi-agent（消息后端）独立进程；pi 假死时桥活着 → 逐条 `⚠️ 处理失败` 但无系统告警，tick 失败只进日志。用户要求：后端假死微信端能发现；约束①token 平衡（不做定时探测）②不动 pi（pi-run.mjs/pi 二进制/上游零改动）。
