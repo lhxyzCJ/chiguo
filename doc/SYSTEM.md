@@ -677,7 +677,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `schedule_parser.py` | 课表解析（xlsx → JSON cache → query） | openpyxl |
 | `holiday_parser.py` | 节假日判断（2026 国务院安排 + 调休） | 无 |
 | `solar_terms.py` | 24 节气日期查询（零依赖） | 无 |
-| `memory_bridge.py` | LanceDB 只读桥接 + Ebbinghaus 遗忘 | lancedb（惰性导入）, pandas |
+| `memory_bridge.py` | LanceDB 只读桥接 + Ebbinghaus 遗忘 | lancedb（惰性导入，可选；缺了降级 JSON） |
 | `anniversary_manager.py` | 纪念日/倒计时 CRUD | 无 |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
