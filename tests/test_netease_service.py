@@ -701,6 +701,8 @@ def test_bridge_default_injected():
 
 
 if __name__ == "__main__":
+    test_disabled_returns_none()
+    test_enabled_default_true()
     test_health_file_default_when_missing()
     test_health_file_corrupt_rebuild()
     test_health_file_atomic_write()
