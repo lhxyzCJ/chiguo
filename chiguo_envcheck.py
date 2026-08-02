@@ -236,7 +236,7 @@ def run_checks(base_dir: Path = None, skip_pi: bool = False) -> dict:
     base = base_dir or _BASE_DIR
     cfg = _load_config(base)
     lancedb_path = _cfg_path(cfg, "memory", "lancedb_path",
-                             "~/.openclaw/memory/lancedb-pro", base)
+                             "~/.pi-agent/memory/lancedb-pro", base)
     xlsx = _cfg_path(cfg, "schedule", "xlsx_path", "data/xskb.xlsx", base)
     mem = _cfg_path(cfg, "memory", "manual_path", "data/chiguo_memories.json", base)
     api_base = os.environ.get("NETEASE_API_BASE", "http://localhost:3000")

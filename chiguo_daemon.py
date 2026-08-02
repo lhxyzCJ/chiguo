@@ -695,7 +695,8 @@ class DecisionEngine:
         host_cfg = self.config.get("host", {})
         oc_cfg = self.config.get("openclaw", {})
         personality_dir = os.path.expanduser(
-            host_cfg.get("personality_dir", oc_cfg.get("personality_source", "~/.openclaw/workspace/skills/chiguo")))
+            host_cfg.get("personality_dir", oc_cfg.get("personality_source", os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "personality"))))
 
         # 按人格层映射语气指引
         layer_guidance = {

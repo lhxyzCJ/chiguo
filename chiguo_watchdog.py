@@ -200,7 +200,7 @@ def check_disk_space(path: Path, warn_mb: int = 500, critical_mb: int = 100) -> 
     return result
 
 
-def check_lancedb(db_path: str = "~/.openclaw/memory/lancedb-pro") -> dict:
+def check_lancedb(db_path: str = "~/.pi-agent/memory/lancedb-pro") -> dict:
     """检查 LanceDB 连通性。"""
     result = {"ok": True, "detail": ""}
     try:

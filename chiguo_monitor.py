@@ -55,7 +55,7 @@ class ChiguoMonitor:
             "disk_critical_mb": 100,
             "memory_warn_mb": 500,
             "memory_critical_mb": 1000,
-            "lancedb_path": "~/.openclaw/memory/lancedb-pro",
+            "lancedb_path": "~/.pi-agent/memory/lancedb-pro",
         }
         candidates = [config_path]
         if not config_path.is_absolute():
@@ -77,7 +77,7 @@ class ChiguoMonitor:
 
     def _lancedb_path(self) -> str:
         """LanceDB 数据库路径。优先级：[monitor] > [memory] > 硬编码默认。~ 展开为 $HOME。"""
-        return os.path.expanduser(self._monitor_config.get("lancedb_path", "~/.openclaw/memory/lancedb-pro"))
+        return os.path.expanduser(self._monitor_config.get("lancedb_path", "~/.pi-agent/memory/lancedb-pro"))
 
     # ═══════════════════════════════════════════════════════════
     # 内部：流式解析

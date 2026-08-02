@@ -27,7 +27,7 @@ say "Python: $(uv run python --version)($(uv run python -c 'import sys;print(sys
 
 # ── 2. 可选依赖 lancedb(OpenClaw 记忆,缺省优雅降级 JSON) ────
 if uv run python -c "import lancedb" >/dev/null 2>&1; then
-    say "lancedb OK → 将读取 \$HOME/.openclaw/memory/lancedb-pro"
+    say "lancedb OK → 将读取 \$HOME/.pi-agent/memory/lancedb-pro"
 else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
