@@ -15,7 +15,8 @@ chiguo_loop.pid
 !uv.lock
 
 # Netease music bridge — cookie is an auth token (keep ignored); cache is tracked
-netease_cookie.txt
+netease/netease_cookie.txt
+netease/netease_qr.png
 
 # Git worktrees
 .worktrees/

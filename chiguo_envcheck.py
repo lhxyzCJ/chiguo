@@ -215,7 +215,7 @@ def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
     if cookie_path.is_file():
         issues.append("已登录(netease_cookie.txt)")
     else:
-        issues.append("未登录(可选来源,未启用不介入;启用需 uv run python netease_bridge.py --login 扫码)")
+        issues.append("未登录(可选来源,未启用不介入;启用需 uv run python -m netease.bridge --login 扫码)")
     if health_path.is_file():
         issues.append("netease_health.json 存在")
     else:
@@ -263,7 +263,7 @@ def run_checks(base_dir: Path = None, skip_pi: bool = False, home: Path = None) 
         check_lancedb(lancedb_path),
         check_ollama(ollama_url),
         check_pi_auth(pi_auth, provider=provider),
-        check_netease(api_base, base / "netease_cookie.txt", base / "netease_health.json"),
+        check_netease(api_base, base / "netease" / "netease_cookie.txt", base / "netease" / "netease_health.json"),
         check_data(xlsx, mem),
     ]
     summary = {"ok": 0, "info": 0, "warn": 0, "critical": 0}
