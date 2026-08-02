@@ -7,8 +7,8 @@
 #       非 TTY 等价 --dry-run）
 # 退出码: 0=完成  1=有待办/警告/残留未处理  2=严重问题
 # 幂等: 重复运行安全；每次修改前备份。
-# 安全边界: 只写 ~/.pi/ 与 ~/.pi-agent/；只读引用 ~/.openclaw/memory/lancedb-pro
-#       （历史记忆库，不修改）。
+# 安全边界: 只写 ~/.pi/ 与 ~/.pi-agent/；记忆库位于 ~/.pi-agent/memory/lancedb-pro
+#       （OpenClaw 已停用，历史记忆库迁出，不修改）。
 # ============================================================
 set -uo pipefail
 
@@ -167,15 +167,15 @@ say "阶段 3: ~/.pi/agent/memory-lancedb-pro.json5..."
 if [ -f "$JSON5" ] \
    && grep -q 'qwen3-embedding' "$JSON5" \
    && grep -q 'localhost:11434' "$JSON5" \
-   && grep -q '\.openclaw/memory/lancedb-pro' "$JSON5" \
+   && grep -q '\.pi-agent/memory/lancedb-pro' "$JSON5" \
    && grep -qE '"autoCapture"[[:space:]]*:[[:space:]]*true' "$JSON5" \
    && grep -qE '"autoRecall"[[:space:]]*:[[:space:]]*true' "$JSON5" \
    && grep -qE '"smartExtraction"[[:space:]]*:[[:space:]]*true' "$JSON5"; then
-  say "memory-lancedb-pro.json5 OK（embedding=ollama qwen3-embedding:0.6b + dbPath=~/.openclaw/memory/lancedb-pro）"
+  say "memory-lancedb-pro.json5 OK（embedding=ollama qwen3-embedding:0.6b + dbPath=~/.pi-agent/memory/lancedb-pro）"
 else
   if [ "$DRY" = 1 ]; then
     PENDING=1
-    echo "  [dry-run] 将写 $JSON5：dbPath=~/.openclaw/memory/lancedb-pro、embedding=ollama qwen3-embedding:0.6b、llm=deepseek、autoCapture/autoRecall/smartExtraction（含 .bak 备份）"
+    echo "  [dry-run] 将写 $JSON5：dbPath=~/.pi-agent/memory/lancedb-pro、embedding=ollama qwen3-embedding:0.6b、llm=deepseek、autoCapture/autoRecall/smartExtraction（含 .bak 备份）"
   elif confirm "写入 $JSON5（memory-lancedb-pro 配置：dbPath 沿用历史库 + ollama embedding）"; then
     mkdir -p "$(dirname "$JSON5")"
     [ -f "$JSON5" ] && cp -a "$JSON5" "$JSON5.bak"
@@ -184,7 +184,7 @@ else
   // memory-lancedb-pro configuration for the pi coding agent (install_pi.sh 生成)
   // embedding: local Ollama (qwen3-embedding:0.6b, 1024 dims)
   // llm: DeepSeek (smart extraction / upgrades)
-  "dbPath": "~/.openclaw/memory/lancedb-pro",
+  "dbPath": "~/.pi-agent/memory/lancedb-pro",
   "embedding": {
     "provider": "openai-compatible",
     "apiKey": "ollama",
@@ -314,7 +314,7 @@ else
   MEMORY_PRO="$CLONE/node_modules/.bin/memory-pro"
   [ -x "$MEMORY_PRO" ] || MEMORY_PRO="node $CLONE/dist/pi-adapter/cli-main.js"
   if timeout 60 bash -c "$MEMORY_PRO stats" >/dev/null 2>&1; then
-    say "memory-pro stats OK（历史库 ~/.openclaw/memory/lancedb-pro 可读）"
+    say "memory-pro stats OK（记忆库 ~/.pi-agent/memory/lancedb-pro 可读）"
   else
     SMOKE_BAD=1; warn "memory-pro stats 失败（见上方错误）"
   fi

@@ -17,9 +17,10 @@ llm_base_url = "http://localhost:11434/v1"       # 已废弃：OpenClaw 本地 o
 llm_model = "qwen3:14b"                          # 已废弃
 
 [memory]
-# ── OpenClaw LanceDB 记忆系统（只读，不写）──
+# ── pi-agent memory-lancedb-pro 记忆系统（只读，不写）──
+# 记忆库已迁至 ~/.pi-agent/（OpenClaw 已停用，~/.openclaw 可删）
 # 如果 LanceDB 不可用，自动降级到 JSON 模式
-lancedb_path = "~/.openclaw/memory/lancedb-pro"
+lancedb_path = "~/.pi-agent/memory/lancedb-pro"
 lancedb_table = "memories"
 # 手动记忆文件（始终生效，作为补充）
 manual_path = "data/chiguo_memories.json"
@@ -297,7 +298,7 @@ archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 # 备份：修改核心配置、执行破坏性操作前，必须先提示备份方案；备份优先
 # 时间：禁止在 22:00 ~ 次日 08:00 主动推送非紧急通知
 # 边界：不重复解释 Linux/正则/服务运维等基础概念；不擅自修改 OpenClaw 核心配置，修改前必须确认
-# 环境：Debian Linux, root 用户；历史核心服务 ~/.openclaw/（OpenClaw 已停用，仅历史记忆库引用）；
+# 环境：Debian Linux, root 用户；OpenClaw 已停用（~/.openclaw 待删），记忆库在 ~/.pi-agent/memory/；
 #       常用工具 rsync/systemctl/nano/tar
 
 provider = "opencode-go"        # pi provider（auth.json 键名；key 由 install_pi.sh 从 OPENCODE_API_KEY 写入）

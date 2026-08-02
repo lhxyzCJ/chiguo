@@ -205,6 +205,22 @@ def test_run_checks_never_crashes():
     print("  OK test_run_checks_never_crashes")
 
 
+def test_lancedb_default_path_migrated():
+    """lancedb 默认路径已迁出 ~/.openclaw（OpenClaw 即将删除，记忆库归 ~/.pi-agent）。"""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        cfg = td / "chiguo_proactive.toml"
+        cfg.write_text(Path("chiguo_proactive.toml").read_text().replace(
+            'lancedb_path = "~/.openclaw/memory/lancedb-pro"',
+            'lancedb_path = "~/.pi-agent/memory/lancedb-pro"'))
+        cfg2 = ec._load_config(td)
+        p = ec._cfg_path(cfg2, "memory", "lancedb_path",
+                         "~/.pi-agent/memory/lancedb-pro", td)
+        assert ".openclaw" not in str(p)
+        assert str(p) == str(Path.home() / ".pi-agent" / "memory" / "lancedb-pro")
+    print("  OK test_lancedb_default_path_migrated")
+
+
 if __name__ == "__main__":
     test_check_env()
     test_check_pi_missing_critical()
@@ -223,4 +239,5 @@ if __name__ == "__main__":
     test_check_data_ok()
     test_exit_code_mapping()
     test_run_checks_never_crashes()
-    print(f"test_envcheck.py: ALL {17} TESTS PASSED")
+    test_lancedb_default_path_migrated()
+    print(f"test_envcheck.py: ALL {18} TESTS PASSED")

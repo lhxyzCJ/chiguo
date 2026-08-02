@@ -94,7 +94,7 @@ export CHIGUO_REPO_OVERRIDE="$TMP/repo" HOME="$TMP/home"
 printf '{"models":[{"name":"qwen3-embedding:0.6b","capabilities":["embedding"]}]}' > "$TAGS_FILE"
 
 WANT="$HOME/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js"
-JSON5_OK='{"dbPath":"~/.openclaw/memory/lancedb-pro","embedding":{"provider":"openai-compatible","model":"qwen3-embedding:0.6b","baseURL":"http://localhost:11434/v1"},"autoCapture":true,"autoRecall":true,"smartExtraction":true}'
+JSON5_OK='{"dbPath":"~/.pi-agent/memory/lancedb-pro","embedding":{"provider":"openai-compatible","model":"qwen3-embedding:0.6b","baseURL":"http://localhost:11434/v1"},"autoCapture":true,"autoRecall":true,"smartExtraction":true}'
 
 setup_ready() {  # 预置全部已安装状态（settings/json5/auth/clone/crontab）
   mkdir -p "$HOME/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter"
@@ -211,7 +211,7 @@ set +e; OUT=$(env -u OPENCODE_API_KEY bash scripts/install_pi.sh --yes 2>&1); RC
 echo "$OUT" | grep -q "clone/build 失败" || fail "缺少 clone/build 失败警告"
 SET_EXT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["extensions"][0])' "$HOME/.pi/agent/settings.json")
 [ "$SET_EXT" = "$WANT" ] || fail "阶段 2 未写入 extensions: $SET_EXT"
-grep -q '\.openclaw/memory/lancedb-pro' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "阶段 3 未写入 dbPath"
+grep -q '\.pi-agent/memory/lancedb-pro' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "阶段 3 未写入 dbPath"
 grep -q 'qwen3-embedding' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "阶段 3 未写入 embedding"
 grep -q 'chiguo-tick' "$CRON_STATE" || fail "阶段 6 未注册 crontab"
 [ ! -f "$HOME/.pi/agent/auth.json" ] || fail "无 OPENCODE_API_KEY 不应写 auth.json"

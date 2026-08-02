@@ -1,19 +1,19 @@
 {
   "_version": 10,
   "emotion": {
-    "loneliness": 77.6899655437451,
+    "loneliness": 60.660074626598735,
     "affection": 55.24487370961934,
-    "anxiety": 69.73049557004775,
-    "energy": 99.96032676727859,
-    "tsundere_index": 74.08882116846884,
-    "loneliness_rate": 0.4007437598483516,
-    "anxiety_rate": 0.35814567961893135
+    "anxiety": 79.10855840256956,
+    "energy": 81.0464816691652,
+    "tsundere_index": 78.3407148869948,
+    "loneliness_rate": 0.6839195910357677,
+    "anxiety_rate": 0.2418687796375606
   },
   "cooldown": {
-    "last_message_at": "2026-08-01T23:07:44.448949+08:00",
+    "last_message_at": "2026-08-02T13:45:02.044260+08:00",
     "last_user_message_at": "2026-08-01T21:09:08.147805+08:00",
-    "messages_today": 0,
-    "messages_without_reply": 2,
+    "messages_today": 1,
+    "messages_without_reply": 3,
     "current_date": "2026-08-02",
     "morning_sent": false,
     "night_sent": false,
@@ -21,7 +21,8 @@
       "longing",
       "lonely_low",
       "longing",
-      "longing"
+      "longing",
+      "anxiety"
     ],
     "event_timestamps": [
       {
@@ -43,6 +44,11 @@
         "type": "longing",
         "time": "2026-08-01T23:07:44.448949+08:00",
         "msg_id": "7a06ec207544"
+      },
+      {
+        "type": "anxiety",
+        "time": "2026-08-02T13:45:02.044260+08:00",
+        "msg_id": "b5bcc975fb2f"
       }
     ],
     "reply_latencies": [
@@ -52,9 +58,11 @@
     "held_count": 0,
     "accumulated_lambda": 0.0,
     "last_user_msg_length": 7,
-    "last_crash_at": null,
-    "crash_count_48h": 0,
-    "crash_timestamps": [],
+    "last_crash_at": "2026-08-02T13:45:02.044260+08:00",
+    "crash_count_48h": 1,
+    "crash_timestamps": [
+      "2026-08-02T13:45:02.044260+08:00"
+    ],
     "last_longing_break_at": null,
     "recv_dedup": {
       "text_sha": "cab372eab5a631b4e9537d678073f41fbb558be51b0af1ba746706d5733ce6c8",
@@ -88,12 +96,12 @@
   "personality": {
     "openness": 55.0,
     "conscientiousness": 65.0,
-    "extraversion": 45.03,
-    "agreeableness": 70.0,
-    "neuroticism": 60.010000000000005,
-    "tsundere_intensity": 70.19999999999999,
-    "playfulness": 55.14999999999999,
-    "attachment_style": 60.09
+    "extraversion": 45.15,
+    "agreeableness": 69.95,
+    "neuroticism": 60.0891,
+    "tsundere_intensity": 70.34699999999998,
+    "playfulness": 55.14849999999999,
+    "attachment_style": 60.0891
   },
   "personality_baseline": {
     "openness": 55.0,
@@ -105,8 +113,22 @@
     "playfulness": 55.0,
     "attachment_style": 60.0
   },
-  "personality_history": [],
-  "last_tick": "2026-08-02T03:15:01.915954+08:00",
-  "tick_seq": 66,
-  "_checksum": "3dcfb909aaba8f88c92ca5bc18de2ebeb0df927327bbd440b959d048e3a9cd33"
+  "personality_history": [
+    {
+      "ts": "2026-08-02T13:45:04.062879+08:00",
+      "dims": {
+        "openness": 55.0,
+        "conscientiousness": 65.0,
+        "extraversion": 45.15,
+        "agreeableness": 69.95,
+        "neuroticism": 60.0891,
+        "tsundere_intensity": 70.34699999999998,
+        "playfulness": 55.14849999999999,
+        "attachment_style": 60.0891
+      }
+    }
+  ],
+  "last_tick": "2026-08-02T14:07:26.504990+08:00",
+  "tick_seq": 71,
+  "_checksum": "074f9fe2297003a85117a0323657c9f18be4e40f805930a3149514f2d2e11867"
 }

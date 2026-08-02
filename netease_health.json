@@ -2,11 +2,11 @@
   "api_alive": false,
   "logged_in": null,
   "faulty": true,
-  "last_check": "2026-08-01T21:09:36.447435+08:00",
+  "last_check": "2026-08-02T13:45:02.044260+08:00",
   "last_failure": "2026-08-01T21:09:36.447435+08:00",
   "failure_reason": "unreachable",
-  "quota_music_day": "2026-08-01",
+  "quota_music_day": "2026-08-02",
   "quota_music_used": 0,
-  "quota_fault_day": "2026-08-01",
-  "quota_fault_used": 0
+  "quota_fault_day": "2026-08-02",
+  "quota_fault_used": 1
 }
