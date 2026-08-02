@@ -29,7 +29,7 @@ uv run python test_circadian.py && uv run python test_followup.py && \
 uv run python test_netease_proof.py && uv run python test_netease_service.py && \
 uv run python test_envcheck.py && uv run python test_composer_trade.py && \
 uv run python test_personality_init.py && uv run python test_toml_binding.py && \
-uv run python test_adapt_personality.py && uv run python test_pi_health.py   # full suite (24 py + 8 script tests)
+uv run python test_adapt_personality.py && uv run python test_pi_health.py   # full suite (24 py + 9 script tests)
 
 uv run python test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout
