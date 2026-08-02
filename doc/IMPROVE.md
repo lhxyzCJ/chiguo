@@ -1,3 +1,16 @@
+## 2026-08-02 — openid 去标识 + 集中认证目录（多 agent 终审，版本不步进）
+
+**问题**：上轮安全整改后仍有真实微信 openid（PII）在 6 个跟踪文件（toml 收件人/脚本默认值/测试 fixture）；schedule_cache.json 历史残留（上轮 git rm --cached 只清当前树）。
+
+**方案**：
+- filter-repo 二轮重写：schedule_cache.json 历史清除 + openid 全历史替换为占位符（replace-text 精确串→前缀规则两轮，覆盖缩写变体）
+- 注入链：登录后 wechat-bridge.sh 从集中目录 credentials.json 提取真实 userId → .env（gitignore）；tick 解析链同步
+- 集中认证目录 ~/.chiguo/auth/（700 权限，迁移介质 + 结构优化）：微信 storage/网易云 cookie/pi auth 三组件统一指向；SDK 层无设备校验（查证），服务端失效自动重登兜底
+- 测试先行：3 个 shell 测试各 +1~2 用例；修复 pipefail+sed 缺文件退出码 2 的隐患
+- 文档：README 双文件（认证迁移）、MEMORY
+
+---
+
 ## 2026-08-02 — 隐私数据移出 git + 历史重写（多 agent 保障，版本不步进）
 
 **问题**：仓库 git 跟踪微信登录态（credentials 3 文件）、真实对话日志（messages/decisions jsonl）、个人数据（data/ 课表/记忆/二维码）——用户要求 git 不追踪隐私。
