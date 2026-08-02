@@ -725,11 +725,11 @@ class ChiguoState:
                 self.cooldown.last_user_msg_length if self.cooldown.last_user_msg_length is not None else 10
             )
 
-        # 课表状态
+        # 课表状态（schedule_status 门面:节假日/周末恒 not-in-class;课表不可用 → None → 不算 busy）
         in_class = False
         try:
-            sch = self.schedule_parser.query(now)
-            in_class = sch.get("in_class", False)
+            sch = self.schedule_status(now)
+            in_class = bool(sch and sch.get("in_class"))
         except Exception:
             pass
 
@@ -892,7 +892,9 @@ class ChiguoState:
             elif not self.holiday_parser.is_school_day(now):
                 base = 0.85
             else:
-                # ── 第二层：课表判断 ──
+                # ── 第二层:课表判断 ──
+                # 注意:这里必须直连 schedule_parser.query（需区分 available=False 与空闲,
+                # schedule_status 会把两者合并为 None → 丢失 1.0/0.85 的语义）
                 try:
                     sch = self.schedule_parser.query(now)
                 except Exception:
@@ -1040,12 +1042,12 @@ class ChiguoState:
         elif not self.holiday_parser.is_school_day(now):
             anx_hl *= 2.0  # 普通周末，焦虑减速
         else:
-            # 课表调节：主人在上课/今天满课 → 焦虑涨得慢（已知原因，不那么慌）
+            # 课表调节:主人在上课/今天满课 → 焦虑涨得慢（已知原因,不那么慌）
             try:
-                sch = self.schedule_parser.query(now)
-                if sch["in_class"]:
+                sch = self.schedule_status(now)
+                if sch and sch["in_class"]:
                     anx_hl *= 1.8  # 半衰期延长80% → 焦虑几乎不涨
-                elif sch.get("class_load") == "heavy":
+                elif sch and sch.get("class_load") == "heavy":
                     anx_hl *= 1.4  # 满课日 → 焦虑涨得慢
             except Exception:
                 pass
