@@ -40,11 +40,11 @@ TESTS=(test_chiguo_math test_holiday_parser test_integration test_monitor
        test_netease_proof test_netease_service test_envcheck
        test_composer_trade test_personality_init test_toml_binding)
 say "运行脚本测试(2 个文件) ..."
-bash test_install_pi.sh >/dev/null || fail "test_install_pi.sh 失败,中止部署"
-bash test_wechat_bridge.sh >/dev/null || fail "test_wechat_bridge.sh 失败,中止部署"
+bash tests/test_install_pi.sh >/dev/null || fail "test_install_pi.sh 失败,中止部署"
+bash tests/test_wechat_bridge.sh >/dev/null || fail "test_wechat_bridge.sh 失败,中止部署"
 say "运行全量 Python 测试(${#TESTS[@]} 个文件) ..."
 for t in "${TESTS[@]}"; do
-    uv run python "$t.py" >/dev/null || fail "$t.py 失败,中止部署"
+    uv run python "tests/$t.py" >/dev/null || fail "$t.py 失败,中止部署"
 done
 say "全部测试通过 ✓"
 

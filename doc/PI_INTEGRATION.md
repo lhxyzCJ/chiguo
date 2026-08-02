@@ -71,7 +71,7 @@ node scripts/pi-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + 回�
 - **输出解析**：NDJSON 取最后一条 `message_end` 的 text 拼接；analysis-mode 提取
   `<<ANALYSIS>>{...}<<END>>` 块
 - **失败语义**：`{"ok":false,"error":"..."}`；非零退出但 stdout 含完整回复 → salvage 不丢回复
-- 单测：`node test_pi_run.mjs`（19 用例）
+- 单测：`node tests/test_pi_run.mjs`（19 用例）
 
 ## 三、chiguo-tick（系统 crontab 入口）
 
@@ -92,7 +92,7 @@ node scripts/pi-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + 回�
 - → `bot.reply(msg, reply)`
 - 环境变量：`WECHAT_BRIDGE_PI_RUN`（默认仓库内 pi-run.mjs）、`WECHAT_BRIDGE_DAEMON_PY`、
   `WECHAT_BRIDGE_DAEMON`、`WECHAT_BRIDGE_OWNER`、`WECHAT_BRIDGE_SEND_PORT`、`WECHAT_BRIDGE_STORAGE`
-- 测试：`node test_bridge_askpi.mjs`（10 用例）、`node test_bridge_cmd.mjs`（31 用例）
+- 测试：`node tests/test_bridge_askpi.mjs`（10 用例）、`node tests/test_bridge_cmd.mjs`（31 用例）
 
 ## 五、特殊命令（纪念日/假期，方案 A：bridge 规则化）
 
@@ -215,7 +215,7 @@ uv run python chiguo_daemon.py --break status
 uv run python chiguo_envcheck.py
 
 # 测试
-node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && \
-bash test_install_pi.sh --dry-run && \
-bash test_wechat_bridge.sh && uv run python test_*.py   # 全量见 AGENTS.md
+node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && \
+bash tests/test_install_pi.sh --dry-run && \
+bash tests/test_wechat_bridge.sh && uv run python tests/test_*.py   # 全量见 AGENTS.md
 ```

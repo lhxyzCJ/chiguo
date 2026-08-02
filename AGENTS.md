@@ -19,21 +19,21 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && node test_bridge_health.mjs && bash test_install_pi.sh && bash test_wechat_bridge.sh && bash test_tick_health.sh && \
-uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
-uv run python test_integration.py && uv run python test_monitor.py && \
-uv run python test_eventbus.py && uv run python test_personality.py && \
-uv run python test_bayesian.py && uv run python test_composer.py && \
-uv run python test_ebbinghaus.py && uv run python test_longing.py && \
-uv run python test_escape_valve.py && uv run python test_feedback.py && \
-uv run python test_trigger.py && uv run python test_topics.py && \
-uv run python test_circadian.py && uv run python test_followup.py && \
-uv run python test_netease_proof.py && uv run python test_netease_service.py && \
-uv run python test_envcheck.py && uv run python test_composer_trade.py && \
-uv run python test_personality_init.py && uv run python test_toml_binding.py && \
-uv run python test_adapt_personality.py && uv run python test_pi_health.py   # full suite (24 py + 7 script tests)
+node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_tick_health.sh && \
+uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
+uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
+uv run python tests/test_eventbus.py && uv run python tests/test_personality.py && \
+uv run python tests/test_bayesian.py && uv run python tests/test_composer.py && \
+uv run python tests/test_ebbinghaus.py && uv run python tests/test_longing.py && \
+uv run python tests/test_escape_valve.py && uv run python tests/test_feedback.py && \
+uv run python tests/test_trigger.py && uv run python tests/test_topics.py && \
+uv run python tests/test_circadian.py && uv run python tests/test_followup.py && \
+uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
+uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
+uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
+uv run python tests/test_adapt_personality.py && uv run python tests/test_pi_health.py   # full suite (24 py + 7 script tests)
 
-uv run python test_monitor.py                    # single file
+uv run python tests/test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout
 uv run python chiguo_daemon.py --stats --alerts --monitor
 uv run python chiguo_monitor.py --summary --health
@@ -44,7 +44,7 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 
 - Python 3.14 via uv (`.venv` exists, Python 3.14.6). 3.14-only syntax is intentional: bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`.
 - Integration tests require `chiguo_proactive.toml` in CWD → always run from project root.
-- Tests isolate via `tempfile.TemporaryDirectory` and never touch real runtime files (`test_integration.py` injects `_base_dir` into a temp dir). `random.seed(42)` + fixed CST datetimes for determinism.
+- Tests isolate via `tempfile.TemporaryDirectory` and never touch real runtime files (`tests/test_integration.py` injects `_base_dir` into a temp dir). `random.seed(42)` + fixed CST datetimes for determinism.
 
 ## Architecture (fast map)
 
@@ -58,7 +58,7 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 
 - `memory_bridge.py` lazy-imports `lancedb` inside `_ensure_table()` (CLAUDE_CODE_RULES.md §1 claims a hard top-level import — stale; CLAUDE.md is correct): daemon runs with `available=False` when lancedb is absent.
 - `schedule_parser.py` requires `xskb.xlsx`; if missing, falls back to availability=0.85 (free time). `_parse()` returns bool and never overwrites a valid cache with a failed parse.
-- `test_topics.py` anchors `_real_state` with `semester_end` in the past — don't "fix" it to real dates (time-bomb test).
+- `tests/test_topics.py` anchors `_real_state` with `semester_end` in the past — don't "fix" it to real dates (time-bomb test).
 
 ## After any code change
 

@@ -4,7 +4,7 @@ import assert from 'node:assert'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { detectSpecialCommand, inferYear, buildReply, executeSpecialCommand } from './wechat-bridge/command-detect.mjs'
+import { detectSpecialCommand, inferYear, buildReply, executeSpecialCommand } from '../wechat-bridge/command-detect.mjs'
 
 let passed = 0
 const tests = []

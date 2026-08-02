@@ -2,7 +2,7 @@
 """test_composer.py — 消息组合系统单元测试"""
 
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datetime import datetime, timezone, timedelta
 CST = timezone(timedelta(hours=8))

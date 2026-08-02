@@ -10,7 +10,7 @@
 """
 
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pathlib
 import tomllib
@@ -53,7 +53,7 @@ def make_composer():
 def test_toml_files_exist():
     """两个 toml 存在、可解析、含 meta + trigger_templates 段"""
     for name in ("tsundere.toml", "deredere.toml"):
-        p = pathlib.Path(__file__).parent / "personality" / name
+        p = pathlib.Path(__file__).parent.parent / "personality" / name
         assert p.exists(), f"缺少 personality/{name}"
         with open(p, "rb") as f:
             data = tomllib.load(f)

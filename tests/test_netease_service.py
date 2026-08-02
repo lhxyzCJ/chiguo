@@ -14,8 +14,8 @@ import sys
 import tempfile
 from datetime import datetime, timezone, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CST = timezone(timedelta(hours=8))
 NOW = datetime(2026, 7, 31, 22, 30, 0, tzinfo=CST)   # 周五 22:30

@@ -667,7 +667,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_state.py` | 情绪引擎 + 多维人格 + Bayesian + 课表 + 节假日 + 记忆 + circadian/pending_topics + 双作息迁移 (v8) | math, personality, bayesian, schedule_parser, holiday_parser, memory_bridge, chiguo_circadian |
 | `chiguo_circadian.py` | 生物钟学习：双作息双桶分桶（weekday_*/weekend_* 独立估计 + 听歌活跃合并计数）（v7 新增，v8 双桶，纯函数） | 无 |
 | `netease_bridge.py` | 网易云 API 桥接：`fetch_recent_play` 最近播放记录（睡眠窗口内夜间活跃反证 + recent_play_cache.json 缓存）（v8）；`fetch_daily_songs` 每日推荐 + `_api_get` 有限重试（瞬时/5xx 重试 retry_count 次 + 退避）与每日推荐 schema 过滤（v9） | 无（requests） |
-| `chiguo_netease.py` | 网易云策略层（v9）：`NeteaseService` 健康探针/登录失效检测/故障降级链（netease_fault 话题）/音乐+故障双日配额（netease_health.json 原子写）/加权随机选源+换源兜底/peek-consume 两阶段（未选中不消费配额）/话题素材组装（不含链接，零 LLM）；测试 `test_netease_service.py` | netease_bridge |
+| `chiguo_netease.py` | 网易云策略层（v9）：`NeteaseService` 健康探针/登录失效检测/故障降级链（netease_fault 话题）/音乐+故障双日配额（netease_health.json 原子写）/加权随机选源+换源兜底/peek-consume 两阶段（未选中不消费配额）/话题素材组装（不含链接，零 LLM）；测试 `tests/test_netease_service.py` | netease_bridge |
 | `chiguo_trigger.py` | 触发评估（13 种，含 v7 follow_up 接话茬）+ 加权随机选择 | state, math |
 | `chiguo_topics.py` | 话题选择器（8 来源 + 人格调制 + v9 netease 委托） | math, solar_terms, anniversary_manager, chiguo_netease |
 | `chiguo_composer.py` | Intent × Cue × Vibe 三层消息组合（v4） | 无 |
@@ -683,7 +683,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_watchdog.py` | 零依赖独立看门狗（cron 集成）（v4） | 无 |
-| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、LanceDB、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重（与 watchdog 一致），路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `test_envcheck.py` | 无 |
+| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、LanceDB、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重（与 watchdog 一致），路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
 | `chiguo_version.py` | 项目版本号单一来源（`VERSION="1"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
@@ -697,49 +697,49 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `.gitignore` | 忽略运行时备份/临时/锁/token（分析数据跟踪入库供本地分析，见 doc/README.md §运行时数据回流） | 无 |
 | `data/xskb.xlsx` | 课表源文件（替换即更新） | 无 |
 | `data/netease_qr.png` | 网易云登录二维码（--login 生成） | 无 |
-| `test_chiguo_math.py` | 数学库单元测试（26 用例，含 sigmoid/负权重/负半衰期边界） | chiguo_math |
-| `test_holiday_parser.py` | 节假日单元测试（7 用例） | holiday_parser |
-| `test_integration.py` | 集成测试（17 用例，test_1/test_8 已从纯 print 强化为真断言） | chiguo_daemon |
-| `test_monitor.py` | 监控测试 + fuzz 测试（42 用例） | chiguo_monitor |
-| `test_eventbus.py` | EventBus 单元测试（10 用例） | chiguo_eventbus |
-| `test_personality.py` | 人格系统单元测试（19 用例） | chiguo_personality |
-| `test_bayesian.py` | Bayesian 推断测试（18 用例） | chiguo_bayesian |
-| `test_composer.py` | 消息组合测试（10 用例） | chiguo_composer |
-| `test_ebbinghaus.py` | Ebbinghaus 遗忘测试（8 用例） | memory_bridge |
-| `test_longing.py` | 概率累积测试（8 用例） | chiguo_math |
-| `test_escape_valve.py` | 逃生阀单元测试（15 用例，含 v7 sleeping_guard 降级 + 0.85 对照） | chiguo_state, chiguo_trigger |
-| `test_feedback.py` | 反馈闭环测试（10 用例） | chiguo_state, chiguo_monitor |
-| `test_trigger.py` | 触发器引擎单元测试（16 用例：softmax 竞争/anxiety 归一化/时间窗口/memory tz 防护） | chiguo_trigger |
-| `test_topics.py` | 话题选择器单元测试（23 用例：8 源权重/人格调制/Ebbinghaus 路径/v9 netease 注入、门控参数、选中才消费、fail-closed） | chiguo_topics, memory_bridge, chiguo_netease |
-| `test_circadian.py` | 生物钟学习单元测试（34 用例：环形滑动窗口/置信度/损坏数据防护/学习窗口作用于门禁/双桶分桶/迁移/按桶选窗/record_active 合并） | chiguo_circadian |
-| `test_followup.py` | 接话茬单元测试（14 用例：pending 管理/钟形权重/多话题/记忆兜底/FakeBridge） | chiguo_state, chiguo_trigger, memory_bridge |
-| `test_netease_proof.py` | 听歌反证单元测试（31 用例：fetch_recent_play 解析/缓存/降级 + `_api_get` 重试策略与每日推荐 schema 过滤 + 非 dict 响应降级 + 窗口内反证 sleeping 压制/按播放时刻分桶/逃生阀放行 + netease 跨触发注入规则） | netease_bridge, chiguo_daemon |
-| `test_netease_service.py` | 网易云策略层单元测试（30 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题绕过门控+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | chiguo_netease, netease_bridge |
-| `test_composer_trade.py` | 组合权衡测试（5 用例：cue 权重重排、trade_tsundere 交易式撒娇） | chiguo_composer |
-| `test_personality_init.py` | 初始人格值对齐原著测试（2 用例） | chiguo_personality |
-| `test_toml_binding.py` | personality toml 接线测试（7 用例：toml 存在、meta.name、cue↔模板关联、参考台词注入） | chiguo_composer, chiguo_proactive.toml |
-| `test_adapt_personality.py` | 基线回归防漂移测试（v10，2 用例：300 次热情回复不甜妹化/200 次沉默不极端化） | chiguo_personality |
+| `tests/test_chiguo_math.py` | 数学库单元测试（26 用例，含 sigmoid/负权重/负半衰期边界） | chiguo_math |
+| `tests/test_holiday_parser.py` | 节假日单元测试（7 用例） | holiday_parser |
+| `tests/test_integration.py` | 集成测试（17 用例，test_1/test_8 已从纯 print 强化为真断言） | chiguo_daemon |
+| `tests/test_monitor.py` | 监控测试 + fuzz 测试（42 用例） | chiguo_monitor |
+| `tests/test_eventbus.py` | EventBus 单元测试（10 用例） | chiguo_eventbus |
+| `tests/test_personality.py` | 人格系统单元测试（19 用例） | chiguo_personality |
+| `tests/test_bayesian.py` | Bayesian 推断测试（18 用例） | chiguo_bayesian |
+| `tests/test_composer.py` | 消息组合测试（10 用例） | chiguo_composer |
+| `tests/test_ebbinghaus.py` | Ebbinghaus 遗忘测试（8 用例） | memory_bridge |
+| `tests/test_longing.py` | 概率累积测试（8 用例） | chiguo_math |
+| `tests/test_escape_valve.py` | 逃生阀单元测试（15 用例，含 v7 sleeping_guard 降级 + 0.85 对照） | chiguo_state, chiguo_trigger |
+| `tests/test_feedback.py` | 反馈闭环测试（10 用例） | chiguo_state, chiguo_monitor |
+| `tests/test_trigger.py` | 触发器引擎单元测试（16 用例：softmax 竞争/anxiety 归一化/时间窗口/memory tz 防护） | chiguo_trigger |
+| `tests/test_topics.py` | 话题选择器单元测试（23 用例：8 源权重/人格调制/Ebbinghaus 路径/v9 netease 注入、门控参数、选中才消费、fail-closed） | chiguo_topics, memory_bridge, chiguo_netease |
+| `tests/test_circadian.py` | 生物钟学习单元测试（34 用例：环形滑动窗口/置信度/损坏数据防护/学习窗口作用于门禁/双桶分桶/迁移/按桶选窗/record_active 合并） | chiguo_circadian |
+| `tests/test_followup.py` | 接话茬单元测试（14 用例：pending 管理/钟形权重/多话题/记忆兜底/FakeBridge） | chiguo_state, chiguo_trigger, memory_bridge |
+| `tests/test_netease_proof.py` | 听歌反证单元测试（31 用例：fetch_recent_play 解析/缓存/降级 + `_api_get` 重试策略与每日推荐 schema 过滤 + 非 dict 响应降级 + 窗口内反证 sleeping 压制/按播放时刻分桶/逃生阀放行 + netease 跨触发注入规则） | netease_bridge, chiguo_daemon |
+| `tests/test_netease_service.py` | 网易云策略层单元测试（30 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题绕过门控+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | chiguo_netease, netease_bridge |
+| `tests/test_composer_trade.py` | 组合权衡测试（5 用例：cue 权重重排、trade_tsundere 交易式撒娇） | chiguo_composer |
+| `tests/test_personality_init.py` | 初始人格值对齐原著测试（2 用例） | chiguo_personality |
+| `tests/test_toml_binding.py` | personality toml 接线测试（7 用例：toml 存在、meta.name、cue↔模板关联、参考台词注入） | chiguo_composer, chiguo_proactive.toml |
+| `tests/test_adapt_personality.py` | 基线回归防漂移测试（v10，2 用例：300 次热情回复不甜妹化/200 次沉默不极端化） | chiguo_personality |
 | `scripts/pi-run.mjs` | **pi 调用统一封装**（Phase 4）：生成/分析两模式，`[host]` 配置 + PIRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage | node |
 | `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → pi-run（PIRUN_SESSION=chiguo-send）→ bridge /send → --record-send | bash, node, curl |
 | `scripts/install_pi.sh` | **pi 环境安装器**（Phase 4）：memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟（三模式幂等） | bash |
 | `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askPi 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
 | `wechat-bridge/command-detect.mjs` | **特殊命令检测/执行**（Phase 4）：纪念日/假期规则化（方案 A），daemon JSON → 迟菓风确认 | node |
 | `scripts/pi_health.py` | **pi 假死状态机**：askPi/tick 成败记账（flock+原子写 `pi_health.json`），transition=down/up 产出告警/恢复文案；bridge（bot.send）与 tick（curl /send）只负责投递 | python, stdlib |
-| `test_pi_health.py` | pi_health 状态机测试（8 用例：阈值/去重/恢复/原因保留/toml 读取/无效阈值回退/恢复后原因重捕获/原子写） | pi_health |
-| `test_bridge_health.mjs` | bridge 记账+告警链路测试（6 用例：特殊命令不记账/去重/恢复/零告警/记账崩溃不阻塞/reply 失败不误记） | bridge.mjs |
-| `test_tick_health.sh` | tick 记账+告警链路测试（4 用例：temp repo + recorder 服务） | chiguo-tick.sh |
-| `test_bridge_cmd.mjs` | 特殊命令测试（31 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
-| `test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
+| `tests/test_pi_health.py` | pi_health 状态机测试（8 用例：阈值/去重/恢复/原因保留/toml 读取/无效阈值回退/恢复后原因重捕获/原子写） | pi_health |
+| `tests/test_bridge_health.mjs` | bridge 记账+告警链路测试（6 用例：特殊命令不记账/去重/恢复/零告警/记账崩溃不阻塞/reply 失败不误记） | bridge.mjs |
+| `tests/test_tick_health.sh` | tick 记账+告警链路测试（4 用例：temp repo + recorder 服务） | chiguo-tick.sh |
+| `tests/test_bridge_cmd.mjs` | 特殊命令测试（31 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
+| `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 | `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟主人消息/`s` 刷新状态 | 无 |
 | `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → pi 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
 | `scripts/wechat-bridge.sh` | 微信桥管理脚本：install/start/stop/status/login（新设备扫码兜底） | bash |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
 
-共计 **400+** 个测试用例（24 个 py 测试文件；另含 node 侧 test_pi_run.mjs 19 用例 + test_bridge_askpi.mjs 10 用例 + test_bridge_cmd.mjs 31 用例、bash 侧 test_install_pi.sh（14 用例）/ test_wechat_bridge.sh，见 doc/README.md）。
+共计 **400+** 个测试用例（24 个 py 测试文件；另含 node 侧 tests/test_pi_run.mjs 19 用例 + tests/test_bridge_askpi.mjs 10 用例 + tests/test_bridge_cmd.mjs 31 用例、bash 侧 tests/test_install_pi.sh（14 用例）/ tests/test_wechat_bridge.sh，见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
-> `test_holiday_parser.py` 7/7 用例通过。
+> `tests/test_holiday_parser.py` 7/7 用例通过。
 
 ---
 
@@ -1289,7 +1289,7 @@ python3 chiguo_monitor.py --health
 
 ### 10.5 Fuzz 测试
 
-`test_monitor.py` 含 fuzz 测试：随机 200 条合法条目、边界极值（None/负数/超长字符串）、空日志+100条纯idle。确保 monitor 在任意输入下不崩溃。
+`tests/test_monitor.py` 含 fuzz 测试：随机 200 条合法条目、边界极值（None/负数/超长字符串）、空日志+100条纯idle。确保 monitor 在任意输入下不崩溃。
 
 ### 10.6 设计原则
 
