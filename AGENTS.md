@@ -6,6 +6,8 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 
 **Spec/plan 归档约定**：设计文档与实施计划**一律写到项目外 `~/chiguo-meta/`**（`specs/` 与 `plans/` 子目录，不进 git）；`doc/` 只放正式系统文档，仓库内不再出现 `docs/superpowers/`。
 
+**双 README 铁律**：README 改动必须**双文件同步**（`README.md` 中文默认 + `README_EN.md` 英文）；`README.md` 顶部声明英文版可能滞后、以中文版为准。
+
 ## Iron rules
 
 - **Decision/generation separation**: the daemon outputs structured JSON, never messages. Do not merge LLM logic into the daemon.
@@ -47,7 +49,7 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 ## Architecture (fast map)
 
 - `chiguo_daemon.py` (DecisionEngine) → `chiguo_state.py` (5-dim emotion engine + 8-dim personality + schedule/holidays/memory + circadian/pending_topics), `chiguo_trigger.py` (13 sigmoid-weighted trigger types incl. v7 follow_up, no hard thresholds), `chiguo_topics.py` (8-source topic injection: schedule/memory/weather/general/anniversary/solar_terms/preference_followup + v9 netease via NeteaseService), `chiguo_composer.py` (Intent × Cue × Vibe), `chiguo_math.py` (pure functions), `chiguo_bayesian.py` (6 user states), `chiguo_circadian.py` (dual-bucket circadian sleep-window learning: weekday/weekend + play-activity merging), `netease_bridge.py` (fetch_recent_play: play proof inside quiet window, cached; v9: `_api_get` limited retry w/ backoff + daily-recommendation schema filter), `chiguo_netease.py` (v9 NeteaseService strategy layer: netease_health.json health/login-expiry detection/degradation chain/peek-consume two-phase quota/random source pick/music_topic material), `chiguo_eventbus.py` (pub/sub singleton), `chiguo_version.py` (project version single source: VERSION="1", +0.1 per round; decision JSON/--version/envcheck/monitor carry it).
-- Everything tunable in `chiguo_proactive.toml` (277 lines); hot-reloads via mtime check in `--loop` mode only (cron spawns fresh processes).
+- Everything tunable in `chiguo_proactive.toml` (314 lines); hot-reloads via mtime check in `--loop` mode only (cron spawns fresh processes).
 - Output: `chiguo_decisions.jsonl` (append-only). State: `chiguo_state.json` (atomic `.tmp` → `os.replace`, `.bak` backup, SHA256 checksum, monotonic `tick_seq`). Runtime files are `.gitignore`d.
 - CLI convention: JSON to stdout, diagnostics to stderr. Always use `CST = timezone(timedelta(hours=8))` — never naive datetimes.
 - OpenClaw integration (v12) → **pi-agent integration (Phase 4, v1.4)**: 发送侧 `scripts/chiguo-tick.sh`（系统 crontab 每 15 分钟；`chiguo_daemon.py --compact` 零模型门控，send 才调 pi）+ 回复侧 bridge `askPi`（`scripts/pi-run.mjs --prompt <原文> --analysis-mode`，一次完成情绪分析 JSON + 回复，daemon recv_dedup 升级语义）+ 特殊命令（纪念日/假期）由 bridge 规则化确定性接管（`wechat-bridge/command-detect.mjs`，不经 pi）；`scripts/install_pi.sh` 引导 pi 环境（provider key 随 toml [host].provider，缺省 opencode-go/memory-lancedb-pro/crontab）；详见 `doc/PI_INTEGRATION.md`。OpenClaw 链路已停用（`openclaw cron disable chiguo-check`），回退参考 `doc/OPENCLAW_INTEGRATION.md`。微信发送走 wechat-bridge (`wechat-bridge/bridge.mjs` 随仓库部署, HTTP POST 127.0.0.1:18790/send, 必须 --noproxy '*'; 管理脚本 `scripts/wechat-bridge.sh` install/start/stop/status/login, deploy.sh 第 5.5 步接入); 回复侧 bridge 确定性 `--user-msg` + pi 补分析 (daemon recv_dedup 升级语义, 见 CooldownState.recv_dedup). 登录态存仓库 `wechat-bridge/credentials/` git 跟踪 (private 仓库, 新设备 clone 即保留登录, 失效自动重登). 会话并发模型：回复=chiguo-main（bridge 内 TurnQueue 串行）、主动发送=chiguo-send（tick 经 PIRUN_SESSION 注入）——两进程零共享会话。

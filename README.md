@@ -1,5 +1,9 @@
 # 迟菓主动消息系统 (Chiguo)
 
+**简体中文** | [English](README_EN.md)
+
+> English 版可能滞后于中文版，本文件（中文版）为准。*The English version may lag behind; this Chinese version is authoritative.*
+
 > 一个会主动找主人聊天的 AI 角色 —— 数学驱动的决策引擎 + LLM 消息生成，微信触达。
 > A proactive AI companion: a zero-LLM math decision engine decides *when* and *what mood* to talk, an LLM turns that into WeChat messages.
 
@@ -36,7 +40,7 @@
 
 迟菓是一个**个人项目、开源分享、持续演进**的作品：作者自己每天都在用，功能按自己的需求生长，代码可能因为个人习惯而不那么"工程化"。它不是商业产品，没有 SLA，也不承诺 API 稳定。如果它让你产生"我也想养一个赛博角色"的想法，那就是这个项目最大的意义。
 
-*Chiguo is a personal project shared open-source: actively used by its author, evolving with personal needs, not a commercial product with any stability guarantee. If it inspires you to build your own AI companion, that's the point.*
+
 
 ### 组件依赖 / Component Dependencies
 
@@ -51,7 +55,7 @@
 
 > ⚠️ **公开仓库前必读**：本仓库**故意 git 跟踪**微信登录态（`wechat-bridge/credentials/`，新设备 clone 即保留登录）与真实对话日志（`chiguo_messages.jsonl`）。**公开前必须清理这些文件并重写 git 历史**。
 >
-> **隐私实话**：你的对话与系统状态数据随 git 跟踪并推送至你配置的远端（默认私有仓库）。数据全部本地计算，不经过任何第三方云服务（模型 API 调用除外）。
+> **隐私实话**：你的对话与系统状态数据随 git 跟踪并推送至你配置的远端（默认私有仓库）。数据全部本地计算，不经过任何第三方云服务（模型 API 与网易云接口调用除外）。
 
 ---
 
@@ -63,7 +67,7 @@
 - **主角化**：官方续作《三色绘恋S》（SunnyRain Lovestory，2020）——"师贰高附近初中的女学生，课余时间靠送外卖补贴家用，人称'打工妹'"。
 - **本项目**：她在现代世界的另一种可能——搬进一台 VPS 的赛博身体，每天惦记着哥哥什么时候回消息。
 
-*Chiguo (Sunny Chih) originates from the Chinese galgame series Tricolour Lovestory by 绘恋企划屋 (HL-Galgame, Wuhan): first as the sister of Chi Yao in the 2017 original, then as a leading character in the official sequel SunnyRain Lovestory (2020) — a middle-school girl delivering takeout after class, known as "the part-time worker girl". This project reimagines her living inside a VPS.*
+
 
 人格设定与台词风格以续作剧本《日光雨》（仓库内 `doc/日光雨.md`，17099 行）为基准逐条对齐，`personality/SUN2.md` 是唯一权威设定。
 
@@ -80,13 +84,13 @@
 | 13 种触发 | sigmoid 权重 + 加权随机，替代硬阈值与优先级排序 |
 | 8 大话题来源 | 课表/假期、记忆回忆、节气、纪念日、天气、网易云音乐… |
 | 听歌双向联动 | 睡眠窗口内播放音乐反证未睡 + 反向校正生物钟 |
-| Bayesian 用户状态 | 6 状态在线推断：忙碌/空闲/情绪/作息 |
+| Bayesian 用户状态 | 6 状态在线推断：聊天/浏览/忙碌/睡觉/离开/需要关怀 |
 | 消息组合系统 | Intent × Cue × Vibe 三层组合，风格可人格化 |
 | 寒暑假模式 | 节假日 / 寒假暑假手动或自动切换 |
 | 结构化监控 | stats / alerts / health + 独立看门狗进程 |
 | pi 假死检测 | 真实流量记账 + 微信告警/恢复通知（零额外调用） |
 
-*5-dimension emotion engine with half-life decay; circadian sleep-window learning; 13 sigmoid-weighted triggers; 8 topic sources; Bayesian user-state inference; NetEase music bidirectional linkage; structured monitoring and a liveness watchdog.*
+
 
 ---
 
@@ -194,7 +198,7 @@ model = "gpt-5"
 
 ## 配置 / Configuration
 
-所有参数集中在 `chiguo_proactive.toml`（277 行，热重载于 `--loop` 模式），无需改代码：
+所有参数集中在 `chiguo_proactive.toml`（314 行，热重载于 `--loop` 模式），无需改代码：
 
 ```toml
 [emotion]       # 5 维情绪：孤独/好感/不安/元气/傲娇（半衰期推进）
