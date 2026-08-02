@@ -37,13 +37,12 @@ from pathlib import Path
 from chiguo_state import ChiguoState
 from chiguo_trigger import evaluate_triggers
 from chiguo_topics import TopicPicker
-from chiguo_netease import NeteaseService
+from netease.service import NeteaseService
 from chiguo_composer import MessageComposer
 from chiguo_version import VERSION
 from chiguo_math import in_quiet_window, longing_accumulate
 from chiguo_eventbus import get_eventbus
 from chiguo_circadian import bucket_for
-import netease_bridge
 
 CST = timezone(timedelta(hours=8))
 
@@ -519,19 +518,15 @@ class DecisionEngine:
         反证成立时把窗口内播放时间记入活跃(active_days,按播放时刻分桶),
         重算生物钟学习窗口并同步门禁(_sync_quiet_window)。"""
         play_proof = False
-        if not self.config.get("netease", {}).get("enabled", True):
+        if not self.netease_service.enabled:
             return False  # 网易云可选来源未启用 → 不拉取
         qs, qe = self.state.cooldown.quiet_window()
         if not in_quiet_window(now, qs, qe):
             return False
         try:
-            ncfg = self.config.get("netease", {})
-            plays = netease_bridge.fetch_recent_play(
-                limit=20,
-                ttl_minutes=ncfg.get("play_cache_ttl_minutes", 15),
-                cache_file=str(self._base_dir / "recent_play_cache.json"))
+            plays = self.netease_service.fetch_play_proof(now)
             if plays:
-                proof_win_h = ncfg.get("play_proof_window_hours", 2.0)
+                proof_win_h = self.config.get("netease", {}).get("play_proof_window_hours", 2.0)
                 now_ms = now.timestamp() * 1000
                 recent = [p for p in plays
                           if 0 <= now_ms - p.get("playTime", 0) <= proof_win_h * 3600 * 1000]
