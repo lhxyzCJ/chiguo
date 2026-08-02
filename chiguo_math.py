@@ -4,6 +4,7 @@
 
 import math
 import random
+from datetime import datetime
 from datetime import datetime as _dt
 
 
@@ -165,3 +166,10 @@ def longing_decay(
     λ 向 base_lambda 回归，不回到底（保留部分惯性）。
     """
     return base_lambda + (current_lambda - base_lambda) * decay_factor
+
+
+def in_quiet_window(dt: datetime, start: int, end: int) -> bool:
+    """跨午夜静默窗口判定:end < start → [start, 24)∪[0, end);否则 [start, end)。"""
+    if end < start:
+        return dt.hour >= start or dt.hour < end
+    return start <= dt.hour < end

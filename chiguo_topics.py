@@ -12,7 +12,7 @@ from datetime import datetime
 from chiguo_math import weighted_trigger_choice
 from solar_terms import SolarTerms
 from anniversary_manager import AnniversaryManager
-from chiguo_netease import _in_quiet_window
+from chiguo_math import in_quiet_window
 
 
 class TopicPicker:
@@ -362,7 +362,7 @@ class TopicPicker:
             return None  # 门控信息不可得 → 不发音乐话题(fail-closed)
         try:
             qs, qe = self.state.cooldown.quiet_window()
-            in_quiet = _in_quiet_window(now, int(qs), int(qe))
+            in_quiet = in_quiet_window(now, int(qs), int(qe))
         except Exception:
             return None
         try:
