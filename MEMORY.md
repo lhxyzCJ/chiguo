@@ -1,5 +1,20 @@
 # MEMORY.md
 
+## 2026-08-02 — OpenClaw 记忆库迁移至 ~/.pi-agent/memory + deepseek key 保留确认（TDD + 全量审计）
+
+**背景**：用户计划整体删除 `~/.openclaw`（4.3G，OpenClaw 已停用），需把仍在使用的 LanceDB 记忆库（195 条，autoCapture 持续写入）迁出；同时确认 `auth.json` 的 deepseek key 保留（后续会用到，install_pi.sh 只写 opencode-go 条目天然保留）。
+
+**方案（TDD 红→绿）**：
+- **数据迁移**：`~/.openclaw/memory/lancedb-pro`（195 条主库）→ `~/.pi-agent/memory/lancedb-pro`（与扩展 fork 同级）；删除扩展默认路径残留库 `~/.pi/agent/memory/lancedb-pro`（7 条早期测试数据）。迁移后扩展加载日志确认 `db: /root/.pi-agent/memory/lancedb-pro` + `smartExtraction: ON`
+- **测试先行（红）**：test_install_pi.sh JSON5_OK 期望 + 阶段 3 grep 校验改新路径（红：模板仍旧路径时用例 3 失败）；test_envcheck.py 新增 `test_lancedb_default_path_migrated`（默认路径断言 + 回归防护力验证：toml 改回旧路径能被捕获）
+- **代码更新（绿）**：11 处——toml `lancedb_path`（:22）+ 环境注释（:300）、memory_bridge.py:43 / monitor:58+80 / watchdog:203 / envcheck:239 默认值、daemon.py:698 personality fallback `~/.openclaw/workspace/skills/chiguo` → 仓库 `personality/`（[host].personality_dir 已配，fallback 仅兜底）、deploy.sh:30 文案、install_pi.sh 模板/grep/文案（10/170/174/178/187/317 行）、pi 侧 `~/.pi/agent/memory-lancedb-pro.json5` dbPath（留 .bak）
+- **stale pyc 教训**：改默认路径后 Python 仍报旧值——`__pycache__/memory_bridge.cpython-314.pyc` 未刷新（文件 mtime 一致仍被复用），`rm -rf __pycache__` 后正常。改动 .py 后如遇诡异旧值，先清 pyc
+- **文档**：README.md（部署段落）、doc/PI_INTEGRATION.md（:51/:130）、doc/SYSTEM.md（:506/:987）、AGENTS.md（:3/:10）、CLAUDE.md（:147）、CLAUDE_CODE_RULES.md（§11/§16）全部同步新路径 + OpenClaw 将删声明
+- **版本号不变**（用户指示：小改动）；wechatbot/memory-lancedb-pro fork README 不动（无代码改动）
+- 运行时文件（chiguo_state.json/chiguo_decisions.jsonl/netease_health.json）的 cron 副作用照常提交
+
+**验证**：script 测试 7 个全过、Python 23 个全过（test_monitor 的 test_health_ok 为既有环境性失败——lancedb 未装，git stash 基线对比确认与本次无关）；`memory-pro stats` 新库 195 条（fact 56/reflection 69/preference 44/decision 24/other 2）；pi 真实调用扩展加载新库 smartExtraction ON；envcheck 6 ok/2 warn/0 critical ready；bridge 重启 HTTP 405 正常；一致性 grep 确认运行时引用零残留（仅废弃 openclaw 脚本 + toml 注释 + test_envcheck 替换串）；4 轴审计通过（正确性/一致性/回归/安全）；deepseek key 完好（sk-a8592…，auth.json 600）
+
 ## 2026-08-02 — 任务 14 评审修复：真实 daemon shape 验证固化 + bridge 链路测试 + 检测边界收紧
 
 **背景**：Task 14 评审 2 项 Important + 6 项 Minor 修复。

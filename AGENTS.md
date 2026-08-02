@@ -1,13 +1,13 @@
 # AGENTS.md
 
-迟菓主动消息系统 (Chiguo proactive message system) — a zero-LLM math engine (`chiguo_daemon.py`) that decides when/what to send as JSON; pi-agent (Phase 4 起；OpenClaw 已停用) reads that JSON, generates the WeChat message, and sends it via wechat-bridge. Project root: the repo checkout directory (this repo is on GitHub; clone it anywhere, e.g. `/root/chiguo` on the dev machine). Always run commands from the repo root. Machine-specific paths (`~/.openclaw/...` 历史记忆库、`~/.pi/...`) live in `chiguo_proactive.toml`；`deploy.sh` bootstraps a fresh machine.
+迟菓主动消息系统 (Chiguo proactive message system) — a zero-LLM math engine (`chiguo_daemon.py`) that decides when/what to send as JSON; pi-agent (Phase 4 起；OpenClaw 已停用) reads that JSON, generates the WeChat message, and sends it via wechat-bridge. Project root: the repo checkout directory (this repo is on GitHub; clone it anywhere, e.g. `/root/chiguo` on the dev machine). Always run commands from the repo root. Machine-specific paths (`~/.pi-agent/memory/lancedb-pro` 记忆库、`~/.pi/...`) live in `chiguo_proactive.toml`；`deploy.sh` bootstraps a fresh machine.
 
 Existing instruction sources to read before editing: `CLAUDE.md` (setup + architecture), `CLAUDE_CODE_RULES.md` (detailed module map, decision schema, known design decisions), `doc/SYSTEM.md`, `doc/IMPROVE.md` (fix log), `MEMORY.md` (change history, newest first).
 
 ## Iron rules
 
 - **Decision/generation separation**: the daemon outputs structured JSON, never messages. Do not merge LLM logic into the daemon.
-- **Security boundary**: never modify anything under `/root/.openclaw/` except `/root/.openclaw/workspace/skills/chiguo/` and `/root/.openclaw/workspace/agents/main/`. LanceDB memory is read-only, accessed only via `memory_bridge.py`.
+- **Security boundary**: OpenClaw 已停用（`~/.openclaw` 可整体删除，勿恢复引用）。LanceDB 记忆库位于 `~/.pi-agent/memory/lancedb-pro`，只读访问仅经 `memory_bridge.py`。
 - Before fixing: make a plan/todolist, dispatch parallel subagents, and self-audit with subagents after finishing. Subagents inherit the main model (do not override via `model` param); never use opus without explicit user authorization.
 
 ## Test & run

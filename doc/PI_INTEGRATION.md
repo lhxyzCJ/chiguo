@@ -48,7 +48,7 @@ bash deploy.sh                         # 或随部署一起（传 --skip-pi 跳�
 | 0 探测 | `pi --version`（缺失 → 严重）；`OPENCODE_API_KEY` 可用性提示 |
 | 1 memory-lancedb-pro | clone `github.com/lhxyzCJ/TestForPi-memory-lancedb-pro` → `~/.pi-agent/`，缺 dist 才 `npm install && npm run build` |
 | 2 settings.json | `extensions` 写 `~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`（修正 Windows 残留路径） |
-| 3 json5 配置 | 写 `~/.pi/agent/memory-lancedb-pro.json5`（dbPath=~/.openclaw/memory/lancedb-pro + ollama embedding + deepseek llm + autoCapture/autoRecall/smartExtraction） |
+| 3 json5 配置 | 写 `~/.pi/agent/memory-lancedb-pro.json5`（dbPath=~/.pi-agent/memory/lancedb-pro + ollama embedding + deepseek llm + autoCapture/autoRecall/smartExtraction） |
 | 4 ollama | `curl localhost:11434/api/tags` 有 `qwen3-embedding:0.6b`（缺 → 提示/`ollama pull`） |
 | 5 auth.json | `opencode-go` 条目（key 从 `OPENCODE_API_KEY` 环境变量读，不落盘明文，chmod 600） |
 | 6 crontab | 注册 `*/15 * * * * scripts/chiguo-tick.sh >> logs/cron-tick.log 2>&1`（幂等，旧条目整行替换） |
@@ -127,8 +127,8 @@ openclaw standing order 停用后，纪念日/假期指令由 **bridge 确定性
 
 - 扩展：`~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`
   （settings.json `extensions` 注册；安装器修正 Windows 残留路径）
-- 配置：`~/.pi/agent/memory-lancedb-pro.json5` —— `dbPath=~/.openclaw/memory/lancedb-pro`
-  （**复用历史 LanceDB 库**，只读语义不变）、embedding=ollama `qwen3-embedding:0.6b`（1024 维，localhost:11434）、
+- 配置：`~/.pi/agent/memory-lancedb-pro.json5` —— `dbPath=~/.pi-agent/memory/lancedb-pro`
+  （**历史 LanceDB 库**，OpenClaw 已停用，`~/.openclaw` 可整体删除；只读语义不变）、embedding=ollama `qwen3-embedding:0.6b`（1024 维，localhost:11434）、
   llm=deepseek、autoCapture/autoRecall/smartExtraction 开、sessionMemory 关
 - CLI 冒烟：`~/.pi-agent/.../node_modules/.bin/memory-pro stats`
 - 降级：ollama 不可达 → 记忆 embedding 降级（自动捕获/召回不可用，不影响 daemon 主链路）；

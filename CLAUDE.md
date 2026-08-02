@@ -144,6 +144,6 @@ All auto-generated at first run, all in `.gitignore`:
 
 ## 安全边界
 
-**严禁修改除了 `/root/.openclaw/workspace/skills/chiguo/`和`/root/.openclaw/workspace/agents/main/` 下的任何openclaw文件。** 那是 OpenClaw 的运行时目录（LanceDB 数据库、插件、配置等），不属于本项目。本项目只通过 `memory_bridge.py` 进行只读查询。
+**OpenClaw 已停用**：`/root/.openclaw/` 是旧宿主运行时目录（LanceDB 数据库、插件、配置等），已不再使用，可整体删除——本项目不得恢复对其的引用。记忆库已迁至 `~/.pi-agent/memory/lancedb-pro`，本项目只通过 `memory_bridge.py` 进行只读查询。
 
 
