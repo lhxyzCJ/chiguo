@@ -4,7 +4,7 @@
 #
 # 只做一件事：评估状态 → 输出触发决策（JSON）。
 # 不生成消息，不调用 LLM，不发送。
-# 消息生成和发送由 OpenClaw 的 cron + chiguo skill 完成。
+# 消息生成和发送由 pi-agent（scripts/pi-run.mjs）完成。
 #
 # 用法：
 #   python3 chiguo_daemon.py              # 检查并输出决策 JSON
@@ -13,9 +13,9 @@
 #   python3 chiguo_daemon.py --loop 120   # 持续运行（调试用）
 #
 # cron 集成：
-#   在 OpenClaw 中创建 cron，执行本脚本。
-#   若 stdout 输出含 "action":"send"，OpenClaw 读取 context
-#   字段，用 chiguo skill 生成消息，通过 weixin 通道发出。
+#   系统 crontab 每 15 分钟经 scripts/chiguo-tick.sh 执行本脚本。
+#   若 stdout 输出含 "action":"send"，chiguo-tick.sh 调 pi 读取 context
+#   字段生成消息，经 wechat-bridge 发出。
 #   若输出 "action":"idle"，什么都不做。
 # ============================================================
 
@@ -390,7 +390,7 @@ class DecisionEngine:
             self.state.cooldown.trigger_history = \
                 self.state.cooldown.trigger_history[-history_max:]
 
-        # 4. 构建上下文（给 OpenClaw 生成消息用）
+        # 4. 构建上下文（给 pi-agent 生成消息用）
         context = self._build_context(trigger, now)
 
         # 4.5 保存 prev_send_was_replied（必须在 on_character_message 递增 messages_without_reply 之前）
@@ -398,7 +398,7 @@ class DecisionEngine:
         prev_send_was_replied = self.state.cooldown.messages_without_reply == 0
 
         # 4.6 v6 修复: 决策时生成 msg_id，写入 Hawkes 事件 + decision JSON，
-        # 供 OpenClaw --send-result 回传后按 msg_id 精确退款（乱序回传不再删错事件）
+        # 供 --send-result 回传后按 msg_id 精确退款（乱序回传不再删错事件）
         msg_id = self._make_msg_id()
 
         # 5. 更新状态（标记已触发）
@@ -619,7 +619,7 @@ class DecisionEngine:
 
     def _estimate_next_check(self, now: datetime, idle_reason: str) -> str | None:
         """估算下次评估的最优时间。idle 决策时提供动态调度提示。
-        OpenClaw 可据此替代固定 cron 间隔。"""
+        调度方（chiguo-tick.sh）可据此替代固定 cron 间隔。"""
         cfg_emo = self.config.get("emotion", {})
         cfg_cooldown = self.config.get("cooldown", {})
 
@@ -693,12 +693,11 @@ class DecisionEngine:
         """构建给 pi-agent 生成消息的上下文。v4: 使用 MessageComposer + 人格注入。"""
         emo = self.state.emotion
         silent_h = self.state.cooldown.silent_hours(now)
-        # v14: 人格目录以 [host].personality_dir 为准（随仓库部署）；[openclaw].personality_source 仅作回退兼容
+        # v14: 人格目录以 [host].personality_dir 为准（随仓库部署）
         host_cfg = self.config.get("host", {})
-        oc_cfg = self.config.get("openclaw", {})
         personality_dir = os.path.expanduser(
-            host_cfg.get("personality_dir", oc_cfg.get("personality_source", os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "personality"))))
+            host_cfg.get("personality_dir", os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "personality")))
 
         # 按人格层映射语气指引
         layer_guidance = {
@@ -854,7 +853,7 @@ class DecisionEngine:
                 "不要话题一转就直接表达情感需求——先好好聊话题。"
             )
 
-        # ── v7: 接话茬素材注入(供 OpenClaw 生成)──
+        # ── v7: 接话茬素材注入(供 pi-agent 生成)──
         if trigger.type == "follow_up":
             instruction += (
                 f"\n用「{trigger.data.get('topic', '')}」这个之前没聊完的话题自然接话茬,"
@@ -1023,7 +1022,7 @@ class DecisionEngine:
 
     def record_send_text(self, msg_id: str, text: str,
                          trigger: str = None, intensity: str = None):
-        """记录已发送消息文本（OpenClaw 发送后回调）。
+        """记录已发送消息文本（发送侧回调）。
         仅写 chiguo_messages.jsonl —— decisions.jsonl 已有 send 决策条目。
         trigger/intensity 从 send 决策中提取，使 messages.jsonl 自包含。
         """
@@ -1051,7 +1050,7 @@ class DecisionEngine:
         return False
 
     def record_send_result(self, msg_id: str, status: str, error: str = None):
-        """v6 反馈闭环: OpenClaw 发送后回传结果。
+        """v6 反馈闭环: 发送后回传结果。
         success → 记录 delivered；failed → 退款（情绪消耗/额度回滚）+ 记录。
         幂等: 同一 msg_id 重复上报不再退款（日志按 msg_id 去重）。
         time 用 %Y-%m-%d %H:%M 格式（与 snapshot 一致，monitor _extract_time 依赖）。"""

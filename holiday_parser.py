@@ -142,7 +142,7 @@ class HolidayParser:
             "is_weekend": bool,
             "is_makeup_workday": bool,
             "is_school_day": bool,
-            "hint": str,          # 给 OpenClaw 的上下文提示
+            "hint": str,          # 给模型后端的上下文提示
           }
         """
         return {

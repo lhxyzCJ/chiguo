@@ -1,4 +1,4 @@
-// test_pi_run.mjs — pi-run 解析逻辑 + 调用链路测试（独立 runner，仿 test_trigger_script.js）
+// test_pi_run.mjs — pi-run 解析逻辑 + 调用链路测试（独立 runner）
 // 用法: node test_pi_run.mjs（退出码 0=全过，1=有失败）
 import assert from 'node:assert'
 import { readToml, parseNdjson, extractAnalysis, runPiBin, run } from './scripts/pi-run.mjs'

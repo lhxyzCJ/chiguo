@@ -4,22 +4,16 @@
 # ============================================================
 
 # ────────────────────────────────────────────────────────────
-# [openclaw] 已废弃（Phase 4 Task 14：由 [host] 取代）
-# 消息生成/情绪分析已迁移到 pi-agent（scripts/pi-run.mjs 读 [host] 段）；
-# 本段仅保留 wechat_recipient（chiguo-tick.sh / wechat-bridge.sh 发送目标仍读取），
-# 其余键仅为回退兼容（chiguo_daemon.py _build_context 在 [host] 缺 personality_dir 时兜底）。
+# [wechat] 微信发送目标
+# 本段仅保留 wechat_recipient（chiguo-tick.sh / wechat-bridge.sh 按 key 名读取发送目标）
 # ────────────────────────────────────────────────────────────
-[openclaw]
-wechat_channel = "openclaw-weixin"      # 已废弃：微信收发由 wechat-bridge 承担
+[wechat]
 wechat_recipient = "owner@im.wechat"   # 发送目标占位符：登录后自动注入真实 openid（~/.chiguo/auth/wechat/credentials.json 的 userId）；
 #                                  # 也可在此手动配真实值（非占位符即生效）
-personality_source = "/root/chiguo/personality"  # 已废弃：见 [host].personality_dir（随仓库部署）
-llm_base_url = "http://localhost:11434/v1"       # 已废弃：OpenClaw 本地 ollama；pi 侧见 [host].provider
-llm_model = "qwen3:14b"                          # 已废弃
 
 [memory]
 # ── pi-agent memory-lancedb-pro 记忆系统（只读，不写）──
-# 记忆库已迁至 ~/.pi-agent/（OpenClaw 已停用，~/.openclaw 可删）
+# 记忆库位于 ~/.pi-agent/memory/lancedb-pro（只读）
 # 如果 LanceDB 不可用，自动降级到 JSON 模式
 lancedb_path = "~/.pi-agent/memory/lancedb-pro"
 lancedb_table = "memories"
@@ -31,9 +25,9 @@ ebbinghaus_min_weight = 0.1  # 最低权重（不会彻底遗忘）
 
 [character]
 name = "迟菓"
-# 人设元数据：供 OpenClaw agent 读取生成消息，代码引擎不使用
+# 人设元数据：供 pi-agent 读取生成消息，代码引擎不使用
 age = 16
-# 人设元数据：供 OpenClaw agent 读取生成消息，代码引擎不使用
+# 人设元数据：供 pi-agent 读取生成消息，代码引擎不使用
 identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
 # 人格: SUN2.md 三层结构 (外壳→中层→内核)
 
@@ -290,7 +284,7 @@ archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 
 # ────────────────────────────────────────────────────────────
 # [host] 主机/主人（哥哥）运维约束 + pi 调用配置（Phase 4 起由 scripts/pi-run.mjs 读取）
-# 运维约束从 OpenClaw USER.md 迁移而来（Task 3）；Task 14 对齐为正式配置段。
+# 运维约束沿用历史 USER.md 迁移内容（Task 3）；Task 14 对齐为正式配置段。
 # 配置键：provider/model/thinking_level/session_id/send_session_id/personality_dir/wechat_bridge_url
 # （PIRUN_* 环境变量可覆盖：PIRUN_PROVIDER/PIRUN_MODEL/PIRUN_THINKING/PIRUN_SESSION/PIRUN_PERSONALITY/PIRUN_GUIDE）
 # ────────────────────────────────────────────────────────────
@@ -300,8 +294,8 @@ archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 # 安全：高危操作（rm -rf、磁盘格式化、系统重启、服务强制停止、配置覆盖）必须先确认，禁止自动执行
 # 备份：修改核心配置、执行破坏性操作前，必须先提示备份方案；备份优先
 # 时间：禁止在 22:00 ~ 次日 08:00 主动推送非紧急通知
-# 边界：不重复解释 Linux/正则/服务运维等基础概念；不擅自修改 OpenClaw 核心配置，修改前必须确认
-# 环境：Debian Linux, root 用户；OpenClaw 已停用（~/.openclaw 待删），记忆库在 ~/.pi-agent/memory/；
+# 边界：不重复解释 Linux/正则/服务运维等基础概念；不擅自修改核心配置，修改前必须确认
+# 环境：Debian Linux, root 用户；记忆库在 ~/.pi-agent/memory/lancedb-pro；
 #       常用工具 rsync/systemctl/nano/tar
 
 provider = "opencode-go"        # pi provider：= pi --provider 名与 auth.json 键名（缺省示例；支持 pi 全部内置 provider 与

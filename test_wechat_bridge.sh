@@ -10,7 +10,7 @@ pass() { echo "  ok - $*"; }
 # ── 假工具：git（记录 clone/pull）、npm（记录 install、造 node_modules）、pgrep/pkill（模拟进程）──
 mkdir -p "$TMP/bin" "$TMP/repo/.venv/bin" "$TMP/repo/wechat-bridge"
 cat > "$TMP/repo/chiguo_proactive.toml" <<'TOML'
-[openclaw]
+[wechat]
 wechat_recipient = "owner_test@im.wechat"
 TOML
 touch "$TMP/repo/.venv/bin/python" && chmod +x "$TMP/repo/.venv/bin/python"

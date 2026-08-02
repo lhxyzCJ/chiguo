@@ -3,7 +3,7 @@
 # chiguo_netease.py — 网易云策略层:健康状态/登录失效检测/降级链/
 #                     共享日配额/随机选源/音乐话题素材组装
 # 依赖 netease_bridge(数据面),不依赖 chiguo_daemon。
-# 零 LLM:输出结构化话题 dict,由 OpenClaw 生成台词。
+# 零 LLM:输出结构化话题 dict,由 pi-agent 生成台词。
 # ============================================================
 
 import json

@@ -1,6 +1,6 @@
 # ============================================================
-# memory_bridge.py — 读取 OpenClaw LanceDB 记忆系统
-# 只读。不写入（写入由 OpenClaw memory_store 完成）。
+# memory_bridge.py — 读取记忆库（~/.pi-agent/memory/lancedb-pro，只读）
+# 不写入（写入由 pi 扩展 memory-lancedb-pro 完成）。
 # 0 token 决策，0 额外依赖（lancedb + pandas 已装）。
 # v4: 新增 Ebbinghaus 遗忘曲线加权（参考 MATE 架构）
 # ============================================================
@@ -29,12 +29,12 @@ _RETRY_SECONDS = 60.0  # available=False 后至少间隔这么久才重新探测
 
 
 class MemoryBridge:
-    """只读桥接：Python → OpenClaw LanceDB 记忆库。
+    """只读桥接：Python → 记忆库（~/.pi-agent/memory/lancedb-pro）。
 
     解耦特性：
     - 路径由配置文件注入，不硬编码
     - LanceDB 不可用时优雅降级（返回空结果，不抛异常）
-    - 只读操作，不与 OpenClaw 文件锁冲突
+    - 只读操作，不与 pi 扩展文件锁冲突
     - 列名使用 .get() 访问，兼容 dreaming 插件的简化 schema
     """
 

@@ -149,7 +149,7 @@ uv run python chiguo_demo.py         # 交互式 Demo（纯模板，无 LLM）
 uv run python chiguo_daemon.py       # 单次决策 → 输出 JSON
 uv run python chiguo_daemon.py --status   # 查看当前状态
 
-# 核心测试（完整测试链：24 个 py + 9 个脚本独立 runner）
+# 核心测试（完整测试链：24 个 py + 8 个脚本独立 runner）
 uv run python test_chiguo_math.py && node test_pi_run.mjs
 ```
 
@@ -221,14 +221,13 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 | [doc/SYSTEM.md](doc/SYSTEM.md) | 完整系统文档（架构、业务逻辑、配置参考、CLI、文件清单） |
 | [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md) | pi-agent 集成指南（模型后端、微信桥、部署） |
 | [doc/日光雨.md](doc/日光雨.md) | 官方续作《三色绘恋S》剧本全文（人格设定基准） |
-| [doc/IMPROVE.md](doc/IMPROVE.md) | 改进清单 |
 | [AGENTS.md](AGENTS.md) | AI 开发助手约定（含完整测试链） |
 
 欢迎任何形式的贡献——尤其是"她"的成长：
 
 - **测试先行（TDD）**：铁律是先写失败测试再实现（红→绿），每个 `test_*.py` 是独立 runner
-- **改完跑全链**：完整测试链见 `AGENTS.md`（24 py + 9 脚本），全绿再提交
-- **文档同步**：行为变化必须同步 `doc/SYSTEM.md`、`doc/IMPROVE.md`、`MEMORY.md`
+- **改完跑全链**：完整测试链见 `AGENTS.md`（24 py + 8 脚本），全绿再提交
+- **文档同步**：行为变化必须同步 `doc/SYSTEM.md`
 - **Commit 风格**：`feat:` / `fix:` / `docs:` / `chore:` 前缀 + 中文描述
 - **设计文档**：大改动先在项目外 `~/chiguo-meta/specs/` 写设计文档，评审通过再动手
 

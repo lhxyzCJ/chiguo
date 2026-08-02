@@ -4,7 +4,7 @@
 # 数学驱动：Sigmoid + 半衰期 + 动态 λ
 #
 # ⚠️ 演示模式：仅展示触发决策与情境组合（MessageComposer），
-# 不接入 OpenClaw/不发送/不落盘决策日志，与生产行为不同
+# 不发送/不落盘决策日志，与生产行为不同
 # ============================================================
 
 import os
@@ -140,7 +140,7 @@ class Demo:
         from chiguo_version import VERSION
         print(f"\n🌸 迟菓 主动消息系统 v{VERSION}")
         print(f"   数学: Sigmoid + 半衰期 + 动态 λ")
-        print(f"{Color.YEL}⚠️ 演示模式：仅展示触发决策与情境组合，不接入 OpenClaw/不发送，与生产行为不同{Color.R}")
+        print(f"{Color.YEL}⚠️ 演示模式：仅展示触发决策与情境组合，不发送，与生产行为不同{Color.R}")
         self.render()
 
         while True:

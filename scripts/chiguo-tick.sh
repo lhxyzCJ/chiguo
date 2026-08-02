@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# chiguo-tick — 系统 crontab 入口（替代 openclaw cron trigger-script）
+# chiguo-tick — 系统 crontab 入口
 set -euo pipefail
 REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
 PY="$REPO/.venv/bin/python"

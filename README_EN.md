@@ -149,7 +149,7 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: 24 py + 9 script standalone runners)
+# Core tests (full suite: 24 py + 8 script standalone runners)
 uv run python test_chiguo_math.py && node test_pi_run.mjs
 ```
 
@@ -221,14 +221,13 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 | [doc/SYSTEM.md](doc/SYSTEM.md) | Full system documentation: architecture, business logic, config reference, CLI, file list (Chinese) |
 | [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md) | pi-agent integration guide: model backend, WeChat bridge, deployment (Chinese) |
 | [doc/日光雨.md](doc/日光雨.md) | The official sequel script (persona reference) (Chinese) |
-| [doc/IMPROVE.md](doc/IMPROVE.md) | Improvement log (Chinese) |
 | [AGENTS.md](AGENTS.md) | AI-assistant conventions, including the full test suite (Chinese) |
 
 Any contribution is welcome — especially ones that help *her* grow:
 
 - **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each `test_*.py` is a standalone runner, exit-code driven.
-- **Run the full suite before submitting**: see `AGENTS.md` (24 py + 9 script tests), all green before commit.
-- **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md`, `doc/IMPROVE.md`, `MEMORY.md` (repo rule).
+- **Run the full suite before submitting**: see `AGENTS.md` (24 py + 8 script tests), all green before commit.
+- **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md` (repo rule).
 - **Commit style**: `feat:` / `fix:` / `docs:` / `chore:` prefix + Chinese description.
 - **Design docs**: for major changes, write a design doc under `~/chiguo-meta/specs/` (outside the repo) and get it reviewed first.
 
