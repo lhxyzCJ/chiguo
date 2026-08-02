@@ -41,6 +41,11 @@ const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 const DAEMON_PY = process.env.WECHAT_BRIDGE_DAEMON_PY ?? '/root/chiguo/.venv/bin/python'
 const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? '/root/chiguo/chiguo_daemon.py'
+// pi 假死记账脚本（pi_health.py 状态机）；默认随仓库 scripts/ 部署，可用 WECHAT_BRIDGE_PI_HEALTH 覆盖
+const PI_HEALTH_SCRIPT = process.env.WECHAT_BRIDGE_PI_HEALTH
+  ?? new URL('../scripts/pi_health.py', import.meta.url).pathname
+// pi_health 解释器独立于 DAEMON_PY（测试可能把后者换成 node 跑 fake daemon）
+const PI_HEALTH_PY = process.env.WECHAT_BRIDGE_PI_HEALTH_PY ?? '/root/chiguo/.venv/bin/python'
 // 登录态目录：默认随仓库（wechat-bridge/credentials/，git 跟踪）；可用 WECHAT_BRIDGE_STORAGE 覆盖
 const DEFAULT_STORAGE = new URL('./credentials/', import.meta.url).pathname
 
@@ -103,6 +108,30 @@ export async function upgradeAnalysis(text, analysis) {
   } catch (err) {
     console.error('[analysis upgrade error]',
       err instanceof Error ? err.message : String(err))
+  }
+}
+
+/** pi 假死记账：askPi/pi-run 成败记录进 pi_health 状态机（零额外 pi 调用）。
+ * transition=down/up 时向 OWNER_ID 发告警/恢复消息。整体绝不抛错、绝不影响回复流。 */
+export async function recordPiHealth(bot, outcome, reason = null) {
+  try {
+    const args = [PI_HEALTH_SCRIPT, 'record', '--outcome', outcome]
+    if (reason) args.push('--reason', String(reason).slice(0, 100))
+    const { stdout } = await execFileP(PI_HEALTH_PY, args, {
+      timeout: 30_000,
+      maxBuffer: 4 * 1024 * 1024,
+    })
+    const parsed = JSON.parse(stdout)
+    if (parsed.transition !== 'none' && parsed.message) {
+      await bot.send(OWNER_ID, parsed.message)
+        .catch((e) => console.error('[pi health alert send error]',
+          e instanceof Error ? e.message : String(e)))
+    }
+    return parsed
+  } catch (err) {
+    console.error('[pi health record error]',
+      err instanceof Error ? err.message : String(err))
+    return null
   }
 }
 
@@ -188,12 +217,16 @@ export async function handleMessage(text, msg, bot, queue) {
         const { text: reply, analysis } = await askPi(text)
         await upgradeAnalysis(text, analysis)  // recv_dedup 升级语义，不重复记账
         console.log(`[out] ${reply.slice(0, 80)}`)
-        await bot.reply(msg, reply)
+        await bot.reply(msg, reply).catch((e) => console.error('[reply error]', e))
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
         console.error('[pi error]', reason)
         await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
+        await recordPiHealth(bot, 'fail', reason)
+        return
       }
+      // 回复失败不记 pi 假死（发送故障 ≠ pi 故障）；记账在回复后执行，不延迟当前消息
+      await recordPiHealth(bot, 'success')
     })
     .catch((err) => console.error('[queue error]', err))
   return 'pi'

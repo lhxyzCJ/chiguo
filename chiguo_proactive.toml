@@ -308,3 +308,6 @@ session_id = "chiguo-main"      # 回复侧会话（bridge askPi；进程内 Tur
 send_session_id = "chiguo-send" # 主动发送会话（chiguo-tick.sh 经 PIRUN_SESSION 注入；与回复会话分离 → 消除跨进程并发 turn）
 personality_dir = "/root/chiguo/personality"        # SUN2.md + 迟菓语言技巧指南.md（随仓库部署）
 wechat_bridge_url = "http://127.0.0.1:18790/send"   # 主动发送端点（chiguo-tick.sh curl 目标；--noproxy '*'）
+
+[health]
+fail_threshold = 3   # pi 假死判定：连续失败次数 ≥ 此值 → 告警（bridge 记账/tick 记账共用；<1 视为无效回退 3）

@@ -2,7 +2,7 @@
 // 用法: node test_bridge_askpi.mjs（退出码 0=全过，1=有失败）
 // 集成式：fake pi-run（canned JSON 响应）+ fake daemon（记录 argv + 真实 shape JSON），真实 execFile 链路。
 import assert from 'node:assert'
-import { writeFileSync, mkdtempSync, appendFileSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, appendFileSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -11,6 +11,12 @@ const FAKE_PI = join(tmp, 'fake-pi-run.mjs')
 const FAKE_DAEMON = join(tmp, 'fake-daemon.mjs')
 const PI_LOG = join(tmp, 'pi.log')
 const DAEMON_LOG = join(tmp, 'daemon.log')
+
+// pi 假死记账隔离：真 pi_health.py 拷贝到 tmp（状态落 tmp，绝不写真实 pi_health.json）
+const PH_SCRIPT = join(tmp, 'pi_health.py')
+cpSync(new URL('./scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
+process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
+process.env.WECHAT_BRIDGE_PI_HEALTH_PY = '/root/chiguo/.venv/bin/python'
 
 writeFileSync(FAKE_PI, `
 import { readFileSync, appendFileSync } from 'node:fs'
@@ -153,6 +159,7 @@ const botStub = () => {
     replies,
     reply: async (msg, text) => { replies.push(text) },
     sendTyping: async () => {},
+    send: async () => {},
   }
 }
 const msg = (text) => ({ userId: 'owner@im.wechat', text })
