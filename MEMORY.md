@@ -1,3 +1,19 @@
+## 2026-08-02 — pi 假死检测与微信告警（TDD 红→绿：零新增 token、pi 零修改；版本 v1.4 → v1.5）
+
+**背景**：bridge（微信接入）与 pi-agent（消息后端）独立进程；pi 假死时桥活着 → 逐条 `⚠️ 处理失败` 但无系统告警，tick 失败只进日志。用户要求：后端假死微信端能发现；约束①token 平衡（不做定时探测）②不动 pi（pi-run.mjs/pi 二进制/上游零改动）。
+
+**方案（TDD 红→绿）**：
+- **零成本信号**：复用真实 pi 调用记账——bridge askPi 成败、tick pi-run 成败；无心跳无定时器
+- **`scripts/pi_health.py`（新增）**：状态机唯一实现，flock+原子写 `pi_health.json`（仓库根，默认跟踪，`.lock` 由 `*.lock` gitignore 覆盖）；`record --outcome fail|success [--reason] [--config] [--state]`；`[health].fail_threshold`（缺省 3，toml 缺失回退）；fail_reason 保留本串首次；transition=down/up 各一次（去重）；stdout `{state, transition, message}`
+- **bridge.mjs（改）**：`recordPiHealth`（`WECHAT_BRIDGE_PI_HEALTH`/`WECHAT_BRIDGE_PI_HEALTH_PY` env；整体 catch 绝不阻塞回复流）；成功→record success（up 时 bot.send 恢复），catch→record fail（down 时 bot.send 告警）；特殊命令不记账
+- **chiguo-tick.sh（改）**：OWNER/BRIDGE_URL 解析提前；`record_health`——失败记 fail（原因取 pi-run error 字段）down→curl /send 告警；成功记 success→发恢复；退出码不变
+- **测试**：test_pi_health.py（8 用例）、test_bridge_health.mjs（6 用例，fake pi-run + stub bot）、test_tick_health.sh（4 用例，temp repo + node recorder 服务）；test_bridge_askpi.mjs 补 PH 隔离
+- **审查修复**：M1 bot.reply 失败不误记 pi 假死（reply 移出 try，补回归用例）；M2 告警投递失败打日志不静默；m3 锁失败不写（宁丢一次记账）；m4 阈值严格校验（bool/float/非整/0/负→回退 3）；m7 tick 记账解析单次 python3 调用；恢复后原因重捕获 + 特殊命令不记账 + reply 失败不误记 补 3 条测试
+- **坑**：① JSON 转义中文导致 grep 失配→测试用 python 解码再断言；② DAEMON_PY 被测试换成 node 会劫持 pi_health 解释器→独立 `WECHAT_BRIDGE_PI_HEALTH_PY`
+- **既有失败**：test_monitor `test_health_ok` 预先失败（真实 netease_health.json faulty:true，与本次无关）
+- **配置**：toml 新增 `[health] fail_threshold = 3`；设计文档 docs/superpowers/specs/2026-08-02-pi-health-alert-design.md
+- **盲区（用户接受）**：长期空闲期 pi 假死 → 告警延迟到下次真实交互
+
 # MEMORY.md
 
 ## 2026-08-02 — OpenClaw 记忆库迁移至 ~/.pi-agent/memory + deepseek key 保留确认（TDD + 全量审计）

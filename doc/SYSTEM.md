@@ -723,6 +723,10 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `scripts/install_pi.sh` | **pi 环境安装器**（Phase 4）：memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟（三模式幂等） | bash |
 | `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askPi 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
 | `wechat-bridge/command-detect.mjs` | **特殊命令检测/执行**（Phase 4）：纪念日/假期规则化（方案 A），daemon JSON → 迟菓风确认 | node |
+| `scripts/pi_health.py` | **pi 假死状态机**：askPi/tick 成败记账（flock+原子写 `pi_health.json`），transition=down/up 产出告警/恢复文案；bridge（bot.send）与 tick（curl /send）只负责投递 | python, stdlib |
+| `test_pi_health.py` | pi_health 状态机测试（8 用例：阈值/去重/恢复/原因保留/toml 读取/无效阈值回退/恢复后原因重捕获/原子写） | pi_health |
+| `test_bridge_health.mjs` | bridge 记账+告警链路测试（6 用例：特殊命令不记账/去重/恢复/零告警/记账崩溃不阻塞/reply 失败不误记） | bridge.mjs |
+| `test_tick_health.sh` | tick 记账+告警链路测试（4 用例：temp repo + recorder 服务） | chiguo-tick.sh |
 | `test_bridge_cmd.mjs` | 特殊命令测试（31 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
 | `test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
@@ -1705,6 +1709,7 @@ rm <仓库根目录>/chiguo_state.json
 | **v8** | **2026-07-31** | **用户状态渠道增强：双作息分桶学习（工作日/周末两桶独立窗口 + 调休/假期修正，STATE_VERSION 7→8）+ 听歌双向联动（睡眠窗口内播放反证：sleeping 置信度 ×0.5 压制 + record_active 反向校正生物钟）** |
 | **v9** | **2026-07-31** | **网易云音乐渠道增强：对话内容源 + 鲁棒性 —— TopicPicker 第 8 源 netease（netease_weight=0.12）+ 网易云策略层 chiguo_netease（健康探针/登录失效检测/降级链/共享日配额 2/随机选源/peek-consume 两阶段，netease_health.json；STATE_VERSION 不变，无状态迁移）** |
 | **v10** | **2026-08-02** | **人格基线回归 + personality_history（STATE_VERSION 9→10）**：`PersonalityTraits.regress_to_baseline()` 每步 `v += (baseline - v) * regress_rate` 向构造时初始值软回归（基线随状态持久化 `personality_baseline`，旧状态回退 toml `[personality]` 初始值；速率 `regress_rate` 默认 0.01，0=关闭）——修复热情回复甜妹化/持续沉默极端化两类人格漂移；`adapt_personality` 每次追加 `{ts, dims}` 到 `personality_history`（滚动 200 条持久化） |
+| **v1.5** | **2026-08-02** | **pi 假死检测与微信告警**：新增 `scripts/pi_health.py` 状态机（flock+原子写 `pi_health.json`，[health].fail_threshold=3，transition 去重，首次失败原因保留）；bridge 的 askPi 成败记账（transition 时 bot.send 告警/恢复，记账崩溃不阻塞回复流）；chiguo-tick.sh pi-run 成败记账（transition 时 curl /send 告警/恢复，原因取 pi-run error 字段）；零新增 pi 调用（复用真实流量记账）、pi-run.mjs/pi 二进制零改动；空闲期假死盲区接受（延迟到下次真实交互，设计文档 docs/superpowers/specs/2026-08-02-pi-health-alert-design.md） |
 | **v1.4** | **2026-08-02** | **寄主迁移收尾（Phase 4 Task 14）**：toml `[openclaw]` → `[host]`（+wechat_bridge_url/send_session_id，opencode-go provider/model/thinking/session/personality_dir）；特殊命令（纪念日/假期）由 bridge 规则化确定性接管（`wechat-bridge/command-detect.mjs`，方案 A：检测→daemon CLI→迟菓风确认，不经 pi）；会话并发模型：回复=chiguo-main（TurnQueue 串行）/主动发送=chiguo-send（PIRUN_SESSION 注入）分离消除跨进程并发 turn；兜底默认值 45/70/70→60/65/75（state/composer/trigger 与 dataclass 对齐）；daemon 人格目录改读 `[host].personality_dir`；新增 `doc/PI_INTEGRATION.md`，OPENCLAW_INTEGRATION.md/CLAUDE_CODE_RULES §11 标已废弃；OpenClaw cron `chiguo-check` 已 disable（gateway 停用留用户最终确认） |
 
 ### v3→v4 迁移

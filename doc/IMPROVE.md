@@ -1,3 +1,20 @@
+## 2026-08-02 — pi 假死检测与微信告警（TDD 红→绿，零新增 token、pi 零改动）
+
+**问题**：wechat-bridge（微信接入）与 pi-agent（回复/主动消息后端）是两个独立进程。pi 假死（key 失效/模型不可达等）时 bridge 仍在线收消息——用户只见逐条 `⚠️ 处理失败`，无系统级告警；tick 路径失败只写 stderr 日志无人知。
+
+**方案（TDD 红→绿）**：
+- **信号来源零成本**：所有检测挂在本来就发生的真实 pi 调用上——bridge askPi 成败、tick pi-run 成败——顺带记账，不做定时探测（用户约束 1：token 平衡；约束 2：pi 零修改——pi-run.mjs/pi 二进制/上游全不动）
+- **`scripts/pi_health.py`**：唯一状态机实现（fcntl flock + `.tmp`→`os.replace` 原子写，照 chiguo_state.py 锁模式）；`record --outcome fail|success --reason`，`[health].fail_threshold`（toml 缺失回退 3）；fail_reason 保留本串首次失败；transition 只在 up→down / down→up 各输出一次（防重复告警）；stdout 输出 `{state, transition, message}`，文案集中一处
+- **bridge.mjs**：`recordPiHealth` helper（`WECHAT_BRIDGE_PI_HEALTH`/`WECHAT_BRIDGE_PI_HEALTH_PY` env 可覆盖；整体 try/catch 绝不阻塞回复流）；askPi 成功→record success（transition=up 时 bot.send 恢复），catch→record fail（原因截断 100 字符，transition=down 时 bot.send 告警）；特殊命令路径不经 pi 不记账
+- **chiguo-tick.sh**：OWNER/BRIDGE_URL 解析提前；`record_health` 函数——失败分支记 fail（原因取 pi-run 输出的 error 字段，提取失败回退静态文案）transition=down→curl /send 告警；成功分支记 success→发恢复；退出码语义不变
+- **测试先行**：test_pi_health.py（8 用例）/ test_bridge_health.mjs（6 用例，fake pi-run + stub bot）/ test_tick_health.sh（4 用例，temp repo + node recorder 服务）；test_bridge_askpi.mjs 补 WECHAT_BRIDGE_PI_HEALTH 隔离（真 pi_health.py 拷贝到 tmp）
+- **审查修复（自查 subagent 报告）**：M1 bot.reply 失败被误记 pi 假死（发送故障≠pi 故障）→ reply 移出 try 独立 `.catch`，补回归用例；M2 告警投递失败静默丢失 → 两端投递失败打日志（`[pi health alert send error]` / tick stderr）；m3 flock 超时降级无锁写 → 改为锁失败不写 + stderr；m4 threshold 校验（bool/float/非整型/0/负 → 回退 3）；m5 记账不阻塞队列（保持 await，回复已先发出，python spawn ~100ms）；m7 tick 记账解析合并为单次 python3 调用（3 次 spawn → 1 次）；pi_health.py 恢复后原因重捕获 + 特殊命令不记账 + reply 失败不误记 共补 3 条测试
+- **坑**：① recorder 收到的 POST 体中文是 JSON 转义（`\uXXXX`），grep 原始字节匹配不上→测试用 python 解码 text 字段再断言；② test_bridge_askpi 把 DAEMON_PY 换成 node 跑 fake daemon→pi_health 解释器独立成 WECHAT_BRIDGE_PI_HEALTH_PY 防劫持
+- **测试环境失败记录**：test_monitor.py `test_health_ok` 1 例失败为预先存在（真实 netease_health.json `faulty:true`，git stash 验证与本次无关）
+- **文档**：doc/SYSTEM.md（模块清单 + v1.5 版本行）、doc/IMPROVE.md、MEMORY.md、docs/superpowers/specs/2026-08-02-pi-health-alert-design.md
+
+---
+
 # 改进清单
 
 > 版本: 2026-08-02 | 寄主迁移收尾（v1.4，Phase 4 Task 14）完成 + Task 14 评审修复，见下
