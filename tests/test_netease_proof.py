@@ -396,7 +396,6 @@ import re
 import chiguo_daemon
 from chiguo_math import in_quiet_window
 from chiguo_circadian import bucket_for
-import netease_bridge as nb  # 旧模块别名:Task 4 删模块前 daemon 仍经模块函数拉取,测试经别名桩之
 
 DAEMON_NOW = datetime(2026, 8, 1, 1, 30, 0, tzinfo=CST)  # 周六 01:30(窗口 0-8 内)
 
@@ -426,16 +425,17 @@ def _make_engine(tmp, factor=None):
     return engine
 
 
-def _patch_fetch(result):
-    """monkeypatch 旧 netease_bridge 模块函数(daemon 与 bridge 共享同一模块对象)"""
-    orig = nb.fetch_recent_play
+def _patch_engine_fetch(engine, result):
+    """按 engine 实例桩 bridge.fetch_recent_play(daemon 经 netease_service 单入口)"""
+    bridge = engine.netease_service.bridge
+    orig = bridge.fetch_recent_play
     calls = {"n": 0}
 
     def fake(*a, **k):
         calls["n"] += 1
         return result
 
-    nb.fetch_recent_play = fake
+    bridge.fetch_recent_play = fake
     return orig, calls
 
 
@@ -470,11 +470,11 @@ def test_check_play_proof_in_window_with_recent_play():
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
         now_ms = int(DAEMON_NOW.timestamp() * 1000)
-        orig, calls = _patch_fetch([{"playTime": now_ms - 3600_000, "name": "夜曲", "artist": "周杰伦"}])
+        orig, calls = _patch_engine_fetch(engine, [{"playTime": now_ms - 3600_000, "name": "夜曲", "artist": "周杰伦"}])
         try:
             assert engine._check_play_proof(DAEMON_NOW) is True
         finally:
-            nb.fetch_recent_play = orig
+            engine.netease_service.bridge.fetch_recent_play = orig
         assert calls["n"] == 1
         days = engine.state.circadian.active_days
         assert len(days) == 1, days
@@ -496,18 +496,18 @@ def test_check_play_proof_recompute_called():
             return orig_recompute(*a, **k)
 
         engine.state.circadian.recompute = wrapped
-        orig, _ = _patch_fetch([{"playTime": now_ms - 3600_000, "name": "夜曲", "artist": "周杰伦"}])
+        orig, _ = _patch_engine_fetch(engine, [{"playTime": now_ms - 3600_000, "name": "夜曲", "artist": "周杰伦"}])
         try:
             assert engine._check_play_proof(DAEMON_NOW) is True
         finally:
-            nb.fetch_recent_play = orig
+            engine.netease_service.bridge.fetch_recent_play = orig
         assert calls["n"] == 1, calls
         # 对照: 无近播放证据(5h 前)→ 不触发 recompute
-        orig2, _ = _patch_fetch([{"playTime": now_ms - 5 * 3600_000, "name": "旧", "artist": "旧"}])
+        orig2, _ = _patch_engine_fetch(engine, [{"playTime": now_ms - 5 * 3600_000, "name": "旧", "artist": "旧"}])
         try:
             assert engine._check_play_proof(DAEMON_NOW) is False
         finally:
-            nb.fetch_recent_play = orig2
+            engine.netease_service.bridge.fetch_recent_play = orig2
         assert calls["n"] == 1, calls
     print("  OK test_check_play_proof_recompute_called")
 
@@ -520,11 +520,11 @@ def test_check_play_proof_buckets_by_play_time():
         engine.state.cooldown.set_quiet_window(19, 7)  # 跨午夜窗口,覆盖周五 20:00 桶边界
         eval_dt = datetime(2026, 7, 31, 21, 30, tzinfo=CST)  # 周五 21:30(评估时刻桶=weekend)
         play_dt = datetime(2026, 7, 31, 19, 30, tzinfo=CST)  # 周五 19:30(播放时刻桶=weekday)
-        orig, calls = _patch_fetch([{"playTime": int(play_dt.timestamp() * 1000), "name": "x", "artist": "y"}])
+        orig, calls = _patch_engine_fetch(engine, [{"playTime": int(play_dt.timestamp() * 1000), "name": "x", "artist": "y"}])
         try:
             assert engine._check_play_proof(eval_dt) is True
         finally:
-            nb.fetch_recent_play = orig
+            engine.netease_service.bridge.fetch_recent_play = orig
         assert calls["n"] == 1
         days = engine.state.circadian.active_days
         assert len(days) == 1, days
@@ -537,12 +537,12 @@ def test_check_play_proof_outside_window_no_fetch():
     """14:00(窗口外)→ fetch 不被调用(计数 0),play_proof False,无 record_active"""
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
-        orig, calls = _patch_fetch([{"playTime": 1, "name": "x", "artist": "y"}])
+        orig, calls = _patch_engine_fetch(engine, [{"playTime": 1, "name": "x", "artist": "y"}])
         try:
             outside = datetime(2026, 8, 1, 14, 0, tzinfo=CST)
             assert engine._check_play_proof(outside) is False
         finally:
-            nb.fetch_recent_play = orig
+            engine.netease_service.bridge.fetch_recent_play = orig
         assert calls["n"] == 0
         assert engine.state.circadian.active_days == []
     print("  OK test_check_play_proof_outside_window_no_fetch")
@@ -553,11 +553,11 @@ def test_check_play_proof_stale_play_no_proof():
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
         now_ms = int(DAEMON_NOW.timestamp() * 1000)
-        orig, calls = _patch_fetch([{"playTime": now_ms - 5 * 3600_000, "name": "旧", "artist": "旧"}])
+        orig, calls = _patch_engine_fetch(engine, [{"playTime": now_ms - 5 * 3600_000, "name": "旧", "artist": "旧"}])
         try:
             assert engine._check_play_proof(DAEMON_NOW) is False
         finally:
-            nb.fetch_recent_play = orig
+            engine.netease_service.bridge.fetch_recent_play = orig
         assert calls["n"] == 1  # 窗口内会拉取,但无近播放证据
         assert engine.state.circadian.active_days == []
     print("  OK test_check_play_proof_stale_play_no_proof")
@@ -567,21 +567,22 @@ def test_check_play_proof_fetch_none_or_exception():
     """fetch 返回 None / 抛异常 → 不崩,play_proof False,不 record_active"""
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
-        orig = nb.fetch_recent_play
-        nb.fetch_recent_play = lambda *a, **k: None
+        bridge = engine.netease_service.bridge
+        orig = bridge.fetch_recent_play
+        bridge.fetch_recent_play = lambda *a, **k: None
         try:
             assert engine._check_play_proof(DAEMON_NOW) is False
         finally:
-            nb.fetch_recent_play = orig
+            bridge.fetch_recent_play = orig
 
         def boom(*a, **k):
             raise RuntimeError("api down")
 
-        nb.fetch_recent_play = boom
+        bridge.fetch_recent_play = boom
         try:
             assert engine._check_play_proof(DAEMON_NOW) is False
         finally:
-            nb.fetch_recent_play = orig
+            bridge.fetch_recent_play = orig
         assert engine.state.circadian.active_days == []
     print("  OK test_check_play_proof_fetch_none_or_exception")
 
@@ -592,11 +593,11 @@ def test_check_play_proof_play_outside_quiet_window():
         engine = _make_engine(td)
         now_ms = int(DAEMON_NOW.timestamp() * 1000)
         play_2330 = now_ms - int(2.0 * 3600_000)  # 2026-07-31 23:30(= 01:30 减 2h)
-        orig, calls = _patch_fetch([{"playTime": play_2330, "name": "夜", "artist": "夜"}])
+        orig, calls = _patch_engine_fetch(engine, [{"playTime": play_2330, "name": "夜", "artist": "夜"}])
         try:
             assert engine._check_play_proof(DAEMON_NOW) is False
         finally:
-            nb.fetch_recent_play = orig
+            engine.netease_service.bridge.fetch_recent_play = orig
         assert calls["n"] == 1
         assert engine.state.circadian.active_days == []
     print("  OK test_check_play_proof_play_outside_quiet_window")
