@@ -28,7 +28,7 @@
 - **审查修复（自查 subagent 报告）**：M1 bot.reply 失败被误记 pi 假死（发送故障≠pi 故障）→ reply 移出 try 独立 `.catch`，补回归用例；M2 告警投递失败静默丢失 → 两端投递失败打日志（`[pi health alert send error]` / tick stderr）；m3 flock 超时降级无锁写 → 改为锁失败不写 + stderr；m4 threshold 校验（bool/float/非整型/0/负 → 回退 3）；m5 记账不阻塞队列（保持 await，回复已先发出，python spawn ~100ms）；m7 tick 记账解析合并为单次 python3 调用（3 次 spawn → 1 次）；pi_health.py 恢复后原因重捕获 + 特殊命令不记账 + reply 失败不误记 共补 3 条测试
 - **坑**：① recorder 收到的 POST 体中文是 JSON 转义（`\uXXXX`），grep 原始字节匹配不上→测试用 python 解码 text 字段再断言；② test_bridge_askpi 把 DAEMON_PY 换成 node 跑 fake daemon→pi_health 解释器独立成 WECHAT_BRIDGE_PI_HEALTH_PY 防劫持
 - **测试环境失败记录**：test_monitor.py `test_health_ok` 1 例失败为预先存在（真实 netease_health.json `faulty:true`，git stash 验证与本次无关）
-- **文档**：doc/SYSTEM.md（模块清单 + v1.5 版本行）、doc/IMPROVE.md、MEMORY.md、docs/superpowers/specs/2026-08-02-pi-health-alert-design.md
+- **文档**：doc/SYSTEM.md（模块清单 + v1.5 版本行）、doc/IMPROVE.md、MEMORY.md、~/chiguo-meta/specs/2026-08-02-pi-health-alert-design.md（项目外归档）
 
 ---
 
