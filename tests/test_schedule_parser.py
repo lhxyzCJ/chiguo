@@ -150,6 +150,105 @@ def test_current_period_boundaries():
     assert ScheduleParser._current_period(dt(2026, 6, 15, 22, 0)) is None  # 晚课后
     print("  OK test_current_period_boundaries")
 
+# ── xlsx 解析 + 缓存（真实 openpyxl fixture）──
+
+import tempfile, json, time
+from pathlib import Path
+import openpyxl
+
+def _write_xlsx(path: Path, rows: list):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for i, row in enumerate(rows, start=5):  # 第5行起是课表数据
+        ws.cell(row=i, column=1, value=row[0])
+        for j, cell in enumerate(row[1:], start=2):
+            ws.cell(row=i, column=j, value=cell)
+    wb.save(str(path))
+
+ROWS = [
+    [1, "高等数学BII(理论)-刘洋【2-17周】尚行楼", None, None, None, None, None, None],
+    [3, None, None, "管理学基础(理论) 王芳【2-17周】 南楼610智慧教室", None, None, None, None],
+    [4, "工程CAD实训-张伟【19周】尚行楼304 BIM实训室4  管理学基础(理论) 王芳【2-17周】 南楼610智慧教室", None, None, None, None, None, None],
+]
+
+def test_xlsx_parse_and_query():
+    with tempfile.TemporaryDirectory() as td:
+        xp = Path(td) / "xskb.xlsx"
+        _write_xlsx(xp, ROWS)
+        p = ScheduleParser(xlsx_path=str(xp), cache_path=str(Path(td) / "c.json"),
+                           semester_start=date(2026, 2, 23))
+        assert p.available is True
+        # 周一第1节,第17周（col 2 = weekday 0）
+        r = p.query(dt(2026, 6, 15, 8, 30))
+        assert r["in_class"] is True and r["current_course"]["course"] == "高等数学BII(理论)"
+        # 周三第3节（col 3 = weekday 2）→ 空格分隔格式
+        r2 = p.query(dt(2026, 6, 17, 10, 30))
+        assert r2["current_course"]["course"] == "管理学基础(理论)", r2
+        # 周一第4节合并单元格,主课=工程CAD(仅19周):第17周 → 备选管理学;第19周 → 主课
+        r3 = p.query(dt(2026, 6, 15, 11, 0))
+        assert r3["current_course"]["course"] == "管理学基础(理论)", r3
+        r4 = p.query(dt(2026, 6, 29, 11, 0))
+        assert r4["current_course"]["course"] == "工程CAD实训", r4
+        print("  OK test_xlsx_parse_and_query")
+
+def test_cache_roundtrip_and_reparse_on_mtime():
+    with tempfile.TemporaryDirectory() as td:
+        xp = Path(td) / "xskb.xlsx"
+        _write_xlsx(xp, ROWS)
+        cp = Path(td) / "c.json"
+        p1 = ScheduleParser(xlsx_path=str(xp), cache_path=str(cp), semester_start=date(2026, 2, 23))
+        assert cp.exists()  # 缓存已落盘
+        # 新实例直接读缓存（不重新解析）
+        p2 = ScheduleParser(xlsx_path=str(xp), cache_path=str(cp), semester_start=date(2026, 2, 23))
+        assert p2.available and p2.query(dt(2026, 6, 15, 8, 30))["in_class"]
+        # 修改 xlsx → mtime 变化 → 重新解析
+        time.sleep(1.1)
+        _write_xlsx(xp, [[1, "新课程-老师【2-17周】新地点", None, None, None, None, None, None]])
+        p3 = ScheduleParser(xlsx_path=str(xp), cache_path=str(cp), semester_start=date(2026, 2, 23))
+        r = p3.query(dt(2026, 6, 15, 8, 30))
+        assert r["current_course"]["course"] == "新课程", r
+        print("  OK test_cache_roundtrip_and_reparse_on_mtime")
+
+def test_cache_corrupt_is_ignored():
+    with tempfile.TemporaryDirectory() as td:
+        xp = Path(td) / "xskb.xlsx"
+        _write_xlsx(xp, ROWS)
+        cp = Path(td) / "c.json"
+        cp.write_text("{corrupt json")
+        p = ScheduleParser(xlsx_path=str(xp), cache_path=str(cp), semester_start=date(2026, 2, 23))
+        assert p.available is True  # 坏缓存被删 + 重新解析 xlsx
+        # 坏缓存被替换为有效缓存（xlsx 存在 → 重解析后重新落盘）
+        assert json.loads(cp.read_text())["cache_version"] == 2, cp.read_text()
+        print("  OK test_cache_corrupt_is_ignored")
+
+def test_parse_failure_keeps_old_cache():
+    with tempfile.TemporaryDirectory() as td:
+        xp = Path(td) / "xskb.xlsx"
+        _write_xlsx(xp, ROWS)
+        cp = Path(td) / "c.json"
+        ScheduleParser(xlsx_path=str(xp), cache_path=str(cp), semester_start=date(2026, 2, 23))
+        xp.write_text("not an xlsx")  # 损坏 → 解析失败
+        time.sleep(1.1)
+        os.utime(xp)  # 确保 mtime 变化
+        p = ScheduleParser(xlsx_path=str(xp), cache_path=str(cp), semester_start=date(2026, 2, 23))
+        r = p.query(dt(2026, 6, 15, 8, 30))
+        # 实际语义:_parse 失败置 _schedule={}（内存空课表）→ in_class=False;
+        # available 由缓存加载置 True 且失败解析不重置（历史行为,特征锁定）;
+        # 缓存文件保留（不用空数据覆盖落盘）
+        assert r["in_class"] is False and r["available"] is True, r
+        assert cp.exists(), "失败解析不应覆盖旧缓存文件"
+        print("  OK test_parse_failure_keeps_old_cache")
+
+def test_cache_v1_migration_forces_reparse():
+    with tempfile.TemporaryDirectory() as td:
+        xp = Path(td) / "xskb.xlsx"
+        _write_xlsx(xp, ROWS)
+        cp = Path(td) / "c.json"
+        cp.write_text(json.dumps({"cache_version": 1, "parsed_at": 0, "schedule": {}}))
+        p = ScheduleParser(xlsx_path=str(xp), cache_path=str(cp), semester_start=date(2026, 2, 23))
+        assert p.query(dt(2026, 6, 15, 8, 30))["in_class"] is True  # v1 缓存强制重解析
+        print("  OK test_cache_v1_migration_forces_reparse")
+
 
 if __name__ == "__main__":
     print("test_schedule_parser.py\n")
@@ -162,6 +261,9 @@ if __name__ == "__main__":
         test_query_in_class, test_query_not_in_class_break, test_query_next_course,
         test_query_alternates_week_filter, test_query_class_load,
         test_query_week_boundary, test_current_period_boundaries,
+        test_xlsx_parse_and_query, test_cache_roundtrip_and_reparse_on_mtime,
+        test_cache_corrupt_is_ignored, test_parse_failure_keeps_old_cache,
+        test_cache_v1_migration_forces_reparse,
     ]
     for t in tests:
         t()
