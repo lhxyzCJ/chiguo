@@ -69,22 +69,45 @@
 
 ## 🏗 架构
 
-两条链路：**主动发送**（daemon 决策 → pi 生成 → 微信发送）与**回复**（微信消息 → pi 分析+回复 → daemon 记账）。
+系统由两条消息链路组成，全部本地运行，模型 API 与网易云接口是仅有的外部调用。
+
+**主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh` → 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/pi-run.mjs --send-mode` 让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）。
+
+**被动回复链**：微信消息进入桥 → `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：纪念日/假期等**特殊命令直接执行并回复，不经 LLM**；普通消息走 `pi-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」→ 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
+
+**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（LanceDB）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` / `chiguo_watchdog.py` 独立巡检。两条链的 pi 调用成败都记入 `pi_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
 ```mermaid
 flowchart LR
-    subgraph 主动发送 Proactive
-        TICK[crontab chiguo-tick.sh<br/>每 15 分钟] --> D[chiguo_daemon.py 决策<br/>零 LLM 纯数学 JSON]
-        D -->|action=send| PI1[pi-run.mjs<br/>LLM 生成消息]
-        PI1 --> B[wechat-bridge /send]
+    subgraph 主动发送链
+        CRON[系统 crontab<br/>每 15 分钟] --> TICK[chiguo-tick.sh]
+        TICK --> DC[chiguo_daemon.py --compact<br/>零 LLM 决策门控]
+        DC -->|action≠send| X1((本轮不发))
+        DC -->|action=send| PI[pi-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
+        PI --> SEND[POST 127.0.0.1:18790/send]
+        SEND --> WX[(微信)]
+        PI -. 发送结果回传 .-> DC
     end
-    subgraph 回复 Reply
-        BR[bridge askPi<br/>情绪分析 + 回复]
+    subgraph 被动回复链
+        WX -->|新消息| BR[bridge 收消息<br/>TurnQueue 串行<br/>会话 chiguo-main]
+        BR --> UR[daemon --user-msg<br/>确定性记账 recv_dedup]
+        UR --> SP{command-detect<br/>特殊命令?}
+        SP -->|纪念日/假期| SC[daemon CLI 执行<br/>直接回复]
+        SP -->|普通消息| AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
+        AP --> UA[daemon --analysis<br/>去重升级]
+        SC -->|回复文本| WX
+        UA -->|回复文本| WX
     end
-    B --> WX[(微信)]
-    WX -->|用户发消息| BR
-    BR -. 记账 .-> D
-    BR -->|回复文本| WX
+    subgraph 共享基础设施
+        DC <-->|读| ST[(chiguo_state.json<br/>原子写)]
+        DC -->|追加| DEC[(chiguo_decisions.jsonl)]
+        DC <-->|记忆话题| MEM[(LanceDB 记忆)]
+        DC <-->|音乐话题| NE[(网易云)]
+        MON[chiguo_monitor / watchdog] -. 巡检 .-> ST
+    end
+    PI -. 成败记账 .-> PH[pi_health.py<br/>假死状态机]
+    AP -. 成败记账 .-> PH
+    PH -. 告警/恢复 .-> WX
 ```
 
 决策引擎内部（`chiguo_daemon.py`，零 LLM）：

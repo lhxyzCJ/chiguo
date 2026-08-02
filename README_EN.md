@@ -69,22 +69,45 @@ Chiguo comes from the *Tricolour Lovestory* series (a Chinese galgame by 绘恋�
 
 ## 🏗 Architecture
 
-Two pipelines: **proactive sending** (daemon decides → pi generates → WeChat delivers) and **replying** (WeChat message → pi analyzes & replies → daemon records).
+The system is two message pipelines, all running locally — model API and NetEase API are the only external calls.
+
+**Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/pi-run.mjs --send-mode` turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`).
+
+**Passive replying**: a WeChat message enters the bridge → `chiguo_daemon.py --user-msg` records it **deterministically** (real-time emotion response, recv_dedup against double-counting) → `command-detect.mjs` rules check first: **special commands** (anniversaries / holidays) are executed and answered directly, **no LLM**; ordinary messages go through `pi-run.mjs --analysis-mode`, producing "mood analysis JSON + reply text" in one call → the analysis is merged back into the daemon via `--analysis` (dedup upgrade) → the reply is sent back to WeChat. The reply side runs as a resident serial process (TurnQueue, session `chiguo-main`), zero session sharing with proactive sending.
+
+**Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (LanceDB) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` / `chiguo_watchdog.py` patrol independently. Both pipelines record pi-call outcomes into the `pi_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
 
 ```mermaid
 flowchart LR
-    subgraph 主动发送 Proactive
-        TICK[crontab chiguo-tick.sh<br/>每 15 分钟] --> D[chiguo_daemon.py 决策<br/>零 LLM 纯数学 JSON]
-        D -->|action=send| PI1[pi-run.mjs<br/>LLM 生成消息]
-        PI1 --> B[wechat-bridge /send]
+    subgraph 主动发送链
+        CRON[系统 crontab<br/>每 15 分钟] --> TICK[chiguo-tick.sh]
+        TICK --> DC[chiguo_daemon.py --compact<br/>零 LLM 决策门控]
+        DC -->|action≠send| X1((本轮不发))
+        DC -->|action=send| PI[pi-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
+        PI --> SEND[POST 127.0.0.1:18790/send]
+        SEND --> WX[(微信)]
+        PI -. 发送结果回传 .-> DC
     end
-    subgraph 回复 Reply
-        BR[bridge askPi<br/>mood analysis + reply]
+    subgraph 被动回复链
+        WX -->|新消息| BR[bridge 收消息<br/>TurnQueue 串行<br/>会话 chiguo-main]
+        BR --> UR[daemon --user-msg<br/>确定性记账 recv_dedup]
+        UR --> SP{command-detect<br/>特殊命令?}
+        SP -->|纪念日/假期| SC[daemon CLI 执行<br/>直接回复]
+        SP -->|普通消息| AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
+        AP --> UA[daemon --analysis<br/>去重升级]
+        SC -->|回复文本| WX
+        UA -->|回复文本| WX
     end
-    B --> WX[(微信)]
-    WX -->|user message| BR
-    BR -. 记账 .-> D
-    BR -->|回复文本| WX
+    subgraph 共享基础设施
+        DC <-->|读| ST[(chiguo_state.json<br/>原子写)]
+        DC -->|追加| DEC[(chiguo_decisions.jsonl)]
+        DC <-->|记忆话题| MEM[(LanceDB 记忆)]
+        DC <-->|音乐话题| NE[(网易云)]
+        MON[chiguo_monitor / watchdog] -. 巡检 .-> ST
+    end
+    PI -. 成败记账 .-> PH[pi_health.py<br/>假死状态机]
+    AP -. 成败记账 .-> PH
+    PH -. 告警/恢复 .-> WX
 ```
 
 Inside the decision engine (`chiguo_daemon.py`, zero LLM):
