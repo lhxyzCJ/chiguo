@@ -104,4 +104,43 @@ CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1 || fail "成功路径 tick
 post_texts | grep -q "测试主动消息" || fail "应发出真实主动消息"
 post_texts | grep -q "恢复" || fail "应发出恢复通知"
 
+# ── 用例 5: OPENCODE_API_KEY 注入——优先 opencode-go 条目（memory 扩展端点固定），无则回退 [host].provider ──
+mkdir -p "$TMP/home/.pi/agent"
+printf '{"opencode-go":{"type":"api_key","key":"sk-og"},"deepseek":{"type":"api_key","key":"sk-ds"}}' \
+  > "$TMP/home/.pi/agent/auth.json"
+cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+send_session_id = "chiguo-send"
+wechat_recipient = "owner_test@im.wechat"
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+provider = "deepseek"
+model = "deepseek-chat"
+
+[health]
+fail_threshold = 3
+TOML
+cat > "$REPO/scripts/pi-run.mjs" <<'JS'
+import { readFileSync, appendFileSync } from 'node:fs'
+appendFileSync(process.env.KEY_LOG, 'KEY=' + (process.env.OPENCODE_API_KEY || '') + '\n')
+const mode = readFileSync(process.env.FAKE_PI_MODE_FILE, 'utf8').trim()
+if (mode === 'success') {
+  process.stdout.write(JSON.stringify({ ok: true, text: '测试主动消息' }))
+} else {
+  process.stdout.write(JSON.stringify({ ok: false, error: 'tick 模拟故障' }))
+}
+JS
+export KEY_LOG="$TMP/key.log"
+: > "$KEY_LOG"
+echo success > "$FAKE_PI_MODE_FILE"
+HOME="$TMP/home" CHIGUO_REPO="$REPO" env -u OPENCODE_API_KEY bash "$REAL_TICK" >/dev/null 2>&1 \
+  || fail "provider 用例 tick 应退出 0"
+grep -q "KEY=sk-og" "$KEY_LOG" || fail "应优先注入 opencode-go 条目: $(cat "$KEY_LOG")"
+# 无 opencode-go 条目 → 回退 [host].provider=deepseek 条目
+printf '{"deepseek":{"type":"api_key","key":"sk-ds"}}' > "$TMP/home/.pi/agent/auth.json"
+: > "$KEY_LOG"
+HOME="$TMP/home" CHIGUO_REPO="$REPO" env -u OPENCODE_API_KEY bash "$REAL_TICK" >/dev/null 2>&1 \
+  || fail "回退用例 tick 应退出 0"
+grep -q "KEY=sk-ds" "$KEY_LOG" || fail "无 opencode-go 条目时应回退 deepseek key: $(cat "$KEY_LOG")"
+pass "OPENCODE_API_KEY 注入：优先 opencode-go、回退 [host].provider"
+
 echo "test_tick_health: 全部通过"

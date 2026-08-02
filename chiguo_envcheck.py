@@ -2,7 +2,7 @@
 # ============================================================
 # chiguo_envcheck.py — 环境就绪检查(v10.3)
 # 检查:Python/uv 版本、pi-agent(pi --version)、pi 扩展路径(settings.json)、
-#       ollama embedding(qwen3-embedding)、auth.json opencode-go 条目、
+#       ollama embedding(qwen3-embedding)、auth.json [host].provider 条目（缺省 opencode-go）、
 #       LanceDB lancedb-pro、网易云 API+登录、数据文件完整。
 # 输出:JSON → stdout,汇总退出码 0=就绪 1=warn 2=critical(与 watchdog 一致)。
 # 只读:不建目录、不写缓存、不启动服务;网易云/ollama 检查仅发轻量健康请求
@@ -147,11 +147,12 @@ def check_ollama(base_url: str = "http://localhost:11434") -> dict:
 
 
 def check_pi_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
-    """auth.json 含 provider 条目(key 存在)。缺失 → warn(消息生成将失败)。"""
+    """auth.json 含 provider 条目(key 存在)。缺失 → warn(消息生成将失败)。
+    provider = toml [host].provider（auth.json 键名与 pi --provider 名一致）。"""
     if not auth_path.is_file():
         return {"name": "pi_auth", "ok": False, "severity": "warn",
                 "detail": f"{auth_path} 不存在 → {provider} key 缺失"
-                          f"(export OPENCODE_API_KEY=... 后 bash scripts/install_pi.sh --yes)"}
+                          f"(export {_key_env_hint(provider)}=... 后 bash scripts/install_pi.sh --yes)"}
     try:
         cfg = json.loads(auth_path.read_text(encoding="utf-8"))
     except Exception as e:
@@ -163,7 +164,15 @@ def check_pi_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
                 "detail": f"auth.json 含 {provider} key(已配置)"}
     return {"name": "pi_auth", "ok": False, "severity": "warn",
             "detail": f"auth.json 无 {provider} 条目 → 消息生成将失败"
-                      f"(export OPENCODE_API_KEY=... 后 bash scripts/install_pi.sh --yes)"}
+                      f"(export {_key_env_hint(provider)}=... 后 bash scripts/install_pi.sh --yes"
+                      f"，或配置其他 provider 见 doc/PI_INTEGRATION.md)"}
+
+
+def _key_env_hint(provider: str) -> str:
+    """key 环境变量名（chiguo 工具链统一入口）。install_pi.sh 阶段 5 只读
+    PI_API_KEY（通用名）/OPENCODE_API_KEY（兼容回退）写 auth.json——
+    提示必须与之一致，否则按提示操作写不进去。"""
+    return "PI_API_KEY"
 
 
 def check_lancedb(db_path: Path) -> dict:
@@ -230,9 +239,10 @@ def check_data(xlsx_path: Path, memories_path: Path) -> dict:
             "detail": f"课表/手动记忆 OK ({xlsx_path.name}, {memories_path.name})"}
 
 
-def run_checks(base_dir: Path = None, skip_pi: bool = False) -> dict:
+def run_checks(base_dir: Path = None, skip_pi: bool = False, home: Path = None) -> dict:
     """按序执行 8 组检查。返回完整报告 dict。单项失败不中断。
-    skip_pi: deploy.sh --skip-pi 传入 → pi 缺失降为 warn,不阻塞部署。"""
+    skip_pi: deploy.sh --skip-pi 传入 → pi 缺失降为 warn,不阻塞部署。
+    home: 测试注入用（默认 Path.home()）。"""
     base = base_dir or _BASE_DIR
     cfg = _load_config(base)
     lancedb_path = _cfg_path(cfg, "memory", "lancedb_path",
@@ -240,18 +250,19 @@ def run_checks(base_dir: Path = None, skip_pi: bool = False) -> dict:
     xlsx = _cfg_path(cfg, "schedule", "xlsx_path", "data/xskb.xlsx", base)
     mem = _cfg_path(cfg, "memory", "manual_path", "data/chiguo_memories.json", base)
     api_base = os.environ.get("NETEASE_API_BASE", "http://localhost:3000")
-    home = Path.home()
+    home = home or Path.home()
     pi_settings = home / ".pi" / "agent" / "settings.json"
     pi_ext = home / ".pi-agent" / "TestForPi-memory-lancedb-pro" / "dist" / "pi-adapter" / "index.js"
     pi_auth = home / ".pi" / "agent" / "auth.json"
     ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
+    provider = cfg.get("host", {}).get("provider") or "opencode-go"
     checks = [
         check_env(),
         check_pi(skip_pi=skip_pi),
         check_pi_ext(pi_settings, pi_ext),
         check_lancedb(lancedb_path),
         check_ollama(ollama_url),
-        check_pi_auth(pi_auth),
+        check_pi_auth(pi_auth, provider=provider),
         check_netease(api_base, base / "netease_cookie.txt", base / "netease_health.json"),
         check_data(xlsx, mem),
     ]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wechat-bridge.sh 桩测试：假 git/npm/pgrep + 临时仓库根，验证 install/start/status 行为与 .env 生成（8 用例）
+# wechat-bridge.sh 桩测试：假 git/npm/pgrep + 临时仓库根，验证 install/start/status 行为与 .env 生成（9 用例）
 set -euo pipefail
 TMP="$(mktemp -d /tmp/chiguo-bridge-test.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
@@ -102,5 +102,26 @@ set +e; OUT=$(FAKE_PID=999 bash scripts/wechat-bridge.sh start 2>&1); RC=$?; set
 [ "$RC" = 0 ] || fail "已运行 start 期望 0 实得 $RC"
 echo "$OUT" | grep -q "已在运行" || fail "start 未识别已运行状态"
 pass "已运行 start → 幂等提示"
+
+# ── 用例 9: OPENCODE_API_KEY 注入——优先 opencode-go 条目，无则回退 [host].provider ──
+cat > "$TMP/repo/chiguo_proactive.toml" <<'TOML'
+[host]
+wechat_recipient = "owner_test@im.wechat"
+provider = "deepseek"
+TOML
+mkdir -p "$TMP/home/.pi/agent"
+printf '{"opencode-go":{"type":"api_key","key":"sk-og"},"deepseek":{"type":"api_key","key":"sk-ds"}}' \
+  > "$TMP/home/.pi/agent/auth.json"
+set +e; OUT=$(HOME="$TMP/home" bash scripts/wechat-bridge.sh install 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "provider .env 生成期望 0 实得 $RC"
+grep -q "OPENCODE_API_KEY=sk-og" "$TMP/repo/wechat-bridge/.env" \
+  || fail ".env 应优先注入 opencode-go key: $(cat "$TMP/repo/wechat-bridge/.env")"
+# 无 opencode-go 条目 → 回退 [host].provider=deepseek 条目
+printf '{"deepseek":{"type":"api_key","key":"sk-ds"}}' > "$TMP/home/.pi/agent/auth.json"
+set +e; OUT=$(HOME="$TMP/home" bash scripts/wechat-bridge.sh install 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "回退 .env 生成期望 0 实得 $RC"
+grep -q "OPENCODE_API_KEY=sk-ds" "$TMP/repo/wechat-bridge/.env" \
+  || fail ".env 未回退注入 deepseek key: $(cat "$TMP/repo/wechat-bridge/.env")"
+pass "OPENCODE_API_KEY 注入：优先 opencode-go、回退 [host].provider"
 
 echo "test_wechat_bridge: 通过"

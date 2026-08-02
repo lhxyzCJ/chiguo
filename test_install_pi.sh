@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install_pi.sh 桩测试：假 pi/curl/crontab + 临时 HOME，验证 dry-run 只读扫描、
 # 待办清单与退出码（0=完成/1=有待办/2=严重）、--skip-pi、--yes 写入产物断言、
-# auth.json 合并写入与两遍 --yes 幂等（不重复 .bak/crontab 行/扩展条目）（14 用例）
+# auth.json 合并写入与两遍 --yes 幂等（不重复 .bak/crontab 行/扩展条目）、provider 去绑定（15 用例）
 set -uo pipefail
 TMP="$(mktemp -d /tmp/chiguo-pi-test.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
@@ -254,5 +254,20 @@ EXT_N=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["exte
 [ "$(grep -c "^npm install" "$CALLS_LOG" || true)" = "$NPM1" ] || fail "第二遍重复 npm install"
 unset OPENCODE_API_KEY
 pass "--yes 两遍幂等（不重复 crontab/扩展/.bak/clone）"
+
+# ── 用例 15: toml [host].provider=deepseek + PI_API_KEY → 写 deepseek 条目 + 冒烟用 deepseek ──
+clean_home
+: > "$CALLS_LOG"
+printf '[host]\nprovider = "deepseek"\nmodel = "deepseek-chat"\n' > "$CHIGUO_REPO_OVERRIDE/chiguo_proactive.toml"
+export PI_API_KEY=sk-ds
+set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "provider=deepseek --yes 期望 0 实得 $RC"
+AUTH_DS=$(python3 -c 'import json,sys;print(json.dumps(json.load(open(sys.argv[1])),sort_keys=True,separators=(",",":")))' "$HOME/.pi/agent/auth.json")
+[ "$AUTH_DS" = '{"deepseek":{"key":"sk-ds","type":"api_key"}}' ] || fail "auth.json 未写 deepseek 条目: $AUTH_DS"
+grep -q "pi -p --provider deepseek" "$CALLS_LOG" || fail "冒烟未用 --provider deepseek: $(cat "$CALLS_LOG")"
+grep -q "pi -p --provider opencode-go" "$CALLS_LOG" && fail "冒烟不应再写死 opencode-go" || true
+unset PI_API_KEY
+rm -f "$CHIGUO_REPO_OVERRIDE/chiguo_proactive.toml"
+pass "toml provider=deepseek + PI_API_KEY → deepseek 条目 + 冒烟 --provider deepseek"
 
 echo "test_install_pi: 通过"
