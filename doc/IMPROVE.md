@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-08-02 — OpenClaw 记忆库迁至 ~/.pi-agent/memory（为整体删除 ~/.openclaw 铺路）+ deepseek key 保留确认
+
+**问题**：用户计划整体删除 `~/.openclaw`（4.3G，OpenClaw 已停用），但 LanceDB 记忆库（195 条，autoCapture 持续写入）仍在 `~/.openclaw/memory/lancedb-pro`；需迁移到独立位置并同步全部引用。另确认 `auth.json` deepseek key 保留（install_pi.sh 阶段 5 只写 opencode-go 条目，天然保留）。
+
+**方案（TDD 红→绿）**：
+- **迁移**：主库 `~/.openclaw/memory/lancedb-pro` → `~/.pi-agent/memory/lancedb-pro`（与扩展 fork 同级）；删除扩展默认路径残留库 `~/.pi/agent/memory/lancedb-pro`（7 条早期测试数据）
+- **测试先行**：test_install_pi.sh JSON5_OK + 阶段 3 grep 改新路径（红：模板旧路径时用例 3 失败）；test_envcheck.py 新增默认路径断言（含回归防护力验证）
+- **实现**：11 处引用更新（toml/memory_bridge/monitor/watchdog/envcheck/daemon fallback/deploy/install_pi.sh/pi 侧 json5）；daemon.py personality fallback 从 `~/.openclaw/workspace/skills/chiguo` → 仓库 `personality/`
+- **文档**：README/PI_INTEGRATION/SYSTEM/AGENTS/CLAUDE/CLAUDE_CODE_RULES 同步；版本号不变
+
+**验证**：script 7 个 + Python 23 个全过（test_health_ok 为既有环境性失败，基线对比无关）；memory-pro stats 195 条完整；pi 真实调用扩展加载新库 smartExtraction ON；envcheck ready；bridge 正常；一致性 grep 运行时引用零残留；4 轴审计通过；deepseek key 完好
+
+---
+
 ## 2026-08-02 — 任务 14 评审修复：真实 daemon shape 验证 + bridge 链路测试 + 检测边界收紧
 
 **问题**：Task 14 评审两项 Important——①buildReply 依赖真实 daemon add 输出 shape 未验证（fake daemon 自拟 shape，31 用例全跑在手写 fake 上）；②bridge detect→execute→reply 特殊命令链路零测试覆盖。另有 6 项 Minor（文档/正则边界/死代码/版本号残留）。

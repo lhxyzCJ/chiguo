@@ -502,8 +502,8 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
      类型: reminder（定时）/ habit（习惯窗口）
      → daemon 直接读取，不用 OpenClaw
 
-  ② LanceDB 只读（OpenClaw 记忆系统）
-     路径: ~/.openclaw/memory/lancedb-pro/memories.lance（~ 展开为 $HOME，v10 起多机可移植）
+  ② LanceDB 只读（pi-agent memory-lancedb-pro 记忆系统；OpenClaw 已停用）
+     路径: ~/.pi-agent/memory/lancedb-pro/memories.lance（~ 展开为 $HOME，v10 起多机可移植）
      访问: memory_bridge.py（FTS BM25 关键词搜索 + Ebbinghaus 加权）
      表结构: id, text, vector(1024d), category, scope, importance, timestamp, metadata
      降级: LanceDB 不可用 → available=False → 自动跳过，JSON 兜底
@@ -984,7 +984,7 @@ age = 16
 identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
 
 [memory]
-lancedb_path = "~/.openclaw/memory/lancedb-pro"  # LanceDB 路径（~ 展开为 $HOME）
+lancedb_path = "~/.pi-agent/memory/lancedb-pro"  # LanceDB 路径（~ 展开为 $HOME）
 lancedb_table = "memories"              # 表名
 manual_path = "data/chiguo_memories.json"  # 手动记忆文件
 ebbinghaus_strength = 168               # 记忆强度 S（小时），168h=7天（v4）

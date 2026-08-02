@@ -308,10 +308,7 @@ Intent × Cue × Vibe three-layer system:
 
 ### Skill files (allowed security boundary)
 - **Repo**（Phase 4 起唯一权威）：`personality/SUN2.md`、`personality/迟菓语言技巧指南.md`（随仓库部署，pi-run 注入）
-- `/root/.openclaw/workspace/skills/chiguo/SKILL.md` (133 lines) [OpenClaw 旧路径，已停用]
-- `/root/.openclaw/workspace/skills/chiguo/SUN2.md` (283 lines) [OpenClaw 旧路径，已停用]
-- `/root/.openclaw/workspace/skills/chiguo/references/迟菓语言技巧指南.md` (153 lines) [OpenClaw 旧路径，已停用]
-- `/root/.openclaw/workspace/agents/main/` — 12 files (IDENTITY, SOUL, MEMORY, etc.; reply-side standing order lives in AGENTS.md) [OpenClaw 旧路径，已停用]
+- `/root/.openclaw/workspace/skills/chiguo/` 与 `/root/.openclaw/workspace/agents/main/` — OpenClaw 旧路径，已停用（OpenClaw 整体可删，勿恢复引用）
 
 Note: v4 residue `scripts/on-user-msg.sh` and `.claude/settings.json` UserPromptSubmit hooks are removed by `install_integration.sh` stage 3b (backed up to `.bak`).
 
@@ -402,11 +399,9 @@ Note: analysis-relevant runtime data (decisions/state/monitor logs) is **tracked
 
 ## 16. Security Boundary
 
-**STRICTLY FORBIDDEN**: Modify any file under `/root/.openclaw/` EXCEPT:
-- `/root/.openclaw/workspace/skills/chiguo/` (SKILL.md, SUN2.md, references/, scripts/)
-- `/root/.openclaw/workspace/agents/main/` (IDENTITY.md, SOUL.md, MEMORY.md, etc.)
+**OpenClaw 已停用**：`/root/.openclaw/` 是旧宿主运行时目录，已不再使用、可整体删除——本项目不得恢复对其的引用。
 
-**READ-ONLY**: `/root/.openclaw/memory/` LanceDB — accessed only via `memory_bridge.py`.
+**READ-ONLY**: `~/.pi-agent/memory/lancedb-pro` LanceDB — accessed only via `memory_bridge.py`.
 
 ---
 
