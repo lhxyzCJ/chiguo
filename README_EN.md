@@ -77,43 +77,11 @@ The system is two message pipelines, all running locally — model API and NetEa
 
 **Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (LanceDB) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` / `chiguo_watchdog.py` patrol independently. Both pipelines record pi-call outcomes into the `pi_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
 
-```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 100, "curve": "basis", "fontSize": 16}}}%%
-flowchart TB
-    subgraph 主动发送链
-        CRON[系统 crontab<br/>每 15 分钟] --> TICK[chiguo-tick.sh]
-        TICK --> DC[chiguo_daemon.py --compact<br/>零 LLM 决策门控]
-        DC -->|action≠send| X1((本轮不发))
-        DC -->|action=send| PI[pi-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
-        PI --> SEND[POST 127.0.0.1:18790/send]
-        SEND --> WX[(微信)]
-        PI -. 发送结果回传 .-> DC
-    end
-    subgraph 被动回复链
-        WX -->|新消息| BR[bridge 收消息<br/>TurnQueue 串行<br/>会话 chiguo-main]
-        BR --> UR[daemon --user-msg<br/>确定性记账 recv_dedup]
-        UR --> SP{command-detect<br/>特殊命令?}
-        SP -->|纪念日/假期| SC[daemon CLI 执行<br/>直接回复]
-        SP -->|普通消息| AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
-        AP --> UA[daemon --analysis<br/>去重升级]
-        SC -->|回复文本| RPL((回复发回微信))
-        UA -->|回复文本| RPL((回复发回微信))
-    end
-    subgraph 共享基础设施
-        direction TB
-        DC <-->|读| ST[(chiguo_state.json<br/>原子写)]
-        DC -->|追加| DEC[(chiguo_decisions.jsonl)]
-        DC <-->|记忆话题| MEM[(LanceDB 记忆)]
-        DC <-->|音乐话题| NE[(网易云)]
-        MON[chiguo_monitor / watchdog] -. 巡检 .-> ST
-        ST ~~~ DEC
-        DEC ~~~ MEM
-        MEM ~~~ NE
-    end
-    PI -. 成败记账 .-> PH[pi_health.py<br/>假死状态机]
-    AP -. 成败记账 .-> PH
-    PH -. 告警/恢复 .-> WX
-```
+<p align="center">
+  <img src="doc/architecture.png" alt="Chiguo architecture: proactive sending / passive replying / shared infrastructure" width="100%">
+</p>
+
+> Diagram source: [doc/architecture.mmd](doc/architecture.mmd) (re-render the PNG after editing). GitHub shrinks inline images to container width — **click the image for full resolution**.
 
 Inside the decision engine (`chiguo_daemon.py`, zero LLM):
 
@@ -206,11 +174,11 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ### Memory system (LanceDB + ollama embedding)
 
-**Role**: long-term memory. Recalled memories and random old stories come from here; also one of the 8 topic sources.
+**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Worth-keeping bits of conversation are auto-accumulated into the memory store by the pi-agent memory-lancedb-pro extension (memories, old stories, your preferences); the decision engine recalls them **read-only** through `memory_bridge.py` (BM25 full-text search, zero tokens, zero extra calls), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
 
-**Setup**: `uv sync --all-extras` + `bash scripts/install_pi.sh --yes` (initializes the memory store).
+**Setup**: `uv sync --all-extras` + `bash scripts/install_pi.sh --yes` (initializes the memory store). The store lives at `~/.pi-agent/memory/lancedb-pro` (read-only from Chiguo's side; writes are done by the pi extension); `data/chiguo_memories.json` is the manual memory file, **always active** as a supplement.
 
-**Missing**: memory topic sources shrink, falling back to JSON mode; `chiguo_envcheck.py` reports a warn (non-fatal).
+**Missing**: graceful degradation when LanceDB is unavailable (`available=False`, queries return empty, no exceptions) — memory topic sources shrink and `chiguo_envcheck.py` reports a warn (non-fatal); manual JSON memories are unaffected. Differences in detail: [❓ FAQ](#-faq).
 
 ### NetEase Music bridge
 
