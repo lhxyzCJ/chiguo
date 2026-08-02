@@ -15,7 +15,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && node test_trigger_script.js && bash test_install_integration.sh && bash test_install_pi.sh && bash test_wechat_bridge.sh && \
+node test_pi_run.mjs && node test_bridge_askpi.mjs && node test_bridge_cmd.mjs && node test_bridge_health.mjs && node test_trigger_script.js && bash test_install_integration.sh && bash test_install_pi.sh && bash test_wechat_bridge.sh && bash test_tick_health.sh && \
 uv run python test_chiguo_math.py && uv run python test_holiday_parser.py && \
 uv run python test_integration.py && uv run python test_monitor.py && \
 uv run python test_eventbus.py && uv run python test_personality.py && \
@@ -27,7 +27,7 @@ uv run python test_circadian.py && uv run python test_followup.py && \
 uv run python test_netease_proof.py && uv run python test_netease_service.py && \
 uv run python test_envcheck.py && uv run python test_composer_trade.py && \
 uv run python test_personality_init.py && uv run python test_toml_binding.py && \
-uv run python test_adapt_personality.py   # full suite (23 py + 7 script tests)
+uv run python test_adapt_personality.py && uv run python test_pi_health.py   # full suite (24 py + 8 script tests)
 
 uv run python test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout

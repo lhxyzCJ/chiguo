@@ -28,7 +28,7 @@ wechat-bridge（微信接入）与 pi-agent（回复/主动消息生成后端）
 
 CLI: `pi_health.py record --outcome fail|success [--reason <r>] [--config <path>] [--state <path>]`
 
-- `--config` 默认锚定脚本所在仓库的 `chiguo_proactive.toml`；`[health].fail_threshold` 决定阈值（默认 3，tomllib 读取失败回退 3）
+- `--config` 默认锚定脚本所在仓库的 `chiguo_proactive.toml`；`[health].fail_threshold` 决定阈值（默认 3；bool/float/非整型/0/负值视为无效回退 3）
 - `--state` 默认 `Path(__file__).parent.parent / "pi_health.json"`（仓库根）
 - 状态文件字段：`{state: up|down, fail_streak, last_fail_at, last_success_at, fail_reason, changed_at}`
   - fail_reason 保留**本串首次失败**的原因（不覆盖），供告警诊断
@@ -37,16 +37,16 @@ CLI: `pi_health.py record --outcome fail|success [--reason <r>] [--config <path>
   - down 期间继续 fail → transition=none（防重复告警）
   - down 后首次 success → state=up，transition=up（恢复通知，仅这一次）
   - up 期间 success → transition=none
-- 写入：`.tmp` + `os.replace` 原子写；`fcntl.flock`（LOCK_EX | LOCK_NB，短超时，照 chiguo_state.py `_lock_acquire` 模式）
+- 写入：`.tmp` + `os.replace` 原子写；`fcntl.flock`（LOCK_EX | LOCK_NB，短超时，照 chiguo_state.py `_lock_acquire` 模式）；**锁获取失败（5s）→ 本次不写并 stderr 告警**（宁丢一次记账，不无锁写共享 .tmp）
 - 输出（stdout JSON）：`{"state", "transition": "none|down|up", "message"}` — message 为现成告警/恢复文案，发送方只负责投递
   - down: `⚠️ 后端异常：pi-agent 连续 N 次调用失败（原因：…）。回复和主动消息都会受影响，我还在线但脑子不转了～恢复后告诉你`
   - up: `✅ 后端已恢复，我活过来了！`
 
 ### bridge.mjs 改动
 
-- 新 helper `recordPiHealth(outcome, reason)`：execFileP 调 `DAEMON_PY pi_health.py record …`（30s 超时），解析 stdout JSON，transition 非 none 时 `bot.send(OWNER_ID, message)`；整体 `.catch(()=>{})` —— 记账失败绝不影响回复流
-- `WECHAT_BRIDGE_PI_HEALTH` env 覆盖 pi_health.py 路径（默认 `new URL('../scripts/pi_health.py', import.meta.url)`，照 PI_RUN_SCRIPT 模式）
-- 接入点：`handleMessage` askPi 成功路径（reply 后）→ record success；catch 路径（`⚠️ 处理失败` 回复后）→ record fail（reason = 错误消息截断 100 字符）
+- 新 helper `recordPiHealth(bot, outcome, reason)`：execFileP 调 pi_health.py（30s 超时），解析 stdout JSON，transition 非 none 时 `bot.send(OWNER_ID, message)`（投递失败打 `[pi health alert send error]` 日志）；整体 `.catch(()=>{})` —— 记账失败绝不影响回复流
+- 解释器独立环境变量 `WECHAT_BRIDGE_PI_HEALTH_PY`（默认 `/root/chiguo/.venv/bin/python`，不随 DAEMON_PY 走——测试可能把后者换成 node 跑 fake daemon）；`WECHAT_BRIDGE_PI_HEALTH` 覆盖脚本路径（默认 `new URL('../scripts/pi_health.py', import.meta.url)`，照 PI_RUN_SCRIPT 模式）
+- 接入点：`handleMessage` askPi 成功路径（reply 后）→ record success；catch 路径（`⚠️ 处理失败` 回复后）→ record fail（reason = 错误消息截断 100 字符）。**bot.reply 移出 try 独立 `.catch`**——微信发送故障 ≠ pi 假死，不得误记 fail
 - 特殊命令路径不经 pi → 不记账（已正确）
 
 ### chiguo-tick.sh 改动
