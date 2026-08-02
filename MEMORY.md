@@ -1,3 +1,17 @@
+## 2026-08-02 — README 开源化重构 + 项目整洁化（版本 v1.6 → v1.7）
+
+**背景**：用户考虑将 chiguo 作为 GitHub 开源项目面向其他开发者。经 brainstorming + grilling 收敛：现 README 版本/测试数过期、无定位边界/由来/架构图/人格自定义/配置示例/FAQ/贡献，且快速开始对全新机器跑不通（无 pyproject.toml、依赖未声明）。
+
+**方案（已批准设计，~/chiguo-meta/specs/2026-08-02-readme-oss-rework-design.md）**：
+- **README.md 重写（371 行，16 节）**：中文为主 + 每节英文精炼段 + 双语 TOC；定位边界（个人项目声明 + 组件依赖表 + **公开前清理警示**（登录态/对话随 git 跟踪）+ 隐私实话）；迟菓的由来（查证维基：源自《三色绘恋》2017 初登场（迟耀的妹妹）→ 官方续作《三色绘恋S / SunnyRain Lovestory》2020 主角化（打工妹初中生）→ 本项目二次演绎；**合规声明**：非官方、版权归绘恋企划屋/山百合、仅个人学习、异议即移除）；mermaid 双链路架构图；脱敏示例（决策 JSON + 3 条消息）；快速开始（uv sync）；接入任意模型；配置/人格自定义/部署/文件结构/CLI/FAQ(7)/贡献/文档/License
+- **pyproject.toml（新增）**：核心**零依赖**（纯 stdlib，memory_bridge.py:15 与 schedule_parser.py:71 均惰性导入已查证）+ `[project.optional-dependencies] memory=["lancedb"]`、`schedule=["openpyxl"]`；**生产 venv 迁移到 `uv sync --all-extras`**：lancedb 0.36 装上后记忆从降级恢复启用（envcheck LanceDB OK）
+- **spec/plan 归档迁移**：全部 15 个 spec/plan 移至项目外 `~/chiguo-meta/`（specs/ + plans/，不进 git），AGENTS.md 新增归档约定
+- **目录清理**：删除 `.superpowers/`（50 文件未跟踪台账）、`archive/openclaw.json`（OpenClaw 已停用）；`.claude/settings.local.json` 移出 git 跟踪（本地工具配置，.gitignore 加 .claude/）
+- **配套**：doc/README.md → 运维速查（~12 行 + 重定向）；SYSTEM.md:680 修正 **pandas 幽灵依赖**（memory_bridge 无此依赖）；AGENTS.md 测试计数 24 py + 9 script
+- **示例消息口径（用户纠正）**：迟菓是赛博生命、无法与现实互动——示例去掉现实职业/空间/支付行为（"外卖单会少一半"、"路过书店"、"奶茶放门口+转账"），改为纯消息域（信息来自数据源、关心指向哥哥、不用睡觉的赛博自嘲）
+- **验证**：uv sync 实跑、快速开始命令逐条、链接全通、双语抽查、全量回归（24 py + 9 script 全绿；test_monitor 1 例为既有网易云环境失败）
+- **提交**：chore(meta) 归档迁移 ×2 / feat(pyproject) / feat(readme) / docs(readme) 配套 / docs(readme) 版本
+
 ## 2026-08-02 — 后端 provider 去绑定：接入任意模型 API（TDD 红→绿；版本 v1.5 → v1.6）
 
 **背景**：用户要求后端表述不绑定 opencode-go，应允许各种模型 API 接入、完全依赖 pi-agent 的接入能力。
