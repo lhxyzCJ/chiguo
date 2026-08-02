@@ -16,7 +16,7 @@
 │  输入信号:                                                         │
 │  ├─ 时间（hour, weekday, week_num）                                │
 │  ├─ 节假日（holiday_parser → 2026 国务院安排）                     │
-│  ├─ 课表（schedule_parser → xskb.xlsx）                            │
+│  ├─ 课表（schedule/ 包 → xskb.xlsx）                              │
 │  ├─ 记忆（memory_bridge → LanceDB 只读（历史记忆库）+ Ebbinghaus）     │
 │  ├─ 交互历史（silent_hours, messages_today）                       │
 │  ├─ 情绪状态（loneliness, anxiety, affection, energy, tsundere）   │
@@ -48,7 +48,7 @@ chiguo_daemon.py (DecisionEngine)
   │     ├─ chiguo_math.py      → 纯数学库：sigmoid / decay / recover / Hawkes / longing
   │     ├─ chiguo_personality.py → Big Five + 角色特质（8 维人格）(v4 NEW)
   │     ├─ chiguo_bayesian.py  → Bayesian 用户状态推断（6 状态，在线学习）(v4 NEW)
-  │     ├─ schedule_parser.py  → 课表解析（xlsx → JSON cache）
+  │     ├─ schedule/ 包    → 课表（parsing.py 纯解析 / query.py 策略 / parser.py 数据面）
   │     ├─ holiday_parser.py   → 节假日判断（国务院安排 + 调休）
   │     ├─ memory_bridge.py    → LanceDB 只读桥接 + Ebbinghaus 遗忘
   │     └─ chiguo_circadian.py → 生物钟学习（双作息双桶分桶学习：工作日/周末独立窗口 + 置信度，
@@ -454,7 +454,7 @@ availability(now):
   ├─ is_holiday? ── yes → 0.85（跳过课表）
   ├─ 课表可选来源（enabled=false 或缺 xlsx）→ 无课表信息 → availability=1.0（按空闲）
   ├─ is_school_day? ── no → 0.85（普通周末）
-  └─ yes（含调休）→ schedule_parser.query()
+  └─ yes（含调休）→ schedule_status() 门面（内部 schedule/query 纯函数）
        ├─ in_class → 0.05(heavy) / 0.08(normal) / 0.12(light)
        ├─ remaining=0 → 0.85（课上完了）
        └─ remaining>0 → 0.50~0.70（还有课）
@@ -532,7 +532,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 | 来源 | 权重 | 数据源 | 说明 |
 |------|:--:|------|------|
-| schedule | 0.30 | schedule_parser + holiday_parser | 课表/假期/周末/调休 |
+| schedule | 0.30 | schedule/ 包 + holiday_parser | 课表/假期/周末/调休 |
 | memory | 0.25 | memory_bridge (LanceDB + Ebbinghaus) | 随机高重要性记忆 |
 | general | 0.25 | 当前小时数 | 按时段通用关心 |
 | weather_season | 0.20 | 当前月份 | 季节感知 |
@@ -667,7 +667,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | 文件 | 职责 | 依赖 |
 |------|------|------|
 | `chiguo_daemon.py` | **主入口**。决策引擎，输出 JSON | state, trigger, topics, composer, eventbus |
-| `chiguo_state.py` | 情绪引擎 + 多维人格 + Bayesian + 课表 + 节假日 + 记忆 + circadian/pending_topics + 双作息迁移 (v8) | math, personality, bayesian, schedule_parser, holiday_parser, memory_bridge, chiguo_circadian |
+| `chiguo_state.py` | 情绪引擎 + 多维人格 + Bayesian + 课表 + 节假日 + 记忆 + circadian/pending_topics + 双作息迁移 (v8) | math, personality, bayesian, schedule, holiday_parser, memory_bridge, chiguo_circadian |
 | `chiguo_circadian.py` | 生物钟学习：双作息双桶分桶（weekday_*/weekend_* 独立估计 + 听歌活跃合并计数）（v7 新增，v8 双桶，纯函数） | 无 |
 | `netease/bridge.py` | 网易云 API 桥接 数据面（NeteaseBridge 实例化）：`fetch_recent_play` 最近播放记录（睡眠窗口内夜间活跃反证 + netease/recent_play_cache.json 缓存）（v8）；`fetch_daily_songs` 每日推荐 + `_api_get` 有限重试（瞬时/5xx 重试 retry_count 次 + 退避）与每日推荐 schema 过滤 + QR 登录（v9） | 无（requests） |
 | `netease/service.py` | 网易云策略层（v9，DI）：`NeteaseService` 健康探针/登录失效检测/故障降级链（netease_fault 话题）/音乐+故障双日配额（netease/netease_health.json 原子写）/加权随机选源+换源兜底/peek-consume 两阶段（未选中不消费配额）/话题素材组装（不含链接，零 LLM）+ 播放反证单入口 `fetch_play_proof`；测试 `tests/test_netease_service.py` | netease.bridge |
@@ -678,7 +678,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_personality.py` | Big Five + 角色特质（8 维人格）（v4） | 无 |
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态，在线学习）（v4） | 无 |
 | `chiguo_eventbus.py` | 轻量发布/订阅事件总线（v4） | 无 |
-| `schedule_parser.py` | 课表解析（xlsx → JSON cache → query） | openpyxl |
+| `schedule/` 包 | 课表（netease 模式拆分）：`parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `parser.py` 数据面（xlsx → JSON cache → 刷新，构造签名与 query 返回形状兼容旧版） | openpyxl（可选，惰性导入） |
 | `holiday_parser.py` | 节假日判断（2026 国务院安排 + 调休） | 无 |
 | `solar_terms.py` | 24 节气日期查询（零依赖） | 无 |
 | `memory_bridge.py` | LanceDB 只读桥接 + Ebbinghaus 遗忘 | lancedb（惰性导入，可选；缺了降级 JSON） |
@@ -702,6 +702,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `netease/netease_qr.png` | 网易云登录二维码（--login 生成） | 无 |
 | `tests/test_chiguo_math.py` | 数学库单元测试（26 用例，含 sigmoid/负权重/负半衰期边界） | chiguo_math |
 | `tests/test_holiday_parser.py` | 节假日单元测试（7 用例） | holiday_parser |
+| `tests/test_schedule_parser.py` | 课表单元测试（23 用例：周数/单元格回退链/上课状态/alternates 周次互斥/周次边界/xlsx 解析/缓存 roundtrip 与 mtime 重解析/损坏缓存重建/失败保留旧缓存/v1 迁移强制重解析） | schedule |
 | `tests/test_integration.py` | 集成测试（17 用例，test_1/test_8 已从纯 print 强化为真断言） | chiguo_daemon |
 | `tests/test_monitor.py` | 监控测试 + fuzz 测试（42 用例） | chiguo_monitor |
 | `tests/test_eventbus.py` | EventBus 单元测试（10 用例） | chiguo_eventbus |
@@ -815,14 +816,14 @@ python3 chiguo_demo.py
 #   q       退出
 ```
 
-### schedule_parser.py
+### schedule/ 包
 
 ```bash
-# 查询当前课表状态
-python3 schedule_parser.py
+# 查询当前课表状态（semester_start 读自 chiguo_proactive.toml）
+uv run python -m schedule.parser
 
 # 导出完整解析结果
-python3 schedule_parser.py --dump
+uv run python -m schedule.parser --dump
 ```
 
 ### holiday_parser.py

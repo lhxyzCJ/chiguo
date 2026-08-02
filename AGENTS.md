@@ -21,6 +21,7 @@ No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every r
 ```bash
 node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && bash tests/test_tick_health.sh && \
 uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
+uv run python tests/test_schedule_parser.py && \
 uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
 uv run python tests/test_eventbus.py && uv run python tests/test_personality.py && \
 uv run python tests/test_bayesian.py && uv run python tests/test_composer.py && \
@@ -31,7 +32,7 @@ uv run python tests/test_circadian.py && uv run python tests/test_followup.py &&
 uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
 uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
 uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
-uv run python tests/test_adapt_personality.py && uv run python tests/test_pi_health.py   # full suite (24 py + 8 script tests)
+uv run python tests/test_adapt_personality.py && uv run python tests/test_pi_health.py   # full suite (25 py + 8 script tests)
 
 uv run python tests/test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout
@@ -57,7 +58,7 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 ## Known gotchas
 
 - `memory_bridge.py` lazy-imports `lancedb` inside `_ensure_table()` (CLAUDE_CODE_RULES.md §1 claims a hard top-level import — stale; CLAUDE.md is correct): daemon runs with `available=False` when lancedb is absent.
-- `schedule_parser.py` requires `xskb.xlsx`; if missing, falls back to availability=0.85 (free time). `_parse()` returns bool and never overwrites a valid cache with a failed parse.
+- `schedule/parser.py` requires `xskb.xlsx`; if missing, falls back to availability=0.85 (free time). `_parse()` returns bool and never overwrites a valid cache with a failed parse.
 - `tests/test_topics.py` anchors `_real_state` with `semester_end` in the past — don't "fix" it to real dates (time-bomb test).
 
 ## After any code change
