@@ -66,7 +66,7 @@ do_install() {
 
   local ver
   ver="$(installed_version)"
-  if [ -n "$ver" ] && [ "$ver" = "$NETEASE_API_TAG" ]; then
+  if [ -n "$ver" ] && { [ "$ver" = "$NETEASE_API_TAG" ] || [ "v$ver" = "$NETEASE_API_TAG" ]; }; then
     say "已安装 $NETEASE_API_TAG（$NETEASE_API_DIR），跳过安装"
   else
     if [ ! -d "$NETEASE_API_DIR/.git" ]; then
