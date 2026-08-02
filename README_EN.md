@@ -78,7 +78,8 @@ The system is two message pipelines, all running locally — model API and NetEa
 **Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (LanceDB) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` / `chiguo_watchdog.py` patrol independently. Both pipelines record pi-call outcomes into the `pi_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
 
 ```mermaid
-flowchart LR
+%%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 100, "curve": "basis", "fontSize": 16}}}%%
+flowchart TB
     subgraph 主动发送链
         CRON[系统 crontab<br/>每 15 分钟] --> TICK[chiguo-tick.sh]
         TICK --> DC[chiguo_daemon.py --compact<br/>零 LLM 决策门控]
@@ -95,15 +96,19 @@ flowchart LR
         SP -->|纪念日/假期| SC[daemon CLI 执行<br/>直接回复]
         SP -->|普通消息| AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
         AP --> UA[daemon --analysis<br/>去重升级]
-        SC -->|回复文本| WX
-        UA -->|回复文本| WX
+        SC -->|回复文本| RPL((回复发回微信))
+        UA -->|回复文本| RPL((回复发回微信))
     end
     subgraph 共享基础设施
+        direction TB
         DC <-->|读| ST[(chiguo_state.json<br/>原子写)]
         DC -->|追加| DEC[(chiguo_decisions.jsonl)]
         DC <-->|记忆话题| MEM[(LanceDB 记忆)]
         DC <-->|音乐话题| NE[(网易云)]
         MON[chiguo_monitor / watchdog] -. 巡检 .-> ST
+        ST ~~~ DEC
+        DEC ~~~ MEM
+        MEM ~~~ NE
     end
     PI -. 成败记账 .-> PH[pi_health.py<br/>假死状态机]
     AP -. 成败记账 .-> PH

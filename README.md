@@ -78,7 +78,8 @@
 **共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（LanceDB）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` / `chiguo_watchdog.py` 独立巡检。两条链的 pi 调用成败都记入 `pi_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
 ```mermaid
-flowchart LR
+%%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 100, "curve": "basis", "fontSize": 16}}}%%
+flowchart TB
     subgraph 主动发送链
         CRON[系统 crontab<br/>每 15 分钟] --> TICK[chiguo-tick.sh]
         TICK --> DC[chiguo_daemon.py --compact<br/>零 LLM 决策门控]
@@ -95,15 +96,19 @@ flowchart LR
         SP -->|纪念日/假期| SC[daemon CLI 执行<br/>直接回复]
         SP -->|普通消息| AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
         AP --> UA[daemon --analysis<br/>去重升级]
-        SC -->|回复文本| WX
-        UA -->|回复文本| WX
+        SC -->|回复文本| RPL((回复发回微信))
+        UA -->|回复文本| RPL((回复发回微信))
     end
     subgraph 共享基础设施
+        direction TB
         DC <-->|读| ST[(chiguo_state.json<br/>原子写)]
         DC -->|追加| DEC[(chiguo_decisions.jsonl)]
         DC <-->|记忆话题| MEM[(LanceDB 记忆)]
         DC <-->|音乐话题| NE[(网易云)]
         MON[chiguo_monitor / watchdog] -. 巡检 .-> ST
+        ST ~~~ DEC
+        DEC ~~~ MEM
+        MEM ~~~ NE
     end
     PI -. 成败记账 .-> PH[pi_health.py<br/>假死状态机]
     AP -. 成败记账 .-> PH
