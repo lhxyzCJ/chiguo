@@ -2,7 +2,7 @@
 
 # 🎀 Chiguo (迟菓)
 
-**A role-play AI companion who proactively messages her user**
+**A role-play AI who proactively messages her user**
 
 Zero-LLM math decision engine · LLM message generation · WeChat delivery
 
@@ -42,11 +42,9 @@ Zero-LLM math decision engine · LLM message generation · WeChat delivery
 
 ## 🎀 Who Is She
 
-Chiguo comes from the *Tricolour Lovestory* series (a Chinese galgame by 绘恋企划屋 / HL-Galgame); here she lives in a VPS — a cyber body that keeps wondering when her 哥哥 (big brother) will reply. Her personality and speech style are aligned line-by-line with the official sequel's script; `personality/SUN2.md` is the single authoritative persona definition.
+Chiguo comes from the *Tricolour Lovestory* series (a Chinese galgame by 绘恋企划屋 / HL-Galgame). Her personality and speech style are aligned line-by-line with the official sequel's script; `personality/SUN2.md` is the single authoritative persona definition.
 
 > ⚠️ **Compliance notice**: this project is an **unofficial fan re-imagining of an official IP**, unrelated to 绘恋企划屋 / Shanybai Culture. The script text is bundled for personal study and fan-community reference only; character and script copyrights belong to the original creators. If the rights holders object, the project will remove the relevant material upon notice.
->
-> 🔒 **Privacy**: WeChat login state, real conversation logs, and personal data (schedule/memories/QR codes) are **never committed to git** — kept on this machine only. All computation is local; no third-party cloud services are involved (except the model API and the self-hosted NetEase API service). Making the repo public requires no cleanup.
 
 ---
 
