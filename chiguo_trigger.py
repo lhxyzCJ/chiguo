@@ -44,12 +44,16 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
 
     # ── 固定事件（权重固定，会概率性参与竞争） ──────────
 
-    # 特殊日期
-    special_dates = state.config.get("schedule", {}).get("special_dates", [])
-    if now.strftime("%m-%d") in special_dates:
+    # 特殊日期(schedule-center 3c:数据源 = anniversary_mgr 当天匹配,原读 toml special_dates)
+    try:
+        anniv_today = state.anniversary_mgr.get_today(now.date())
+        special_hit = any(a.type == "anniversary" for a in anniv_today)
+    except Exception:
+        special_hit = False
+    if special_hit:
         weighted_candidates.append({
             "trigger": Trigger(type="special", intensity="soft", description="特殊日期"),
-            "weight": 3.0 * ritual_scale,  # 高权重，但非绝对
+            "weight": 3.0 * ritual_scale,  # 高权重,但非绝对
         })
 
     # 早安

@@ -44,16 +44,27 @@ def _real_state(tmp: str) -> ChiguoState:
     return ChiguoState(cfg)
 
 
+class _EmptyAnniversaryMgr:
+    """空纪念日源：MockState 默认无纪念日（真实文件场景走 _real_state + base_dir 锚定）"""
+
+    def get_today(self, today):
+        return []
+
+    def get_upcoming(self, today, days=7):
+        return []
+
+
 class MockState:
-    """最小化 mock：TopicPicker 只依赖 emotion 变化率 / personality / schedule_status / memory_bridge"""
+    """最小化 mock：TopicPicker 只依赖 emotion 变化率 / personality / schedule_status / memory_bridge / anniversary_mgr"""
 
     def __init__(self, bridge=None, personality=None, lon_rate=0.0, anx_rate=0.0,
-                 schedule_status=None, quiet_window=(0, 8)):
+                 schedule_status=None, quiet_window=(0, 8), anniversary_mgr=None):
         self.memory_bridge = bridge
         self.personality = personality
         self.emotion = SimpleNamespace(loneliness_rate=lon_rate, anxiety_rate=anx_rate)
         self.cooldown = SimpleNamespace(trigger_history=[],
                                         quiet_window=lambda: quiet_window)
+        self.anniversary_mgr = anniversary_mgr if anniversary_mgr is not None else _EmptyAnniversaryMgr()
         self._schedule_status = schedule_status or {
             "in_class": False, "class_load": "free", "remaining_classes": 0,
         }
@@ -361,31 +372,24 @@ def test_solar_terms_topic():
 
 
 def test_anniversary_topic_today_and_upcoming():
-    """纪念日：当天命中 + 7 天内倒计时（chdir 临时目录隔离 anniversaries.json）"""
+    """纪念日：当天命中 + 7 天内倒计时（3c:TopicPicker 经 state.anniversary_mgr,base_dir 锚定;
+    文件先于 state 构造写入,替代旧 cwd 重构造手法）"""
     picker_cfg = _picker_cfg()
     with tempfile.TemporaryDirectory() as td:
+        Path(td, "anniversaries.json").write_text(json.dumps({
+            "anniversaries": [
+                {"id": "a1", "type": "anniversary", "name": "相遇纪念日", "date": "06-21"},
+                {"id": "a2", "type": "anniversary", "name": "生日", "date": "06-25"},
+            ]
+        }, ensure_ascii=False))
         state = _real_state(td)
-        picker = TopicPicker(state, picker_cfg)  # 构造时读 cwd 的 anniversaries.json（项目根无此文件）
-        orig = os.getcwd()
-        os.chdir(td)
-        try:
-            Path("anniversaries.json").write_text(json.dumps({
-                "anniversaries": [
-                    {"id": "a1", "type": "anniversary", "name": "相遇纪念日", "date": "06-21"},
-                    {"id": "a2", "type": "anniversary", "name": "生日", "date": "06-25"},
-                ]
-            }, ensure_ascii=False))
-            # chdir 后重新构造 → AnniversaryManager 读到临时目录的文件
-            # _anniversary_topic 的 now 参数是 datetime（内部调 now.date()）
-            picker2 = TopicPicker(state, picker_cfg)
-            today = picker2._anniversary_topic(datetime(2026, 6, 21, 14, 0, tzinfo=CST))
-            assert today and today["type"] == "anniversary", today
-            assert "相遇纪念日" in today["hint"], today
-            up = picker2._anniversary_topic(datetime(2026, 6, 22, 14, 0, tzinfo=CST))
-            assert up and up["type"] == "anniversary" and "3天" in up["hint"], up
-            assert picker2._anniversary_topic(datetime(2026, 7, 10, 14, 0, tzinfo=CST)) is None
-        finally:
-            os.chdir(orig)
+        picker = TopicPicker(state, picker_cfg)
+        today = picker._anniversary_topic(datetime(2026, 6, 21, 14, 0, tzinfo=CST))
+        assert today and today["type"] == "anniversary", today
+        assert "相遇纪念日" in today["hint"], today
+        up = picker._anniversary_topic(datetime(2026, 6, 22, 14, 0, tzinfo=CST))
+        assert up and up["type"] == "anniversary" and "3天" in up["hint"], up
+        assert picker._anniversary_topic(datetime(2026, 7, 10, 14, 0, tzinfo=CST)) is None
     print("  OK test_anniversary_topic_today_and_upcoming")
 
 
