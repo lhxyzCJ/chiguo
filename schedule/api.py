@@ -118,6 +118,7 @@ class ScheduleApi:
     def _migrate_toml_exam_weeks(self):
         """③(Task 10 激活):toml exam_weeks → override,label="from toml 考试周"。"""
         sched = self.config.get("schedule", {})
+        migrated = 0
         for r in sched.get("exam_weeks", []) or []:
             parts = [x.strip() for x in str(r).split(",")]
             if len(parts) == 1:
@@ -136,10 +137,14 @@ class ScheduleApi:
             self.apply_override({"kind": "exam_week", "date": s.isoformat(),
                                  "end_date": e.isoformat(), "label": "from toml 考试周"},
                                 _from_migration=True)
+            migrated += 1
+        if migrated:
+            print(f"[schedule.api] toml exam_weeks 已迁移 {migrated} 条", file=sys.stderr)
 
     def _migrate_toml_special_dates(self):
         """④(Task 10 激活):toml special_dates → 纪念日(迟菓生日为默认,其余 name="特殊日期 MM-DD")。"""
         sched = self.config.get("schedule", {})
+        added = 0
         for mmdd in sched.get("special_dates", []) or []:
             if mmdd == "05-11":
                 continue  # 默认生日(代码内置,物化时已含)
@@ -147,6 +152,9 @@ class ScheduleApi:
                    for a in self.anniversary_mgr.visible_items()):
                 continue  # 幂等:④ 重复执行不重复合并
             self.anniversary_mgr.add("anniversary", f"特殊日期 {mmdd}", mmdd, note="from toml")
+            added += 1
+        if added:
+            print(f"[schedule.api] toml special_dates 已迁移 {added} 条", file=sys.stderr)
 
     # ── when 换算(完整七形态;形态约束先于学期边界,保证单日 kind 收区间 → shape_mismatch 与学期状态无关)──
 
@@ -236,7 +244,10 @@ class ScheduleApi:
             elif not _from_migration and kind == "reminder":
                 if start < today:
                     raise ApiRejection("past_date", f"结果 {start} < today")
-            # move:源日可为过去(快照派生语义;过去性由 to_date 检查与写后清理链路约束)
+            elif not _from_migration and kind == "move" and not entry.get("to_date"):
+                # move 无 to_date = 单日条目 → 查 date;有 to_date 由下方 to_date 检查约束
+                if start < today:
+                    raise ApiRejection("past_date", f"结果 {start} < today")
         # ── to_date(move 独立字段;五态单日形态,不收 week_offset 单/start-end,C2/M4)──
         if item.get("to_date") is not None:
             if kind != "move":
@@ -409,6 +420,7 @@ class ScheduleApi:
             os.replace(tmp, bp)
 
         if cmd == "on":
+            self._guard()
             data = _load()
             data["manual_override"] = True
             data["since"] = datetime.now(CST).isoformat()
@@ -416,6 +428,7 @@ class ScheduleApi:
             return {"action": "break_set", "manual_override": True,
                     "message": "假期模式已开启（无限期），availability 恒为 0.85"}
         if cmd == "off":
+            self._guard()
             if bp.exists():
                 bp.unlink()
             return {"action": "break_set", "manual_override": False,
@@ -427,6 +440,7 @@ class ScheduleApi:
                 date.fromisoformat(start_str); date.fromisoformat(end_str)
             except ValueError as e:
                 return {"action": "break_add", "ok": False, "error": f"日期格式错误: {e}"}
+            self._guard()
             data = _load()
             entry = {"start": start_str, "end": end_str, "note": note}
             data.setdefault("breaks", []).append(entry)
@@ -438,6 +452,7 @@ class ScheduleApi:
                 idx = int(parts[1])
             except ValueError:
                 return {"action": "break_remove", "ok": False, "error": f"无效序号: {parts[1]}"}
+            self._guard()
             data = _load()
             breaks = data.get("breaks", [])
             if 0 <= idx < len(breaks):
@@ -454,6 +469,7 @@ class ScheduleApi:
                     "semester_end": (self._semester_dates()[1] or None).isoformat()
                     if self._semester_dates()[1] else None}
         if cmd == "clear":
+            self._guard()
             if bp.exists():
                 bp.unlink()
             return {"action": "break_clear", "ok": True, "message": "所有假期区间已清空"}
