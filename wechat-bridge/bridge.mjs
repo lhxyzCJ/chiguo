@@ -294,6 +294,19 @@ async function withTimeout(p, ms) {
   } finally { clearTimeout(timer) }
 }
 
+/** 聊天链回复:queue 串行 + askPi;失败回通用文案(非本人/chat 放行共用,不回内部诊断)。 */
+async function askChat(text, msg, bot, queue, askPiFn) {
+  await queue.run(async () => {
+    try {
+      const { text: reply } = await askPiFn(text)
+      await bot.reply(msg, reply).catch(() => {})
+    } catch (err) {
+      await bot.reply(msg, '⚠️ 处理失败').catch(() => {})   // 不回内部诊断(安全补钉)
+      await recordPiHealth(bot, 'fail', err.message)
+    }
+  })
+}
+
 /** 单条微信消息处理链路（onMessage 委托；导出供测试）：
  * 路由顺序:OWNER_ID 门(最顶部,C1) → recordUserMsg(仅本人) → 澄清检查 → detectSpecialCommand
  * → detectScheduleIntent → askPi;命令消息经 --user-msg 无分析(recordUserMsg 已先行,dedup 600s 继承);
@@ -303,6 +316,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   if (!text?.trim()) return null
   const isOwner = msg.userId === OWNER_ID
   const repoRoot = deps.repoRoot ?? REPO_ROOT
+  const askPiFn = deps.askPi ?? askPi
   const extractPi = deps.extractPi ?? defaultExtractPi
   const verifyPi = deps.verifyPi ?? defaultVerifyPi
   const runDaemon = deps.runDaemon ?? defaultRunDaemon
@@ -310,15 +324,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
 
   // ── C1 门:非本人不进写/回忆/追问/特殊命令路径,不取 --attention;仅 askPi 回复 ──
   if (!isOwner) {
-    await queue.run(async () => {
-      try {
-        const { text: reply } = await askPi(text)
-        await bot.reply(msg, reply).catch(() => {})
-      } catch (err) {
-        await bot.reply(msg, '⚠️ 处理失败').catch(() => {})   // 不回内部诊断(安全补钉)
-        await recordPiHealth(bot, 'fail', err.message)
-      }
-    })
+    await askChat(text, msg, bot, queue, askPiFn)
     return 'pi'
   }
 
@@ -331,8 +337,11 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     const wordIntent = detectScheduleIntent(text)          // 词表命中 = 新命令
     const isNewCommand = wordIntent && wordIntent.intent !== 'extract'
     const original = isNewCommand ? text : `${clarify.original}\n(补充回答:${text})`
-    return handleScheduleCommand(original, msg, bot,
+    const released = await handleScheduleCommand(original, msg, bot,
       { ...deps, repoRoot, clarify, extractPi, verifyPi, runDaemon, now })
+    if (released !== 'chat') return released
+    await askChat(text, msg, bot, queue, askPiFn)   // ⑥ 放行回聊天链:消息必须获得回复(不静默丢弃)
+    return 'chat'
   }
   if (clarify && exitWordMatch(text)) {
     clearClarify(repoRoot)
@@ -360,8 +369,11 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   // 返回值透传 handleScheduleCommand(not_command → 'chat' 释放回聊天链,⑤)
   const intent = exitWord ? null : detectScheduleIntent(text)
   if (intent) {
-    return queue.run(() => handleScheduleCommand(text, msg, bot,
+    const released = await queue.run(() => handleScheduleCommand(text, msg, bot,
       { ...deps, repoRoot, clarify: null, extractPi, verifyPi, runDaemon, now }))
+    if (released !== 'chat') return released
+    await askChat(text, msg, bot, queue, askPiFn)   // ⑤ 误命中释放:消息必须获得回复(不静默丢弃)
+    return 'chat'
   }
 
   try {

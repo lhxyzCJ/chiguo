@@ -29,7 +29,8 @@ function tmpRepo() {
 }
 
 /** 注入式测试替身:extract/verify/daemon 全部脚本化返回。
- * 函数值按对应参数调用(extract(original)/verify(item, original)),对象值直接返回。 */
+ * 函数值按对应参数调用(extract(original)/verify(item, original)),对象值直接返回。
+ * askPi 为 stub('聊'),chat 放行路径不 hit 真实 pi。 */
 function depsWith(script, repoRoot = null) {
   const call = (v) => (typeof v === 'function' ? v : async () => v)
   return {
@@ -41,6 +42,7 @@ function depsWith(script, repoRoot = null) {
       ? await call(script.verify)(item, original)
       : { ok: true },
     runDaemon: async (item) => script.daemon ? script.daemon(item) : { ok: true, text: '好,记下了。' },
+    askPi: async () => ({ text: '聊' }),
     now: () => script.now ? script.now() : new Date(),
   }
 }
@@ -143,6 +145,7 @@ t('⑤ 误命中释放(extract not_command → 回聊天链、独占解除)', as
   const r = await handleMessage('我们明天调课吧', { userId: 'owner@im.wechat' }, fakeBot(replies), queue, deps)
   assert.strictEqual(r, 'chat', `释放回聊天链, got ${r}`)
   assert.strictEqual(readClarify(repo), null, '误命中不留记录')
+  assert.ok(replies.includes('聊'), '释放后仍收到聊天回复(不静默丢弃)')
   rmSync(repo, { recursive: true, force: true })
 })
 
@@ -154,6 +157,7 @@ t('⑥ 闲聊释放(追问期间答非所问 → 放行回聊天、记录保留)
   const r = await handleMessage('今天天气不错', { userId: 'owner@im.wechat' }, fakeBot(replies), queue, deps)
   assert.strictEqual(r, 'chat', '放行聊天链')
   assert.ok(readClarify(repo), '记录保留(下次回答仍路由回提取)')
+  assert.ok(replies.includes('聊'), '放行后仍收到聊天回复(不静默丢弃)')
   rmSync(repo, { recursive: true, force: true })
 })
 
@@ -218,13 +222,14 @@ t('鉴权:非 OWNER_ID 不进命令/回忆/追问路径,仅 askPi 回复,不 rec
   const repo = tmpRepo()
   const replies = []
   const calls = []
-  const deps = depsWith({ extract: { ok: true, item: { kind: 'reminder', when: { date: '2026-08-20' }, label: 'x' } }, verify: { ok: true } })
+  const deps = depsWith({ extract: { ok: true, item: { kind: 'reminder', when: { date: '2026-08-20' }, label: 'x' } }, verify: { ok: true } }, repo)
   const bot = { reply: async (m, t) => replies.push(t), sendTyping: async () => {} }
   const r = await handleMessage('停课', { userId: 'stranger@im.wechat' }, bot, queue,
     { ...deps, recordUserMsg: async () => calls.push('record') })
   assert.strictEqual(r, 'pi', '非本人走聊天链')
   assert.ok(!calls.includes('record'), '不 recordUserMsg/状态零写入')
   assert.ok(!existsSync(scheduleClarifyPath(repo)), '不写澄清记录')
+  assert.ok(replies.includes('聊'), '仅 askPi 回复(聊天链)')
   rmSync(repo, { recursive: true, force: true })
 })
 
