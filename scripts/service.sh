@@ -61,7 +61,8 @@ kill_temp() {
 }
 
 stop_systemd() {
-  systemd_active && "$SYSTEMCTL" stop chiguo-bridge 2>/dev/null || true
+  systemd_active || return 0
+  "$SYSTEMCTL" stop chiguo-bridge 2>/dev/null
 }
 
 write_unit() {
@@ -161,9 +162,15 @@ do_temp() {
   mkdir -p "$PID_DIR" "$(dirname "$LOG_FILE")"
   (
     cd "$BRIDGE_DIR" || exit 1
-    setsid nohup node --env-file="$ENV_FILE" bridge.mjs >> "$LOG_FILE" 2>&1 < /dev/null &
+    setsid nohup "$NODE" --env-file="$ENV_FILE" bridge.mjs >> "$LOG_FILE" 2>&1 < /dev/null &
     echo "$!" > "$TEMP_PIDFILE"
   )
+  sleep 0.5
+  if ! kill -0 "$(cat "$TEMP_PIDFILE" 2>/dev/null || echo 0)" 2>/dev/null; then
+    rm -f "$TEMP_PIDFILE"
+    warn "temp 启动后立即退出（日志: $LOG_FILE 排查）"
+    return 1
+  fi
   say "temp 已启动（PID $(cat "$TEMP_PIDFILE")；不注册开机自启；bash scripts/service.sh status 查看）"
 }
 
@@ -194,7 +201,15 @@ do_stop() {
     say "dry-run 计划: systemctl stop chiguo-bridge + 清理 temp（$TEMP_PIDFILE）"
     return 0
   fi
-  stop_systemd && say "systemd 实例已停止" || say "systemd 实例未在运行"
+  if systemd_active; then
+    if stop_systemd; then
+      say "systemd 实例已停止"
+    else
+      warn "systemd 停止失败（bash scripts/service.sh status 排查）"
+    fi
+  else
+    say "systemd 实例未在运行"
+  fi
   if temp_running; then
     kill_temp
     say "temp 实例已停止"
