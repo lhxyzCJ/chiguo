@@ -37,6 +37,33 @@ EOF
 
 NODE="$(command -v node || true)"
 
+ollama_health() {
+  curl -s -m 3 http://127.0.0.1:11434/api/tags 2>/dev/null | grep -q '"models"'
+}
+
+systemd_active() {
+  "$SYSTEMCTL" is-active --quiet chiguo-bridge 2>/dev/null
+}
+
+temp_running() {
+  [ -f "$TEMP_PIDFILE" ] || return 1
+  local pid
+  pid="$(cat "$TEMP_PIDFILE" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+kill_temp() {
+  temp_running || { rm -f "$TEMP_PIDFILE"; return 0; }
+  kill "$(cat "$TEMP_PIDFILE")" 2>/dev/null || true
+  sleep 1
+  temp_running && kill -9 "$(cat "$TEMP_PIDFILE")" 2>/dev/null || true
+  rm -f "$TEMP_PIDFILE"
+}
+
+stop_systemd() {
+  systemd_active && "$SYSTEMCTL" stop chiguo-bridge 2>/dev/null || true
+}
+
 write_unit() {
   local tmp="$BRIDGE_UNIT.tmp"
   cat > "$tmp" <<EOF
@@ -55,15 +82,53 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 EOF
-  cat "$tmp"
-  rm -f "$tmp"
+  if [ -f "$BRIDGE_UNIT" ] && cmp -s "$tmp" "$BRIDGE_UNIT"; then
+    rm -f "$tmp"
+    say "systemd unit 已存在且一致"
+    return 0
+  fi
+  if [ "$DRY" = 1 ]; then
+    cat "$tmp"
+    rm -f "$tmp"
+    say "dry-run：unit 将写入 $BRIDGE_UNIT"
+    return 0
+  fi
+  mv "$tmp" "$BRIDGE_UNIT"
+  say "systemd unit 已写入: $BRIDGE_UNIT"
 }
 
 do_autostart() {
   [ -n "$NODE" ] || fail "缺少 node（需先安装 Node.js）"
   [ -f "$ENV_FILE" ] || { warn "缺少 .env（先运行: bash scripts/wechat-bridge.sh install）"; exit 1; }
-  say "systemd unit 模板（chiguo-bridge.service）:"
+  if [ "$DRY" = 1 ]; then
+    say "dry-run 计划:"
+    say "  1) systemctl enable --now ollama"
+    write_unit
+    say "  2) systemctl daemon-reload + enable --now chiguo-bridge"
+    say "  3) 清理残留 temp 进程（pidfile: $TEMP_PIDFILE）"
+    return 0
+  fi
+  say "阶段 1: ollama 自启..."
+  "$SYSTEMCTL" enable --now ollama 2>/dev/null \
+    || warn "ollama enable 失败（无 ollama unit？可手动: systemctl enable --now ollama）"
+  if ollama_health; then
+    say "ollama 健康 ✓（11434 响应正常）"
+  else
+    warn "ollama 健康检查未通过（curl http://127.0.0.1:11434/api/tags 排查）"
+  fi
+  say "阶段 2: wechat-bridge unit..."
   write_unit
+  "$SYSTEMCTL" daemon-reload
+  "$SYSTEMCTL" enable --now chiguo-bridge 2>/dev/null \
+    || { warn "chiguo-bridge enable/start 失败（bash scripts/wechat-bridge.sh status 排查）"; exit 1; }
+  say "阶段 3: 清理 temp 残留..."
+  if temp_running; then
+    kill_temp
+    say "已停止 temp 实例（互斥接管）"
+  else
+    say "无 temp 残留"
+  fi
+  say "autostart 完成 ✓（开机自启: ollama + chiguo-bridge）"
 }
 
 for arg in "$@"; do
