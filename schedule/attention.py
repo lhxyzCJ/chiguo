@@ -3,7 +3,7 @@
 # 纯函数零 I/O;--attention(批 5)与内容层注入共用同源组装。
 # ============================================================
 
-from datetime import date, timedelta
+from datetime import date
 
 from schedule.anniversary import mmdd_to_date
 from schedule.day_plan import week_number, week_courses, _on_break
