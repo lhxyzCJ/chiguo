@@ -73,30 +73,30 @@ t('特殊命令（纪念日）→ pi_health.json 内容不变（不记账）', a
 t('连续 3 次 askPi 失败 → 恰好 1 次告警（含次数与原因），第 4 次失败不重复告警', async () => {
   setPiResponse(FAIL_RESP)
   for (let i = 0; i < 3; i++) {
-    await handleMessage('测试消息', msg, bot, queue)
+    await handleMessage('这是一条测试消息', msg, bot, queue)
   }
   assert.strictEqual(sends.length, 1, `期望 1 次告警，实际 ${sends.length}`)
   assert.ok(sends[0].text.includes('3'), `告警应含失败次数: ${sends[0].text}`)
   assert.ok(sends[0].text.includes('模拟 pi 故障'), `告警应含失败原因: ${sends[0].text}`)
-  await handleMessage('再来一条', msg, bot, queue)
+  await handleMessage('这是一条新消息', msg, bot, queue)
   assert.strictEqual(sends.length, 1, `第 4 次失败不应重复告警，实际 ${sends.length}`)
 })
 
 // ── 恢复通知：成功后发恢复；再次成功不再发 ──
 t('恢复后首次 success → 发送恢复通知；随后 success 不再发送', async () => {
   setPiResponse(OK_RESP)
-  await handleMessage('我回来了', msg, bot, queue)
+  await handleMessage('我回来了呀今天', msg, bot, queue)
   assert.strictEqual(sends.length, 2, `期望 1 次恢复通知，实际 ${sends.length}`)
   assert.ok(sends[1].text.includes('恢复'), `应为恢复文案: ${sends[1].text}`)
   assert.ok(sends[1].to, '告警必须有收件人')
-  await handleMessage('又一条', msg, bot, queue)
+  await handleMessage('又一条新消息来了', msg, bot, queue)
   assert.strictEqual(sends.length, 2, '恢复后 success 不应再发送')
 })
 
 // ── 正常路径：无失败史时成功消息零告警 ──
 t('健康状态下成功消息：零告警、零恢复', async () => {
   // 状态文件已在 up 状态，无需清理；直接再发成功消息
-  await handleMessage('普通消息', msg, bot, queue)
+  await handleMessage('这是一条普通消息', msg, bot, queue)
   assert.strictEqual(sends.length, 2, `不应有新增发送，实际 ${sends.length}`)
 })
 
@@ -106,13 +106,13 @@ t('记账脚本崩溃 → 消息仍收到 ⚠️ 处理失败回复，进程不�
   writeFileSync(PH_SCRIPT, 'raise SystemExit("boom")\n')
   try {
     setPiResponse(FAIL_RESP)
-    await handleMessage('触发失败', msg, bot, queue)
+    await handleMessage('触发失败的消息来了', msg, bot, queue)
     assert.ok(replies.some((r) => r.startsWith('⚠️ 处理失败')), '应回复 ⚠️ 处理失败')
     assert.strictEqual(sends.length, before, '记账崩溃不应产生告警发送')
     // 恢复后链路仍可用
     writeFileSync(PH_SCRIPT, PH_REAL_CONTENT)
     setPiResponse(OK_RESP)
-    await handleMessage('恢复链路', msg, bot, queue)
+    await handleMessage('恢复链路的消息', msg, bot, queue)
     assert.ok(replies.some((r) => r === '正常回复'), '链路应恢复')
   } finally {
     writeFileSync(PH_SCRIPT, PH_REAL_CONTENT)
@@ -133,7 +133,7 @@ t('bot.reply 失败（微信发送故障）→ 不误记 pi 假死：无告警�
   assert.strictEqual(sends.length, before, '回复失败不得触发告警/恢复（发送故障≠pi 故障）')
   // 记账仍记 success（pi 活着），且后续消息正常
   setPiResponse(OK_RESP)
-  await handleMessage('下一条', msg, bot, queue)
+  await handleMessage('下一条消息来了', msg, bot, queue)
   assert.ok(replies.at(-1) === '正常回复', '链路应继续正常回复')
 })
 
