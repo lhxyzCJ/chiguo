@@ -32,17 +32,26 @@ else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
 
-# ── 3. 全量自检(22 py + 3 脚本测试,任一失败即中止) ──────────
-TESTS=(test_chiguo_math test_holiday_parser test_integration test_monitor
-       test_eventbus test_personality test_bayesian test_composer
-       test_ebbinghaus test_longing test_escape_valve test_feedback
-       test_trigger test_topics test_circadian test_followup
-       test_netease_proof test_netease_service test_envcheck
-       test_composer_trade test_personality_init test_toml_binding)
-say "运行脚本测试(2 个文件) ..."
+# ── 3. 全量自检(35 py + 9 script 测试,任一失败即中止) ──────────
+TESTS=(test_chiguo_math test_holiday_parser test_schedule_parser
+       test_integration test_monitor test_eventbus test_personality
+       test_bayesian test_composer test_ebbinghaus test_longing
+       test_escape_valve test_feedback test_trigger test_topics
+       test_circadian test_followup test_netease_proof test_netease_service
+       test_envcheck test_composer_trade test_personality_init
+       test_toml_binding test_adapt_personality test_pi_health
+       test_anniversary test_schedule_override test_day_plan test_recall
+       test_attention_tiers test_availability test_trigger_scale
+       test_isolation test_schedule_plan test_schedule_cli)
+say "运行 Node 测试(5 个文件) ..."
+for t in test_pi_run test_bridge_askpi test_bridge_cmd test_bridge_health test_bridge_schedule; do
+    node "tests/$t.mjs" >/dev/null || fail "$t.mjs 失败,中止部署"
+done
+say "运行脚本测试(4 个文件) ..."
 bash tests/test_install_pi.sh >/dev/null || fail "test_install_pi.sh 失败,中止部署"
 bash tests/test_wechat_bridge.sh >/dev/null || fail "test_wechat_bridge.sh 失败,中止部署"
 bash tests/test_netease_api.sh >/dev/null || fail "test_netease_api.sh 失败,中止部署"
+bash tests/test_tick_health.sh >/dev/null || fail "test_tick_health.sh 失败,中止部署"
 say "运行全量 Python 测试(${#TESTS[@]} 个文件) ..."
 for t in "${TESTS[@]}"; do
     uv run python "tests/$t.py" >/dev/null || fail "$t.py 失败,中止部署"
