@@ -1079,6 +1079,89 @@ class DecisionEngine:
         return self.state.snapshot(datetime.now(CST))
 
 
+def _load_light_config(config_path: str | None = None) -> dict:
+    """轻量分支共用:读 toml + 注入 _base_dir(config 所在目录)。不构造任何引擎对象。"""
+    if config_path is None:
+        config_path = str(Path(__file__).resolve().parent / "chiguo_proactive.toml")
+    with open(config_path, "rb") as f:
+        cfg = tomllib.load(f)
+    cfg["_base_dir"] = str(Path(config_path).resolve().parent)
+    return cfg
+
+
+def _cmd_attention(config_path: str | None = None):
+    """--attention 轻量读(§5.4):T1/T2/T3 组装 + 情感快照。零写副作用,毫秒级。"""
+    import json as _json
+    from schedule.sources import load_sources
+    from schedule.attention import build_attention
+    cfg = _load_light_config(config_path)
+    try:
+        src = load_sources(cfg["_base_dir"], cfg)
+        att = build_attention(src, datetime.now(CST).date())
+        emotion = {}
+        try:
+            st = _json.loads((Path(cfg["_base_dir"]) / "chiguo_state.json").read_text())
+            emotion = st.get("emotion", {})
+        except Exception:
+            pass
+        print(_json.dumps({"action": "attention", "ok": True, "attention": att,
+                           "emotion": emotion, "week_num": att["week_num"],
+                           "today_exceptions": att["today_exceptions"]}, ensure_ascii=False))
+    except Exception as e:
+        print(_json.dumps({"action": "attention", "ok": False, "reason": str(e)[:200]},
+                          ensure_ascii=False))
+        print(f"[chiguo_daemon] --attention 失败: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cmd_schedule_recall(query: str, config_path: str | None = None):
+    """--schedule-recall <query>:recall 检索(A4 形状;失败 ok:false + exit 1,bridge 降级普通回复)。"""
+    import json as _json
+    from schedule.sources import load_sources
+    from schedule.recall import recall
+    cfg = _load_light_config(config_path)
+    try:
+        r = recall(query, load_sources(cfg["_base_dir"], cfg), datetime.now(CST).date())
+    except Exception as e:
+        print(_json.dumps({"action": "schedule_recall", "ok": False, "reason": str(e)[:200]},
+                          ensure_ascii=False))
+        print(f"[chiguo_daemon] --schedule-recall 失败: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(_json.dumps({"action": "schedule_recall", "ok": True, "query": r["query"],
+                       "matches": r["matches"]}, ensure_ascii=False))
+
+
+def _cmd_schedule_change(json_arg: str, config_path: str | None = None):
+    """--schedule-change <json>:写安排(二十轮 A4 形状;畸形 JSON → bad_json 不写入;ApiRejection → H5 文案)。"""
+    import json as _json
+    from schedule.api import ScheduleApi, ApiRejection
+    from schedule.confirm import build_question
+    cfg = _load_light_config(config_path)
+    try:
+        item = _json.loads(json_arg)
+    except (_json.JSONDecodeError, TypeError):
+        print(_json.dumps({"action": "schedule_change", "ok": False,
+                           "reason": "bad_json", "question": "处理失败,再试一次?"}, ensure_ascii=False))
+        print("[chiguo_daemon] --schedule-change 畸形 JSON,未写入", file=sys.stderr)
+        sys.exit(1)
+    try:
+        api = ScheduleApi(cfg["_base_dir"], cfg)
+        if isinstance(item, dict) and item.get("kind") == "remove":
+            result = api.remove_override(item.get("match", {}))
+        else:
+            result = api.apply_override(item)
+    except ApiRejection as e:
+        question, missing = build_question(e.category)
+        out = {"action": "schedule_change", "ok": False, "reason": e.category, "question": question}
+        if missing:
+            out["missing"] = missing
+        print(_json.dumps(out, ensure_ascii=False))
+        print(f"[chiguo_daemon] --schedule-change 拒绝({e.category}): {e}", file=sys.stderr)
+        sys.exit(1)
+    print(_json.dumps({"action": "schedule_change", "ok": True, "text": result["text"]},
+                      ensure_ascii=False))
+
+
 # ── 入口 ──────────────────────────────────────────────────
 
 def main():
@@ -1107,6 +1190,14 @@ def main():
                         help="寒暑假: on|off|status|add <起> <止> <备注>|remove <序号>|list|clear")
     parser.add_argument("--health", action="store_true",
                         help="健康检查：检测 daemon 最近是否正常运行")
+    parser.add_argument("--attention", action="store_true",
+                        help="注意力快照（T1/T2/T3 + 情感快照，轻量读，零写）")
+    parser.add_argument("--schedule-recall", type=str, default=None,
+                        metavar="QUERY",
+                        help="安排回忆检索（日期或关键词）")
+    parser.add_argument("--schedule-change", type=str, default=None,
+                        metavar="JSON",
+                        help="写安排（JSON: reminder/add/cancel/move/exam_week/remove）")
     parser.add_argument("--tune", action="store_true",
                         help="参数校准：基于回复延迟推荐 base_lambda 调整")
     parser.add_argument("--stats", type=int, nargs="?", const=7, metavar="DAYS",
@@ -1160,62 +1251,36 @@ def main():
         print("[chiguo_daemon] --ack 需要 --alerts，已自动联动开启", file=sys.stderr)
         args.alerts = True
 
-    # ── 纪念日 CRUD（独立分支，不影响决策引擎） ──
+    # ── 纪念日 CRUD（独立分支，不影响决策引擎；批 5 改调 ScheduleApi） ──
     if args.anniversary:
-        from anniversary_manager import AnniversaryManager
-        mgr = AnniversaryManager()
+        from schedule.api import ScheduleApi
+        cfg = _load_light_config()
+        api = ScheduleApi(cfg["_base_dir"], cfg)
         parts = args.anniversary.split()
         cmd = parts[0] if parts else ""
-
-        if cmd == "add" and len(parts) >= 4:
-            type_ = parts[1]
-            date_ = parts[2]
-            name = " ".join(parts[3:])
-            try:
-                a = mgr.add(type_, name, date_)
-                result = {"action": "anniversary_added", "ok": True,
-                          "id": a.id, "name": a.name, "date": a.date, "type": a.type}
-            except ValueError as e:
-                result = {"action": "anniversary_added", "ok": False, "error": str(e)}
-
-        elif cmd == "remove" and len(parts) >= 2:
-            ok = mgr.remove(parts[1])
-            result = {"action": "anniversary_removed", "ok": ok}
-
-        elif cmd == "list":
-            anns = mgr.list_all()
-            result = {"action": "anniversary_list",
-                      "anniversaries": [
-                          {"id": a.id, "type": a.type, "name": a.name,
-                           "date": a.date, "note": a.note, "created_at": a.created_at}
-                          for a in anns
-                      ],
-                      "count": len(anns)}
-
-        elif cmd == "update" and len(parts) >= 3:
-            id_ = parts[1]
-            kwargs = {}
-            for kv in parts[2:]:
-                if "=" in kv:
-                    k, v = kv.split("=", 1)
-                    kwargs[k] = v
-            try:
-                a = mgr.update(id_, **kwargs)
-                result = {"action": "anniversary_updated", "ok": a is not None,
-                          "anniversary": {"id": a.id, "type": a.type, "name": a.name,
-                                          "date": a.date, "note": a.note} if a else None}
-            except ValueError as e:
-                result = {"action": "anniversary_updated", "ok": False, "error": str(e)}
-
-        elif cmd == "cleanup":
-            count = mgr.cleanup()
-            result = {"action": "anniversary_cleanup", "removed": count}
-
-        else:
-            result = {"error": f"未知子命令: {args.anniversary}",
-                      "usage": "add anniversary|countdown <DATE> <NAME> / remove <ID> / list / update <ID> key=val / cleanup"}
-
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        try:
+            if cmd == "add" and len(parts) >= 4:
+                result = api.add_anniversary(parts[1], " ".join(parts[3:]), parts[2])
+            elif cmd == "remove" and len(parts) >= 2:
+                result = api.remove_anniversary(parts[1])
+            elif cmd == "list":
+                result = api.list_anniversaries()
+            elif cmd == "update" and len(parts) >= 3:
+                kwargs = {}
+                for kv in parts[2:]:
+                    if "=" in kv:
+                        k, v = kv.split("=", 1)
+                        kwargs[k] = v
+                result = api.update_anniversary(parts[1], **kwargs)
+            elif cmd == "cleanup":
+                result = {"action": "anniversary_cleanup", "removed": api.anniversary_mgr.cleanup()}
+            else:
+                result = {"error": f"未知子命令: {args.anniversary}",
+                          "usage": "add anniversary|countdown <DATE> <NAME> / remove <ID> / list / update <ID> key=val / cleanup"}
+        except ValueError as e:
+            result = {"action": "anniversary_added", "ok": False, "error": str(e)} \
+                if cmd == "add" else {"action": "anniversary_updated", "ok": False, "error": str(e)}
+        print(json.dumps(result, ensure_ascii=False))
         if result.get("error") or result.get("ok") is False:
             sys.exit(1)
         return
@@ -1274,130 +1339,14 @@ def main():
             print(json.dumps(msgs, ensure_ascii=False, indent=2))
         return
 
-    # ── 寒暑假模式切换 ──
+    # ── 寒暑假模式切换（批 5 改调 ScheduleApi.set_break，输出形状逐键一致） ──
     if args.break_cmd:
-        engine = DecisionEngine()
-        bp = engine.state.break_state_path
-        parts = args.break_cmd.split()
-        cmd = parts[0]
-
-        def _load_state():
-            if bp.exists():
-                try:
-                    return json.loads(bp.read_text())
-                except Exception:
-                    pass
-            return {"breaks": []}
-
-        def _save_state(data):
-            tmp = Path(str(bp) + ".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-            # v5: fsync before atomic rename
-            try:
-                with open(tmp, 'rb') as _f:
-                    os.fsync(_f.fileno())
-            except OSError:
-                pass
-            os.replace(tmp, bp)
-
-        if cmd == "on":
-            data = _load_state()
-            data["manual_override"] = True
-            data["since"] = datetime.now(CST).isoformat()
-            _save_state(data)
-            print(json.dumps({"action": "break_set", "manual_override": True,
-                  "message": "假期模式已开启（无限期），availability 恒为 0.85"}, ensure_ascii=False))
-
-        elif cmd == "off":
-            if bp.exists():
-                bp.unlink()
-            print(json.dumps({"action": "break_set", "manual_override": False,
-                  "message": "假期模式已关闭，所有区间已清空"}, ensure_ascii=False))
-
-        elif cmd == "add" and len(parts) >= 3:
-            start_str = parts[1]
-            end_str = parts[2]
-            note = " ".join(parts[3:]) if len(parts) > 3 else ""
-            # 验证日期格式
-            from datetime import date as dt_date
-            try:
-                dt_date.fromisoformat(start_str)
-                dt_date.fromisoformat(end_str)
-            except ValueError as e:
-                print(json.dumps({"action": "break_add", "ok": False,
-                      "error": f"日期格式错误: {e}"}, ensure_ascii=False))
-                sys.exit(1)
-            data = _load_state()
-            entry = {"start": start_str, "end": end_str, "note": note}
-            data.setdefault("breaks", []).append(entry)
-            _save_state(data)
-            idx = len(data["breaks"]) - 1
-            print(json.dumps({"action": "break_add", "ok": True,
-                  "index": idx, "start": start_str, "end": end_str,
-                  "note": note, "total": len(data["breaks"])}, ensure_ascii=False))
-
-        elif cmd == "remove" and len(parts) >= 2:
-            try:
-                idx = int(parts[1])
-            except ValueError:
-                print(json.dumps({"action": "break_remove", "ok": False,
-                      "error": f"无效序号: {parts[1]}"}, ensure_ascii=False))
-                sys.exit(1)
-            data = _load_state()
-            breaks = data.get("breaks", [])
-            if 0 <= idx < len(breaks):
-                removed = breaks.pop(idx)
-                _save_state(data)
-                print(json.dumps({"action": "break_remove", "ok": True,
-                      "index": idx, "removed": removed, "remaining": len(breaks)}, ensure_ascii=False))
-            else:
-                print(json.dumps({"action": "break_remove", "ok": False,
-                      "error": f"序号越界: {idx}（共 {len(breaks)} 个区间）"}, ensure_ascii=False))
-
-        elif cmd == "list":
-            data = _load_state()
-            print(json.dumps({
-                "action": "break_list",
-                "manual_override": data.get("manual_override") or data.get("on_break", False),
-                "breaks": data.get("breaks", []),
-                "count": len(data.get("breaks", [])),
-                "semester_end": str(engine.state.semester_end) if engine.state.semester_end else None,
-            }, ensure_ascii=False))
-
-        elif cmd == "clear":
-            if bp.exists():
-                bp.unlink()
-            print(json.dumps({"action": "break_clear", "ok": True,
-                  "message": "所有假期区间已清空"}, ensure_ascii=False))
-
-        elif cmd == "status":
-            on_break = engine.state.on_break
-            data = _load_state()
-            today = datetime.now(CST).date()
-            # Detect which source triggered on_break
-            source = "none"
-            if on_break:
-                if data.get("manual_override") or data.get("on_break"):
-                    source = "manual_override"
-                elif engine.state._in_break_range(today):
-                    source = "break_range"
-                elif engine.state.semester_end and today > engine.state.semester_end:
-                    source = "semester_end"
-            print(json.dumps({
-                "action": "break_status",
-                "on_break": on_break,
-                "source": source,
-                "manual_override": data.get("manual_override") or data.get("on_break", False),
-                "breaks": data.get("breaks", []),
-                "semester_end": str(engine.state.semester_end) if engine.state.semester_end else None,
-                "semester_ended": engine.state.semester_end is not None and today > engine.state.semester_end,
-            }, ensure_ascii=False))
-
-        else:
-            print(json.dumps({"action": "break_error", "ok": False,
-                  "error": f"未知命令: {args.break_cmd}",
-                  "usage": "on|off|status|add YYYY-MM-DD YYYY-MM-DD [备注]|remove <序号>|list|clear"},
-                  ensure_ascii=False))
+        from schedule.api import ScheduleApi
+        cfg = _load_light_config()
+        api = ScheduleApi(cfg["_base_dir"], cfg)
+        result = api.set_break(args.break_cmd)
+        print(json.dumps(result, ensure_ascii=False))
+        if result.get("error") or result.get("ok") is False:
             sys.exit(1)
         return
 
@@ -1510,6 +1459,17 @@ def main():
             "hours_ago": round(hours_ago, 1) if hours_ago else None,
             "error": error,
         }, ensure_ascii=False))
+        return
+
+    # ── 批 5 轻量子命令（不构造 DecisionEngine/ChiguoState/ScheduleParser，毫秒级） ──
+    if args.attention:
+        _cmd_attention()
+        return
+    if args.schedule_recall:
+        _cmd_schedule_recall(args.schedule_recall)
+        return
+    if args.schedule_change:
+        _cmd_schedule_change(args.schedule_change)
         return
 
     engine = DecisionEngine()

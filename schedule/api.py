@@ -10,6 +10,7 @@ import json
 import os
 import sys
 from datetime import date, datetime
+from pathlib import Path
 
 from schedule.override_store import OverrideStore, OverrideError, CST
 from schedule.plan_store import PlanStore
@@ -374,5 +375,102 @@ class ScheduleApi:
         return {"action": "anniversary_updated", "ok": a is not None,
                 "anniversary": {"id": a.id, "type": a.type, "name": a.name, "date": a.date} if a else None}
 
-    # set_break 落 Task 11(批 5):daemon --break 处理器整体迁入(行为保持现 --break 语义,
-    # 写路径归 api 唯一写口,§3.1/§6)
+    # ── 寒暑假写路径(批 5 自 daemon --break 迁入,行为保持:输出形状逐键一致)──
+
+    def set_break(self, cmd_line: str) -> dict:
+        """on/off/add/remove/list/clear/status。break_state.json 锚定 base_dir;
+        写 = tmp+os.replace+fsync(沿现先例);on_break/status 判定沿用现语义(真实今天)。"""
+        bp = Path(self.base_dir) / "break_state.json"
+        parts = cmd_line.split()
+        cmd = parts[0] if parts else ""
+
+        def _load():
+            if bp.exists():
+                try:
+                    return json.loads(bp.read_text())
+                except Exception:
+                    pass
+            return {"breaks": []}
+
+        def _save(data):
+            tmp = Path(str(bp) + ".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+            try:
+                with open(tmp, "rb") as _f:
+                    os.fsync(_f.fileno())
+            except OSError:
+                pass
+            os.replace(tmp, bp)
+
+        if cmd == "on":
+            data = _load()
+            data["manual_override"] = True
+            data["since"] = datetime.now(CST).isoformat()
+            _save(data)
+            return {"action": "break_set", "manual_override": True,
+                    "message": "假期模式已开启（无限期），availability 恒为 0.85"}
+        if cmd == "off":
+            if bp.exists():
+                bp.unlink()
+            return {"action": "break_set", "manual_override": False,
+                    "message": "假期模式已关闭，所有区间已清空"}
+        if cmd == "add" and len(parts) >= 3:
+            start_str, end_str = parts[1], parts[2]
+            note = " ".join(parts[3:]) if len(parts) > 3 else ""
+            try:
+                date.fromisoformat(start_str); date.fromisoformat(end_str)
+            except ValueError as e:
+                return {"action": "break_add", "ok": False, "error": f"日期格式错误: {e}"}
+            data = _load()
+            entry = {"start": start_str, "end": end_str, "note": note}
+            data.setdefault("breaks", []).append(entry)
+            _save(data)
+            return {"action": "break_add", "ok": True, "index": len(data["breaks"]) - 1,
+                    "start": start_str, "end": end_str, "note": note, "total": len(data["breaks"])}
+        if cmd == "remove" and len(parts) >= 2:
+            try:
+                idx = int(parts[1])
+            except ValueError:
+                return {"action": "break_remove", "ok": False, "error": f"无效序号: {parts[1]}"}
+            data = _load()
+            breaks = data.get("breaks", [])
+            if 0 <= idx < len(breaks):
+                removed = breaks.pop(idx)
+                _save(data)
+                return {"action": "break_remove", "ok": True, "index": idx,
+                        "removed": removed, "remaining": len(breaks)}
+            return {"action": "break_remove", "ok": False, "error": f"序号越界: {idx}（共 {len(breaks)} 个区间）"}
+        if cmd == "list":
+            data = _load()
+            return {"action": "break_list",
+                    "manual_override": data.get("manual_override") or data.get("on_break", False),
+                    "breaks": data.get("breaks", []), "count": len(data.get("breaks", [])),
+                    "semester_end": (self._semester_dates()[1] or None).isoformat()
+                    if self._semester_dates()[1] else None}
+        if cmd == "clear":
+            if bp.exists():
+                bp.unlink()
+            return {"action": "break_clear", "ok": True, "message": "所有假期区间已清空"}
+        if cmd == "status":
+            data = _load()
+            today = date.today()
+            from schedule.day_plan import _on_break
+            on_break = _on_break(data, self._semester_dates()[1], today)
+            source = "none"
+            if on_break:
+                if data.get("manual_override") or data.get("on_break"):
+                    source = "manual_override"
+                elif any(date.fromisoformat(b["start"]) <= today <= date.fromisoformat(b["end"])
+                         for b in data.get("breaks", []) if b.get("start") and b.get("end")):
+                    source = "break_range"
+                else:
+                    source = "semester_end"
+            return {"action": "break_status", "on_break": on_break, "source": source,
+                    "manual_override": data.get("manual_override") or data.get("on_break", False),
+                    "breaks": data.get("breaks", []),
+                    "semester_end": (self._semester_dates()[1] or None).isoformat()
+                    if self._semester_dates()[1] else None,
+                    "semester_ended": self._semester_dates()[1] is not None
+                    and today > self._semester_dates()[1]}
+        return {"action": "break_error", "ok": False, "error": f"未知命令: {cmd_line}",
+                "usage": "on|off|status|add YYYY-MM-DD YYYY-MM-DD [备注]|remove <序号>|list|clear"}
