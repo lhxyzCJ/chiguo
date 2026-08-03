@@ -68,6 +68,8 @@ class OverrideStore:
         for i in self._items:
             if i["date"] == d_s:
                 out.append(i)
+            elif i.get("to_date") == d_s:
+                out.append(i)  # R2:跨天 move 目标日呈现(day_plan/today_exceptions 同源)
             elif i.get("end_date") and i["date"] <= d_s <= i["end_date"]:
                 out.append(i)
         return out
