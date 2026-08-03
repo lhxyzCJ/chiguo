@@ -13,11 +13,10 @@ from pathlib import Path
 
 from schedule.sources import load_sources
 from schedule.plan_store import PlanStore
-from schedule.override_store import OverrideStore
 
 CST = timezone(timedelta(hours=8))
 DIRTY_FILES = ("schedule_overrides.json", "holidays.json")   # mtime 文件集合(仅此二者,F12)
-TRIGGER_TYPES = ("special", "morning", "night", "json_memory", "lancedb_memory", "meal",
+TRIGGER_TYPES = ("special", "morning", "night", "memory", "meal",
                  "lonely_low", "lonely_mid", "lonely_high", "anxiety", "playful",
                  "reflect", "longing", "follow_up", "default")   # 13 类型 + default
 MAX_MODIFIERS = 20
@@ -68,6 +67,8 @@ def validate_plan(plan: dict, sources=None) -> list[str]:
             errs.append(f"modifier 未知字段: {m}")
             continue
         ref = m.get("ref", "")
+        if len(ref) > MAX_FIELD_LEN:
+            errs.append(f"ref 超长(>{MAX_FIELD_LEN}): {ref[:20]}...")
         if not (ref.startswith("fact:") or ref.startswith("holiday:")):
             errs.append(f"ref 前缀未知: {ref}")
         elif sources is not None:
@@ -78,10 +79,15 @@ def validate_plan(plan: dict, sources=None) -> list[str]:
             elif sources.holiday.range_of(ref[len("holiday:"):]) is None:
                 errs.append(f"ref 未知: {ref}")
         ts = m.get("trigger_scale", {})
+        if not isinstance(ts, dict):
+            errs.append(f"trigger_scale 非 dict: {m.get('ref','')}")
+            continue
         for k, v in ts.items():
+            if len(str(k)) > MAX_FIELD_LEN:
+                errs.append(f"类型名超长(>{MAX_FIELD_LEN}): {k[:20]}...")
             if k not in TRIGGER_TYPES:
                 errs.append(f"未知类型名: {k}")
-            if not isinstance(v, (int, float)) or not 0.1 <= float(v) <= 10:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0.1 <= float(v) <= 10:
                 errs.append(f"trigger_scale clamp 越界: {k}={v}")
         if len(json.dumps(m, ensure_ascii=False).encode()) > MAX_ITEM_BYTES:
             errs.append(f"modifier JSON 总长 > 4KB: {ref}")
@@ -113,7 +119,6 @@ def _lock(base_dir: str) -> bool:
 
 def _run_replan(base_dir: str, config: dict, sources) -> dict | None:
     """pi 分析(facts + 类型清单 + clamp 边界),120s 超时;失败 → None(保留旧 plan + stale)。"""
-    from schedule.day_plan import week_number
     facts = [{"ref": f"fact:{it['id']}", "start": it["date"], "end": it.get("end_date") or it["date"],
               "label": it.get("label", "")} for it in sources.overrides.intervals()]
     for name, (s, e) in sources.holiday.all_ranges().items():
@@ -123,7 +128,9 @@ def _run_replan(base_dir: str, config: dict, sources) -> dict | None:
         "trigger_types": list(TRIGGER_TYPES),
         "clamp": [0.1, 10],
         "rule": "产出 modifiers:ref 引用上述事实 id 或 holiday:名称;trigger_scale 为类型→乘数;"
-                "只写特化类型;无需要调节的类型时返回空 modifiers;禁止输出日期字段与 importance。"},
+                "只写特化类型;无需要调节的类型时返回空 modifiers;禁止输出日期字段与 importance;"
+                "用 `<<REPLAN>>{...}<<END>>` 包裹,块内为 {\"modifiers\": [...]}"
+                "(ref+trigger_scale 对象;无需要调节时 modifiers 为空数组)。"},
         ensure_ascii=False)
     repo = str(Path(__file__).resolve().parent.parent)
     env = dict(os.environ)
