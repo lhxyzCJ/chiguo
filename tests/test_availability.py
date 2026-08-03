@@ -63,6 +63,11 @@ def test_tier_matrix():
         # unavailable:enabled 但无缓存数据 → 1.0
         assert _avail(td, cfg_ok, dt(2026, 3, 4, 14, 0)) == 1.0, "课表不可用 → 1.0"
     with tempfile.TemporaryDirectory() as td:
+        # enabled=false + 陈旧缓存 → 课表未启用(unavailable 1.0,spec 未启用判据)
+        cfg_off = {"schedule": {"enabled": False, "semester_start": "2026-02-23",
+                                "semester_end": "2099-12-31", "exam_weeks": []}}
+        assert _avail(td, cfg_off, dt(2026, 3, 4, 14, 0), cache=CACHE) == 1.0, "enabled=false → 1.0"
+    with tempfile.TemporaryDirectory() as td:
         # idle_school 上课中:周三 14:00 第 5 节,2 节课 → light 0.12
         assert _avail(td, cfg_ok, dt(2026, 3, 4, 14, 0), cache=CACHE) == 0.12, "2 节课 → light 0.12"
     with tempfile.TemporaryDirectory() as td:

@@ -71,7 +71,10 @@ def load_sources(base_dir: str, config: dict, schedule_cache_dict: dict | None =
         except (json.JSONDecodeError, OSError, TypeError):
             break_state = None  # 损坏 → 静默 None(行为保持)
     schedule, valid = {}, False
-    if schedule_cache_dict is not None:
+    sched_enabled = sched.get("enabled", True)
+    if not sched_enabled:
+        pass                      # 课表未启用 → unavailable 语义(即便存在陈旧缓存)
+    elif schedule_cache_dict is not None:
         if isinstance(schedule_cache_dict, dict) and schedule_cache_dict.get("schedule"):
             schedule = normalize_schedule_cache(schedule_cache_dict)
             valid = bool(schedule)
