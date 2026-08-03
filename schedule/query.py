@@ -64,20 +64,13 @@ def schedule_query(schedule: dict, semester_start: date, now: datetime) -> dict:
     """
     weekday = now.weekday()  # 0=Mon ... 6=Sun
     current_period_no = current_period(now)
-    # 学期第几周（从 semester_start 算起）
-    week_num = max(1, (now.date() - semester_start).days // 7 + 1)
+    # 学期第几周(§4.1 周一归一化,与 day_plan 同源)。
+    # 惰性 import:day_plan 模块级 import 本模块,顶层导入会循环(D3)。
+    from schedule.day_plan import week_number, week_courses
+    week_num = week_number(now.date(), semester_start)
 
-    today_courses = schedule.get(weekday, {})
-
-    # 筛选本周有效的课程。
-    # 合并单元格（alternates）同一时段多门课周次互斥：取 weeks 含本周的那门
-    active_courses = {}
-    for period, entry in today_courses.items():
-        for course in [entry] + entry.get("alternates", []):
-            weeks = course.get("weeks", set())
-            if weeks and week_num in weeks:
-                active_courses[period] = course
-                break
+    # active 过滤 + alternates 周次互斥 → 委托 week_courses(与 day_plan/T3 同值,D3)
+    active_courses = week_courses(schedule, semester_start, week_num).get(weekday, {})
 
     # 当前课程
     in_class = False
