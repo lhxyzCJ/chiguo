@@ -72,6 +72,41 @@ def test_get_today_upcoming_kept():
     print("  OK test_get_today_upcoming_kept")
 
 
+def test_countdown_removed_and_migration_activated():
+    """6c:type 白名单仅 anniversary;cleanup 删除;历史 countdown 防御迁移激活(label+date 去重)"""
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "anniversaries.json").write_text(json.dumps({"anniversaries": [
+            {"id": "c1", "type": "countdown", "name": "考试", "date": "2026-12-25",
+             "note": "", "created_at": "2026-08-01"},
+            {"id": "a1", "type": "anniversary", "name": "生日", "date": "05-11",
+             "note": "", "created_at": "2026-01-01"}]}))
+        from schedule.api import ScheduleApi
+        api = ScheduleApi(td, {"schedule": {}}, today=date(2026, 8, 5))
+        api._guard()
+        raw = json.loads(Path(td, "anniversaries.json").read_text())
+        assert all(a["type"] == "anniversary" for a in raw["anniversaries"]), "countdown 已迁走"
+        reminders = [i for i in api.overrides.items() if i["kind"] == "reminder"]
+        assert reminders and reminders[0]["date"] == "2026-12-25" and reminders[0]["label"] == "考试", \
+            f"② 迁移为 reminder, got {reminders}"
+        assert reminders[0].get("note") == "from countdown"
+        # 幂等:二次迁移不重复(重跑 _guard 需新实例)
+        api2 = ScheduleApi(td, {"schedule": {}}, today=date(2026, 8, 5))
+        api2._guard()
+        assert len([i for i in api2.overrides.items() if i["kind"] == "reminder"]) == 1, "label+date 去重"
+        # 白名单:add countdown → ValueError
+        try:
+            api2.anniversary_mgr.add("countdown", "x", "2026-12-25")
+            raise AssertionError("countdown 应拒")
+        except ValueError:
+            pass
+        assert not hasattr(api2.anniversary_mgr, "cleanup"), "cleanup 整个方法删除"
+        # 列表合并读两本子
+        lst = api2.list_anniversaries()
+        names = [a["name"] for a in lst["anniversaries"]]
+        assert "考试" in names and "生日" in names, f"合并展示, got {names}"
+    print("  OK test_countdown_removed_and_migration_activated")
+
+
 def test_special_dates_merge_kept_behavior():
     """④ 合并后:文件存在不覆盖用户删除;默认生日仍可见(已在文件中)"""
     with tempfile.TemporaryDirectory() as td:
@@ -94,6 +129,7 @@ if __name__ == "__main__":
     print("test_anniversary.py\n")
     tests = [test_crud_and_list, test_default_merge_missing_or_corrupt,
              test_mmdd_to_date, test_get_today_upcoming_kept,
+             test_countdown_removed_and_migration_activated,
              test_special_dates_merge_kept_behavior]
     for t in tests:
         t()

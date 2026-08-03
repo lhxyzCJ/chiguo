@@ -1190,7 +1190,7 @@ def main():
     parser.add_argument("--compact", action="store_true",
                         help="紧凑输出（cron用，idle时不输出）")
     parser.add_argument("--anniversary", type=str, default=None,
-                        help="纪念日管理: add anniversary|countdown <DATE> <NAME> / remove <ID> / list / update <ID> key=val... / cleanup")
+                        help="纪念日管理: add anniversary <DATE> <NAME> / remove <ID> / list / update <ID> key=val...")
     parser.add_argument("--break", type=str, default=None, dest="break_cmd",
                         metavar="CMD",
                         help="寒暑假: on|off|status|add <起> <止> <备注>|remove <序号>|list|clear")
@@ -1278,11 +1278,9 @@ def main():
                         k, v = kv.split("=", 1)
                         kwargs[k] = v
                 result = api.update_anniversary(parts[1], **kwargs)
-            elif cmd == "cleanup":
-                result = {"action": "anniversary_cleanup", "removed": api.anniversary_mgr.cleanup()}
             else:
                 result = {"error": f"未知子命令: {args.anniversary}",
-                          "usage": "add anniversary|countdown <DATE> <NAME> / remove <ID> / list / update <ID> key=val / cleanup"}
+                          "usage": "add anniversary <DATE> <NAME> / remove <ID> / list / update <ID> key=val"}
         except ValueError as e:
             result = {"action": "anniversary_added", "ok": False, "error": str(e)} \
                 if cmd == "add" else {"action": "anniversary_updated", "ok": False, "error": str(e)}

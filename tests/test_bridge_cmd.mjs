@@ -49,17 +49,21 @@ t('detect: 尾缀「了」剥离（记住5月11日是生日了 → 名称 生日
   assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 05-11 生日'])
 })
 
-// ── 检测：倒计时添加 ──
-t('detect: YYYY年M月D日要XX → countdown YYYY-MM-DD', () => {
+// ── 检测：一次性提醒添加（6c:倒计时废弃 → reminder,经 --schedule-change）──
+t('detect: YYYY年M月D日要XX → reminder_added + --schedule-change', () => {
   const r = detectSpecialCommand('2026年12月25日要考试')
-  assert.strictEqual(r.action, 'countdown_added')
-  assert.deepStrictEqual(r.daemon, ['--anniversary', 'add countdown 2026-12-25 考试'])
+  assert.strictEqual(r.action, 'reminder_added')
+  assert.deepStrictEqual(r.daemon, ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-12-25' }, label: '考试' })])
 })
 t('detect: M月D日要XX（无年份）→ 推断年份（已过→明年）', () => {
   const now = new Date(Date.now() + 8 * 3600 * 1000)
   const y = now.getUTCFullYear()
   const r = detectSpecialCommand(`5月11日要过生日`)
-  const date = r.daemon[1].match(/add countdown (\d{4}-\d{2}-\d{2})/)[1]
+  assert.strictEqual(r.action, 'reminder_added')
+  const item = JSON.parse(r.daemon[1])
+  assert.strictEqual(item.kind, 'reminder')
+  assert.strictEqual(item.label, '过生日')
+  const date = item.when.date
   const year = Number(date.slice(0, 4))
   assert.ok(year === y || year === y + 1, `年份应为 ${y} 或 ${y + 1}，实得 ${year}`)
   if (Date.UTC(y, 4, 11) < Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())) {
@@ -138,9 +142,13 @@ t('buildReply: anniversary_added 成功', () => {
   assert.strictEqual(buildReply('anniversary_added', { action: 'anniversary_added', ok: true, id: 'a1', name: '迟菓生日', date: '05-11', type: 'anniversary' }),
     '记住了！05-11——迟菓生日。……哼，才不会忘记。')
 })
-t('buildReply: countdown_added 成功', () => {
-  assert.strictEqual(buildReply('countdown_added', { action: 'anniversary_added', ok: true, name: '考试', date: '2026-12-25' }),
-    '嗯嗯，考试（2026-12-25）——我算着日子呢。')
+t('buildReply: reminder_added 成功（用 result.text 确认文案）', () => {
+  assert.strictEqual(buildReply('reminder_added', { action: 'schedule_change', ok: true, text: '好,12月25日周日要考试,我记着。' }),
+    '好,12月25日周日要考试,我记着。')
+})
+t('buildReply: reminder_added daemon 失败 → result.question', () => {
+  assert.strictEqual(buildReply('reminder_added', { action: 'schedule_change', ok: false, reason: 'past_date', question: '这个日期已经过去了,告诉哥哥具体哪天的安排' }),
+    '处理失败：这个日期已经过去了,告诉哥哥具体哪天的安排')
 })
 t('buildReply: list 非空（含倒计时标记）', () => {
   const r = buildReply('anniversary_list', { anniversaries: [
@@ -205,6 +213,10 @@ if (args[0] === '--break') {
     process.stdout.write(JSON.stringify({ action: 'schedule_change', ok: false, reason: 'past_date', question: '这个日期已经过去了,告诉哥哥具体哪天的安排', missing: ['date'] }))
     process.exit(1)
   }
+  if (item.kind === 'reminder') {
+    process.stdout.write(JSON.stringify({ action: 'schedule_change', ok: true, text: \`好,\${item.label}(\${item.when.date})我记着。\` }))
+    process.exit(0)
+  }
   process.stdout.write(JSON.stringify({ action: 'schedule_change', ok: true, text: '好,8月20日周四要交材料,我记着。' }))
 } else {
   process.stdout.write(JSON.stringify({ ok: false, error: 'boom' }))
@@ -219,7 +231,7 @@ t('executeSpecialCommand: break on → ok + 迟菓确认', async () => {
   assert.strictEqual(r.ok, true)
   assert.ok(r.reply.includes('放假了'))
 })
-t('executeSpecialCommand: anniversary add → ok + 真实 shape 渲染（含 id 字段）', async () => {
+t('executeSpecialCommand: reminder → ok + result.text 渲染（含 label+date）', async () => {
   const spec = detectSpecialCommand('2026年12月25日要考试')
   const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
@@ -263,6 +275,14 @@ t('executeSpecialCommand: --schedule-change 成功 shape(A4)→ ok:true(确认�
   const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-08-20' }, label: '交材料' })], hint: 'x' }
   const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
+})
+t('executeSpecialCommand: reminder_added past_date → ok:false + result.question 呈现', async () => {
+  const spec = detectSpecialCommand('2026年8月1日要考试')
+  assert.strictEqual(spec.action, 'reminder_added')
+  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  assert.strictEqual(r.ok, false)
+  assert.ok(r.reply.includes('处理失败'), r.reply)
+  assert.ok(r.reply.includes('已经过去了'), r.reply)
 })
 t('executeSpecialCommand: --schedule-change 畸形 JSON 契约(A4 bad_json)→ ok:false + 处理失败兜底', async () => {
   const spec = { action: 'schedule_change', daemon: ['--schedule-change', '{not json'], hint: 'x' }

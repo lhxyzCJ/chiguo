@@ -2,7 +2,8 @@
 # schedule/anniversary.py — 纪念日管理(迁自 anniversary_manager.py,批次 2)
 # 变更:显式 base_dir 参数(不再依赖 __file__/cwd 解析);新增 mmdd_to_date 工具;
 #       DEFAULT_ANNIVERSARIES 默认集合 + 读路径内存合并(不落盘);
-#       countdown 分支与 cleanup 保留至批次 #6c(与 type 白名单收紧同批删除)。
+#       countdown 已废弃,6c 同批删除(白名单仅 anniversary,cleanup 整方法删);
+#       历史 countdown 由 api 迁移入口迁为 reminder。
 # ============================================================
 
 import json
@@ -86,17 +87,14 @@ class AnniversaryManager:
 
     def add(self, type_: str, name: str, date_str: str, note: str = "") -> Anniversary:
         """
-        添加纪念日或倒计时。
+        添加纪念日(6c:countdown 已废弃,仅收 anniversary)。
         Raises ValueError on invalid format.
         """
-        if type_ not in ("anniversary", "countdown"):
-            raise ValueError(f"type must be 'anniversary' or 'countdown', got '{type_}'")
+        if type_ != "anniversary":
+            raise ValueError("type must be 'anniversary'")
 
-        # 校验日期格式
-        if type_ == "anniversary":
-            date.fromisoformat(f"2024-{date_str}")  # 用闰年测试 MM-DD 合法性
-        else:
-            date.fromisoformat(date_str)  # 测试 YYYY-MM-DD 合法性
+        # 校验日期格式(MM-DD;用闰年测试合法性)
+        date.fromisoformat(f"2024-{date_str}")
 
         a = Anniversary(
             id=uuid.uuid4().hex[:12],
@@ -138,8 +136,8 @@ class AnniversaryManager:
                 if "note" in kwargs:
                     a.note = kwargs["note"].strip()
                 if "type" in kwargs:
-                    if kwargs["type"] not in ("anniversary", "countdown"):
-                        raise ValueError(f"type must be 'anniversary' or 'countdown'")
+                    if kwargs["type"] != "anniversary":
+                        raise ValueError("type must be 'anniversary'")
                     a.type = kwargs["type"]
                 if "date" in kwargs:
                     d = kwargs["date"].strip()
@@ -216,16 +214,3 @@ class AnniversaryManager:
 
         result.sort(key=lambda x: x[1])
         return result
-
-    def cleanup(self) -> int:
-        """清理已过期的倒计时（countdown 类型且 date < today）。返回删除数。"""
-        today = date.today()
-        before = len(self._items)
-        self._items = [
-            a for a in self._items
-            if not (a.type == "countdown" and date.fromisoformat(a.date) < today)
-        ]
-        removed = before - len(self._items)
-        if removed > 0:
-            self._save()
-        return removed
