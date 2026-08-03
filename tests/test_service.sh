@@ -69,3 +69,27 @@ echo "$OUT" | grep -q "After=network-online.target ollama.service" || fail "unit
 grep -q "systemctl" "$CALLS_LOG" && fail "dry-run 不应调用 systemctl"
 : > "$CALLS_LOG"
 pass "dry-run 只读 + unit 模板断言"
+
+# ── 用例 2: autostart 写 unit + 调用链（enable ollama → daemon-reload → enable chiguo-bridge）──
+"$SERVICE" autostart >/dev/null 2>&1 || fail "autostart 退出非 0"
+[ -f "$TMP/systemd/chiguo-bridge.service" ] || fail "unit 未写入"
+grep -q "enable --now ollama" "$CALLS_LOG" || fail "未 enable ollama"
+grep -q "daemon-reload" "$CALLS_LOG" || fail "未 daemon-reload"
+grep -q "enable --now chiguo-bridge" "$CALLS_LOG" || fail "未 enable chiguo-bridge"
+: > "$CALLS_LOG"
+pass "autostart 写 unit + systemctl 调用链"
+
+# ── 用例 3: 幂等（重复 autostart 不重写 unit，两次调用间文件 mtime 不变）──
+UNIT_MTIME="$(stat -c %Y "$TMP/systemd/chiguo-bridge.service")"
+sleep 1
+"$SERVICE" autostart >/dev/null 2>&1 || fail "重复 autostart 退出非 0"
+[ "$(stat -c %Y "$TMP/systemd/chiguo-bridge.service")" = "$UNIT_MTIME" ] || fail "unit 被重复重写"
+pass "autostart 幂等"
+
+# ── 用例 4: temp 残留被杀（pidfile 指向存活进程时 autostart 清理）──
+sleep 300 & FAKE_TEMP_PID=$!
+echo "$FAKE_TEMP_PID" > "$TMP/pid/bridge-temp.pid"
+"$SERVICE" autostart >/dev/null 2>&1 || fail "autostart 退出非 0"
+[ ! -f "$TMP/pid/bridge-temp.pid" ] || fail "残留 temp pidfile 未被清理"
+kill "$FAKE_TEMP_PID" 2>/dev/null || true
+pass "autostart 清理 temp 残留"
