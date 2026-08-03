@@ -61,10 +61,10 @@ node scripts/pi-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + 回�
 ```
 
 - **配置优先级**：`PIRUN_*` 环境变量 > toml `[host]` 段 > 默认值
-  （PIRUN_PROVIDER/PIRUN_MODEL/PIRUN_THINKING/PIRUN_SESSION/PIRUN_PERSONALITY/PIRUN_GUIDE）
+  （PIRUN_PROVIDER/PIRUN_MODEL/PIRUN_THINKING/PIRUN_SESSION；PIRUN_PERSONALITY/PIRUN_GUIDE 仅测试/开发用，生产人格固定仓库内 personality/）
 - **[host] 键**：`provider`（默认 opencode-go）、`model`（deepseek-v4-flash）、`thinking_level`（high）、
   `session_id`（chiguo-main，回复侧）、`send_session_id`（chiguo-send，主动发送）、
-  `personality_dir`（仓库内 `personality/`，注入 SUN2.md + 迟菓语言技巧指南.md）、
+  personality 固定仓库内 personality/（[host].personality_dir 已移除，见 DEPLOYMENT.md；注入 SUN2.md + 迟菓语言技巧指南.md）、
   `wechat_bridge_url`（`http://127.0.0.1:18790/send`）
 - **pi 参数**：`-p` 非交互 + `--no-context-files`（隔离仓库开发上下文）+ `--mode json`（NDJSON 事件流）
   + `--append-system-prompt` ×2（SUN2 + 语言技巧指南）+ `--session-id <会话>` + `--thinking`

@@ -32,7 +32,7 @@ else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
 
-# ── 3. 全量自检(35 py + 9 script 测试,任一失败即中止) ──────────
+# ── 3. 全量自检(36 py + 10 script 测试,任一失败即中止) ──────────
 TESTS=(test_chiguo_math test_holiday_parser test_schedule_parser
        test_integration test_monitor test_eventbus test_personality
        test_bayesian test_composer test_ebbinghaus test_longing
@@ -42,7 +42,7 @@ TESTS=(test_chiguo_math test_holiday_parser test_schedule_parser
        test_toml_binding test_adapt_personality test_pi_health
        test_anniversary test_schedule_override test_day_plan test_recall
        test_attention_tiers test_availability test_trigger_scale
-       test_isolation test_schedule_plan test_schedule_cli)
+       test_isolation test_schedule_plan test_schedule_cli test_docs_sync)
 say "运行 Node 测试(5 个文件) ..."
 for t in test_pi_run test_bridge_askpi test_bridge_cmd test_bridge_health test_bridge_schedule; do
     node "tests/$t.mjs" >/dev/null || fail "$t.mjs 失败,中止部署"
