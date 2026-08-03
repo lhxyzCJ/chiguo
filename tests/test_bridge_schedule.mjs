@@ -4,13 +4,21 @@
 import assert from 'node:assert'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, cpSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { detectScheduleIntent } from '../wechat-bridge/command-detect.mjs'
-import { scheduleClarifyPath, readClarify, writeClarify, clearClarify, exitWordMatch,
-         handleMessage } from '../wechat-bridge/bridge.mjs'
 import { extractBlock } from '../scripts/pi-run.mjs'
+
+// 隔离: handleMessage 成功路径会记 pi 假死账 — 复制真 pi_health.py 到 temp,绝不碰真实 pi_health.json。
+// 注意: env 必须在动态 import bridge.mjs 之前设置(模块级 const 读取),故 bridge 符号全部走动态导入。
+const tmp = mkdtempSync(join(tmpdir(), 'bridge-schedule-'))
+const PH_SCRIPT = join(tmp, 'pi_health.py')
+cpSync(new URL('../scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
+process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
+process.env.WECHAT_BRIDGE_PI_HEALTH_PY = '/root/chiguo/.venv/bin/python'
+const { scheduleClarifyPath, readClarify, writeClarify, clearClarify, exitWordMatch, handleMessage } =
+  await import('../wechat-bridge/bridge.mjs')
 
 // R2.2: ⑭ 用 REPO 锚定仓库根(测试从仓库根运行)
 const REPO = process.cwd()
