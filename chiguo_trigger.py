@@ -20,12 +20,15 @@ class Trigger:
     data: dict = field(default_factory=dict)
 
 
-def evaluate_triggers(state: ChiguoState, now: datetime) -> Trigger | None:
+def evaluate_triggers(state: ChiguoState, now: datetime,
+                      trigger_scale: dict | None = None) -> Trigger | None:
     """
     评估触发。
     v2 改进：不再硬排序取优先级最高者。
     而是：先收集所有合法候选 → 按 sigmoid 权重随机选一个。
     结果：53 孤独 + 48 不安时，lonely_mid 和 anxiety 都有概率被选中。
+    v9 schedule-center:trigger_scale = 计划文件修饰参数,
+    候选收集后统一乘,只改类型间相对概率;逃生阀在缩放前 return,天然豁免。
     """
     # ── v6: 溢出逃生阀 — 死锁态破防（高焦虑阻塞+沉默超限），强制最高优先 ──
     # 高焦虑阻塞（≥ anxiety_block_threshold）时，正常的 longing overflow
@@ -270,6 +273,15 @@ def evaluate_triggers(state: ChiguoState, now: datetime) -> Trigger | None:
 
     if not weighted_candidates:
         return None
+
+    # ── schedule-center:计划文件修饰参数(§5.2,拷问 18)──
+    # 单点缩放:统一乘 scale.get(type, scale.get("default", 1.0));不动 13 处候选逻辑。
+    # 逃生阀 longing 已在函数首 return → 天然豁免。共同缩放因子会被概率竞争约掉,
+    # 只改变类型间相对概率(写 default 全局缩放无实际效果)。
+    if trigger_scale:
+        for c in weighted_candidates:
+            c["weight"] *= trigger_scale.get(c["trigger"].type,
+                                             trigger_scale.get("default", 1.0))
 
     # ── 加权随机选择（而非硬排序取max） ──────────────────
     chosen = weighted_trigger_choice(weighted_candidates)
