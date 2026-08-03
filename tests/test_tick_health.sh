@@ -15,6 +15,40 @@ REPO="$TMP/repo"
 mkdir -p "$REPO/scripts" "$REPO/.venv/bin"
 ln -s /root/chiguo/.venv/bin/python "$REPO/.venv/bin/python"
 
+# ── pi-auth.sh 共同 sourcing(opencode-go 优先 → toml provider 回退)──
+pass "pi-auth: sourcing sets OPENCODE_API_KEY from auth.json"
+test_pi_auth() {
+  local AUTH_DIR="$TMP/pi-auth"
+  mkdir -p "$AUTH_DIR"
+  mkdir -p "$REPO/scripts"
+  ln -sf /root/chiguo/scripts/pi-auth.sh "$REPO/scripts/pi-auth.sh" 2>/dev/null || \
+    cp /root/chiguo/scripts/pi-auth.sh "$REPO/scripts/pi-auth.sh"
+  # 用例 1:opencode-go 优先
+  mkdir -p "$AUTH_DIR/.pi/agent"
+  cat > "$AUTH_DIR/.pi/agent/auth.json" <<'JSON'
+{"opencode-go": {"key": "KEY_OG"}, "local": {"key": "KEY_LOCAL"}}
+JSON
+  cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+provider = "local"
+TOML
+  local KEY
+  KEY="$(HOME="$AUTH_DIR" CHIGUO_REPO="$REPO" bash -c 'source "$CHIGUO_REPO/scripts/pi-auth.sh"; printf "%s" "${OPENCODE_API_KEY:-}"' 2>/dev/null || true)"
+  [ "$KEY" = "KEY_OG" ] || fail "pi-auth: 期望 opencode-go 优先, got '$KEY'"
+  # 用例 2:无 opencode-go → toml provider 回退
+  cat > "$AUTH_DIR/.pi/agent/auth.json" <<'JSON'
+{"local": {"key": "KEY_LOCAL"}}
+JSON
+  KEY="$(HOME="$AUTH_DIR" CHIGUO_REPO="$REPO" bash -c 'source "$CHIGUO_REPO/scripts/pi-auth.sh"; printf "%s" "${OPENCODE_API_KEY:-}"' 2>/dev/null || true)"
+  [ "$KEY" = "KEY_LOCAL" ] || fail "pi-auth: 期望 toml provider 回退, got '$KEY'"
+  # 用例 3:无 auth.json → 空串不报错
+  rm -rf "$AUTH_DIR/.pi"
+  KEY="$(HOME="$AUTH_DIR" CHIGUO_REPO="$REPO" bash -c 'source "$CHIGUO_REPO/scripts/pi-auth.sh"; printf "%s" "${OPENCODE_API_KEY:-}"' 2>/dev/null || true)"
+  [ -z "$KEY" ] || fail "pi-auth: 期望空 key, got '$KEY'"
+  pass "pi-auth: sourcing sets OPENCODE_API_KEY from auth.json"
+}
+test_pi_auth
+
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
 POST_LOG="$TMP/post.log"
 cat > "$TMP/recorder.js" <<'JS'
