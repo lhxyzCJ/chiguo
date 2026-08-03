@@ -233,8 +233,14 @@ def test_longing_overflow_candidate():
 # ═══════════════════════════════════════════════════════════
 
 def test_special_date_ritual():
-    """特殊日期（配置 11-03）：special 高权重候选（实测 100/100）；非特殊日不触发"""
+    """特殊日期(3c 起数据源 = anniversary_mgr 当天匹配,替代 toml special_dates):
+    special 高权重候选(实测 100/100);非特殊日不触发"""
     with tempfile.TemporaryDirectory() as td:
+        from pathlib import Path as _P
+        import json as _json
+        _P(td, "anniversaries.json").write_text(_json.dumps({"anniversaries": [
+            {"id": "a1", "type": "anniversary", "name": "认识纪念日", "date": "11-03",
+             "note": "", "created_at": "2026-01-01"}]}))
         now = datetime(2026, 11, 3, 14, 0, tzinfo=CST)
         s = _make_state(td, now, energy=40)
         counts = _run_seeds(s, now, n=100)

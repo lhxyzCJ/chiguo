@@ -244,17 +244,7 @@ class ChiguoState:
                 self.semester_end = date_type.fromisoformat(sem_end_str)
             except (ValueError, TypeError):
                 pass
-        # 考试周范围
-        self.exam_ranges: list[tuple[date_type, date_type]] = []
-        for r in sched.get("exam_weeks", []) or []:
-            parts = r.split(",")
-            if len(parts) == 2:
-                try:
-                    s = date_type.fromisoformat(parts[0].strip())
-                    e = date_type.fromisoformat(parts[1].strip())
-                    self.exam_ranges.append((s, e))
-                except (ValueError, TypeError):
-                    pass
+        # 考试周范围(3c:已移除 exam_ranges 属性,唯一来源 = override 区间门面 exam_season_now;M18)
         self.schedule_parser = ScheduleParser(
             self._anchored(xlsx_path),
             cache_path=self._anchored("schedule_cache.json"),
@@ -974,6 +964,17 @@ class ChiguoState:
             result["makeup_day"] = True
             result["makeup_reason"] = hq["hint"]
         return result
+
+    def exam_season_now(self, now) -> bool:
+        """考试周门面(§5.1):override 区间事实当日命中,唯一来源(exam_week);
+        toml 已废弃。引擎层经此,不直触 schedule 模块。"""
+        today = now.date() if isinstance(now, datetime) else now
+        for it in self.override_store.intervals():
+            s = date_type.fromisoformat(it["date"])
+            e = date_type.fromisoformat(it.get("end_date") or it["date"])
+            if s <= today <= e:
+                return True
+        return False
 
     # ── 计划修饰参数(§5.2) ──────────────────────────────
 

@@ -85,7 +85,10 @@ def test_scale_ref_resolution():
 def test_engine_scale_loop():
     """缩放循环:候选收集后统一乘;{special: 0.0} → special 永不选中;default 作用于缺席类型"""
     def counts(td, scale, now, loneliness=75.0):
-        s = make_state(td, {"schedule": {"special_dates": ["11-03"]}}, now)
+        Path(td, "anniversaries.json").write_text(json.dumps({"anniversaries": [
+            {"id": "a1", "type": "anniversary", "name": "认识纪念日", "date": "11-03",
+             "note": "", "created_at": "2026-01-01"}]}))
+        s = make_state(td, {"schedule": {}}, now)  # 3c:special 源 = anniversary_mgr,toml special_dates 键已废
         s.emotion.loneliness = loneliness  # 对照基线:低孤独 → lonely 候选低于 0.03 截断(同 test_trigger.py:235)
         random.seed(42)
         c = {}
@@ -118,10 +121,29 @@ def test_escape_valve_exempt():
     print("  OK test_escape_valve_exempt")
 
 
+def test_special_source_switch():
+    """special 数据源切换(3c):触发器改读 anniversary_mgr 当天匹配,与 T1 同源;
+    缩放 {special: 0.5} 作用于新数据源"""
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "anniversaries.json").write_text(json.dumps({"anniversaries": [
+            {"id": "a1", "type": "anniversary", "name": "认识纪念日", "date": "11-03",
+             "note": "", "created_at": "2026-01-01"}]}))
+        now = datetime(2026, 11, 3, 14, 0, tzinfo=CST)
+        s = make_state(td, {"schedule": {"special_dates": []}}, now)  # toml 键已无 11-03
+        random.seed(42)
+        c = {}
+        for _ in range(100):
+            t = evaluate_triggers(s, now, trigger_scale={"special": 0.5})
+            c[t.type] = c.get(t.type, 0) + 1
+        assert c.get("special", 0) > 0, f"anniversary 当天应触发 special, got {c}"
+        assert c.get("special", 0) < 100, f"×0.5 后不得全中, got {c}"
+    print("  OK test_special_source_switch")
+
+
 if __name__ == "__main__":
     print("test_trigger_scale.py\n")
     tests = [test_scale_identity_without_plan, test_scale_ref_resolution,
-             test_engine_scale_loop, test_escape_valve_exempt]
+             test_engine_scale_loop, test_escape_valve_exempt, test_special_source_switch]
     for t in tests:
         t()
     print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

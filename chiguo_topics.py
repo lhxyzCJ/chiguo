@@ -11,7 +11,6 @@ from datetime import datetime
 
 from chiguo_math import weighted_trigger_choice
 from solar_terms import SolarTerms
-from anniversary_manager import AnniversaryManager
 from chiguo_math import in_quiet_window
 
 
@@ -38,7 +37,6 @@ class TopicPicker:
             "netease": config.get("netease_weight", 0.12),  # v9
         }
         self.solar_terms = SolarTerms()
-        self.anniversary_mgr = AnniversaryManager()
 
     def pick(self, now: datetime) -> dict | None:
         """
@@ -300,7 +298,7 @@ class TopicPicker:
 
     def _anniversary_topic(self, now: datetime) -> dict | None:
         """检查当天纪念日或临近倒计时。今天 > 7天内 > 无。"""
-        today_events = self.anniversary_mgr.get_today(now.date())
+        today_events = self.state.anniversary_mgr.get_today(now.date())
         if today_events:
             names = "、".join(a.name for a in today_events)
             return {
@@ -310,7 +308,7 @@ class TopicPicker:
                 "data": {"anniversaries": [a.__dict__ for a in today_events]},
             }
 
-        upcoming = self.anniversary_mgr.get_upcoming(now.date(), days=7)
+        upcoming = self.state.anniversary_mgr.get_upcoming(now.date(), days=7)
         if upcoming:
             a, days = upcoming[0]
             return {

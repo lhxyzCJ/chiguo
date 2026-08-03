@@ -419,15 +419,12 @@ class MessageComposer:
             elif "evening" in base or "night" in base:
                 base = "weekend_evening"
 
-        # 检查考试周
+        # 检查考试周(schedule-center 3c:守卫改走门面 exam_season_now;exam_ranges 属性已移除,
+        # 原 hasattr 守卫会静默吞掉 exam_season 情境,M18)
         try:
             sch = self.state.schedule_status(now)
-            if sch and hasattr(self.state, 'exam_ranges'):
-                today = now.date()
-                for start, end in self.state.exam_ranges:
-                    if start <= today <= end:
-                        base = "exam_season"
-                        break
+            if sch and self.state.exam_season_now(now):
+                base = "exam_season"
         except (AttributeError, KeyError, TypeError):
             pass
 
