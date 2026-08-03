@@ -33,6 +33,7 @@ import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent } from './command-detect.mjs'
+import { parseNdjson, extractAnalysis } from '../scripts/pi-run.mjs'
 
 const execFileP = promisify(execFile)
 
@@ -84,6 +85,112 @@ export async function askPi(text) {
     throw new Error(parsed.error ?? 'pi-run 返回 ok=false 且无 error')
   }
   return { text: parsed.text, analysis: parsed.analysis ?? null }
+}
+
+// ── 6b:recall 信号 + 回复侧 --attention 注入(导出供测试注入 fake run)──
+const RECALL_GUIDE = `只依据事实回答,禁止编造;检索无结果时反问用户('哥哥,那是什么时候呀?我帮你记上')`
+
+/** --attention 轻量读(§5.4):失败/畸形 → null(跳过注入继续 askPi,不阻塞回复流)。 */
+async function getAttention() {
+  try {
+    const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--attention'], {
+      timeout: 30_000,
+      maxBuffer: 4 * 1024 * 1024,
+    })
+    return JSON.parse(r.stdout)
+  } catch {
+    return null
+  }
+}
+
+/** T1/T2/T3 + today_exceptions 拼成回复侧注入块(§5.4 同源组装)。 */
+function buildAttentionBlock(att) {
+  const a = att?.attention ?? {}
+  const lines = []
+  if (Array.isArray(a.t1) && a.t1.length) {
+    lines.push(`重要日子:${a.t1.map((x) => `${x.date} ${x.name ?? x.label ?? ''}(还有${x.days_until}天)`).join('、')}`)
+  }
+  if (Array.isArray(a.t2) && a.t2.length) {
+    lines.push(`区间事实:${a.t2.join(';')}`)
+  }
+  const w = a.t3?.this_week
+  if (w && Object.keys(w).length) {
+    const days = Object.entries(w)
+      .map(([d, periods]) => `${d}日:${Object.entries(periods).map(([p, c]) => `${p}节${c?.course ?? c}`).join(',')}`)
+      .join(';')
+    lines.push(`本周课表:${days}`)
+  }
+  if (Array.isArray(a.today_exceptions) && a.today_exceptions.length) {
+    lines.push(`今日课程例外:${a.today_exceptions.map((e) => `${e.period}节${e.action}${e.course ? ` ${e.course}` : ''}`).join(';')}`)
+  }
+  return lines.join('\n')
+}
+
+/** askPi 前先注入 attention 块(取数失败 → 原文直走,§5.4 降级)。 */
+async function askPiWithAttention(text, att) {
+  const block = att?.ok ? buildAttentionBlock(att) : null
+  const prompt = block ? `${text}\n\n【今日安排参考】\n${block}\n(仅供回答参考,仅在相关时提及)` : text
+  return askPi(prompt)
+}
+
+/** 第一趟分析(analysis-mode,含 recall 信号):默认走 askPi;测试注入 {exec} fake(原始 ndjson 解析)。 */
+async function firstAnalysis(text, runOverride) {
+  if (typeof runOverride === 'function') return runOverride(text)
+  const { stdout } = await runOverride.exec('node',
+    [PI_RUN_SCRIPT, '--prompt', text, '--analysis-mode'], { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
+  const { analysis, reply } = extractAnalysis(parseNdjson(stdout))
+  return { text: reply, analysis }
+}
+
+/** 第二趟 pi(recall 模式):prompt = 事实 + 用户问题 + 反问引导(joined args 含 '反问',prompt 契约)。
+ * 返回 { text } 或 null(失败/漏检 → 调用方按普通回复,零额外调用)。 */
+async function runPiRun({ mode, prompt, facts }, runOverride = null) {
+  const composed = `${prompt}\n\n检索事实：${facts}\n\n${RECALL_GUIDE}`
+  const args = ['--prompt', composed, '--schedule-recall']
+  if (runOverride && typeof runOverride.exec === 'function') {
+    const { stdout } = await runOverride.exec('node', [PI_RUN_SCRIPT, ...args],
+      { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
+    const raw = parseNdjson(stdout)
+    return { text: raw ? raw.replace(/<<RECALL>>[\s\S]*?<<END>>/, '').trim() : null }
+  }
+  const { stdout } = await execFileP('node', [PI_RUN_SCRIPT, ...args], {
+    timeout: 180_000,
+    maxBuffer: 16 * 1024 * 1024,
+  })
+  let out
+  try { out = JSON.parse(stdout) } catch { return null }
+  if (!out?.ok) return null
+  const raw = out.raw ?? out.text ?? ''
+  return { text: raw.replace(/<<RECALL>>[\s\S]*?<<END>>/, '').trim() }
+}
+
+/** recall 信号路由:analysis 带 recall → daemon --schedule-recall → 第二趟 pi → 回答;
+ * 无信号/失败/漏检 → null(调用方按普通回复,零额外调用)。 */
+export async function runWithRecall(text, runOverride = askPi) {
+  const first = await firstAnalysis(text, runOverride)
+  if (first?.analysis?.recall) {
+    const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--schedule-recall', first.analysis.recall], {
+      timeout: 30_000,
+      maxBuffer: 4 * 1024 * 1024,
+    })
+    let rec = null
+    try { rec = JSON.parse(r.stdout) } catch {}
+    if (rec?.ok) {
+      const second = await runPiRun({ mode: 'recall', prompt: text, facts: JSON.stringify(rec.matches) }, runOverride)
+      if (second) return second.text
+    }
+  }
+  return null
+}
+
+/** 回复侧注入(§5.4):先取 --attention(失败降级),成功注入 T1/T2/T3 + today_exceptions 再 askPi。 */
+export async function runWithAttention(text, runOverride = null) {
+  const att = await getAttention()
+  if (runOverride) {
+    const res = await runOverride({ attention: att?.ok ? att : null, text })
+    return typeof res === 'string' ? res : res?.text ?? null
+  }
+  return (await askPiWithAttention(text, att)).text
 }
 
 /** 确定性记录主人消息到迟菓 daemon（无分析；随后的 askPi 分析经 upgradeAnalysis 升级，daemon 去重）。失败不阻塞回复流。 */
@@ -382,11 +489,23 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
 
   await queue
     .run(async () => {
+      let recalled = false
       try {
-        const { text: reply, analysis } = await askPi(text)
-        await upgradeAnalysis(text, analysis)  // recv_dedup 升级语义，不重复记账
-        console.log(`[out] ${reply.slice(0, 80)}`)
-        await bot.reply(msg, reply).catch((e) => console.error('[reply error]', e))
+        // 回复侧:先取 --attention 注入(失败降级,§5.4),analysis 带 recall 信号 → 第二趟 pi
+        const att = await getAttention()
+        const { text: reply, analysis } = await askPiWithAttention(text, att)
+        if (analysis?.recall) {
+          const second = await runWithRecall(text)
+          if (second) {
+            await bot.reply(msg, second).catch((e) => console.error('[reply error]', e))
+            recalled = true
+          }
+        }
+        if (!recalled) {
+          await upgradeAnalysis(text, analysis)  // recv_dedup 升级语义，不重复记账
+          console.log(`[out] ${reply.slice(0, 80)}`)
+          await bot.reply(msg, reply).catch((e) => console.error('[reply error]', e))
+        }
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
         console.error('[pi error]', reason)

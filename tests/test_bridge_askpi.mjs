@@ -38,6 +38,12 @@ if (args[0] === '--anniversary') {
   }
 } else if (args[0] === '--break') {
   process.stdout.write(JSON.stringify({ action: 'break_set', manual_override: args[1] === 'on', message: 'ok' }))
+} else if (args[0] === '--attention') {
+  process.stdout.write(JSON.stringify({ action: 'attention', ok: false, reason: 'fake 无注意力块' }))
+} else if (args[0] === '--schedule-recall') {
+  const q = args[1] ?? ''
+  process.stdout.write(JSON.stringify({ action: 'schedule_recall', ok: true, query: q,
+    matches: q === '生日' ? [{ type: 'anniversary', label: '哥哥的生日' }] : [] }))
 }
 process.exit(Number(process.env.FAKE_DAEMON_EXIT ?? 0))
 `)
@@ -47,7 +53,7 @@ process.env.WECHAT_BRIDGE_DAEMON_PY = '/usr/bin/node'
 process.env.WECHAT_BRIDGE_DAEMON = FAKE_DAEMON
 process.env.FAKE_PI_LOG = PI_LOG
 process.env.FAKE_DAEMON_LOG = DAEMON_LOG
-const { askPi, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue } = await import('../wechat-bridge/bridge.mjs')
+const { askPi, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue, runWithRecall, runWithAttention } = await import('../wechat-bridge/bridge.mjs')
 
 let passed = 0
 const tests = []
@@ -152,6 +158,44 @@ t('全链路: recordUserMsg → askPi → upgradeAnalysis 顺序与内容', asyn
   assert.strictEqual(pLines().length, pb + 1, 'pi 只被调一次')
 })
 
+// ── 6b:recall 信号 + 回复侧 --attention 注入(独立 runner 同款 t() 风格)──
+t('recall 信号路由:信号 → 第二趟 pi → 回答(mock analysis JSON)', async () => {
+  // fake askPi 返回含 recall 信号的 analysis;断言第二趟 pi 收到事实注入
+  const calls = []
+  const fakeRun = { exec: async (bin, args, opts) => {
+    const joined = args.join(' ')
+    calls.push(joined)
+    if (joined.includes('--analysis-mode')) {
+      return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<ANALYSIS>>{"warmth":0.5,"recall":"生日"}<<END>>回答' }] } }) }
+    }
+    if (joined.includes('--schedule-recall')) {
+      return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<RECALL>>{"ok":true,"matches":[{"type":"anniversary","label":"哥哥的生日"}]}<<END>>哥哥的生日是5月11日呀' }] } }) }
+    }
+    throw new Error('unexpected')
+  } }
+  const r = await runWithRecall('哥哥我生日是什么时候', fakeRun)
+  assert.ok(r.includes('5月11日'), `第二趟按事实回答: ${r}`)
+  assert.ok(calls.some((c) => c.includes('--schedule-recall')), '第二趟调用')
+})
+t('recall 无匹配 → 反问引导文案注入(prompt 契约)', async () => {
+  const calls = []
+  const fakeRun = { exec: async (bin, args, opts) => {
+    calls.push(args.join(' '))
+    if (args.join(' ').includes('--analysis-mode')) {
+      return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<ANALYSIS>>{"warmth":0.5,"recall":"查无此事"}<<END>>回答' }] } }) }
+    }
+    return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '回答' }] } }) }
+  } }
+  await runWithRecall('查无此事', fakeRun)
+  const second = calls.find((c) => c.includes('--schedule-recall'))
+  assert.ok(second && second.includes('反问'), `prompt 须注入反问引导: ${second}`)
+})
+t('--attention 回复侧注入:取数失败跳过注入继续 askPi(降级)', async () => {
+  // daemon --attention 返回 ok:false → askPi 仍执行(无 attention 块)
+  const got = await runWithAttention(null, async () => ({ text: '自然回复' }))   // 注入失败
+  assert.ok(got.includes('自然回复'), '降级为现状行为')
+})
+
 // ── onMessage 链路（handleMessage：detect→execute→reply 接线，bridge.mjs）──
 const botStub = () => {
   const replies = []
@@ -197,7 +241,8 @@ t('handleMessage: 普通消息 → 走 askPi（--prompt 原文 --analysis-mode�
   assert.strictEqual(pLines().length, pb + 1, 'pi 应被调一次')
   assert.deepStrictEqual(JSON.parse(pLines()[pb]), ['--prompt', '今天天气怎么样', '--analysis-mode'])
   assert.deepStrictEqual(JSON.parse(dLines()[db]), ['--user-msg', '今天天气怎么样'])
-  assert.deepStrictEqual(JSON.parse(dLines()[db + 1]), ['--user-msg', '今天天气怎么样', '--analysis', JSON.stringify({ warmth: 0.3, effort: 0.4 })])
+  assert.deepStrictEqual(JSON.parse(dLines()[db + 1]), ['--attention'], '6b:回复侧先取 --attention(失败降级继续 askPi)')
+  assert.deepStrictEqual(JSON.parse(dLines()[db + 2]), ['--user-msg', '今天天气怎么样', '--analysis', JSON.stringify({ warmth: 0.3, effort: 0.4 })])
   assert.deepStrictEqual(bot.replies, ['今天天气不错呢'])
 })
 t('handleMessage: 空文本 → 不调 pi/daemon、不回复', async () => {
