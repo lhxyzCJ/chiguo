@@ -25,13 +25,14 @@ Zero-LLM math decision engine · LLM message generation · WeChat delivery
 ## Table of Contents
 
 - [🎀 Who Is She](#-who-is-she)
+- [🧭 What This Is](#-what-this-is)
 - [✨ Features](#-features)
 - [🏗 Architecture](#-architecture)
 - [💬 Example Outputs](#-example-outputs)
 - [🚀 Quick Start](#-quick-start)
 - [🧩 Components](#-components)
 - [🧠 Bring Your Own Model](#-bring-your-own-model)
-- [🎭 Customizing the Persona](#-customizing-the-persona)
+- [🎭 Persona (Fixed)](#-persona-fixed)
 - [🛠 Deploy & Ops](#-deploy--ops)
 - [📖 Docs & Contributing](#-docs--contributing)
 - [❓ FAQ](#-faq)
@@ -45,6 +46,20 @@ Zero-LLM math decision engine · LLM message generation · WeChat delivery
 Chiguo comes from the *Tricolour Lovestory* series (a Chinese galgame by 绘恋企划屋 / HL-Galgame). Her personality and speech style are aligned line-by-line with the official sequel's script; `personality/SUN2.md` is the single authoritative persona definition.
 
 > ⚠️ **Compliance notice**: this project is an **unofficial fan re-imagining of an official IP**, unrelated to 绘恋企划屋 / Shanybai Culture. The script text is bundled for personal study and fan-community reference only; character and script copyrights belong to the original creators. If the rights holders object, the project will remove the relevant material upon notice.
+
+---
+
+## 🧭 What This Is
+
+A role-play AI that proactively messages her user — a zero-LLM math decision engine decides **when to message, in what mood, and about what**; an LLM only turns each decision into a WeChat message that fits her persona. The entire system runs on your own Linux machine — all computation is local, and data never leaves the machine.
+
+The system serves one user only: 哥哥 (gēge, her in-character name for the user). To get it running you'll need:
+
+- **A Linux machine** (Debian + systemd is best — the WeChat bridge autostart needs it)
+- **A model API key** (message generation and mood analysis go through pi-agent; any OpenAI-compatible backend works)
+- **Optional**: a WeChat account (bot send/receive), ollama (memory embeddings), a schedule Excel, a NetEase account
+
+> ⚠️ **Usage risk**: automating a personal WeChat account carries account risks (e.g. bans). For personal learning and research only — use at your own risk.
 
 ---
 
@@ -163,6 +178,16 @@ Example messages (generated in the `personality/SUN2.md` style — **examples, n
 
 Requires **Python 3.14+** (managed by uv). The core has zero third-party dependencies (pure stdlib); memory/schedule enhancements are optional.
 
+Deployment comes in three tiers — pick what you need:
+
+| Tier | Contents | Command |
+|------|----------|---------|
+| **T0 pure local** | Full decision-engine CLI, no model, no WeChat | `bash deploy.sh --skip-pi --skip-bridge --skip-netease` |
+| **T1 + model** | + message generation (pi-agent + API key) | `bash deploy.sh --skip-bridge --skip-netease` |
+| **T2 full** | WeChat send/receive + memory + NetEase + crontab, fully automatic | `bash deploy.sh` |
+
+Lower tiers can be upgraded later: `bash scripts/install_pi.sh --yes` (model), `bash scripts/wechat-bridge.sh install` (WeChat). Full deployment guide: [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
+
 ```bash
 git clone git@github.com:lhxyzCJ/chiguo.git && cd chiguo
 
@@ -171,7 +196,7 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: 35 py + 9 script standalone runners)
+# Core tests (full suite: 36 py + 10 script standalone runners)
 uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 ```
 
@@ -203,7 +228,7 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 **Role**: the last mile — actually delivers generated text to WeChat and receives the user's messages back for the daemon to record. Runs as a resident process; login state stays local (one QR scan).
 
-**Setup**: `bash scripts/wechat-bridge.sh install`; login with `bash scripts/wechat-bridge.sh login`.
+**Setup**: `bash scripts/wechat-bridge.sh install` (auto-clones the [wechatbot](https://github.com/lhxyzCJ/wechatbot) iLink SDK to `$HOME/wechatbot` and installs npm dependencies — requires Node.js + npm); login with `bash scripts/wechat-bridge.sh login`.
 
 **Service management**: `bash scripts/service.sh <autostart|temp|status|stop|uninstall>` (autostart = systemd boot autostart for ollama + bridge; temp = temporary start without autostart registration; see doc/SYSTEM.md for details).
 
@@ -211,7 +236,7 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ### Memory system (LanceDB + ollama embedding)
 
-**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Worth-keeping bits of conversation are auto-accumulated into the memory store by the pi-agent memory-lancedb-pro extension (memories, old stories, your preferences); the decision engine recalls them **read-only** through `memory_bridge.py` (BM25 full-text search, zero tokens, zero extra calls), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
+**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Worth-keeping bits of conversation are auto-accumulated into the memory store by the pi-agent [memory-lancedb-pro](https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro) extension (memories, old stories, your preferences); the decision engine recalls them **read-only** through `memory_bridge.py` (BM25 full-text search, zero tokens, zero extra calls), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
 
 **Setup**: `uv sync --all-extras` + `bash scripts/install_pi.sh --yes` (initializes the memory store). The store lives at `~/.pi-agent/memory/lancedb-pro` (read-only from Chiguo's side; writes are done by the pi extension); `data/chiguo_memories.json` is the manual memory file, **always active** as a supplement.
 
@@ -262,23 +287,27 @@ Detailed steps: [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md) §7 "接入任意
 
 ---
 
-## 🎭 Customizing the Persona
+## 🎭 Persona (Fixed)
 
-The fun part — the persona is entirely text-defined and can be swapped wholesale:
+Chiguo's persona is **fixed** — the entire system is designed around this one character and cannot be swapped for another. The persona is defined entirely in text:
 
 ```
 personality/
 ├── SUN2.md                 # single authoritative persona definition (layers/identity/relations/boundaries)
 ├── 迟菓语言技巧指南.md      # speech-style manual (L1 tone words → L6 self-check) (Chinese)
-├── tsundere.toml           # tsundere gear (current persona)
-└── deredere.toml           # sweet gear (switchable)
+├── tsundere.toml           # tsundere phrasing material
+└── deredere.toml           # sweet phrasing material (combined with tsundere, not a switch)
 ```
 
-Want a different character? Write your own `SUN2.md` (model it on the existing structure) and point `[host].personality_dir` at it. All parameters live in `chiguo_proactive.toml` (314 lines, hot-reloaded in `--loop` mode) — no code changes needed.
+Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (314 lines, hot-reloaded in `--loop` mode) — no code changes needed.
 
 ---
 
 ## 🛠 Deploy & Ops
+
+**Prerequisites**: Debian Linux (systemd) + git + Node.js/npm + a model API key (`export PI_API_KEY=...`); ollama optional (memory embeddings).
+
+**Tiered deployment**: the three tiers are in [🚀 Quick Start](#-quick-start); the full guide (six steps in detail / landing map / migration / verification) is [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
 
 ```bash
 bash deploy.sh   # install uv/Python 3.14 → create venv → full test → env check → pi env + wechat-bridge + cron
@@ -309,6 +338,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 | Doc | Description |
 |-----|-------------|
 | [doc/SYSTEM.md](doc/SYSTEM.md) | Full system documentation: architecture, business logic, config reference, CLI, file list (Chinese) |
+| [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | Full deployment guide: tiered paths / prerequisites / landing map / migration / verification |
 | [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md) | pi-agent integration guide: model backend, WeChat bridge, deployment (Chinese) |
 | [doc/日光雨.md](doc/日光雨.md) | The official sequel script (persona reference) (Chinese) |
 | [AGENTS.md](AGENTS.md) | AI-assistant conventions, including the full test suite (Chinese) |
@@ -316,7 +346,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 Any contribution is welcome — especially ones that help *her* grow:
 
 - **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each `test_*.py` in `tests/` is a standalone runner, exit-code driven.
-- **Run the full suite before submitting**: see `AGENTS.md` (35 py + 9 script tests), all green before commit.
+- **Run the full suite before submitting**: see `AGENTS.md` (35 py + 10 script tests), all green before commit.
 - **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md` (repo rule).
 - **Commit style**: `feat:` / `fix:` / `docs:` / `chore:` prefix + Chinese description.
 - **Design docs**: for major changes, write a design doc under `~/chiguo-meta/specs/` (outside the repo) and get it reviewed first.
@@ -332,7 +362,7 @@ She originates from the official *Tricolour Lovestory* series (see [🎀 Who Is 
 Without it (`uv sync`): memory topic sources are reduced, JSON fallback, `envcheck` reports a warning. With it (`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`): full LanceDB memory + music linkage.
 
 **How do I change the persona / personality?**
-Edit the `personality/` directory — `SUN2.md` is the authoritative definition, the speech manual shapes tone, and a whole new character is just a new `SUN2.md`.
+Chiguo's persona is fixed (the system is designed around a single character) — it cannot be replaced. Want to adjust her behavior? Change the parameters in `chiguo_proactive.toml` — `SUN2.md` is the single authoritative definition and the speech manual shapes tone.
 
 **Do I need to change code to switch models?**
 No. Change `[host].provider` / `[host].model` in `chiguo_proactive.toml` and configure the key; custom OpenAI-compatible endpoints see [PI_INTEGRATION.md](doc/PI_INTEGRATION.md).
@@ -362,7 +392,7 @@ schedule/                # schedule center (holiday/anniversary/override_store/p
 scripts/                 # tick/replan crontab entries + pi wrappers (extract/verify/recall/replan/pi-auth)
                          #   + env installer + liveness detection
 wechat-bridge/           # WeChat bridge (bridge.mjs + command-detect.mjs)
-personality/             # persona files (SUN2.md + speech manual + gear tomls)
+personality/             # persona files (SUN2.md + speech manual + phrasing-material tomls)
 doc/                     # system docs (SYSTEM.md / PI_INTEGRATION.md / 日光雨 script)
 tests/                   # tests (standalone runners)
 data/                    # data files (schedule / memories / NetEase QR, never committed)

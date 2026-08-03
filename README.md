@@ -25,13 +25,14 @@
 ## 目录
 
 - [🎀 她是谁](#-她是谁)
+- [🧭 这是什么](#-这是什么)
 - [✨ 特性一览](#-特性一览)
 - [🏗 架构](#-架构)
 - [💬 效果示例](#-效果示例)
 - [🚀 快速开始](#-快速开始)
 - [🧩 组件](#-组件)
 - [🧠 接入模型后端](#-接入模型后端)
-- [🎭 自定义人格](#-自定义人格)
+- [🎭 人格设定](#-人格设定)
 - [🛠 部署与运维](#-部署与运维)
 - [📖 文档与贡献](#-文档与贡献)
 - [❓ FAQ](#-faq)
@@ -46,6 +47,20 @@
 
 > ⚠️ **合规声明**：本项目为官方 IP 的**非官方同人二次演绎**，与绘恋企划屋/山百合文化无关。剧本全文仅作个人学习与同人交流参考，角色形象与剧本文本版权归原作者所有；如权利方提出异议，本项目将按通知移除相关素材。
 > 
+---
+
+## 🧭 这是什么
+
+一个会主动找用户聊天的角色扮演 AI——零 LLM 的数学决策引擎决定**何时、以什么心情聊什么**，LLM 只负责把决定变成符合人格的微信消息。整个系统在你自己的 Linux 机器上运行，计算全本地，数据不离开本机。
+
+系统为「哥哥」（角色设定中的称呼，也是唯一用户）一人服务。要跑起来你需要准备：
+
+- **一台 Linux 机器**（Debian + systemd 最佳——微信桥自启需要）
+- **一个模型 API key**（消息生成与情绪分析走 pi-agent，支持任意 OpenAI 兼容后端）
+- **可选**：一个微信账号（bot 收发）、ollama（记忆嵌入）、课表 Excel、网易云账号
+
+> ⚠️ **使用风险**：个人微信自动化存在账号风险（封号等），仅供个人学习研究，风险自担。
+
 ---
 
 ## ✨ 特性一览
@@ -163,6 +178,16 @@ flowchart LR
 
 需要 **Python 3.14+**（uv 管理）。核心零第三方依赖（纯 stdlib）；记忆/课表增强可选。
 
+部署分三档，按需选择：
+
+| 档位 | 内容 | 命令 |
+|------|------|------|
+| **T0 纯本地** | 决策引擎 CLI 全功能，无模型无微信 | `bash deploy.sh --skip-pi --skip-bridge --skip-netease` |
+| **T1 加模型** | + 消息生成（pi-agent + API key） | `bash deploy.sh --skip-bridge --skip-netease` |
+| **T2 完整** | 微信收发 + 记忆 + 网易云 + crontab 全自动 | `bash deploy.sh` |
+
+低档位可事后补装：`bash scripts/install_pi.sh --yes`（模型）、`bash scripts/wechat-bridge.sh install`（微信）。完整部署指南见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
+
 ```bash
 git clone git@github.com:lhxyzCJ/chiguo.git && cd chiguo
 
@@ -171,7 +196,7 @@ uv run python chiguo_demo.py         # 交互式 Demo（纯模板，无 LLM）
 uv run python chiguo_daemon.py       # 单次决策 → 输出 JSON
 uv run python chiguo_daemon.py --status   # 查看当前状态
 
-# 核心测试（完整测试链：35 py + 9 script 独立 runner）
+# 核心测试（完整测试链：36 py + 10 script 独立 runner）
 uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 ```
 
@@ -203,7 +228,7 @@ uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 
 **作用**：消息的最后一段路——把生成好的文本真正发到微信，并接收用户的消息回传给 daemon 记账。常驻本机，登录态仅存本地（扫码一次）。
 
-**安装/配置**：`bash scripts/wechat-bridge.sh install`；登录 `bash scripts/wechat-bridge.sh login`。
+**安装/配置**：`bash scripts/wechat-bridge.sh install`（自动克隆 [wechatbot](https://github.com/lhxyzCJ/wechatbot) iLink SDK 到 `$HOME/wechatbot` 并安装 npm 依赖，需 Node.js + npm）；登录 `bash scripts/wechat-bridge.sh login`。
 
 **服务管理**：`bash scripts/service.sh <autostart|temp|status|stop|uninstall>`（autostart=systemd 开机自启 ollama+微信桥；temp=临时启动不注册自启；详见 doc/SYSTEM.md）。
 
@@ -211,7 +236,7 @@ uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 
 ### 记忆系统（LanceDB + ollama embedding）
 
-**作用**：迟菓的长期记忆——比情绪更持久的"记得"。对话中值得记的内容由 pi-agent 的 memory-lancedb-pro 扩展自动沉淀进记忆库（回忆、旧事、你的偏好），决策引擎经 `memory_bridge.py` **只读召回**（BM25 全文搜索，零 token、零额外调用），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
+**作用**：迟菓的长期记忆——比情绪更持久的"记得"。对话中值得记的内容由 pi-agent 的 [memory-lancedb-pro](https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro) 扩展自动沉淀进记忆库（回忆、旧事、你的偏好），决策引擎经 `memory_bridge.py` **只读召回**（BM25 全文搜索，零 token、零额外调用），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
 
 **安装/配置**：`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`（初始化记忆库）。记忆库位于 `~/.pi-agent/memory/lancedb-pro`（迟菓侧只读，写入由 pi 扩展完成）；`data/chiguo_memories.json` 是手动记忆文件，**始终生效**作为补充。
 
@@ -262,23 +287,27 @@ model = "gpt-5"
 
 ---
 
-## 🎭 自定义人格
+## 🎭 人格设定
 
-这是本项目最好玩的部分——人格完全由文本定义，可以整个换掉：
+迟菓的人格是**固定的**——系统的全部设计围绕这一角色，不支持替换成其他角色。人格完全由文本定义：
 
 ```
 personality/
 ├── SUN2.md                 # 唯一权威人格设定（分层人格/身份/关系/边界）
 ├── 迟菓语言技巧指南.md      # 语气操作手册（L1 语气词 → L6 自查）
-├── tsundere.toml           # 傲娇档位（当前人格）
-└── deredere.toml           # 娇羞档位（可切换）
+├── tsundere.toml           # 傲娇措辞素材
+└── deredere.toml           # 娇羞措辞素材（与 tsundere 组合使用，非切换开关）
 ```
 
-想换角色？写一份自己的 `SUN2.md`（参考现有结构），把 `[host].personality_dir` 指过去即可。所有参数集中在 `chiguo_proactive.toml`（314 行，`--loop` 模式热重载），无需改代码。
+想调整她的行为？所有参数集中在 `chiguo_proactive.toml`（314 行，`--loop` 模式热重载），无需改代码。
 
 ---
 
 ## 🛠 部署与运维
+
+**前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export PI_API_KEY=...`）；ollama 可选（记忆嵌入）。
+
+**分级部署**：三档路径见 [🚀 快速开始](#-快速开始)；完整指南（六步详解/落点地图/迁移/验证）见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 
 ```bash
 bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境检查 → pi 环境 + wechat-bridge + cron
@@ -309,6 +338,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 | 文档 | 说明 |
 |------|------|
 | [doc/SYSTEM.md](doc/SYSTEM.md) | 完整系统文档（架构、业务逻辑、配置参考、CLI、文件清单） |
+| [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | 完整部署指南（分级路径/前提条件/落点地图/迁移/验证） |
 | [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md) | pi-agent 集成指南（模型后端、微信桥、部署） |
 | [doc/日光雨.md](doc/日光雨.md) | 官方续作《三色绘恋S》剧本全文（人格设定基准） |
 | [AGENTS.md](AGENTS.md) | AI 开发助手约定（含完整测试链） |
@@ -316,7 +346,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 欢迎任何形式的贡献——尤其是"她"的成长：
 
 - **测试先行（TDD）**：铁律是先写失败测试再实现（红→绿），`tests/` 下每个 `test_*.py` 是独立 runner
-- **改完跑全链**：完整测试链见 `AGENTS.md`（35 py + 9 script），全绿再提交
+- **改完跑全链**：完整测试链见 `AGENTS.md`（35 py + 10 script），全绿再提交
 - **文档同步**：行为变化必须同步 `doc/SYSTEM.md`
 - **Commit 风格**：`feat:` / `fix:` / `docs:` / `chore:` 前缀 + 中文描述
 - **设计文档**：大改动先在项目外 `~/chiguo-meta/specs/` 写设计文档，评审通过再动手
@@ -332,7 +362,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 不装（`uv sync`）：记忆话题源减少，JSON 兜底，`envcheck` 报 warn。装齐（`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`）：LanceDB 记忆 + 听歌联动全功能。
 
 **怎么换人格/调性格？**
-改 `personality/` 目录即可——`SUN2.md` 是权威设定，语感在《迟菓语言技巧指南》，整体换个角色也只需新写一份 `SUN2.md`。
+迟菓的人格是固定的（系统围绕单一角色设计），不可替换角色。想调整行为？改 `chiguo_proactive.toml` 的参数即可——`SUN2.md` 是唯一权威设定，语感在《迟菓语言技巧指南》。
 
 **换模型要改代码吗？**
 不用。改 `chiguo_proactive.toml` 的 `[host].provider/model` + 配 key 即可；自定义 OpenAI 兼容端点见 [PI_INTEGRATION.md](doc/PI_INTEGRATION.md)。
@@ -362,7 +392,7 @@ schedule/                # 时间安排中心（holiday/anniversary/override_sto
 scripts/                 # tick/replan crontab 入口 + pi 封装（extract/verify/recall/replan/pi-auth）
                          #   + 环境安装 + 假死检测
 wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs）
-personality/             # 人格设定（SUN2.md + 语言指南 + 档位 toml）
+personality/             # 人格设定（SUN2.md + 语言指南 + 措辞素材 toml）
 doc/                     # 系统文档（SYSTEM.md / PI_INTEGRATION.md / 日光雨剧本）
 tests/                   # 测试（独立 runner）
 data/                    # 数据文件（课表/手动记忆/网易云二维码，不进 git）
