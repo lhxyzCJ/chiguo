@@ -7,7 +7,7 @@
 
 一个零 LLM 的数学决策引擎（`chiguo_daemon.py`）决定何时、以什么心情主动发消息，pi-agent（LLM）按人格生成微信消息，wechat-bridge 负责收发；全部计算在本机完成。默认由 crontab 每 15 分钟评估一次，需要时才调模型。
 
-⚠️ **使用风险**：个人微信自动化存在账号风险（封号等），仅供个人学习研究，风险自担；隐私数据（登录态/对话/状态）仅存本机，不进 git。
+> 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API，无封号风险；隐私数据（登录态/对话/状态）仅存本机，不进 git。
 
 ## 二、外部依赖（3 个 GitHub 公开仓库）
 
