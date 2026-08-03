@@ -52,6 +52,7 @@ bash tests/test_install_pi.sh >/dev/null || fail "test_install_pi.sh 失败,中�
 bash tests/test_wechat_bridge.sh >/dev/null || fail "test_wechat_bridge.sh 失败,中止部署"
 bash tests/test_netease_api.sh >/dev/null || fail "test_netease_api.sh 失败,中止部署"
 bash tests/test_tick_health.sh >/dev/null || fail "test_tick_health.sh 失败,中止部署"
+bash tests/test_service.sh >/dev/null || fail "test_service.sh 失败,中止部署"
 say "运行全量 Python 测试(${#TESTS[@]} 个文件) ..."
 for t in "${TESTS[@]}"; do
     uv run python "tests/$t.py" >/dev/null || fail "$t.py 失败,中止部署"
@@ -74,7 +75,7 @@ case $EC in
     2) fail "环境存在严重问题(见上方 JSON),请先修复再继续(若为 pi 缺失: 请先安装 pi-agent,或 --skip-pi 跳过 pi 环境)" ;;
 esac
 
-# ── 5 微信桥 wechat-bridge 安装+启动（可跳过: bash deploy.sh --skip-bridge）──
+# ── 5 微信桥 wechat-bridge 安装+自启（可跳过: bash deploy.sh --skip-bridge）──
 BRIDGE_OK=0
 if [[ "$*" != *--skip-bridge* ]]; then
     say "安装微信桥（wechat-bridge，发送端点 + 回复回传）..."
@@ -83,18 +84,19 @@ if [[ "$*" != *--skip-bridge* ]]; then
     BI=$?
     set -e
     case $BI in
-        0) BRIDGE_OK=1; say "微信桥安装完成 ✓" ;;
+        0) say "微信桥安装完成 ✓" ;;
         2) fail "微信桥安装严重问题，请修复后重试（或 --skip-bridge 跳过）" ;;
     esac
     set +e
-    bash "$PROJECT_DIR/scripts/wechat-bridge.sh" start
+    bash "$PROJECT_DIR/scripts/service.sh" autostart
     BC=$?
     set -e
     BRIDGE_OK=0
     [ "$BC" = 0 ] && BRIDGE_OK=1
     case $BC in
-        0) say "微信桥启动 ✓" ;;
-        1) warn "微信桥未启动（通常=无登录态/缺 .env；扫码见日志 /tmp/opencode/wechat-bridge.log 或 bash scripts/wechat-bridge.sh status）" ;;
+        0) say "微信桥 systemd 自启注册并启动 ✓" ;;
+        1) warn "微信桥自启注册有警告（service.sh autostart 排查；非 root 机器可改用 bash scripts/service.sh temp）" ;;
+        2) warn "微信桥自启注册失败（bash scripts/service.sh status 排查）" ;;
     esac
 fi
 
