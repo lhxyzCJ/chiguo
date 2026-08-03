@@ -257,8 +257,13 @@ t('readToml: 文件不存在 → {}（不抛错）', () => {
 t('resolveRepo: 环境变量 CHIGUO_REPO 优先', () => {
   assert.strictEqual(resolveRepo('file:///x/y/z.mjs', { CHIGUO_REPO: '/tmp/r' }), '/tmp/r')
 })
-t('resolveRepo: 无环境变量 → 从脚本位置两级目录推导仓库根', () => {
+t('resolveRepo: 目录 URL（尾斜杠）→ 一级目录推导', () => {
   const repo = resolveRepo(new URL('.', import.meta.url).href, {})
+  assert.ok(fs.existsSync(path.join(repo, 'chiguo_proactive.toml')), `推导失败: ${repo}`)
+  assert.ok(fs.existsSync(path.join(repo, 'scripts/pi-run.mjs')))
+})
+t('resolveRepo: 文件 URL → 两级目录推导（生产调用分支）', () => {
+  const repo = resolveRepo(new URL('../scripts/pi-run.mjs', import.meta.url).href, {})
   assert.ok(fs.existsSync(path.join(repo, 'chiguo_proactive.toml')), `推导失败: ${repo}`)
   assert.ok(fs.existsSync(path.join(repo, 'scripts/pi-run.mjs')))
 })
