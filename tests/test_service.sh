@@ -179,3 +179,37 @@ printf '{"token":"keep-me"}' > "$TMP/home/auth/wechat/credentials.json"
 grep -q "daemon-reload" "$CALLS_LOG" || fail "uninstall 未 daemon-reload"
 [ -f "$TMP/home/auth/wechat/credentials.json" ] || fail "uninstall 误删登录态"
 pass "uninstall 清理 + 登录态保留"
+
+# ── 用例 11: 缺 node → autostart 退出 2（CHIGUO_NODE 注入为空）──
+mkdir -p "$TMP/nonode"
+cat > "$TMP/nonode/curl" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+chmod +x "$TMP/nonode/curl"
+cp "$TMP/bin/systemctl" "$TMP/nonode/systemctl"
+PATH="$TMP/nonode:$PATH" CHIGUO_NODE="" bash "$SERVICE" autostart >/dev/null 2>&1
+[ $? = 2 ] || fail "缺 node 应退出 2（实际 $?）"
+pass "缺 node → 2"
+
+# ── 用例 12: 缺 .env → autostart 退出 1 ──
+rm -f "$TMP/repo/wechat-bridge/.env"
+OUT="$("$SERVICE" autostart 2>&1)"
+[ $? = 1 ] || fail "缺 .env 应退出 1（实际 $?）"
+echo "$OUT" | grep -q "wechat-bridge.sh install" || fail "缺 .env 未提示 install"
+touch "$TMP/repo/wechat-bridge/.env"
+pass "缺 .env → 1 + 提示 install"
+
+# ── 用例 13: 非 root → autostart 退出 2（PATH 前缀 fake id 输出 1000）──
+mkdir -p "$TMP/nonroot"
+cp "$TMP/bin/systemctl" "$TMP/nonroot/systemctl"
+cp "$TMP/bin/curl" "$TMP/nonroot/curl"
+cp "$TMP/bin/node" "$TMP/nonroot/node"
+cat > "$TMP/nonroot/id" <<'STUB'
+#!/usr/bin/env bash
+echo "1000"
+STUB
+chmod +x "$TMP/nonroot/id"
+PATH="$TMP/nonroot:$PATH" "$SERVICE" autostart >/dev/null 2>&1
+[ $? = 2 ] || fail "非 root autostart 应退出 2（实际 $?）"
+pass "非 root autostart → 2"
