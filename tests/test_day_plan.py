@@ -190,9 +190,13 @@ def test_resolve_classes_move_dual_slot():
     with tempfile.TemporaryDirectory() as td:
         src = _mk(td, cache=base, ovr=[
             {"id": "i1", "date": D, "end_date": "2026-03-06", "kind": "cancel", "period": 5,
+             "note": "本周停课", "created_at": "2026-03-01T10:00:00+08:00"},
+            {"id": "i2", "date": D, "end_date": "2026-03-06", "kind": "cancel", "period": 3,
              "note": "本周停课", "created_at": "2026-03-01T10:00:00+08:00"}])
         rc2 = resolve_classes(date(2026, 3, 4), src)
         assert rc2[5]["cancelled"] is True, "区间性 cancel 每日展开"
+        rc3 = resolve_classes(date(2026, 3, 6), src)
+        assert rc3[3]["cancelled"] is True, "区间性 cancel 中间日(03-06 周五)同样展开"
     print("  OK test_resolve_classes_move_dual_slot")
 
 

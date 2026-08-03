@@ -104,16 +104,31 @@ def test_remove_override():
 
 def test_cleanup_endpoints():
     with tempfile.TemporaryDirectory() as td:
+        Path(td, "schedule_overrides.json").write_text(json.dumps({
+            "override_version": 1,
+            "items": [
+                {"id": "c1", "date": "2026-08-01", "kind": "cancel", "period": 1,
+                 "created_at": "2026-07-01T10:00:00+08:00"},
+                {"id": "c2", "date": "2026-07-20", "end_date": "2026-07-24", "kind": "cancel",
+                 "period": 3, "created_at": "2026-07-01T10:00:00+08:00"},
+                {"id": "m2", "date": "2026-07-01", "to_date": "2026-07-02", "kind": "move",
+                 "period": 1, "to_period": 7,
+                 "course": {"course": "线代", "teacher": "", "weeks": [1], "weeks_raw": "第1周",
+                            "location": "", "alternates": []},
+                 "created_at": "2026-07-01T10:00:00+08:00"},
+                {"id": "e1", "date": "2026-06-01", "end_date": "2026-06-05", "kind": "exam_week",
+                 "label": "期末", "created_at": "2026-06-01T10:00:00+08:00"},
+                {"id": "r1", "date": "2026-07-30", "kind": "reminder", "label": "已过提醒",
+                 "created_at": "2026-07-01T10:00:00+08:00"}]}, ensure_ascii=False))
         api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
-        _cancel(api, {"date": "2026-08-01"}, period=1)                      # 单日已过 → 清
-        _cancel(api, {"date": "2026-08-20", "end_date": "2026-08-24"}, period=2)  # 区间 end 未到 → 留
-        _cancel(api, {"date": "2026-07-20", "end_date": "2026-07-24"}, period=3)  # 区间 end 已过 → 清
-        api.apply_override({"kind": "move", "when": {"date": "2026-08-03"}, "to_date": {"date": "2026-08-14"}, "to_period": 7, "course": {"course": "高数"}})
-        api.apply_override({"kind": "move", "when": {"date": "2026-07-01"}, "to_date": {"date": "2026-07-02"}, "to_period": 7, "course": {"course": "线代"}})
-        api.apply_override({"kind": "exam_week", "when": {"date": "2026-06-01"}, "end_date": "2026-06-05", "label": "期末"})
-        api.apply_override({"kind": "reminder", "when": {"date": "2026-07-30"}, "label": "已过提醒"})
+        api.apply_override({"kind": "cancel", "when": {"date": "2026-08-20"},
+                            "end_date": "2026-08-24", "period": 2})   # 区间 end 未到 → 留
+        api.apply_override({"kind": "move", "when": {"date": "2026-08-03"},
+                            "to_date": {"date": "2026-08-14"}, "to_period": 7,
+                            "course": {"course": "高数"}})
         api.apply_override({"kind": "reminder", "when": {"date": "2026-08-20"}, "label": "未来提醒"})
-        api.apply_override({"kind": "add", "when": {"date": "2026-08-20"}, "period": 9, "course": {"course": "晚自习"}})
+        api.apply_override({"kind": "add", "when": {"date": "2026-08-20"}, "period": 9,
+                            "course": {"course": "晚自习"}})
         api.overrides.cleanup(TODAY)
         kinds = [(i["kind"], i["date"]) for i in api.overrides.items()]
         assert ("cancel", "2026-08-20") in kinds, "区间性 cancel end 未到必须保留"

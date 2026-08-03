@@ -177,6 +177,10 @@ class ScheduleApi:
         semester_start, semester_end = self._semester_dates()
         when = item.get("when")
         entry = {k: v for k, v in item.items() if k not in ("when",) and v is not None}
+        if when is None:
+            if "date" not in item:
+                raise ApiRejection("ambiguous", "when/date 缺失 → 歧义拒绝")
+            when = {"date": item["date"]}   # 批 2b 旧协议顶层 date 形态 → 归一进 when 管线(start/end/过去校验全走)
         if when is not None:
             if not isinstance(when, dict):
                 raise ApiRejection("invalid_value", "when 非 dict")
@@ -195,7 +199,7 @@ class ScheduleApi:
             if kind in ("reminder", "move") and is_interval:
                 raise ApiRejection("shape_mismatch", f"{kind} 不收区间形态(单日 kind)")
             # ── 学期边界(二十轮对称化):week_offset 非 cancel 类 → 学期前/目标周超学期周数拒绝 ──
-            if "week_offset" in when and kind in ("reminder", "add", "exam_week"):
+            if "week_offset" in when and kind in ("reminder", "add", "exam_week", "move"):
                 if today < semester_start:
                     raise ApiRejection("before_semester", "学期前 week_offset 语义失效")
                 if semester_end and week_number(start, semester_start) > week_number(semester_end, semester_start):
