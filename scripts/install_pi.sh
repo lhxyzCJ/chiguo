@@ -322,6 +322,38 @@ else
   fi
 fi
 
+# ── 阶段 6b: crontab 注册 replan-tick（幂等,与 tick 条目同款逻辑）──
+# CURRENT_CRON 必须重读:tick 条目刚在阶段 6 写入,旧快照会致 replan 追加时覆盖整表
+CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
+REPLAN_LINE="*/15 * * * * $CHIGUO_REPO/scripts/replan-tick.sh >> $CHIGUO_REPO/logs/cron-replan.log 2>&1"
+if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$REPLAN_LINE"; then
+  say "crontab 已注册 replan-tick"
+elif printf '%s\n' "$CURRENT_CRON" | grep -q 'replan-tick'; then
+  if [ "$DRY" = 1 ]; then
+    PENDING=1
+    echo "  [dry-run] crontab 有旧 replan-tick 条目（路径已变）→ 将替换为: $REPLAN_LINE"
+  elif confirm "替换旧 replan-tick 条目为: $REPLAN_LINE"; then
+    mkdir -p "$CHIGUO_REPO/logs"
+    if ( printf '%s\n' "$CURRENT_CRON" | grep -v 'replan-tick' || true; echo "$REPLAN_LINE" ) | crontab -; then
+      say "crontab 旧 replan-tick 条目已替换"
+    else
+      PENDING=1; warn "crontab replan 替换失败（请手工执行: (crontab -l | grep -v replan-tick; echo '$REPLAN_LINE') | crontab -）"
+    fi
+  fi
+else
+  if [ "$DRY" = 1 ]; then
+    PENDING=1
+    echo "  [dry-run] 将注册 crontab: $REPLAN_LINE"
+  elif confirm "注册 replan crontab: $REPLAN_LINE"; then
+    mkdir -p "$CHIGUO_REPO/logs"
+    if ( printf '%s\n' "$CURRENT_CRON"; echo "$REPLAN_LINE" ) | crontab -; then
+      say "crontab 已注册 replan-tick"
+    else
+      PENDING=1; warn "crontab replan 注册失败（请手工执行: (crontab -l; echo '$REPLAN_LINE') | crontab -）"
+    fi
+  fi
+fi
+
 # ── 阶段 7: 冒烟验证（仅 --yes/ask；dry-run 不执行任何命令）──
 say "阶段 7: 冒烟验证..."
 if [ "$DRY" = 1 ]; then

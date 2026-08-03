@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""test_schedule_plan.py — replan 链路:触发矩阵/跳过/校验/TOCTOU/悬挂(批次 7)"""
+
+import json, os, sys, tempfile, time
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from datetime import date, datetime, timezone, timedelta
+from pathlib import Path
+
+from schedule.replan import check_dirty, should_skip, validate_plan
+
+CFG = {"schedule": {"semester_start": "2026-02-23", "semester_end": "2026-07-04"}}
+
+
+def _mk(td, plan=None, ovr=None):
+    if plan is not None:
+        Path(td, "schedule_plan.json").write_text(json.dumps(plan))
+    if ovr is not None:
+        Path(td, "schedule_overrides.json").write_text(json.dumps({"override_version": 1, "items": ovr}))
+    return td
+
+
+def test_dirty_matrix():
+    """mtime 文件集合 = overrides+holidays 仅此二者;break_state/schedule_cache 变更不触发(二十轮点名)"""
+    with tempfile.TemporaryDirectory() as td:
+        _mk(td, plan={"plan_version": 1, "generated_at": "2026-08-03T15:00:00+08:00", "modifiers": []},
+            ovr=[{"id": "e1", "date": "2026-08-03", "end_date": "2026-08-09", "kind": "exam_week",
+                  "label": "期末", "created_at": "2026-08-01T10:00:00+08:00"}])
+        # R4:overrides mtime 钉到过去(generated_at 之前)→ 首断言与墙钟无关
+        past = datetime(2026, 8, 3, 10, 0, tzinfo=timezone(timedelta(hours=8))).timestamp()
+        os.utime(Path(td, "schedule_overrides.json"), (past, past))
+        assert check_dirty(td, CFG) is False, "overrides mtime 早于 generated_at → 不脏"
+        time.sleep(0.01)
+        Path(td, "schedule_overrides.json").touch()
+        assert check_dirty(td, CFG) is True, "overrides mtime 新 → 脏"
+        _mk(td, plan=None, ovr=[])
+        Path(td, "break_state.json").write_text("{}")
+        Path(td, "schedule_cache.json").write_text("{}")
+        assert check_dirty(td, CFG) is True, "plan 缺失 → 脏"
+        _mk(td, plan={"plan_version": 1, "generated_at": "2099-01-01T00:00:00+08:00", "modifiers": []}, ovr=[])
+        Path(td, "break_state.json").write_text("{}")
+        Path(td, "schedule_cache.json").write_text("{}")
+        assert check_dirty(td, CFG) is False, "break_state/schedule_cache 变更不触发(仅 overrides+holidays)"
+    print("  OK test_dirty_matrix")
+
+
+def test_skip_and_validate():
+    """跳过条件:无区间事实且无当年日历的节假日(R1);校验:≤20/clamp/未知 ref/未知字段"""
+    with tempfile.TemporaryDirectory() as td:
+        from schedule.sources import load_sources
+        src = load_sources(td, CFG)
+        assert should_skip(src, date(2027, 1, 1)) is True, "无区间事实且无 2027 当年日历 → 跳过"
+        Path(td, "schedule_overrides.json").write_text(json.dumps({"override_version": 1, "items": [
+            {"id": "e1", "date": "2026-08-03", "end_date": "2026-08-09", "kind": "exam_week",
+             "label": "期末", "created_at": "2026-08-01T10:00:00+08:00"}]}))
+        assert should_skip(load_sources(td, CFG), date(2026, 8, 5)) is False, "有区间事实 → 不跳过"
+        Path(td, "schedule_overrides.json").unlink()
+        # 节假日(内嵌 2026 国庆)→ 当年日历存在 → 不跳过(holiday 是合法 ref 源)
+        assert should_skip(load_sources(td, CFG), date(2026, 8, 5)) is False, "有当年节假日 → 不跳过"
+    with tempfile.TemporaryDirectory() as td:
+        from schedule.sources import load_sources
+        src = load_sources(td, CFG)
+        errs = validate_plan({"modifiers": [{"ref": "fact:bad", "trigger_scale": {"special": 0.5}}]}, src)
+        assert any("ref" in e for e in errs), f"未知 ref 拒, got {errs}"
+        errs = validate_plan({"modifiers": [{"ref": "holiday:国庆节", "trigger_scale": {"xxx": 0.5}}]}, src)
+        assert any("类型" in e for e in errs), f"未知类型名拒, got {errs}"
+        errs = validate_plan({"modifiers": [{"ref": "holiday:国庆节", "trigger_scale": {"special": 20.0}}]}, src)
+        assert any("clamp" in e or "0.1" in e for e in errs), f"clamp 拒, got {errs}"
+        errs = validate_plan({"modifiers": [{"ref": "holiday:国庆节", "trigger_scale": {"special": 1.0}, "hack": 1}]}, src)
+        assert any("未知字段" in e for e in errs), f"modifier 未知字段拒, got {errs}"
+        errs = validate_plan({"modifiers": [{"ref": f"holiday:国庆节{i}", "trigger_scale": {"special": 1.0}}
+                                            for i in range(21)]}, src)
+        assert any("20" in e for e in errs), f"modifiers > 20 拒, got {errs}"
+    print("  OK test_skip_and_validate")
+
+
+if __name__ == "__main__":
+    print("test_schedule_plan.py\n")
+    tests = [test_dirty_matrix, test_skip_and_validate]
+    for t in tests:
+        t()
+    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

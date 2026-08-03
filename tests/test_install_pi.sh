@@ -96,7 +96,7 @@ printf '{"models":[{"name":"qwen3-embedding:0.6b","capabilities":["embedding"]}]
 WANT="$HOME/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js"
 JSON5_OK='{"dbPath":"~/.pi-agent/memory/lancedb-pro","embedding":{"provider":"openai-compatible","model":"qwen3-embedding:0.6b","baseURL":"http://localhost:11434/v1"},"autoCapture":true,"autoRecall":true,"smartExtraction":true}'
 
-setup_ready() {  # 预置全部已安装状态（settings/json5/auth/clone/crontab）
+setup_ready() {  # 预置全部已安装状态（settings/json5/auth/clone/crontab 含 replan-tick 行）
   mkdir -p "$HOME/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter"
   touch "$HOME/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js"
   mkdir -p "$HOME/.pi/agent"
@@ -104,6 +104,7 @@ setup_ready() {  # 预置全部已安装状态（settings/json5/auth/clone/cront
   printf '%s' "$JSON5_OK" > "$HOME/.pi/agent/memory-lancedb-pro.json5"
   printf '{"opencode-go":{"type":"api_key","key":"sk-test"}}' > "$HOME/.pi/agent/auth.json"
   printf '*/15 * * * * %s/scripts/chiguo-tick.sh >> %s/logs/cron-tick.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" > "$CRON_STATE"
+  printf '*/15 * * * * %s/scripts/replan-tick.sh >> %s/logs/cron-replan.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" >> "$CRON_STATE"
 }
 clean_home() { rm -rf "$HOME/.pi" "$HOME/.pi-agent"; rm -f "$CRON_STATE"; }
 
@@ -121,6 +122,7 @@ set +e; OUT=$(bash scripts/install_pi.sh --dry-run 2>&1); RC=$?; set -e
 [ "$RC" = 1 ] && pass "干净环境 dry-run → 退出 1" || fail "期望 1 实得 $RC"
 echo "$OUT" | grep -q "git clone" || fail "待办清单缺 clone"
 echo "$OUT" | grep -q "chiguo-tick" || fail "待办清单缺 crontab"
+echo "$OUT" | grep -q "replan-tick" || fail "待办清单缺 replan crontab"
 echo "$OUT" | grep -q "auth.json" || fail "待办清单缺 auth.json"
 [ ! -e "$HOME/.pi" ] && [ ! -e "$HOME/.pi-agent" ] || fail "dry-run 不应创建 ~/.pi 或 ~/.pi-agent"
 [ ! -f "$CRON_STATE" ] || fail "dry-run 不应注册 crontab"
@@ -214,6 +216,7 @@ SET_EXT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["extens
 grep -q '\.pi-agent/memory/lancedb-pro' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "阶段 3 未写入 dbPath"
 grep -q 'qwen3-embedding' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "阶段 3 未写入 embedding"
 grep -q 'chiguo-tick' "$CRON_STATE" || fail "阶段 6 未注册 crontab"
+grep -q 'replan-tick' "$CRON_STATE" || fail "阶段 6 未注册 replan crontab"
 [ ! -f "$HOME/.pi/agent/auth.json" ] || fail "无 OPENCODE_API_KEY 不应写 auth.json"
 pass "--yes 阶段失败 → PENDING + 退出 1（阶段 2/3/6 产物已断言）"
 
@@ -246,6 +249,7 @@ NPM1=$(grep -c "^npm install" "$CALLS_LOG" || true)
 set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "第二遍 --yes 期望 0 实得 $RC"
 [ "$(grep -c 'chiguo-tick' "$CRON_STATE" || true)" = 1 ] || fail "crontab 重复注册: $(cat "$CRON_STATE")"
+[ "$(grep -c 'replan-tick' "$CRON_STATE" || true)" = 1 ] || fail "replan crontab 重复注册: $(cat "$CRON_STATE")"
 EXT_N=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["extensions"]))' "$HOME/.pi/agent/settings.json")
 [ "$EXT_N" = 1 ] || fail "extensions 重复条目: $EXT_N"
 [ ! -f "$HOME/.pi/agent/settings.json.bak" ] && [ ! -f "$HOME/.pi/agent/memory-lancedb-pro.json5.bak" ] \

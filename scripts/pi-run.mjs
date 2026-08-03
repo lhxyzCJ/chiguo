@@ -192,7 +192,7 @@ period?, to_period?, to_date?, course?, label?, match?}。
 async function main() {
   const args = process.argv.slice(2)
   const promptIdx = args.indexOf('--prompt')
-  if (promptIdx < 0) { console.error('usage: pi-run.mjs --prompt <text> [--analysis-mode|--send-mode|--schedule-extract|--schedule-verify|--schedule-recall]'); process.exit(2) }
+  if (promptIdx < 0) { console.error('usage: pi-run.mjs --prompt <text> [--analysis-mode|--send-mode|--schedule-extract|--schedule-verify|--schedule-recall|--schedule-replan]'); process.exit(2) }
   const prompt = args[promptIdx + 1]
   if (args.includes('--schedule-extract')) {
     const attIdx = args.indexOf('--attention')
@@ -215,6 +215,10 @@ async function main() {
     const factsIdx = args.indexOf('--facts')
     const facts = factsIdx >= 0 ? args[factsIdx + 1] : '[]'
     console.log(JSON.stringify(await runSchedule(runPiBin, { mode: 'recall', prompt, extra: { facts } })))
+    return
+  }
+  if (args.includes('--schedule-replan')) {
+    console.log(JSON.stringify(await runSchedule(runPiBin, { mode: 'replan', prompt })))
     return
   }
   const analysisMode = args.includes('--analysis-mode')
