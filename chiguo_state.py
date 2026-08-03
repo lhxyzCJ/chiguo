@@ -30,7 +30,7 @@ from chiguo_personality import (
     personality_to_dict, personality_from_dict,
 )
 from schedule import ScheduleParser
-from holiday_parser import HolidayParser
+from schedule.holiday import HolidayParser
 from memory_bridge import MemoryBridge
 from chiguo_circadian import CircadianTracker, bucket_for
 from datetime import date as date_type
