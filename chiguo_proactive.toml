@@ -168,13 +168,14 @@ morning_start = 8
 morning_end = 10
 night_start = 20
 night_end = 21
-special_dates = ["05-11", "11-03"]
+# ── schedule-center(批 4):exam_weeks/special_dates 已废弃,迁移至 schedule_overrides.json/anniversaries.json ──
+# 旧键:exam_weeks = []   → override kind=exam_week(label="from toml 考试周")
+# 旧键:special_dates = ["05-11", "11-03"] → anniversaries.json(迟菓生日默认;其余 name="特殊日期 MM-DD")
 
 # ── 课表 ──
 xlsx_path = "data/xskb.xlsx"              # 课表文件，直接替换即可更新
 semester_start = "2026-02-23"         # 学期起始日期，换学期改此行
 semester_end = "2026-07-04"           # 学期结束日期，之后自动视为假期
-exam_weeks = []                       # 考试周日期范围，如 ["2026-06-22,2026-07-03"]
 
 [circadian]
 # ── v7: 生物钟学习 — 从用户回复时间学习睡眠时段,动态调整静默窗口 ──

@@ -166,6 +166,55 @@ def test_corrupt_and_migration_order():
     print("  OK test_corrupt_and_migration_order")
 
 
+def test_toml_exam_weeks_migration():
+    """③:toml exam_weeks 一次性迁移(判据 kind==exam_week 且 date+end_date 全等,幂等 M9);
+    单日期条目 → date=end_date 单日退化(F14);键删除后不再迁移"""
+    import copy
+    with tempfile.TemporaryDirectory() as td:
+        cfg = {"schedule": {"semester_start": "2026-02-23", "semester_end": "2026-07-04",
+                            "special_dates": [], "exam_weeks": ["2026-06-22,2026-07-03"]}}
+        api = ScheduleApi(td, cfg, today=TODAY)   # 批 4 激活 = __init__ 默认 True(Step 3)
+        api._guard()
+        ew = [i for i in api.overrides.items() if i["kind"] == "exam_week"]
+        assert len(ew) == 1 and ew[0]["date"] == "2026-06-22" and ew[0]["end_date"] == "2026-07-03"
+        assert ew[0]["label"] == "from toml 考试周", f"label 合成规则, got {ew[0]['label']}"
+        # 幂等:再次迁移不新增
+        api._migrated = False
+        api._guard()
+        assert len([i for i in api.overrides.items() if i["kind"] == "exam_week"]) == 1
+        # 单日期条目 → 单日退化
+        with tempfile.TemporaryDirectory() as td2:
+            cfg2 = dict(cfg)
+            cfg2["schedule"] = dict(cfg["schedule"], exam_weeks=["2026-06-22"])
+            api2 = ScheduleApi(td2, cfg2, today=TODAY)
+            api2._guard()
+            ew2 = [i for i in api2.overrides.items() if i["kind"] == "exam_week"]
+            assert ew2[0]["date"] == ew2[0]["end_date"] == "2026-06-22", f"单日退化, got {ew2[0]}"
+    print("  OK test_toml_exam_weeks_migration")
+
+
+def test_toml_special_dates_migration():
+    """④:special_dates 合并(迟菓生日默认跳过,其余 name='特殊日期 MM-DD' note='from toml');
+    文件缺失时创建含默认生日文件(R1,防'④先建文件不含默认→合并失效→默认永久缺席')"""
+    with tempfile.TemporaryDirectory() as td:
+        cfg = {"schedule": {"semester_start": "2026-02-23", "semester_end": "2026-07-04",
+                            "special_dates": ["05-11", "11-03"], "exam_weeks": []}}
+        api = ScheduleApi(td, cfg, today=TODAY)
+        api._guard()
+        anns = json.loads(Path(td, "anniversaries.json").read_text())["anniversaries"]
+        names = {a["name"] for a in anns}
+        assert "迟菓生日" in names, "④ 缺失时创建含默认生日文件(R1)"
+        assert "特殊日期 11-03" in names, f"name 合成规则 M1, got {names}"
+        it = next(a for a in anns if a["name"] == "特殊日期 11-03")
+        assert it["date"] == "11-03" and it.get("note") == "from toml", f"got {it}"
+        # 幂等:再次迁移不重复
+        api._migrated = False
+        api._guard()
+        anns2 = json.loads(Path(td, "anniversaries.json").read_text())["anniversaries"]
+        assert len([a for a in anns2 if a["name"] == "特殊日期 11-03"]) == 1
+    print("  OK test_toml_special_dates_migration")
+
+
 def test_plan_store_and_confirm():
     with tempfile.TemporaryDirectory() as td:
         ps = PlanStore(td)
@@ -191,6 +240,7 @@ if __name__ == "__main__":
     print("test_schedule_override.py\n")
     tests = [test_apply_and_file_schema, test_validation_matrix, test_idempotent_write,
              test_remove_override, test_cleanup_endpoints, test_corrupt_and_migration_order,
+             test_toml_exam_weeks_migration, test_toml_special_dates_migration,
              test_plan_store_and_confirm]
     for t in tests:
         t()

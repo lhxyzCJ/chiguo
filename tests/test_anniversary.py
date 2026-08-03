@@ -72,10 +72,29 @@ def test_get_today_upcoming_kept():
     print("  OK test_get_today_upcoming_kept")
 
 
+def test_special_dates_merge_kept_behavior():
+    """④ 合并后:文件存在不覆盖用户删除;默认生日仍可见(已在文件中)"""
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "anniversaries.json").write_text(json.dumps({"anniversaries": [
+            {"id": "u1", "type": "anniversary", "name": "用户条目", "date": "01-01",
+             "note": "", "created_at": "2026-01-01"}]}))
+        from schedule.api import ScheduleApi
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23", "semester_end": "2026-07-04",
+                                            "special_dates": ["05-11", "11-03"], "exam_weeks": []}},
+                          today=date(2026, 8, 5))
+        api._guard()
+        names = {a.name for a in api.anniversary_mgr.list_all()}
+        assert "用户条目" in names, "用户文件不丢"
+        assert not any(a.name == "迟菓生日" for a in api.anniversary_mgr.list_all()), \
+            "文件存在不合并默认(用户曾删默认)"
+    print("  OK test_special_dates_merge_kept_behavior")
+
+
 if __name__ == "__main__":
     print("test_anniversary.py\n")
     tests = [test_crud_and_list, test_default_merge_missing_or_corrupt,
-             test_mmdd_to_date, test_get_today_upcoming_kept]
+             test_mmdd_to_date, test_get_today_upcoming_kept,
+             test_special_dates_merge_kept_behavior]
     for t in tests:
         t()
     print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
