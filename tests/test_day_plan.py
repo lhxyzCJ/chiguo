@@ -517,7 +517,7 @@ def test_api_semester_boundary():
 
 def test_api_move_source_and_snapshot():
     """move 源槽参照系 = 基底课表 + 已应用 add 例外;add weeks 快照派生(M7)"""
-    cache = {"schedule": {"2": {"3": {"course": "高数", "teacher": "刘洋", "weeks": [2],
+    cache = {"schedule": {"2": {"3": {"course": "高数", "teacher": "刘洋", "weeks": [2, 26],
                                       "weeks_raw": "第2周", "location": "A301", "alternates": []}}}}
     with tempfile.TemporaryDirectory() as td:
         Path(td, "schedule_cache.json").write_text(json.dumps(cache))
@@ -529,11 +529,11 @@ def test_api_move_source_and_snapshot():
             raise AssertionError("源槽无课应拒绝")
         except ApiRejection as e:
             assert e.category == "no_source_class"
-        # 基底有课 → 通过,且快照 weeks=[当日周次](M7)
-        r = api.apply_override({"kind": "move", "when": {"date": "2026-03-04"}, "period": 3,
+        # 基底有课 → 通过,且快照 weeks=[当日周次](M7);08-19 未来(相对 api today 08-05)→ 过过去校验
+        r = api.apply_override({"kind": "move", "when": {"date": "2026-08-19"}, "period": 3,
                                 "to_period": 7, "course": {"course": "高数"}})
         c = r["item"]["course"]
-        assert c["weeks"] == [2] and c["weeks_raw"] == "第2周" and c["alternates"] == [], f"快照派生, got {c}"
+        assert c["weeks"] == [26] and c["weeks_raw"] == "第26周" and c["alternates"] == [], f"快照派生, got {c}"
         # 已应用 add 例外提供源槽 → 通过
         api.apply_override({"kind": "add", "when": {"date": "2026-08-05"}, "period": 9,
                             "course": {"course": "晚自习", "location": "自习室"}})

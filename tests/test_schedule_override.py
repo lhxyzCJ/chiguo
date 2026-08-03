@@ -121,21 +121,21 @@ def test_cleanup_endpoints():
                 {"id": "r1", "date": "2026-07-30", "kind": "reminder", "label": "已过提醒",
                  "created_at": "2026-07-01T10:00:00+08:00"}]}, ensure_ascii=False))
         api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
-        api.apply_override({"kind": "cancel", "when": {"date": "2026-08-20"},
-                            "end_date": "2026-08-24", "period": 2})   # 区间 end 未到 → 留
-        api.apply_override({"kind": "move", "when": {"date": "2026-08-03"},
-                            "to_date": {"date": "2026-08-14"}, "to_period": 7,
+        api.apply_override({"kind": "cancel", "when": {"date": "2027-08-20"},
+                            "end_date": "2027-08-24", "period": 2})   # 区间 end 未到 → 留
+        api.apply_override({"kind": "move", "when": {"date": "2027-08-03"},
+                            "to_date": {"date": "2027-08-14"}, "to_period": 7,
                             "course": {"course": "高数"}})
-        api.apply_override({"kind": "reminder", "when": {"date": "2026-08-20"}, "label": "未来提醒"})
-        api.apply_override({"kind": "add", "when": {"date": "2026-08-20"}, "period": 9,
+        api.apply_override({"kind": "reminder", "when": {"date": "2027-08-20"}, "label": "未来提醒"})
+        api.apply_override({"kind": "add", "when": {"date": "2027-08-20"}, "period": 9,
                             "course": {"course": "晚自习"}})
         api.overrides.cleanup(TODAY)
         kinds = [(i["kind"], i["date"]) for i in api.overrides.items()]
-        assert ("cancel", "2026-08-20") in kinds, "区间性 cancel end 未到必须保留"
-        assert ("move", "2026-08-03") in kinds, "跨天 move 目标日未到必须保留(按 max(date,to_date))"
+        assert ("cancel", "2027-08-20") in kinds, "区间性 cancel end 未到必须保留"
+        assert ("move", "2027-08-03") in kinds, "跨天 move 目标日未到必须保留(按 max(date,to_date))"
         assert ("move", "2026-07-01") not in kinds, "跨天 move 双端已过必须清"
         assert ("exam_week", "2026-06-01") not in kinds, "exam_week end 已过必须清"
-        assert ("reminder", "2026-07-30") not in kinds and ("reminder", "2026-08-20") in kinds
+        assert ("reminder", "2026-07-30") not in kinds and ("reminder", "2027-08-20") in kinds
         assert all(i["kind"] != "cancel" or i["date"] != "2026-08-01" for i in api.overrides.items())
         assert all(i["kind"] != "cancel" or i["date"] != "2026-07-20" for i in api.overrides.items())
     print("  OK test_cleanup_endpoints")
