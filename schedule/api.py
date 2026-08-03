@@ -38,7 +38,7 @@ class ScheduleApi:
         self._migrated = False
         # 迁移子项激活开关(批次注记):② 激活批次 = 6c(Task 14);③④ 激活批次 = 4(Task 10)
         self._enable_countdown_migration = False
-        self._enable_toml_migrations = False
+        self._enable_toml_migrations = True   # 批 4 激活(③④;② 仍待 6c)
 
     # ── 迁移/物化守卫(惰性首执,只读子命令永不触发,H1)──
 
@@ -119,11 +119,18 @@ class ScheduleApi:
         sched = self.config.get("schedule", {})
         for r in sched.get("exam_weeks", []) or []:
             parts = [x.strip() for x in str(r).split(",")]
-            if len(parts) != 2:
-                continue
-            try:
-                s, e = date.fromisoformat(parts[0]), date.fromisoformat(parts[1])
-            except ValueError:
+            if len(parts) == 1:
+                try:
+                    s = date.fromisoformat(parts[0])
+                except ValueError:
+                    continue
+                e = s                              # F14:单日期条目 → 单日退化
+            elif len(parts) == 2:
+                try:
+                    s, e = date.fromisoformat(parts[0]), date.fromisoformat(parts[1])
+                except ValueError:
+                    continue
+            else:
                 continue
             self.apply_override({"kind": "exam_week", "date": s.isoformat(),
                                  "end_date": e.isoformat(), "label": "from toml 考试周"},
@@ -216,14 +223,16 @@ class ScheduleApi:
             else:  # reminder / move
                 entry["date"] = start.isoformat()
             # ── 过去日期分端点校验(L2/C3/F1):课程例外与区间事实查 end;单日查 date ──
-            if kind in ("cancel", "add", "exam_week"):
+            # 迁移写(_from_migration)豁免:一次性迁移含历史条目(如已结束学期的考试周),
+            # 校验/清理在迁移后的常规写调用点照常执行
+            if not _from_migration and kind in ("cancel", "add", "exam_week"):
                 try:
                     check = date.fromisoformat(entry.get("end_date") or end.isoformat())
                 except ValueError:
                     raise ApiRejection("invalid_value", f"end_date 非法: {entry.get('end_date')!r}")
                 if check < today:
                     raise ApiRejection("past_date", f"结果 {check} < today")
-            elif kind == "reminder":
+            elif not _from_migration and kind == "reminder":
                 if start < today:
                     raise ApiRejection("past_date", f"结果 {start} < today")
             # move:源日可为过去(快照派生语义;过去性由 to_date 检查与写后清理链路约束)
@@ -283,7 +292,8 @@ class ScheduleApi:
             e2, replaced = self.overrides.add(entry, datetime.now(CST))
         except OverrideError as ex:
             raise ApiRejection("invalid_value", str(ex))
-        self.overrides.cleanup(today)
+        if not _from_migration:
+            self.overrides.cleanup(today)  # 迁移写豁免清理:一次性迁移含历史条目(常规写仍清理)
         return {"ok": True, "action": "schedule_change", "replaced": replaced,
                 "item": e2, "text": build_confirmation(e2)}
 
