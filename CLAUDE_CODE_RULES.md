@@ -1,6 +1,6 @@
 # Claude Code Rules — Chiguo Proactive Message System
 
-> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-01. 19 py runners, zero framework, pure Python stdlib.
+> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-03. 35 py + 9 script runners, zero framework, pure Python stdlib.
 > **Iron law**: decision/generation separation. Daemon outputs JSON. pi-agent generates messages (Phase 4).
 
 ---
@@ -8,17 +8,29 @@
 ## 1. Build & Test
 
 ```bash
-# Run ALL tests: 19 py runners (every runner exits non-zero on failure)
-python3 tests/test_chiguo_math.py && python3 tests/test_holiday_parser.py && \
-python3 tests/test_integration.py && python3 tests/test_monitor.py && \
-python3 tests/test_eventbus.py && python3 tests/test_personality.py && \
-python3 tests/test_bayesian.py && python3 tests/test_composer.py && \
-python3 tests/test_ebbinghaus.py && python3 tests/test_longing.py && \
-python3 tests/test_escape_valve.py && python3 tests/test_feedback.py && \
-python3 tests/test_trigger.py && python3 tests/test_topics.py && \
-python3 tests/test_circadian.py && python3 tests/test_followup.py && \
-python3 tests/test_netease_proof.py && python3 tests/test_netease_service.py && \
-python3 tests/test_envcheck.py
+# Run ALL tests: 35 py + 9 script runners (every runner exits non-zero on failure)
+node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && \
+node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
+bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
+bash tests/test_tick_health.sh && \
+uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
+uv run python tests/test_schedule_parser.py && \
+uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
+uv run python tests/test_eventbus.py && uv run python tests/test_personality.py && \
+uv run python tests/test_bayesian.py && uv run python tests/test_composer.py && \
+uv run python tests/test_ebbinghaus.py && uv run python tests/test_longing.py && \
+uv run python tests/test_escape_valve.py && uv run python tests/test_feedback.py && \
+uv run python tests/test_trigger.py && uv run python tests/test_topics.py && \
+uv run python tests/test_circadian.py && uv run python tests/test_followup.py && \
+uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
+uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
+uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
+uv run python tests/test_adapt_personality.py && uv run python tests/test_pi_health.py && \
+uv run python tests/test_anniversary.py && uv run python tests/test_schedule_override.py && \
+uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
+uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
+uv run python tests/test_trigger_scale.py && uv run python tests/test_isolation.py && \
+uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py
 
 # Single file
 python3 tests/test_monitor.py
@@ -58,8 +70,7 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 ├── chiguo_state.py         ChiguoState + ChiguoEmotion + CooldownState (1701 lines)
 │   ├── chiguo_personality.py  PersonalityTraits (8 dims) + PersonalityDelta + Deltas (231 lines)
 │   ├── chiguo_bayesian.py     UserStateEstimator (6 states) + BayesianLearner
-│   ├── schedule_parser.py     xskb.xlsx → schedule_cache.json → query() (445 lines)
-│   ├── holiday_parser.py      7 holidays + 6 makeup days for 2026 (187 lines)
+│   ├── schedule/ 包        schedule 数据面 parser.py (xskb.xlsx → schedule_cache.json → query) + parsing.py 纯解析 + query.py 策略 + holiday.py (节假日) + anniversary.py (纪念日) + override_store/plan_store/api (覆盖/计划/澄清存储) + sources/day_plan/resolve_when/attention/recall (检索与安排) + confirm + replan
 │   ├── memory_bridge.py       LanceDB read-only (lazy import, available=False degrade) + Ebbinghaus forgetting (506 lines)
 │   └── chiguo_circadian.py    dual-bucket sleep-window learning (weekday/weekend + active-time merging)
 ├── chiguo_trigger.py       evaluate_triggers() → 13 trigger types (incl. v7 follow_up), sigmoid-weighted
@@ -74,7 +85,6 @@ Supporting (not imported by daemon):
 ├── chiguo_demo.py          Interactive terminal demo (template-only, no LLM) (191 lines)
 ├── chiguo_watchdog.py      Standalone health checks (cron/systemd timer)
 ├── chiguo_envcheck.py      Read-only env readiness check (Python/pi/ollama/auth/LanceDB/netease/data, exit 0/1/2)
-├── anniversary_manager.py  CRUD for anniversaries/countdowns
 ├── netease/                Netease package: bridge.py (NeteaseBridge 数据面, upstream: api-enhanced v4.39.0, localhost:3000) + service.py (NeteaseService 策略层 DI) + 运行时文件(锚定 <base_dir>/netease/)
 ├── solar_terms.py          24 solar terms lookup (±1 day window) (85 lines)
 └── update_holidays.py      Generate holidays.json + solar_terms.json for any year
@@ -296,6 +306,12 @@ Intent × Cue × Vibe three-layer system:
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
 3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askPi `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 600s → analysis-only upgrade, no double counting)
 
+### Schedule-center CLI (daemon subcommands, schedule/ 包)
+- `chiguo_daemon.py --attention` — T1/T2/T3 注意力快照（回复侧注入，零写；失败降级继续 askPi）
+- `chiguo_daemon.py --schedule-recall <query>` — 安排回忆检索（日期或关键词，A4 形状）
+- `chiguo_daemon.py --schedule-change <json>` — 写安排（reminder/add/cancel/move/exam_week/remove；畸形 JSON → bad_json 不写入；ApiRejection → H5 文案）
+- `python -m schedule.replan --check` — 复盘只读检查明日计划；`python -m schedule.holiday [YYYY-MM-DD]` — 节假日查询
+
 ### SUN2.md Personality Constitution (283 lines)
 - **3-layer structure**: 喧闹外壳 → 倔强中层 → 脆弱内核
 - **3-stage tsundere protocol**: Push away (MANDATORY) → Accept + belittle → Quiet truth leak
@@ -325,8 +341,11 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | `chiguo_alerts.json` | chiguo_monitor.py | AlertManager persisted state |
 | `chiguo_watchdog_state.json` | chiguo_watchdog.py | Last seen tick_seq for stall detection |
 | `chiguo_loop.pid` | chiguo_daemon.py | PID lock file |
-| `schedule_cache.json` | schedule_parser.py | Parsed xskb.xlsx cache |
-| `anniversaries.json` | anniversary_manager.py | Anniversary/countdown records |
+| `schedule_cache.json` | schedule/parser.py | Parsed xskb.xlsx cache |
+| `schedule_overrides.json` | schedule/override_store.py | Manual schedule overrides (atomic 0600) |
+| `schedule_plan.json` | schedule/plan_store.py | Daily plan, replan-generated (atomic 0600) |
+| `schedule_clarify.json` | wechat-bridge/bridge.mjs | Clarify record (writeClarify atomic 0600, 6h expiry) |
+| `anniversaries.json` | schedule/anniversary.py | Anniversary records (countdown deprecated, migrated to reminder) |
 | `break_state.json` | chiguo_daemon.py | Vacation override (written by --break CLI) |
 | `holidays.json` | update_holidays.py | Override holiday data for future years |
 | `solar_terms.json` | update_holidays.py | Override solar terms for future years |
@@ -381,10 +400,8 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | chiguo_demo.py | 191 | Interactive demo | Demo class |
 | chiguo_version.py | 5 | Project version | VERSION |
 | memory_bridge.py | 506 | Memory access | MemoryBridge |
-| schedule_parser.py | 445 | Schedule | ScheduleParser |
-| holiday_parser.py | 187 | Holidays | HolidayParser |
+| schedule/ 包 | — | Schedule/holiday/anniversary/arrangements | parser.py: ScheduleParser; parsing.py; query.py; holiday.py: HolidayParser; anniversary.py: AnniversaryManager; override_store.py; plan_store.py; api.py; sources.py; day_plan.py; resolve_when.py; attention.py; recall.py; confirm.py; replan.py |
 | solar_terms.py | 85 | Solar terms | SolarTerms |
-| anniversary_manager.py | 216 | Anniversaries | AnniversaryManager |
 | netease/ | 939 | Netease package | bridge.py: NeteaseBridge (login/fetch_recent_play/fetch_daily_songs); service.py: NeteaseService (DI) |
 | chiguo_envcheck.py | 178 | Env readiness | run_checks() |
 | update_holidays.py | 234 | Holiday gen | generate() |
