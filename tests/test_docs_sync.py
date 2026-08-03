@@ -15,7 +15,7 @@ def check(name, cond, detail=""):
 
 # a) deploy.sh TESTS 数组 ↔ 文档计数
 deploy = (ROOT / "deploy.sh").read_text()
-m = re.search(r"^TESTS=\((.*?)\)", deploy, re.S)
+m = re.search(r"^TESTS=\((.*?)\)", deploy, re.M | re.S)
 assert m, "deploy.sh 找不到 TESTS 数组"
 test_names = m.group(1).split()
 check("deploy.sh TESTS 含 test_docs_sync", "test_docs_sync" in test_names)
@@ -28,7 +28,9 @@ for f in ["AGENTS.md", "CLAUDE.md", "README.md", "README_EN.md"]:
 # b) --skip-* flags：deploy.sh 与 DEPLOYMENT.md 一致
 flags = ["--skip-pi", "--skip-bridge", "--skip-netease"]
 check("deploy.sh 支持全部 --skip-*", all(f in deploy for f in flags))
-dep = (ROOT / "doc" / "DEPLOYMENT.md").read_text()
+dep_file = ROOT / "doc" / "DEPLOYMENT.md"
+dep = dep_file.read_text() if dep_file.exists() else ""
+check("DEPLOYMENT.md 存在", bool(dep))
 check("DEPLOYMENT.md 引用全部 --skip-*", all(f in dep for f in flags))
 
 # c) 落点锚点：DEPLOYMENT.md 与脚本常量一致（$HOME 归一化为 ~）
