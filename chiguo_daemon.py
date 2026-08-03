@@ -1158,6 +1158,12 @@ def _cmd_schedule_change(json_arg: str, config_path: str | None = None):
         print(_json.dumps(out, ensure_ascii=False))
         print(f"[chiguo_daemon] --schedule-change 拒绝({e.category}): {e}", file=sys.stderr)
         sys.exit(1)
+    except Exception as e:
+        print(_json.dumps({"action": "schedule_change", "ok": False,
+                           "reason": "internal_error", "question": "处理失败,再试一次?"},
+                          ensure_ascii=False))
+        print(f"[chiguo_daemon] --schedule-change 异常: {e}", file=sys.stderr)
+        sys.exit(1)
     print(_json.dumps({"action": "schedule_change", "ok": True, "text": result["text"]},
                       ensure_ascii=False))
 
