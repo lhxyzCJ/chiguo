@@ -59,7 +59,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 - **A model API key** (message generation and mood analysis go through pi-agent; any OpenAI-compatible backend works)
 - **Optional**: a WeChat account (bot send/receive), ollama (memory embeddings), a schedule Excel, a NetEase account
 
-> ⚠️ **Usage risk**: automating a personal WeChat account carries account risks (e.g. bans). For personal learning and research only — use at your own risk.
+> WeChat delivery uses the official iLink Bot channel (upstream [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin), open source); QR login via the official API. Login state and conversation data stay on your machine — nothing goes into git.
 
 ---
 

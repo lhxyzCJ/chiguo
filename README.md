@@ -59,7 +59,7 @@
 - **一个模型 API key**（消息生成与情绪分析走 pi-agent，支持任意 OpenAI 兼容后端）
 - **可选**：一个微信账号（bot 收发）、ollama（记忆嵌入）、课表 Excel、网易云账号
 
-> ⚠️ **使用风险**：个人微信自动化存在账号风险（封号等），仅供个人学习研究，风险自担。
+> 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API；登录态与对话数据仅存本机，不进 git。
 
 ---
 
