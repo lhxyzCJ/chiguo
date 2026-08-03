@@ -38,8 +38,8 @@ class ScheduleApi:
         self.plan_store = PlanStore(self.base_dir)
         self._migrated = False
         # 迁移子项激活开关(批次注记):② 激活批次 = 6c(Task 14);③④ 激活批次 = 4(Task 10)
-        self._enable_countdown_migration = False
-        self._enable_toml_migrations = True   # 批 4 激活(③④;② 仍待 6c)
+        self._enable_countdown_migration = True  # 6c 激活(②)
+        self._enable_toml_migrations = True   # 批 4 激活(③④;② 已 6c 激活)
 
     # ── 迁移/物化守卫(惰性首执,只读子命令永不触发,H1)──
 
@@ -364,10 +364,16 @@ class ScheduleApi:
         return {"action": "anniversary_removed", "ok": self.anniversary_mgr.remove(id_)}
 
     def list_anniversaries(self):
-        return {"action": "anniversary_list", "anniversaries": [
-            {"id": a.id, "type": a.type, "name": a.name, "date": a.date,
-             "note": a.note, "created_at": a.created_at}
-            for a in self.anniversary_mgr.list_all()], "count": len(self.anniversary_mgr.list_all())}
+        """列表合并读两本子(6c):anniversary 类型 + overrides reminder(统一展示)。"""
+        items = [{"id": a.id, "type": a.type, "name": a.name, "date": a.date,
+                  "note": a.note, "created_at": a.created_at}
+                 for a in self.anniversary_mgr.list_all()]
+        for r in self.overrides.items():
+            if r["kind"] == "reminder":
+                items.append({"id": r["id"], "type": "reminder", "name": r["label"],
+                              "date": r["date"], "note": "", "created_at": r.get("created_at", "")})
+        items.sort(key=lambda x: (x["date"], x["name"]))
+        return {"action": "anniversary_list", "anniversaries": items, "count": len(items)}
 
     def update_anniversary(self, id_, **kwargs):
         self._guard()

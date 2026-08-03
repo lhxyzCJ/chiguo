@@ -22,7 +22,7 @@ function cstNow() {
   return new Date(Date.now() + CST_OFFSET_MS)
 }
 
-/** 推测倒计时年份：今年该日期已过 → 明年（CST）。 */
+/** 推测一次性提醒年份：今年该日期已过 → 明年（CST）。 */
 export function inferYear(month, day) {
   const now = cstNow()
   let year = now.getUTCFullYear()
@@ -58,15 +58,15 @@ export function detectSpecialCommand(text) {
     }
   }
 
-  // 2) 倒计时：YYYY年M月D日(是|为|要)?XX / M月D日要XX → add countdown YYYY-MM-DD <name>
+  // 2) 一次性提醒(6c:countdown 废弃 → 写 reminder,经 --schedule-change;显式日期直转写,确定性链路)
   m = t.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日\s*(?:是|为|要)?\s*(.+)$/)
   if (m) {
     const name = m[4].replace(/[。！!～~，,、]+$/, '').trim()
     if (name) {
       const date = `${m[1]}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`
       return {
-        action: 'countdown_added',
-        daemon: ['--anniversary', `add countdown ${date} ${name}`],
+        action: 'reminder_added',
+        daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date }, label: name })],
         hint: `嗯嗯，${name}（${date}）——我算着日子呢。`,
       }
     }
@@ -78,8 +78,8 @@ export function detectSpecialCommand(text) {
       const year = inferYear(Number(m[1]), Number(m[2]))
       const date = `${year}-${String(Number(m[1])).padStart(2, '0')}-${String(Number(m[2])).padStart(2, '0')}`
       return {
-        action: 'countdown_added',
-        daemon: ['--anniversary', `add countdown ${date} ${name}`],
+        action: 'reminder_added',
+        daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date }, label: name })],
         hint: `嗯嗯，${name}（${date}）——我算着日子呢。`,
       }
     }
@@ -128,14 +128,18 @@ export function detectScheduleIntent(text) {
 
 /** daemon 输出 JSON → 迟菓风确认文案。 */
 export function buildReply(action, result) {
+  if (action === 'reminder_added') {
+    if (result.ok === false || result.error) {
+      return `处理失败：${result.question ?? result.error ?? '未知错误'}`
+    }
+    return result.text ?? `记住了，${result.item?.label ?? ''}。`
+  }
   if (result.error || result.ok === false) {
     return `处理失败：${result.error ?? result.message ?? '未知错误'}`
   }
   switch (action) {
     case 'anniversary_added':
       return `记住了！${result.date}——${result.name}。……哼，才不会忘记。`
-    case 'countdown_added':
-      return `嗯嗯，${result.name}（${result.date}）——我算着日子呢。`
     case 'anniversary_list': {
       const items = result.anniversaries ?? []
       if (!items.length) return '纪念日一个都没有……哼，那我先自己记住。'

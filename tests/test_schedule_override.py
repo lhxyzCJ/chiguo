@@ -156,13 +156,17 @@ def test_corrupt_and_migration_order():
         # 子项 ①:anniversaries 重建为默认生日(0 先于 ①)
         anns = json.loads(Path(td, "anniversaries.json").read_text())
         assert any(a["name"] == "迟菓生日" for a in anns["anniversaries"])
-        # ② 未激活:已有 countdown 条目不得被迁移(激活批次 = 6c)
+        # ② 已激活(6c):历史 countdown → 迁移为 reminder(豁免过去校验)并从文件移除
         Path(td, "anniversaries.json").write_text(json.dumps({"anniversaries": [
             {"id": "c1", "type": "countdown", "name": "考试", "date": "2026-12-25", "note": "", "created_at": "2026-08-01"}]}))
         api2 = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
         api2._guard()
-        assert api2.overrides.items() == [], "② 未激活,countdown 不得迁入 overrides"
-        assert any(a["type"] == "countdown" for a in json.loads(Path(td, "anniversaries.json").read_text())["anniversaries"])
+        rem = [i for i in api2.overrides.items() if i["kind"] == "reminder"]
+        assert len(rem) == 1 and rem[0]["date"] == "2026-12-25" and rem[0]["label"] == "考试", \
+            f"② 激活,countdown 迁为 reminder, got {rem}"
+        assert not any(a["type"] == "countdown"
+                       for a in json.loads(Path(td, "anniversaries.json").read_text())["anniversaries"]), \
+            "已迁移条目从 anniversaries.json 移除"
     print("  OK test_corrupt_and_migration_order")
 
 
