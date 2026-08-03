@@ -211,3 +211,25 @@ def class_load_adjust(base: float, resolved_classes: dict, now) -> float:
     if remaining == 1:
         return 0.70
     return 0.50
+
+
+def bayesian_adjust(base: float, user_state: dict, emotion, config: dict) -> float:
+    """第三层(§5.1):现逻辑原样保留——高置信 sleeping → 0.0;busy ×0.5;
+    needs_care → min(×1.2, 0.95);anxiety 超阈值 → ×0.3。"""
+    try:
+        if user_state is None:
+            return base
+        most_likely = user_state.get("most_likely", "browsing")
+        confidence = user_state.get("confidence", 0.0)
+        if most_likely == "sleeping" and confidence > config.get("bayesian", {}).get(
+                "min_confidence_for_block", 0.5):
+            return 0.0
+        if most_likely == "busy":
+            base *= 0.5
+        elif most_likely == "needs_care":
+            base = min(base * 1.2, 0.95)
+        if emotion.anxiety > config.get("cooldown", {}).get("anxiety_block_threshold", 70.0):
+            base *= 0.3
+    except Exception:
+        pass
+    return base
