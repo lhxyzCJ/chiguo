@@ -59,14 +59,28 @@ check("脚本链无 /root/chiguo 硬编码", not hits, f"命中: {hits}")
 # e) toml 无 personality_dir
 check("toml 无 personality_dir", "personality_dir" not in (ROOT / "chiguo_proactive.toml").read_text())
 
-# f) README 中英 section 标题集合一致（目录/Table of Contents 归一为同一 token）
+# f) README 中英 section 标题集合一致（经 EN_TITLES 翻译映射；映射即配对文档，改名时同步更新）
+EN_TITLES = {
+    "目录": "Table of Contents",
+    "🎀 她是谁": "🎀 Who Is She",
+    "✨ 特性一览": "✨ Features",
+    "🏗 架构": "🏗 Architecture",
+    "💬 效果示例": "💬 Example Outputs",
+    "🚀 快速开始": "🚀 Quick Start",
+    "🧩 组件": "🧩 Components",
+    "🧠 接入模型后端": "🧠 Bring Your Own Model",
+    "🎭 自定义人格": "🎭 Customizing the Persona",
+    "🛠 部署与运维": "🛠 Deploy & Ops",
+    "📖 文档与贡献": "📖 Docs & Contributing",
+    "❓ FAQ": "❓ FAQ",
+    "📄 License": "📄 License",
+    "📁 文件结构": "📁 Project Layout",
+}
 def headings(p):
-    s = set(re.findall(r"^## (.+)$", p.read_text(), re.M))
-    s.discard("目录")
-    s.discard("Table of Contents")
-    return s
-zh, en = headings(ROOT / "README.md"), headings(ROOT / "README_EN.md")
-check("README 中英 section 标题集合一致", zh == en, f"仅中文: {zh - en} 仅英文: {en - zh}")
+    return set(re.findall(r"^## (.+)$", p.read_text(), re.M))
+zh = {EN_TITLES.get(h, h) for h in headings(ROOT / "README.md")}
+en = headings(ROOT / "README_EN.md")
+check("README 中英 section 标题集合一致（EN_TITLES 映射）", zh == en, f"仅中文: {zh - en} 仅英文: {en - zh}")
 
 # g) AGENTS.md 引用 DEPLOYMENT.md
 check("AGENTS.md 引用 DEPLOYMENT.md", "DEPLOYMENT.md" in (ROOT / "AGENTS.md").read_text())
