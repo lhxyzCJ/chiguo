@@ -131,6 +131,37 @@ do_autostart() {
   say "autostart 完成 ✓（开机自启: ollama + chiguo-bridge）"
 }
 
+do_temp() {
+  [ -n "$NODE" ] || fail "缺少 node（需先安装 Node.js）"
+  [ -f "$ENV_FILE" ] || { warn "缺少 .env（先运行: bash scripts/wechat-bridge.sh install）"; exit 1; }
+  if [ "$DRY" = 1 ]; then
+    say "dry-run 计划:"
+    say "  1) systemctl stop chiguo-bridge（互斥接管，若在运行）"
+    say "  2) nohup node --env-file=$ENV_FILE bridge.mjs（后台）"
+    say "  3) pidfile: $TEMP_PIDFILE；日志: $LOG_FILE"
+    return 0
+  fi
+  if temp_running; then
+    say "temp 实例已在运行（pidfile: $TEMP_PIDFILE）"
+    return 0
+  fi
+  say "互斥接管：停 systemd 实例（若在运行）..."
+  stop_systemd
+  if ollama_health; then
+    say "ollama 健康 ✓"
+  else
+    warn "ollama 不在线（embedding 记忆库不可用；本模式不拉起，由 systemd 管理）"
+  fi
+  say "启动 temp bridge（日志: $LOG_FILE）..."
+  mkdir -p "$PID_DIR" "$(dirname "$LOG_FILE")"
+  (
+    cd "$BRIDGE_DIR" || exit 1
+    setsid nohup node --env-file="$ENV_FILE" bridge.mjs >> "$LOG_FILE" 2>&1 < /dev/null &
+    echo "$!" > "$TEMP_PIDFILE"
+  )
+  say "temp 已启动（PID $(cat "$TEMP_PIDFILE")；不注册开机自启；bash scripts/service.sh status 查看）"
+}
+
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY=1 ;;
@@ -142,5 +173,6 @@ done
 
 case "$CMD" in
   autostart) do_autostart ;;
+  temp) do_temp ;;
   *) usage; exit 2 ;;
 esac

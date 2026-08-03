@@ -93,3 +93,40 @@ echo "$FAKE_TEMP_PID" > "$TMP/pid/bridge-temp.pid"
 [ ! -f "$TMP/pid/bridge-temp.pid" ] || fail "残留 temp pidfile 未被清理"
 kill "$FAKE_TEMP_PID" 2>/dev/null || true
 pass "autostart 清理 temp 残留"
+
+# ── 用例 5: temp 先停 systemd 实例（互斥接管），再启动并写 pidfile ──
+touch "$TMP/active"   # fake systemctl is-active → 0
+export ACTIVE_MARK="$TMP/active"
+: > "$CALLS_LOG"
+"$SERVICE" temp >/dev/null 2>&1 || fail "temp 退出非 0"
+grep -q "stop chiguo-bridge" "$CALLS_LOG" || fail "temp 未先停 systemd 实例"
+grep -q "node --env-file=$TMP/repo/wechat-bridge/.env bridge.mjs" "$CALLS_LOG" || fail "temp 未启动 bridge"
+[ -f "$TMP/pid/bridge-temp.pid" ] || fail "temp pidfile 未写入"
+unset ACTIVE_MARK
+rm -f "$TMP/pid/bridge-temp.pid"
+pass "temp 互斥接管 + pidfile"
+
+# ── 用例 6: temp 重复运行（pidfile 存在）→ 提示并退出 0，不重复启动 ──
+sleep 300 & FAKE_TEMP_PID=$!
+echo "$FAKE_TEMP_PID" > "$TMP/pid/bridge-temp.pid"
+: > "$CALLS_LOG"
+OUT="$("$SERVICE" temp 2>&1)"
+[ $? = 0 ] || fail "重复 temp 应退出 0"
+echo "$OUT" | grep -q "已在运行" || fail "重复 temp 未提示已在运行"
+grep -q "node --env-file" "$CALLS_LOG" && fail "重复 temp 不应再次启动"
+kill "$FAKE_TEMP_PID" 2>/dev/null || true
+rm -f "$TMP/pid/bridge-temp.pid"
+pass "temp 幂等"
+
+# ── 用例 7: temp 时 ollama 不在线 → warn 但继续启动 ──
+cat > "$TMP/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "curl $*" >> "$CALLS_LOG"
+exit 1
+STUB
+chmod +x "$TMP/bin/curl"
+OUT="$("$SERVICE" temp 2>&1)"
+echo "$OUT" | grep -q "ollama" || fail "ollama 不在线未 warn"
+[ -f "$TMP/pid/bridge-temp.pid" ] || fail "ollama 不在线不应阻止 temp 启动"
+rm -f "$TMP/pid/bridge-temp.pid"
+pass "temp 对 ollama 降级 warn"
