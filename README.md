@@ -60,6 +60,7 @@
 | 🧠 Bayesian 用户状态 | 6 状态在线推断：聊天/浏览/忙碌/睡觉/离开/需要关怀 |
 | ✍️ 消息组合系统 | Intent × Cue × Vibe 三层组合，风格可人格化 |
 | 🏖 寒暑假模式 | 节假日/寒假暑假手动或自动切换 |
+| 🗓 时间安排中心 | 课表/节假日/寒暑假/例外/考试周/纪念日/提醒日统一管理;考试周自动降频;微信一句话登记安排 |
 | 📊 结构化监控 | stats / alerts / health + 独立看门狗进程 |
 | 💗 假死检测 | 真实流量记账 + 微信告警/恢复通知（零额外调用） |
 
@@ -71,7 +72,7 @@
 
 **主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh` → 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/pi-run.mjs --send-mode` 让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）。
 
-**被动回复链**：微信消息进入桥 → `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：纪念日/假期等**特殊命令直接执行并回复，不经 LLM**；普通消息走 `pi-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」→ 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
+**被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假/开学）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `pi-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `pi-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
 
 **共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（LanceDB）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` / `chiguo_watchdog.py` 独立巡检。两条链的 pi 调用成败都记入 `pi_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
@@ -88,12 +89,18 @@ flowchart LR
         PI -. 发送结果回传 .-> DC
     end
     subgraph 被动回复链
-        WX -->|新消息| BR[bridge 收消息<br/>TurnQueue 串行<br/>会话 chiguo-main]
+        WX -->|新消息| BR[bridge 收消息<br/>OWNER_ID 门<br/>TurnQueue 串行]
         BR --> UR[daemon --user-msg<br/>记账 recv_dedup]
         UR --> SP{command-detect<br/>特殊命令?}
-        SP -->|纪念日/假期| SC[daemon CLI 执行<br/>直接回复]
-        SP -->|普通消息| AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
-        AP --> UA[daemon --analysis<br/>去重升级]
+        SP -->|纪念日/假期/放假| SC[daemon CLI 执行<br/>直接回复]
+        SP -->|停课/调课/考试周/提醒…| SX[extract/verify 双 agent<br/>追问循环 clarify]
+        SX -->|--schedule-change 原子写| SC
+        SP -->|普通消息| AT[--attention 注入<br/>T1/T2/T3]
+        AT --> AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
+        AP --> RC{recall 信号?}
+        RC -->|有| R2[第二趟 pi<br/>按登记事实回答]
+        RC -->|无| UA[daemon --analysis<br/>去重升级]
+        R2 -->|回复文本| WX
         SC -->|回复文本| WX
         UA -->|回复文本| WX
     end
@@ -220,11 +227,19 @@ uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 
 ### 课表 xlsx
 
-**作用**：让迟菓知道用户在不在上课——上课中/满课日会调整情绪推进与触发权重，也会在触发上下文里注入课程信息。
+**作用**：让迟菓知道用户在不在上课——上课中/满课日会调整情绪推进与触发权重，也会在触发上下文里注入课程信息。课表经 `schedule/` 包解析缓存（`schedule/parser.py` → `schedule_cache.json`）。
 
 **安装/配置**：把课表 Excel 放进 `data/` 即可（文件名与格式见 `chiguo_proactive.toml` 配置）。
 
 **缺失影响**：按空闲处理（availability=1.0），行为保守但不会出错。
+
+### schedule/ 时间安排中心
+
+**作用**：全部时间安排的唯一事实源——课表、节假日、寒暑假、临时例外（停课/调课/加课）、考试周、纪念日、提醒日统一收敛到 `schedule/` 包，分文件存储（`holiday.py`/`anniversary.py`/`override_store.py`/`plan_store.py`）。检索层（`day_plan.py`）输出多日纯事实窗口；引擎按事实直算 availability——考试周自动降到 0.5、上课中分层降频、例外取消即时生效；纪念日/提醒日按"还有几天"注入上下文（T1），节假日/考试周等区间事实注入 T2，本周课表注入 T3。微信侧写命令（"明天停课""下周三开始考试周""8月20号交材料"）经提取→校验→追问循环**确定性写入**，确认文案带星期+日期；来源变化时 crontab 触发重分析（`schedule/replan.py`）离线让 LLM 只调各触发类型权重（`schedule_plan.json`）。
+
+**安装/配置**：随仓库部署，零安装。运行时文件（`schedule_overrides.json`/`schedule_plan.json`/`schedule_clarify.json`/`anniversaries.json`）自动生成于仓库根，0600 权限，不进 git。重分析 crontab 由 `scripts/install_pi.sh` 注册（`scripts/replan-tick.sh`）。
+
+**缺失影响**：无——它是内置模块；缺课表 xlsx 只退回"按空闲处理"。
 
 ---
 
@@ -329,6 +344,9 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 **微信怎么登录？**
 `bash scripts/wechat-bridge.sh login` 扫码；登录态仅本地保留（不进 git），新设备需重新扫码。
 
+**怎么告诉迟菓临时的安排（停课/考试周/提醒）？**
+直接微信说即可："明天停课""下周三开始考试周""8月20号交材料"——提取→校验→确认一条龙，确认文案带星期+日期；信息说不清楚她会追问（澄清记录 6 小时有效），绝不瞎猜。
+
 ---
 
 ## 📁 文件结构
@@ -336,8 +354,11 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 ```
 chiguo_proactive.toml    # 主配置（所有参数，热重载）
 chiguo_daemon.py         # 决策引擎（主入口，零 LLM）
-chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + 课表/节假日/记忆 + circadian
-scripts/                 # tick 入口 / pi 封装 / 环境安装 / 假死检测
+chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian
+schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
+                         #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan）
+scripts/                 # tick/replan crontab 入口 + pi 封装（extract/verify/recall/replan/pi-auth）
+                         #   + 环境安装 + 假死检测
 wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs）
 personality/             # 人格设定（SUN2.md + 语言指南 + 档位 toml）
 doc/                     # 系统文档（SYSTEM.md / PI_INTEGRATION.md / 日光雨剧本）

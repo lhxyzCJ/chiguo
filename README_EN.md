@@ -60,6 +60,7 @@ Chiguo comes from the *Tricolour Lovestory* series (a Chinese galgame by 绘恋�
 | 🧠 Bayesian user state | 6 states inferred online: chatting / browsing / busy / sleeping / away / needs care |
 | ✍️ Message composer | Intent × Cue × Vibe three-layer composition, persona-able style |
 | 🏖 Break/summer-winter modes | Holidays and semester breaks, manual or automatic switching |
+| 🗓 Schedule center | Unified management of schedule / holidays / breaks / exceptions / exam weeks / anniversaries / reminders; exam weeks auto-lower send rate; register an arrangement with one WeChat message |
 | 📊 Structured monitoring | stats / alerts / health + standalone watchdog |
 | 💗 Backend liveness detection | Real-traffic accounting + WeChat alert/recovery notices (zero extra calls) |
 
@@ -71,7 +72,7 @@ The system is two message pipelines, all running locally — the model API and t
 
 **Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/pi-run.mjs --send-mode` turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`).
 
-**Passive replying**: a WeChat message enters the bridge → `chiguo_daemon.py --user-msg` records it **deterministically** (real-time emotion response, recv_dedup against double-counting) → `command-detect.mjs` rules check first: **special commands** (anniversaries / holidays) are executed and answered directly, **no LLM**; ordinary messages go through `pi-run.mjs --analysis-mode`, producing "mood analysis JSON + reply text" in one call → the analysis is merged back into the daemon via `--analysis` (dedup upgrade) → the reply is sent back to WeChat. The reply side runs as a resident serial process (TurnQueue, session `chiguo-main`), zero session sharing with proactive sending.
+**Passive replying**: a WeChat message enters the bridge → an **OWNER_ID gate** (non-owners only get a plain chat reply — no accounting, no command/recall paths) → `chiguo_daemon.py --user-msg` records it **deterministically** (real-time emotion response, recv_dedup against double-counting) → `command-detect.mjs` rules check first: **special commands** (anniversaries / holidays / break on-off) are executed and answered directly, **no LLM**; **schedule write-commands** (cancel / move / add / exam week / reminder / remove) go through `pi-run.mjs --schedule-extract` extraction → `--schedule-verify` verification (dual agents, separate sessions; if info is missing they return a question into the clarify loop, records valid 6h) → daemon `--schedule-change` atomic write (confirmation text carries weekday + date); ordinary messages first fetch a lightweight `--attention` injection (today's important days / active range facts / this week's schedule), then run `pi-run.mjs --analysis-mode`, producing "mood analysis JSON + reply text" in one call — if the analysis carries a recall signal (registered facts / past dates), the bridge queries the facts and answers via a second pi pass → the analysis is merged back into the daemon via `--analysis` (dedup upgrade) → the reply is sent back to WeChat. The reply side runs as a resident serial process (TurnQueue, session `chiguo-main`), zero session sharing with proactive sending.
 
 **Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (LanceDB) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` / `chiguo_watchdog.py` patrol independently. Both pipelines record pi-call outcomes into the `pi_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
 
@@ -88,12 +89,18 @@ flowchart LR
         PI -. 发送结果回传 .-> DC
     end
     subgraph 被动回复链
-        WX -->|新消息| BR[bridge 收消息<br/>TurnQueue 串行<br/>会话 chiguo-main]
+        WX -->|新消息| BR[bridge 收消息<br/>OWNER_ID 门<br/>TurnQueue 串行]
         BR --> UR[daemon --user-msg<br/>记账 recv_dedup]
         UR --> SP{command-detect<br/>特殊命令?}
-        SP -->|纪念日/假期| SC[daemon CLI 执行<br/>直接回复]
-        SP -->|普通消息| AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
-        AP --> UA[daemon --analysis<br/>去重升级]
+        SP -->|纪念日/假期/放假| SC[daemon CLI 执行<br/>直接回复]
+        SP -->|停课/调课/考试周/提醒…| SX[extract/verify 双 agent<br/>追问循环 clarify]
+        SX -->|--schedule-change 原子写| SC
+        SP -->|普通消息| AT[--attention 注入<br/>T1/T2/T3]
+        AT --> AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
+        AP --> RC{recall 信号?}
+        RC -->|有| R2[第二趟 pi<br/>按登记事实回答]
+        RC -->|无| UA[daemon --analysis<br/>去重升级]
+        R2 -->|回复文本| WX
         SC -->|回复文本| WX
         UA -->|回复文本| WX
     end
@@ -220,11 +227,19 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ### Class schedule xlsx
 
-**Role**: lets Chiguo know when the user is in class — in-class/full-day schedules adjust emotion decay and trigger weights, and class info is injected into the trigger context.
+**Role**: lets Chiguo know when the user is in class — in-class/full-day schedules adjust emotion decay and trigger weights, and class info is injected into the trigger context. The schedule is parsed and cached by the `schedule/` package (`schedule/parser.py` → `schedule_cache.json`).
 
 **Setup**: drop the schedule Excel file into `data/` (file name and format per `chiguo_proactive.toml`).
 
 **Missing**: treated as free time (availability=1.0) — conservative but safe.
+
+### schedule/ package (the schedule center)
+
+**Role**: the single source of truth for all time arrangements — schedule, holidays, breaks, temporary exceptions (cancel / move / add), exam weeks, anniversaries and reminders, unified in the `schedule/` package with per-kind file storage (`holiday.py` / `anniversary.py` / `override_store.py` / `plan_store.py`). The retrieval layer (`day_plan.py`) emits multi-day pure-fact windows; the engine computes availability straight from facts — exam weeks drop it to 0.5, in-class tiers lower it further, exceptions take effect immediately; anniversaries/reminders are injected as "N days away" (T1), active range facts such as holidays/exam weeks as T2, this week's schedule as T3. WeChat write-commands ("取消明天的课" / "下周三开始考试周" / "8月20号交材料") write **deterministically** through extraction → verification → clarify loop, with weekday+date in the confirmation; when sources change, a crontab triggers re-analysis (`schedule/replan.py`) where the LLM only tunes per-trigger-type weights offline (`schedule_plan.json`).
+
+**Setup**: ships with the repo, zero install. Runtime files (`schedule_overrides.json` / `schedule_plan.json` / `schedule_clarify.json` / `anniversaries.json`) are auto-generated in the repo root, mode 0600, never committed. The re-analysis crontab is registered by `scripts/install_pi.sh` (`scripts/replan-tick.sh`).
+
+**Missing**: n/a — it is a built-in module; a missing schedule xlsx only falls back to "free time".
 
 ---
 
@@ -329,6 +344,9 @@ Send gating is working: quiet window (late night), daily cap, min interval, trig
 **How do I log into WeChat?**
 `bash scripts/wechat-bridge.sh login` and scan the QR code; the login state is kept locally only (never committed) — a fresh clone requires logging in again.
 
+**How do I tell Chiguo about temporary arrangements (cancel class / exam week / reminder)?**
+Just say it in WeChat: "明天停课" / "下周三开始考试周" / "8月20号交材料" — extraction → verification → confirmation in one flow, confirmation text carries weekday + date; if the info is unclear she asks follow-up questions (clarify record valid 6h), never guessing.
+
 ---
 
 ## 📁 Project Layout
@@ -336,8 +354,11 @@ Send gating is working: quiet window (late night), daily cap, min interval, trig
 ```
 chiguo_proactive.toml    # main config (all parameters, hot-reloaded)
 chiguo_daemon.py         # decision engine (main entry, zero LLM)
-chiguo_state.py          # emotion engine + persona + Bayesian + schedule/holidays/memory + circadian
-scripts/                 # tick entry / pi wrapper / env installer / liveness detection
+chiguo_state.py          # emotion engine + persona + Bayesian + schedule facade + circadian
+schedule/                # schedule center (holiday/anniversary/override_store/plan_store/
+                         #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan)
+scripts/                 # tick/replan crontab entries + pi wrappers (extract/verify/recall/replan/pi-auth)
+                         #   + env installer + liveness detection
 wechat-bridge/           # WeChat bridge (bridge.mjs + command-detect.mjs)
 personality/             # persona files (SUN2.md + speech manual + gear tomls)
 doc/                     # system docs (SYSTEM.md / PI_INTEGRATION.md / 日光雨 script)
