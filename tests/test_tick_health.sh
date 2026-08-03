@@ -205,4 +205,26 @@ grep -q "real_openid@im.wechat" "$POST_LOG" || fail "主动消息应发往真实
 grep -q '"to": "owner@im.wechat"' "$POST_LOG" && fail "不应发往占位符" || true
 pass "登录后收件人自动注入（credentials userId 生效）"
 
+# ── replan lockfile(5s 超时 + 陈旧锁 10min 接管,M15)──
+# 直接调产品 schedule/replan._lock(R5):测试的是真实现,非逻辑拷贝
+test_replan_lock() {
+  local LOCK="$TMP/replan.lock"
+  # 用例 1:占用中 → 5s 超时让位(_lock 返回 False)
+  touch "$LOCK"
+  local T0 T1
+  T0="$(date +%s)"
+  if python3 -c "import sys; sys.path.insert(0, '/root/chiguo'); from schedule.replan import _lock; sys.exit(0 if _lock('$TMP') else 1)"; then
+    fail "replan lockfile 占用中应超时让位"
+  fi
+  T1="$(date +%s)"
+  [ $((T1 - T0)) -le 7 ] || fail "5s 超时未生效(耗时 $((T1 - T0))s)"
+  # 用例 2:陈旧锁(mtime > 10min)→ 强制接管(_lock 返回 True)
+  rm -f "$LOCK"
+  touch -d "12 minutes ago" "$LOCK"
+  python3 -c "import sys; sys.path.insert(0, '/root/chiguo'); from schedule.replan import _lock; sys.exit(0 if _lock('$TMP') else 1)" || fail "陈旧锁应被接管"
+  rm -f "$LOCK"
+  pass "replan: lockfile 5s timeout and stale-lock takeover"
+}
+test_replan_lock
+
 echo "test_tick_health: 全部通过"
