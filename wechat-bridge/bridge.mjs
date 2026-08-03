@@ -46,7 +46,7 @@ const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 const REPO = resolveRepo(import.meta.url)
 const DAEMON_PY = process.env.WECHAT_BRIDGE_DAEMON_PY ?? `${REPO}/.venv/bin/python`
 const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? `${REPO}/chiguo_daemon.py`
-// 仓库根 = DAEMON_SCRIPT 父目录(与 :43 同款解析,二十轮 A3 落点)
+// schedule 运行时文件锚定 daemon 所在目录（跟随 WECHAT_BRIDGE_DAEMON 覆盖；测试隔离依赖），与 REPO 仅默认相等
 const REPO_ROOT = dirname(DAEMON_SCRIPT)
 // pi 假死记账脚本（pi_health.py 状态机）；默认随仓库 scripts/ 部署，可用 WECHAT_BRIDGE_PI_HEALTH 覆盖
 const PI_HEALTH_SCRIPT = process.env.WECHAT_BRIDGE_PI_HEALTH
