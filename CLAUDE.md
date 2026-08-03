@@ -10,10 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required) — 23 py + 5 script tests
-node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && \
-bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && \
+# Run all tests (Python 3.14+ required) — 35 py + 9 script tests
+node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
+bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && bash tests/test_tick_health.sh && \
 uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
+uv run python tests/test_schedule_parser.py && \
 uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
 uv run python tests/test_eventbus.py && uv run python tests/test_personality.py && \
 uv run python tests/test_bayesian.py && uv run python tests/test_composer.py && \
@@ -24,7 +25,12 @@ uv run python tests/test_circadian.py && uv run python tests/test_followup.py &&
 uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
 uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
 uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
-uv run python tests/test_adapt_personality.py   # full suite (23 py + 5 script tests)
+uv run python tests/test_adapt_personality.py && uv run python tests/test_pi_health.py && \
+uv run python tests/test_anniversary.py && uv run python tests/test_schedule_override.py && \
+uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
+uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
+uv run python tests/test_trigger_scale.py && uv run python tests/test_isolation.py && \
+uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py   # full suite (35 py + 9 script tests)
 
 # Or individually
 uv run python tests/test_monitor.py
@@ -65,7 +71,7 @@ No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python �
 
 **pi-agent integration** (see `doc/PI_INTEGRATION.md`, Phase 4):
 - Send side: system crontab `*/15 * * * * scripts/chiguo-tick.sh` — runs `chiguo_daemon.py --compact` with zero model calls; idle → silent exit, send → `scripts/pi-run.mjs` (session `chiguo-send`) generates message per SUN2.md → curl `[host].wechat_bridge_url` → `--record-send` writes back
-- Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askPi` (pi-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
+- Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break/schedule rules, no pi; schedule-center CLI 子命令 `--attention`/`--schedule-recall`/`--schedule-change` + `python -m schedule.replan --check`/`schedule.holiday`) → otherwise `askPi` (pi-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
 - Sessions: reply=`chiguo-main`, proactive send=`chiguo-send` — separate sessions eliminate cross-process concurrent turns
 - Environment: `scripts/install_pi.sh` bootstraps pi (memory-lancedb-pro extension, settings/json5, ollama embedding, provider auth via toml [host].provider (default opencode-go), crontab)
 
@@ -88,11 +94,9 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_circadian.py → circadian sleep-window learning (dual-bucket: weekday/weekend independent windows + active-time merging) (v7, v8 dual-bucket)
   ├─ netease/bridge.py  → NetEase API bridge 数据面 (NeteaseBridge 实例化: fetch_recent_play/fetch_daily_songs/QR 登录;运行时文件锚定 netease/ 子目录) (v8→重构)
   ├─ netease/service.py → NetEase strategy layer 策略层 (v9, DI: health probe/degradation chain/peek-consume quota/music topic/fetch_play_proof 单入口)
-  ├─ schedule_parser.py  → xskb.xlsx → schedule_cache.json
-  ├─ holiday_parser.py   → Chinese holiday detection (State Council schedule)
+  ├─ schedule/ 包   → 课表数据面 parser.py / 纯解析 parsing.py / 策略 query.py + 节假日 holiday.py + 纪念日 anniversary.py + 覆盖/计划/澄清 override_store.py/plan_store.py/api.py + 检索与安排 sources.py/day_plan.py/resolve_when.py/attention.py/recall.py + 确认 confirm.py + 复盘 replan.py
   ├─ solar_terms.py      → 24 solar terms
   ├─ memory_bridge.py    → LanceDB read-only bridge + Ebbinghaus forgetting (v4)
-  ├─ anniversary_manager.py → anniversary/countdown CRUD
   ├─ chiguo_watchdog.py  → daemon health checks (disk, memory, tick freshness)
   ├─ chiguo_rotation.py  → monthly log rotation → archive/
   ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
@@ -125,7 +129,10 @@ All auto-generated at first run, all in `.gitignore`:
 | `chiguo_decisions.jsonl` | Append-only decision log (one JSON object per line) |
 | `schedule_cache.json` | Parsed class schedule cache (cache_version=2) |
 | `holidays.json` | Chinese holiday data (regenerated by `update_holidays.py`, State Council schedule) |
-| `anniversaries.json` | Anniversary/countdown records |
+| `anniversaries.json` | Anniversary records |
+| `schedule_overrides.json` | Manual schedule overrides (schedule/override_store.py, atomic 0600) |
+| `schedule_plan.json` | Daily plan (schedule/plan_store.py, atomic 0600, replan-generated) |
+| `schedule_clarify.json` | Clarify record (wechat-bridge/bridge.mjs writeClarify, atomic 0600, 6h expiry) |
 | `break_state.json` | Vacation override state (written by `--break` CLI) |
 | `chiguo_state_audit.jsonl` | State corruption/recovery/checksum audit log |
 | `chiguo_watchdog_state.json` | Watchdog persisted state (`stall_since` tick freshness) |
@@ -138,7 +145,7 @@ All auto-generated at first run, all in `.gitignore`:
 - **Emotion trends**: first-half vs second-half mean comparison; no heavy regression needed.
 - **Reply rate estimation**: inferred from `messages_without_reply` deltas between consecutive sends (no explicit reply tracking in logs).
 - **Config hot-reload**: `_maybe_reload_config()` checks toml mtime before each `evaluate()` call. Only matters for `--loop` mode; cron spawns fresh processes.
-- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 23 py test runners (+ 6 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
+- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 35 py test runners (+ 9 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
 
 ## 安全边界
 
