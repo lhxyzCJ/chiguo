@@ -160,12 +160,25 @@ def test_6_holiday_availability(cfg):
 
 def test_7_in_class_availability(cfg):
     """上课中 → availability 极低"""
-    s = make_state(cfg)
-    # 周一上午第一节课（08:30）
-    avail = s.availability(dt(2026, 6, 15, 8, 30))
-    # 上课中 availability 应在 0.05-0.20；on_break(8月=暑假,on_break 用真实今天判定)时兜底 0.85
-    assert avail <= 0.20 or avail == 0.85, \
-        f"expected in-class (<=0.20) or on_break fallback (0.85), got {avail}"
+    import shutil
+    # 批 3a:break 判定按 now(不再依赖真实今天),无课表缓存时走 unavailable→1.0,
+    # 无法锁定"上课中";故注入仓库真实课表文件 data/xskb.xlsx → 周一 08:30 第 1 节上课中
+    xlsx_src = Path("data/xskb.xlsx")
+    xlsx_dst = TMP_DIR / "data" / "xskb.xlsx"
+    xlsx_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(xlsx_src, xlsx_dst)
+    cache_file = TMP_DIR / "schedule_cache.json"
+    try:
+        s = make_state(cfg)
+        # 周一上午第一节课（08:30）
+        avail = s.availability(dt(2026, 6, 15, 8, 30))
+        # 上课中 availability 应在 0.05-0.20；on_break(8月=暑假,on_break 用真实今天判定)时兜底 0.85
+        assert avail <= 0.20 or avail == 0.85, \
+            f"expected in-class (<=0.20) or on_break fallback (0.85), got {avail}"
+    finally:
+        # 清理注入的课表(xlsx 副本 + 解析产生的缓存),不污染后续测试(test_7b 依赖无缓存环境)
+        for p in (xlsx_dst, cache_file):
+            p.unlink(missing_ok=True)
     print("  OK test_7_in_class: availability =", avail)
 
 
@@ -379,6 +392,40 @@ def test_17_rate_affects_lambda(cfg):
     print(f"  OK test_17_rate_lambda: λ {lam_low:.4f} → {lam_high:.4f}")
 
 
+def test_8_snapshot_keys_compatible(cfg):
+    """snapshot 键兼容:现有键零改动 + 新增 attention 块(批 3a)"""
+    s = make_state(cfg)
+    snap = s.snapshot(dt(2026, 6, 15, 14, 0))
+    for k in ("emotion", "dominant_layer", "neediness", "poisson_lambda", "availability",
+              "holiday", "schedule", "cooldown", "personality", "user_state", "time"):
+        assert k in snap, f"snapshot 缺键 {k}"
+    assert "attention" in snap, "snapshot 须含 attention 块"
+    assert set(snap["attention"]) == {"t1", "t2", "t3", "week_num", "today_exceptions"}, \
+        f"attention 块键, got {set(snap['attention'])}"
+    if snap["schedule"] is not None:
+        for k in ("in_class", "class_load", "current_course", "remaining_classes",
+                  "total_classes", "on_break", "breaks"):
+            assert k in snap["schedule"], f"schedule 缺键 {k}"
+    print("  OK test_8_snapshot_keys_compatible")
+
+
+def test_9_exam_weekend_overlap(cfg):
+    """考周×周末 → 0.5(二十轮 C5 落点);override 写入即时生效(来源直算,零 LLM 窗口)"""
+    import tempfile
+    from pathlib import Path as _P
+    import json as _json
+    s = make_state(cfg)
+    s.semester_end = date(2099, 12, 31)
+    ovr_path = _P(s._anchored("schedule_overrides.json"))
+    ovr_path.parent.mkdir(parents=True, exist_ok=True)
+    ovr_path.write_text(_json.dumps({"override_version": 1, "items": [
+        {"id": "e1", "date": "2026-06-13", "end_date": "2026-06-19", "kind": "exam_week",
+         "label": "期末", "created_at": "2026-06-01T10:00:00+08:00"}]}))  # 覆盖周六 6/13 与 周日 6/14
+    avail = s.availability(dt(2026, 6, 13, 14, 0))   # 周六
+    assert avail == 0.5, f"考周×周末 → 0.5, got {avail}"
+    print("  OK test_9_exam_weekend_overlap")
+
+
 # ═══════════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════════
@@ -411,7 +458,11 @@ if __name__ == "__main__":
             test_16_anxiety_rate_tracking,
             test_17_rate_affects_lambda,
         ]
-        tests = basic_tests + v3_tests
+        batch3a_tests = [
+            test_8_snapshot_keys_compatible,
+            test_9_exam_weekend_overlap,
+        ]
+        tests = basic_tests + v3_tests + batch3a_tests
 
         for t in tests:
             t(cfg)

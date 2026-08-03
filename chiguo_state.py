@@ -31,6 +31,9 @@ from chiguo_personality import (
 )
 from schedule import ScheduleParser
 from schedule.holiday import HolidayParser
+from schedule.anniversary import AnniversaryManager
+from schedule.override_store import OverrideStore
+from schedule.plan_store import PlanStore
 from memory_bridge import MemoryBridge
 from chiguo_circadian import CircadianTracker, bucket_for
 from datetime import date as date_type
@@ -272,6 +275,12 @@ class ChiguoState:
             strength=mem_cfg.get("ebbinghaus_strength"),
             min_weight=mem_cfg.get("ebbinghaus_min_weight"),
         )
+
+        base_dir = str(self._anchored("."))
+        self.anniversary_mgr = AnniversaryManager(base_dir)
+        self.override_store = OverrideStore(base_dir)
+        self.plan_store = PlanStore(base_dir)
+        self._rc_cache: dict = {}   # {date_str: resolved_classes}(availability/schedule_status 共享)
 
         self._load()
 
@@ -866,155 +875,104 @@ class ChiguoState:
 
     # ── 课表查询 ──────────────────────────────────────────
 
+    def _resolved_for(self, now):
+        """当日 resolved_classes 共享缓存(消灭 availability/schedule_status 双查询路径,§5.1)"""
+        from schedule.sources import load_sources
+        from schedule.day_plan import resolve_classes
+        key = now.date().isoformat()
+        if self._rc_cache.get("date") != key:
+            src = load_sources(str(self._anchored(".")), self.config)
+            self._rc_cache = {"date": key, "sources": src,
+                              "classes": resolve_classes(now.date(), src)}
+        return self._rc_cache["sources"], self._rc_cache["classes"]
+
     def availability(self, now: datetime, user_state: dict = None) -> float:
-        """
-        主人当前可接收消息的程度 [0, 1]。
-        寒暑假   → 0.85（手动或学期结束）
-        节假日   → 0.85（放假，完全自由）
-        上课中(满课)→ 0.05 / 0.08 / 0.12（极低但非零，崩溃边缘可突破）
-        课间/剩余课上完 → 0.85 / 0.70 / 0.50（按剩余节数递减）
-        空闲     → 0.85
-        深夜     → 0.0（硬禁发，由 can_send 处理）
-
-        v4: 集成 Bayesian 用户状态推断。user_sleeping → 0.0, user_busy → ×0.5
-        """
-        # ── 第零层：寒暑假检测，最高优先级 ──
-        if self.on_break:
-            base = 0.85
-        # ── 第零点半层：考试周 ──
-        elif not self.holiday_parser.is_holiday(now):
-            today = now.date() if isinstance(now, datetime) else now
-            in_exam = False
-            for start, end in self.exam_ranges:
-                if start <= today <= end:
-                    in_exam = True
-                    break
-            if in_exam:
-                base = 0.5
-            elif not self.holiday_parser.is_school_day(now):
-                base = 0.85
-            else:
-                # ── 第二层:课表判断 ──
-                # 注意:这里必须直连 schedule_parser.query（需区分 available=False 与空闲,
-                # schedule_status 会把两者合并为 None → 丢失 1.0/0.85 的语义）
-                try:
-                    sch = self.schedule_parser.query(now)
-                except Exception:
-                    base = 1.0  # 课表不可用（可选来源）→ 按完全空闲处理
-                else:
-                    if not sch.get("available", True):
-                        base = 1.0  # 课表未启用/无数据 → 无课表信息，按空闲
-                    elif sch["in_class"]:
-                        load = sch.get("class_load", "normal")
-                        base = {"heavy": 0.05, "normal": 0.08, "light": 0.12}.get(load, 0.08)
-                    else:
-                        remaining = sch.get("remaining_classes", 0)
-                        if remaining == 0:
-                            base = 0.85
-                        elif remaining <= 1:
-                            base = 0.70
-                        else:
-                            base = 0.50
-        else:
-            # 节假日 / 非上学日
-            base = 0.85
-
-        # ── v4: Bayesian 用户状态调制 ──
-        try:
-            if user_state is None:
-                user_state = self.infer_user_state(now)
-            most_likely = user_state.get("most_likely", "browsing")
-            confidence = user_state.get("confidence", 0.0)
-            # v6: 只有高置信度的 sleeping 推断才阻塞发送（置信度门槛来自 config
-            # [bayesian] min_confidence_for_block，默认 0.5），低置信不误伤
-            if most_likely == "sleeping" and confidence > self.config.get("bayesian", {}).get("min_confidence_for_block", 0.5):
-                base = 0.0  # 用户很可能在睡觉 → 绝不发送
-            elif most_likely == "busy":
-                base *= 0.5  # 用户忙 → 降低
-            elif most_likely == "needs_care":
-                base = min(base * 1.2, 0.95)  # 需要关心 → 略微提高
-            # 焦虑阻塞（"生气了不会找你"）
-            if self.emotion.anxiety > self.config.get("cooldown", {}).get("anxiety_block_threshold", 70.0):
-                base *= 0.3  # 生气时大幅降低
-        except Exception:
-            pass
-
-        return base
+        """三层重组(§5.1):availability_base → class_load_adjust(idle_school) → bayesian_adjust。
+        数值与现码一致;break 判定按 now(修复"真实今天"怪癖,现有断言两值皆可)。"""
+        from schedule.day_plan import availability_base, class_load_adjust, bayesian_adjust
+        src, rc = self._resolved_for(now)
+        res = availability_base(now, src)
+        base = res["base"]
+        if res["tier"] == "idle_school":
+            base = class_load_adjust(base, rc, now)
+        return bayesian_adjust(base, user_state, self.emotion, self.config)
 
     def schedule_status(self, now: datetime) -> dict | None:
-        """获取课表快照，用于展示和 context 注入。寒暑假/节假日优先。"""
+        """窄原语 + resolved_classes 组装;None 语义保持(课表不可用);键形状双向兼容(§5.1)。"""
+        from schedule.day_plan import resolve_classes, _on_break, current_period
+        from schedule.sources import load_sources
+        from schedule.query import PERIOD_TIMES
+        src, rc = self._resolved_for(now)
+        today = now.date() if isinstance(now, datetime) else now
 
-        # 始终计算假期区间信息
         def _breaks_info():
-            data = self._read_break_state()
-            today = now.date() if isinstance(now, datetime) else now
-            breaks = []
-            if data:
-                for b in data.get("breaks", []):
-                    try:
-                        start = date_type.fromisoformat(b["start"])
-                        end = date_type.fromisoformat(b["end"])
-                        breaks.append({
-                            "start": b["start"], "end": b["end"],
-                            "note": b.get("note", ""),
-                            "active": start <= today <= end,
-                        })
-                    except (ValueError, KeyError):
-                        continue
-            return breaks
+            data = src.break_state
+            if not data:
+                return []
+            out = []
+            for b in data.get("breaks", []):
+                try:
+                    start = date_type.fromisoformat(b["start"]); end = date_type.fromisoformat(b["end"])
+                except (ValueError, KeyError, TypeError):
+                    continue
+                out.append({"start": b["start"], "end": b["end"], "note": b.get("note", ""),
+                            "active": start <= today <= end})
+            return out
 
-        if self.on_break:
-            today = datetime.now(CST).date()
-            reason = "学期已结束" if (self.semester_end and today > self.semester_end) else None
-            data = self._read_break_state()
-            if data and (data.get("manual_override") or data.get("on_break")):
-                reason = reason or "手动无限期开启"
-            return {
-                "in_class": False,
-                "current_course": None,
-                "class_load": "free",
-                "remaining_classes": 0,
-                "total_classes": 0,
-                "on_break": True,
-                "break_reason": reason or "日期区间",
-                "breaks": _breaks_info(),
-            }
-        hq = self.holiday_parser.query(now)
+        on_break = _on_break(src.break_state, src.semester_end, today)
+        if on_break:
+            return {"in_class": False, "current_course": None, "class_load": "free",
+                    "remaining_classes": 0, "total_classes": 0, "on_break": True,
+                    "break_reason": "学期已结束" if (src.semester_end and today > src.semester_end) else
+                                    ("手动无限期开启" if (src.break_state and (src.break_state.get("manual_override")
+                                     or src.break_state.get("on_break"))) else "日期区间"),
+                    "breaks": _breaks_info()}
+        hq = src.holiday.query(now)
         if hq["is_holiday"]:
-            return {
-                "in_class": False,
-                "current_course": None,
-                "class_load": "free",
-                "remaining_classes": 0,
-                "total_classes": 0,
-                "holiday": hq["holiday_name"],
-                "holiday_hint": hq["hint"],
-                "on_break": False,
-                "breaks": _breaks_info(),
-            }
+            return {"in_class": False, "current_course": None, "class_load": "free",
+                    "remaining_classes": 0, "total_classes": 0, "holiday": hq["holiday_name"],
+                    "holiday_hint": hq["hint"], "on_break": False, "breaks": _breaks_info()}
         if hq["is_weekend"] and not hq["is_makeup_workday"]:
-            return {
-                "in_class": False,
-                "current_course": None,
-                "class_load": "free",
-                "remaining_classes": 0,
-                "total_classes": 0,
-                "weekend": True,
-                "on_break": False,
-                "breaks": _breaks_info(),
-            }
-        try:
-            result = self.schedule_parser.query(now)
-            if not result.get("available", True):
-                return None  # 课表可选来源未启用 → 不注入课表信息
-            if hq["is_makeup_workday"]:
-                result["makeup_day"] = True
-                result["makeup_reason"] = hq["hint"]
-            result["on_break"] = False
-            result["breaks"] = _breaks_info()
-            return result
-        except Exception:
-            return None
+            return {"in_class": False, "current_course": None, "class_load": "free",
+                    "remaining_classes": 0, "total_classes": 0, "weekend": True,
+                    "on_break": False, "breaks": _breaks_info()}
+        if not src.schedule_valid:
+            return None  # 课表未启用/无数据/解析异常 → None 语义保持
+        # ── 组装(与现 schedule_query 返回形状逐键兼容)──
+        active = {p: c for p, c in rc.items() if not c.get("cancelled")}
+        cp = current_period(now)
+        result = {"in_class": cp in active, "on_break": False, "breaks": _breaks_info()}
+        cur = active.get(cp)
+        if cur:
+            end_h, end_m = map(int, PERIOD_TIMES[cp][1].split(":"))
+            end_time = now.replace(hour=end_h, minute=end_m, second=0)
+            result["current_course"] = {**cur, "period": cp, "time": PERIOD_TIMES[cp],
+                                        "minutes_remaining": max(0, (end_time - now).total_seconds() / 60)}
+        else:
+            result["current_course"] = None
+        nxt = next((active[p] for p in sorted(active) if p > (cp or 0)), None)
+        if nxt is not None:
+            result["next_course"] = {**nxt, "period": [p for p in sorted(active) if p > (cp or 0)][0],
+                                     "time": PERIOD_TIMES[[p for p in sorted(active) if p > (cp or 0)][0]]}
+        else:
+            result["next_course"] = None
+        total = len(active)
+        if total == 0:
+            load = "free"
+        elif total <= 2:
+            load = "light"
+        elif total <= 5:
+            load = "normal"
+        else:
+            load = "heavy"
+        result["class_load"] = load
+        result["remaining_classes"] = len([p for p in active if p > (cp or 0)])
+        result["total_classes"] = total
+        result["periods_today"] = [dict(c) for c in rc.values()]   # 同形:period 字段在条目内
+        if hq["is_makeup_workday"]:
+            result["makeup_day"] = True
+            result["makeup_reason"] = hq["hint"]
+        return result
 
     # ── 时间推进（半衰期驱动） ──────────────────────────
 
@@ -1750,4 +1708,8 @@ class ChiguoState:
             "user_state": user_state,
             "time": now.strftime("%Y-%m-%d %H:%M"),
         }
+        from schedule.sources import load_sources
+        from schedule.attention import build_attention
+        src, _rc = self._resolved_for(now)
+        snap["attention"] = build_attention(src, now.date())
         return snap
