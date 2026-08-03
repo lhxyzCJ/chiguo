@@ -2,6 +2,8 @@
 // test_bridge_schedule.mjs — 追问循环 8 态 + 鉴权 + 超时 + ⑩-⑭(批次 6a,独立 runner)
 // 用法: node test_bridge_schedule.mjs(退出码 0=全过,1=有失败)
 import assert from 'node:assert'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -55,6 +57,18 @@ function fakeBot(replies) {
 }
 
 const queue = { run: async (fn) => fn() }
+
+const execFileP = promisify(execFile)
+const DAEMON_PY = 'uv'
+
+t('⑨ recall 无匹配反问(6b 锚;daemon --schedule-recall 无匹配形状)', async () => {
+  const { stdout } = await execFileP(DAEMON_PY,
+    ['run', 'python', join(REPO, 'chiguo_daemon.py'), '--schedule-recall', '不存在的关键词xyz'],
+    { timeout: 30_000 })
+  const r = JSON.parse(stdout)
+  assert.ok(r.action === 'schedule_recall' && r.ok === true && r.query === '不存在的关键词xyz')
+  assert.ok(Array.isArray(r.matches) && r.matches.length === 0, '无匹配 → 空数组 + ok:true(反问引导由 prompt 契约承担)')
+})
 
 t('⑭ clarify 路径锚定仓库根(A3)', () => {
   const p = scheduleClarifyPath(REPO)
