@@ -16,7 +16,6 @@ const tmp = mkdtempSync(join(tmpdir(), 'bridge-schedule-'))
 const PH_SCRIPT = join(tmp, 'pi_health.py')
 cpSync(new URL('../scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
 process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
-process.env.WECHAT_BRIDGE_PI_HEALTH_PY = '/root/chiguo/.venv/bin/python'
 const { scheduleClarifyPath, readClarify, writeClarify, clearClarify, exitWordMatch, handleMessage } =
   await import('../wechat-bridge/bridge.mjs')
 

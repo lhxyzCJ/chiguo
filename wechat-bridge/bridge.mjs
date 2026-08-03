@@ -33,7 +33,7 @@ import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent } from './command-detect.mjs'
-import { parseNdjson, extractAnalysis } from '../scripts/pi-run.mjs'
+import { parseNdjson, extractAnalysis, resolveRepo } from '../scripts/pi-run.mjs'
 
 const execFileP = promisify(execFile)
 
@@ -42,15 +42,17 @@ const PI_RUN_SCRIPT = process.env.WECHAT_BRIDGE_PI_RUN
   ?? new URL('../scripts/pi-run.mjs', import.meta.url).pathname
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
-const DAEMON_PY = process.env.WECHAT_BRIDGE_DAEMON_PY ?? '/root/chiguo/.venv/bin/python'
-const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? '/root/chiguo/chiguo_daemon.py'
+// 仓库根 = 本文件位置推导（可移植，随仓库克隆到任何路径）
+const REPO = resolveRepo(import.meta.url)
+const DAEMON_PY = process.env.WECHAT_BRIDGE_DAEMON_PY ?? `${REPO}/.venv/bin/python`
+const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? `${REPO}/chiguo_daemon.py`
 // 仓库根 = DAEMON_SCRIPT 父目录(与 :43 同款解析,二十轮 A3 落点)
 const REPO_ROOT = dirname(DAEMON_SCRIPT)
 // pi 假死记账脚本（pi_health.py 状态机）；默认随仓库 scripts/ 部署，可用 WECHAT_BRIDGE_PI_HEALTH 覆盖
 const PI_HEALTH_SCRIPT = process.env.WECHAT_BRIDGE_PI_HEALTH
   ?? new URL('../scripts/pi_health.py', import.meta.url).pathname
 // pi_health 解释器独立于 DAEMON_PY（测试可能把后者换成 node 跑 fake daemon）
-const PI_HEALTH_PY = process.env.WECHAT_BRIDGE_PI_HEALTH_PY ?? '/root/chiguo/.venv/bin/python'
+const PI_HEALTH_PY = process.env.WECHAT_BRIDGE_PI_HEALTH_PY ?? `${REPO}/.venv/bin/python`
 // 登录态目录：默认仓库内回退；wechat-bridge.sh 注入集中认证目录 ~/.chiguo/auth/wechat（可迁移）；可用 WECHAT_BRIDGE_STORAGE 覆盖
 const DEFAULT_STORAGE = new URL('./credentials/', import.meta.url).pathname
 

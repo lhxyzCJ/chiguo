@@ -24,9 +24,7 @@ const PH_REAL_CONTENT = readFileSync(PH_SCRIPT, 'utf8')
 
 process.env.WECHAT_BRIDGE_PI_RUN = FAKE_PI
 process.env.WECHAT_BRIDGE_DAEMON = FAKE_DAEMON
-process.env.WECHAT_BRIDGE_DAEMON_PY = '/root/chiguo/.venv/bin/python'
 process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
-process.env.WECHAT_BRIDGE_PI_HEALTH_PY = '/root/chiguo/.venv/bin/python'
 
 const { handleMessage, TurnQueue } = await import('../wechat-bridge/bridge.mjs')
 

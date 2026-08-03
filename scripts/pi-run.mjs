@@ -7,9 +7,18 @@
  */
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
-const REPO = process.env.CHIGUO_REPO ?? '/root/chiguo'
+/** 仓库根推导：CHIGUO_REPO 环境变量优先，否则从脚本位置推导（文件 URL 两级、目录 URL 一级目录）。 */
+export function resolveRepo(fileURL, env = process.env) {
+  if (env.CHIGUO_REPO) return env.CHIGUO_REPO
+  const p = fileURLToPath(fileURL)
+  const dir = p.endsWith(path.sep) ? p : path.dirname(p)
+  return path.dirname(dir)
+}
+
+const REPO = resolveRepo(import.meta.url)
 const HOST = readToml(`${REPO}/chiguo_proactive.toml`)?.host ?? {}
 const PI_BIN = process.env.PI_BIN ?? 'pi'
 const PROVIDER = process.env.PIRUN_PROVIDER ?? HOST.provider ?? 'opencode-go'  // provider 可配：pi --provider 名（内置或 models.json 自定义）
