@@ -47,7 +47,7 @@ say "运行 Node 测试(5 个文件) ..."
 for t in test_pi_run test_bridge_askpi test_bridge_cmd test_bridge_health test_bridge_schedule; do
     node "tests/$t.mjs" >/dev/null || fail "$t.mjs 失败,中止部署"
 done
-say "运行脚本测试(4 个文件) ..."
+say "运行脚本测试(5 个文件) ..."
 bash tests/test_install_pi.sh >/dev/null || fail "test_install_pi.sh 失败,中止部署"
 bash tests/test_wechat_bridge.sh >/dev/null || fail "test_wechat_bridge.sh 失败,中止部署"
 bash tests/test_netease_api.sh >/dev/null || fail "test_netease_api.sh 失败,中止部署"
