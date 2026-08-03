@@ -205,6 +205,8 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 **Setup**: `bash scripts/wechat-bridge.sh install`; login with `bash scripts/wechat-bridge.sh login`.
 
+**Service management**: `bash scripts/service.sh <autostart|temp|status|stop|uninstall>` (autostart = systemd boot autostart for ollama + bridge; temp = temporary start without autostart registration; see doc/SYSTEM.md for details).
+
 **Missing**: no WeChat delivery. The daemon still runs fine via CLI (`chiguo_daemon.py`) — decisions, emotions and accounting all work, messages just cannot be sent.
 
 ### Memory system (LanceDB + ollama embedding)

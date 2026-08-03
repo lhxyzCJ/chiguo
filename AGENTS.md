@@ -19,7 +19,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && bash tests/test_tick_health.sh && \
+node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && bash tests/test_tick_health.sh && bash tests/test_service.sh && \
 uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
 uv run python tests/test_schedule_parser.py && \
 uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
@@ -37,7 +37,7 @@ uv run python tests/test_anniversary.py && uv run python tests/test_schedule_ove
 uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
 uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
 uv run python tests/test_trigger_scale.py && uv run python tests/test_isolation.py && \
-uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py   # full suite (35 py + 9 script tests)
+uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py   # full suite (35 py + 10 script tests)
 
 uv run python tests/test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout
@@ -68,5 +68,5 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 
 ## After any code change
 
-1. Run affected test files; full chain (35 py + 9 script) if touching math/state/daemon.
+1. Run affected test files; full chain (35 py + 10 script) if touching math/state/daemon.
 2. Update affected sections of `doc/SYSTEM.md`, `doc/README.md`.
