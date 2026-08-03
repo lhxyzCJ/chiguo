@@ -1015,7 +1015,6 @@ model = "deepseek-v4-flash"
 thinking_level = "high"                  # off/minimal/low/medium/high/xhigh/max
 session_id = "chiguo-main"               # 回复侧会话（bridge askPi）
 send_session_id = "chiguo-send"          # 主动发送会话（chiguo-tick.sh）——与回复会话分离，消除跨进程并发 turn
-personality_dir = "/root/chiguo/personality"    # SUN2.md + 迟菓语言技巧指南.md（随仓库）
 wechat_bridge_url = "http://127.0.0.1:18790/send"  # 主动发送端点（tick curl 目标，--noproxy '*'）
 
 [character]

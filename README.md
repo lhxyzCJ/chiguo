@@ -346,7 +346,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 欢迎任何形式的贡献——尤其是"她"的成长：
 
 - **测试先行（TDD）**：铁律是先写失败测试再实现（红→绿），`tests/` 下每个 `test_*.py` 是独立 runner
-- **改完跑全链**：完整测试链见 `AGENTS.md`（35 py + 10 script），全绿再提交
+- **改完跑全链**：完整测试链见 `AGENTS.md`（36 py + 10 script），全绿再提交
 - **文档同步**：行为变化必须同步 `doc/SYSTEM.md`
 - **Commit 风格**：`feat:` / `fix:` / `docs:` / `chore:` 前缀 + 中文描述
 - **设计文档**：大改动先在项目外 `~/chiguo-meta/specs/` 写设计文档，评审通过再动手

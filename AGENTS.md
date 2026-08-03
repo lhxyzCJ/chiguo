@@ -37,7 +37,7 @@ uv run python tests/test_anniversary.py && uv run python tests/test_schedule_ove
 uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
 uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
 uv run python tests/test_trigger_scale.py && uv run python tests/test_isolation.py && \
-uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py   # full suite (35 py + 10 script tests)
+uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py && uv run python tests/test_docs_sync.py   # full suite (36 py + 10 script tests)
 
 uv run python tests/test_monitor.py                    # single file
 uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout
@@ -68,5 +68,5 @@ uv run python chiguo_demo.py                     # interactive demo, templates o
 
 ## After any code change
 
-1. Run affected test files; full chain (35 py + 10 script) if touching math/state/daemon.
-2. Update affected sections of `doc/SYSTEM.md`, `doc/README.md`.
+1. Run affected test files; full chain (36 py + 10 script) if touching math/state/daemon.
+2. Update affected sections of `doc/SYSTEM.md`, `doc/README.md`；`doc/DEPLOYMENT.md` 在 deploy.sh/scripts 改动时同步。
