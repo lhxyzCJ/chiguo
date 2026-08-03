@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """test_schedule_override.py — 写接口/override_store/plan_store/confirm 单元测试(批次 2b)"""
 
-import json, os, stat, sys, tempfile
+import json, os, re, stat, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datetime import date, datetime, timezone, timedelta
@@ -32,8 +32,8 @@ def test_apply_and_file_schema():
         it = raw["items"][0]
         assert it["id"] == "ovr-20260820-1", f"id 规则 ovr-YYYYMMDD-N(条目日期), got {it['id']}"
         assert it["kind"] == "cancel" and it["date"] == "2026-08-20" and it["period"] == 3
-        assert it["created_at"].startswith("2026-08-03T") and it["created_at"].endswith("+0800"), \
-            f"created_at CST 秒级, got {it['created_at']}"
+        assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+0800$", it["created_at"]), \
+            f"created_at 格式(CST 秒级 ISO): {it['created_at']}"
         assert stat.S_IMODE(os.stat(Path(td, "schedule_overrides.json")).st_mode) == 0o600, "0600"
     print("  OK test_apply_and_file_schema")
 
