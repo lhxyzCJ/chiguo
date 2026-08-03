@@ -3,7 +3,7 @@
 # 验证 dry-run 只读、unit 模板、幂等、互斥接管、status 三态、uninstall、错误路径（用例见各 Task）
 set -uo pipefail
 TMP="$(mktemp -d /tmp/chiguo-service-test.XXXXXX)"
-trap 'rm -rf "$TMP"' EXIT
+trap 'kill $(cat "$TMP/pid/bridge-temp.pid" 2>/dev/null) 2>/dev/null || true; rm -rf "$TMP"' EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok - $*"; }
@@ -19,11 +19,11 @@ export CALLS_LOG
 : > "$CALLS_LOG"
 PATH="$TMP/bin:$PATH"
 
-# ── 假 node：记录调用；有 node 版本（错误路径用例通过 PATH 移除）──
+# ── 假 node：记录 "$0 $*"；模拟常驻（exec sleep）供 temp 存活校验 ──
 cat > "$TMP/bin/node" <<'STUB'
 #!/usr/bin/env bash
-echo "node $*" >> "$CALLS_LOG"
-exit 0
+echo "$0 $*" >> "$CALLS_LOG"
+exec sleep 300
 STUB
 chmod +x "$TMP/bin/node"
 
@@ -102,6 +102,7 @@ export ACTIVE_MARK="$TMP/active"
 grep -q "stop chiguo-bridge" "$CALLS_LOG" || fail "temp 未先停 systemd 实例"
 grep -q "node --env-file=$TMP/repo/wechat-bridge/.env bridge.mjs" "$CALLS_LOG" || fail "temp 未启动 bridge"
 [ -f "$TMP/pid/bridge-temp.pid" ] || fail "temp pidfile 未写入"
+kill "$(cat "$TMP/pid/bridge-temp.pid")" 2>/dev/null || true
 unset ACTIVE_MARK
 rm -f "$TMP/pid/bridge-temp.pid"
 pass "temp 互斥接管 + pidfile"
@@ -128,8 +129,38 @@ chmod +x "$TMP/bin/curl"
 OUT="$("$SERVICE" temp 2>&1)"
 echo "$OUT" | grep -q "ollama" || fail "ollama 不在线未 warn"
 [ -f "$TMP/pid/bridge-temp.pid" ] || fail "ollama 不在线不应阻止 temp 启动"
+kill "$(cat "$TMP/pid/bridge-temp.pid")" 2>/dev/null || true
 rm -f "$TMP/pid/bridge-temp.pid"
 pass "temp 对 ollama 降级 warn"
+
+# ── 用例 7b: temp 使用 CHIGUO_NODE 注入路径启动 ──
+cat > "$TMP/bin/fakenode" <<'STUB'
+#!/usr/bin/env bash
+echo "fake-node $*" >> "$CALLS_LOG"
+exec sleep 300
+STUB
+chmod +x "$TMP/bin/fakenode"
+: > "$CALLS_LOG"
+CHIGUO_NODE="$TMP/bin/fakenode" "$SERVICE" temp >/dev/null 2>&1 || fail "temp 退出非 0"
+grep -q "fake-node --env-file=$TMP/repo/wechat-bridge/.env bridge.mjs" "$CALLS_LOG" || fail "temp 未用 CHIGUO_NODE 注入路径"
+kill "$(cat "$TMP/pid/bridge-temp.pid")" 2>/dev/null || true
+rm -f "$TMP/pid/bridge-temp.pid"
+pass "temp 使用 CHIGUO_NODE 注入路径"
+
+# ── 用例 7c: temp 启动即死 → warn + 退出 1 + pidfile 清理 ──
+mkdir -p "$TMP/bin-dead"
+cat > "$TMP/bin-dead/node" <<'STUB'
+#!/usr/bin/env bash
+echo "$0 $*" >> "$CALLS_LOG"
+exit 1
+STUB
+chmod +x "$TMP/bin-dead/node"
+: > "$CALLS_LOG"
+OUT="$(PATH="$TMP/bin-dead:$PATH" "$SERVICE" temp 2>&1)"
+[ $? = 1 ] || fail "temp 启动即死应退出 1（实际 $?）"
+echo "$OUT" | grep -q "立即退出" || fail "temp 启动即死未 warn"
+[ ! -f "$TMP/pid/bridge-temp.pid" ] || fail "temp 启动即死 pidfile 未清理"
+pass "temp 启动即死 → warn + 退出 1"
 
 # ── 用例 8: status 三态（systemd active + temp 无 + ollama 健康）──
 # 恢复 curl 假件（用例 7 已替换为全失败版）
