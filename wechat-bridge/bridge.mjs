@@ -30,7 +30,9 @@ import { WeChatBot } from '@wechatbot/wechatbot'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
-import { detectSpecialCommand, executeSpecialCommand } from './command-detect.mjs'
+import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent } from './command-detect.mjs'
 
 const execFileP = promisify(execFile)
 
@@ -41,6 +43,8 @@ const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 const DAEMON_PY = process.env.WECHAT_BRIDGE_DAEMON_PY ?? '/root/chiguo/.venv/bin/python'
 const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? '/root/chiguo/chiguo_daemon.py'
+// 仓库根 = DAEMON_SCRIPT 父目录(与 :43 同款解析,二十轮 A3 落点)
+const REPO_ROOT = dirname(DAEMON_SCRIPT)
 // pi 假死记账脚本（pi_health.py 状态机）；默认随仓库 scripts/ 部署，可用 WECHAT_BRIDGE_PI_HEALTH 覆盖
 const PI_HEALTH_SCRIPT = process.env.WECHAT_BRIDGE_PI_HEALTH
   ?? new URL('../scripts/pi_health.py', import.meta.url).pathname
@@ -135,6 +139,33 @@ export async function recordPiHealth(bot, outcome, reason = null) {
   }
 }
 
+// ── schedule-center 6a:澄清记录(仓库根锚定 = DAEMON_SCRIPT 父目录;A3)──
+export function scheduleClarifyPath(repoRoot = REPO_ROOT) { return join(repoRoot, 'schedule_clarify.json') }
+export function readClarify(repoRoot = REPO_ROOT) {
+  const p = scheduleClarifyPath(repoRoot)
+  if (!existsSync(p)) return null
+  try {
+    const rec = JSON.parse(readFileSync(p, 'utf8'))
+    if (!rec.expires_at || Date.parse(rec.expires_at) <= Date.now()) {  // 6h 过期静默清理
+      rmSync(p, { force: true })
+      return null
+    }
+    return rec
+  } catch {  // 损坏 → 清空为无记录
+    rmSync(p, { force: true })
+    return null
+  }
+}
+export function writeClarify(repoRoot, rec) {
+  const p = scheduleClarifyPath(repoRoot)
+  const tmp = p + '.tmp'
+  writeFileSync(tmp, JSON.stringify(rec), { mode: 0o600 })
+  chmodSync(tmp, 0o600)
+  renameSync(tmp, p)
+}
+export function clearClarify(repoRoot = REPO_ROOT) { rmSync(scheduleClarifyPath(repoRoot), { force: true }) }
+export function exitWordMatch(text) { return /^(?:算了|不要了|没事)/.test(text.trim()) }
+
 /** 主动发送端点：POST /send {"to","text"} → bot.send()。仅 127.0.0.1。 */
 function startSendServer(bot) {
   const server = createServer((req, res) => {
@@ -180,15 +211,133 @@ function startSendServer(bot) {
   })
 }
 
-/** 单条微信消息处理链路（onMessage 委托；导出供测试）：
- * 1) recordUserMsg 确定性回传 daemon（无分析）
- * 2) detectSpecialCommand 命中特殊命令 → executeSpecialCommand 直接执行 daemon 并回复，不经 pi
- * 3) 否则 askPi（pi-run --analysis-mode 一次完成分析+回复）→ upgradeAnalysis 升级 → 回复
- * bot 需提供 reply(msg, text)/sendTyping(userId)；queue 提供 run(task)。 */
-export async function handleMessage(text, msg, bot, queue) {
-  if (!text?.trim()) return null
+/** 命令链路默认实现:pi-run 模式 + daemon CLI(独立会话 chiguo-extract/verify;A4 shape 直读 stdout JSON) */
+function makeScheduleDeps(repoRoot) {
+  return {
+    async extractPi(original) {
+      const att = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--attention'], { timeout: 30_000 }).catch(() => ({ stdout: '{}' }))
+      let attention = {}
+      try { attention = JSON.parse(att.stdout) } catch {}
+      const { stdout } = await execFileP('node', [PI_RUN_SCRIPT, '--prompt', original,
+        '--schedule-extract', '--attention', JSON.stringify(attention), '--week-num', String(attention.week_num ?? 1)],
+        { timeout: 180_000 })
+      const res = JSON.parse(stdout)
+      return res.parsed ?? { ok: false, error: 'no block' }
+    },
+    async verifyPi(item, original) {
+      const { stdout } = await execFileP('node', [PI_RUN_SCRIPT, '--prompt', original,
+        '--schedule-verify', '--item', JSON.stringify(item)], { timeout: 180_000 })
+      return JSON.parse(stdout).parsed ?? { ok: false }
+    },
+    async runDaemon(item) {
+      const { stdout } = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--schedule-change', JSON.stringify(item)],
+        { timeout: 30_000 })
+      return JSON.parse(stdout)
+    },
+  }
+}
 
-  await recordUserMsg(text)  // 确定性回传 daemon（先于 askPi 分析；analysis 稍后经 upgradeAnalysis 升级）
+let scheduleDeps = null
+function scheduleDefaults() {
+  scheduleDeps ??= makeScheduleDeps(REPO_ROOT)
+  return scheduleDeps
+}
+const defaultExtractPi = (original) => scheduleDefaults().extractPi(original)
+const defaultVerifyPi = (item, original) => scheduleDefaults().verifyPi(item, original)
+const defaultRunDaemon = (item) => scheduleDefaults().runDaemon(item)
+
+/** 命令链路:提取 → 校验 → daemon 写入 → 确认/追问/澄清记录(180s 超时不阻塞队列,M16) */
+async function handleScheduleCommand(original, msg, bot, deps) {
+  const repoRoot = deps.repoRoot ?? REPO_ROOT
+  try {
+    const ex = await withTimeout(deps.extractPi(original), 180_000)
+    if (!ex.ok) {
+      if (ex.not_command) return 'chat'                 // ⑤/⑥ 释放回聊天链(记录保留)
+      const rec = { original, missing: ex.missing ?? [], question: ex.question ?? '哥哥没太听明白,再告诉哥哥一次具体安排?',
+                    created_at: deps.now().toISOString(), expires_at: new Date(deps.now().getTime() + 6 * 3600e3).toISOString() }
+      writeClarify(repoRoot, rec)
+      await bot.reply(msg, rec.question)
+      return 'clarify'
+    }
+    const vf = await withTimeout(deps.verifyPi(ex.item, original), 180_000)
+    if (!vf.ok) {
+      const rec = { original, missing: vf.missing ?? [], question: vf.question ?? '这个安排有点对不上,哥哥再确认一下?',
+                    created_at: deps.now().toISOString(), expires_at: new Date(deps.now().getTime() + 6 * 3600e3).toISOString() }
+      writeClarify(repoRoot, rec)
+      await bot.reply(msg, rec.question)
+      return 'clarify'
+    }
+    const r = await withTimeout(deps.runDaemon(ex.item), 30_000)
+    if (r.ok) {
+      clearClarify(repoRoot)                            // ⑪ 成功写入后清记录(F4)
+      await bot.reply(msg, r.text)
+      return 'done'
+    }
+    // ⑩ 确定性拒绝(reason/question/missing 由 daemon 给出)→ 入澄清记录
+    writeClarify(repoRoot, { original, missing: r.missing ?? [], question: r.question ?? '处理失败,再试一次?',
+                             created_at: deps.now().toISOString(), expires_at: new Date(deps.now().getTime() + 6 * 3600e3).toISOString() })
+    await bot.reply(msg, r.question)
+    return 'rejected'
+  } catch (err) {
+    await bot.reply(msg, '⚠️ 处理失败,再试一次?').catch(() => {})   // 超时/异常兜底(M16/C7)
+    return 'error'
+  }
+}
+
+async function withTimeout(p, ms) {
+  let timer
+  try {
+    return await Promise.race([
+      p,
+      new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`timeout ${ms}ms`)), ms) }),
+    ])
+  } finally { clearTimeout(timer) }
+}
+
+/** 单条微信消息处理链路（onMessage 委托；导出供测试）：
+ * 路由顺序:OWNER_ID 门(最顶部,C1) → recordUserMsg(仅本人) → 澄清检查 → detectSpecialCommand
+ * → detectScheduleIntent → askPi;命令消息经 --user-msg 无分析(recordUserMsg 已先行,dedup 600s 继承);
+ * 非本人 = 仅 askPi 回复 + 失败回通用文案(不回内部诊断,安全补钉)。
+ * bot 需提供 reply(msg, text)/sendTyping(userId)；queue 提供 run(task)。 */
+export async function handleMessage(text, msg, bot, queue, deps = {}) {
+  if (!text?.trim()) return null
+  const isOwner = msg.userId === OWNER_ID
+  const repoRoot = deps.repoRoot ?? REPO_ROOT
+  const extractPi = deps.extractPi ?? defaultExtractPi
+  const verifyPi = deps.verifyPi ?? defaultVerifyPi
+  const runDaemon = deps.runDaemon ?? defaultRunDaemon
+  const now = deps.now ?? (() => new Date())
+
+  // ── C1 门:非本人不进写/回忆/追问/特殊命令路径,不取 --attention;仅 askPi 回复 ──
+  if (!isOwner) {
+    await queue.run(async () => {
+      try {
+        const { text: reply } = await askPi(text)
+        await bot.reply(msg, reply).catch(() => {})
+      } catch (err) {
+        await bot.reply(msg, '⚠️ 处理失败').catch(() => {})   // 不回内部诊断(安全补钉)
+        await recordPiHealth(bot, 'fail', err.message)
+      }
+    })
+    return 'pi'
+  }
+
+  await recordUserMsg(text)   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 600s 继承)
+
+  // 澄清检查:有待澄清记录且非退出词 → 路由回提取(词表命中=新命令;否则合并"原意+回答")
+  const clarify = readClarify(repoRoot)
+  let exitWord = false
+  if (clarify && !exitWordMatch(text)) {
+    const wordIntent = detectScheduleIntent(text)          // 词表命中 = 新命令
+    const isNewCommand = wordIntent && wordIntent.intent !== 'extract'
+    const original = isNewCommand ? text : `${clarify.original}\n(补充回答:${text})`
+    return handleScheduleCommand(original, msg, bot,
+      { ...deps, repoRoot, clarify, extractPi, verifyPi, runDaemon, now })
+  }
+  if (clarify && exitWordMatch(text)) {
+    clearClarify(repoRoot)
+    exitWord = true   // 退出词:清记录后本消息不再进命令路径(短消息兜底不再重写记录)
+  }
 
   // 特殊命令（纪念日/假期）确定性接管：命中则直接执行 daemon，不经 pi（Phase 4 Task 14）
   const special = detectSpecialCommand(text)
@@ -205,6 +354,14 @@ export async function handleMessage(text, msg, bot, queue) {
       }
     })
     return 'special'
+  }
+
+  // 写/回忆命令意图 → 命令链路(提取 → 校验 → daemon;180s 超时不阻塞队列)
+  // 返回值透传 handleScheduleCommand(not_command → 'chat' 释放回聊天链,⑤)
+  const intent = exitWord ? null : detectScheduleIntent(text)
+  if (intent) {
+    return queue.run(() => handleScheduleCommand(text, msg, bot,
+      { ...deps, repoRoot, clarify: null, extractPi, verifyPi, runDaemon, now }))
   }
 
   try {
@@ -258,7 +415,7 @@ async function main() {
     const text = msg.text
     if (!text?.trim()) return
     console.log(`[in] ${msg.userId}: ${text.slice(0, 80)}`)
-    await handleMessage(text, msg, bot, queue)
+    await handleMessage(text, msg, bot, queue, makeScheduleDeps(REPO_ROOT))
   })
 
   bot.on('error', (err) => {

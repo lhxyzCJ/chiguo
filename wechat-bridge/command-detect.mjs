@@ -101,6 +101,31 @@ export function detectSpecialCommand(text) {
   return null
 }
 
+/** 写/回忆意图检测(schedule-center 6a):词表子串命中 + start-anchored 豁免 MAX_LEN(R1/MED 钉死)。
+ * 误命中由 extract not_command 释放回聊天兜底(代码核验)。 */
+const SCHEDULE_WORDS = [
+  ['remove',    /取消|撤销/],
+  ['move',      /调课|改到|调到/],
+  ['add',       /加课|补课/],
+  ['cancel',    /停课|不上课/],
+  ['exam_week', /考试周/],
+  ['reminder',  /记住|记得|要|提醒/],
+]
+const ANCHORED = /^(?:我(?:们)?)?(?:停课|不上课|调课|改到|调到|加课|补课|取消|撤销)/
+const DATE_TOKEN = /\d{1,2}月\d{1,2}[日号]/
+export function detectScheduleIntent(text) {
+  if (typeof text !== 'string') return null
+  const t = text.trim()
+  if (!t || /[吗？?]$/.test(t) || /^(你|您)/.test(t)) return null
+  if (t.length > MAX_LEN && !ANCHORED.test(t)) return null      // MAX_LEN 豁免:start-anchored
+  for (const [intent, re] of SCHEDULE_WORDS) {
+    if (re.test(t)) return { intent }                           // 词表子串命中(remove 先判)
+  }
+  if (DATE_TOKEN.test(t)) return { intent: 'extract' }          // 日期令牌兜底(MED/用户裁决)
+  if (t.length <= 6) return { intent: 'extract' }               // 短消息兜底(②'交材料';extract not_command 释放)
+  return null
+}
+
 /** daemon 输出 JSON → 迟菓风确认文案。 */
 export function buildReply(action, result) {
   if (result.error || result.ok === false) {
