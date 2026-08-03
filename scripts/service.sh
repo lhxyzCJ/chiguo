@@ -4,7 +4,7 @@
 # 模式: autostart（systemd 开机自启）| temp（临时启动，不注册自启）
 # 子命令: autostart|temp|status|stop|uninstall；均支持 --dry-run（只报告不改）
 # 退出码: 0=OK  1=警告/待办  2=严重
-# 测试注入: CHIGUO_REPO_OVERRIDE / CHIGUO_SYSTEMD_DIR / CHIGUO_SYSTEMCTL / CHIGUO_PID_DIR
+# 测试注入: CHIGUO_REPO_OVERRIDE / CHIGUO_SYSTEMD_DIR / CHIGUO_SYSTEMCTL / CHIGUO_PID_DIR / CHIGUO_NODE
 # ============================================================
 set -uo pipefail
 
@@ -35,7 +35,7 @@ usage() {
 EOF
 }
 
-NODE="$(command -v node || true)"
+NODE="${CHIGUO_NODE-$(command -v node || true)}"
 
 ollama_health() {
   curl -s -m 3 http://127.0.0.1:11434/api/tags 2>/dev/null | grep -q '"models"'
@@ -97,7 +97,12 @@ EOF
   say "systemd unit 已写入: $BRIDGE_UNIT"
 }
 
+require_root() {
+  [ "$(id -u)" = 0 ] || fail "需 root 权限（写 $SYSTEMD_DIR；非 root 请用 sudo 或 temp 模式）"
+}
+
 do_autostart() {
+  require_root
   [ -n "$NODE" ] || fail "缺少 node（需先安装 Node.js）"
   [ -f "$ENV_FILE" ] || { warn "缺少 .env（先运行: bash scripts/wechat-bridge.sh install）"; exit 1; }
   if [ "$DRY" = 1 ]; then
@@ -199,6 +204,7 @@ do_stop() {
 }
 
 do_uninstall() {
+  require_root
   if [ "$DRY" = 1 ]; then
     say "dry-run 计划: stop + 删除 $BRIDGE_UNIT + daemon-reload（登录态 $HOME/.chiguo/auth/wechat/ 保留；不撤销 ollama enable）"
     return 0
