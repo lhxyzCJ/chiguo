@@ -15,7 +15,7 @@
 │                                                                    │
 │  输入信号:                                                         │
 │  ├─ 时间（hour, weekday, week_num）                                │
-│  ├─ 节假日（holiday_parser → 2026 国务院安排）                     │
+│  ├─ 节假日（schedule.holiday → 2026 国务院安排）                     │
 │  ├─ 课表（schedule/ 包 → xskb.xlsx）                              │
 │  ├─ 记忆（memory_bridge → LanceDB 只读（历史记忆库）+ Ebbinghaus）     │
 │  ├─ 交互历史（silent_hours, messages_today）                       │
@@ -48,8 +48,11 @@ chiguo_daemon.py (DecisionEngine)
   │     ├─ chiguo_math.py      → 纯数学库：sigmoid / decay / recover / Hawkes / longing
   │     ├─ chiguo_personality.py → Big Five + 角色特质（8 维人格）(v4 NEW)
   │     ├─ chiguo_bayesian.py  → Bayesian 用户状态推断（6 状态，在线学习）(v4 NEW)
-  │     ├─ schedule/ 包    → 课表（parsing.py 纯解析 / query.py 策略 / parser.py 数据面）
-  │     ├─ holiday_parser.py   → 节假日判断（国务院安排 + 调休）
+  │     ├─ schedule/ 包    → 课表/假期/纪念日/安排（数据面 parser.py / 纯解析 parsing.py / 策略
+  │     │                    query.py；节假日 holiday.py；纪念日 anniversary.py；覆盖/计划/澄清
+  │     │                    存储 override_store.py / plan_store.py / api.py；检索与安排 sources.py /
+  │     │                    day_plan.py / resolve_when.py / attention.py / recall.py；确认 confirm.py；
+  │     │                    复盘 replan.py）
   │     ├─ memory_bridge.py    → LanceDB 只读桥接 + Ebbinghaus 遗忘
   │     └─ chiguo_circadian.py → 生物钟学习（双作息双桶分桶学习：工作日/周末独立窗口 + 置信度，
   │                             听歌活跃合并计数）(v7 NEW, v8 双桶)
@@ -65,7 +68,6 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 (v4 NEW)
   ├─ chiguo_eventbus.py → 轻量发布/订阅事件总线 (v4 NEW)
   ├─ solar_terms.py     → 24 节气
-  ├─ anniversary_manager.py → 纪念日/倒计时 CRUD
   ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康）
   ├─ chiguo_rotation.py → 对话日志轮转与归档 + 告警持久化 + 索引查询（v5 NEW）
   └─ chiguo_watchdog.py → 零依赖独立看门狗（cron 集成）
@@ -476,7 +478,7 @@ availability(now):
 is_school_day = 非节假日 AND (工作日 OR 调休上班日)
 ```
 
-更新方式：改 `holiday_parser.py` 内置数据，或放 `holidays.json` 覆盖（ChiguoState 构造时以 `_base_dir` 锚定传入，不依赖 cwd；显式指定路径后不再回退 cwd 的同名文件，无参构造 `HolidayParser()` 保留 cwd 默认行为）。
+更新方式：改 `schedule/holiday.py` 内置数据，或放 `holidays.json` 覆盖（ChiguoState 构造时以 `_base_dir` 锚定传入，不依赖 cwd；显式指定路径后不再回退 cwd 的同名文件，无参构造 `HolidayParser()` 保留 cwd 默认行为）。
 
 ### 3.3 课表解析
 
@@ -532,11 +534,11 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 | 来源 | 权重 | 数据源 | 说明 |
 |------|:--:|------|------|
-| schedule | 0.30 | schedule/ 包 + holiday_parser | 课表/假期/周末/调休 |
+| schedule | 0.30 | schedule/ 包（parser/query/holiday） | 课表/假期/周末/调休 |
 | memory | 0.25 | memory_bridge (LanceDB + Ebbinghaus) | 随机高重要性记忆 |
 | general | 0.25 | 当前小时数 | 按时段通用关心 |
 | weather_season | 0.20 | 当前月份 | 季节感知 |
-| anniversary | 0.15 | anniversary_manager | 纪念日/倒计时 |
+| anniversary | 0.15 | schedule/anniversary | 纪念日 |
 | solar_terms | 0.10 | solar_terms | 24节气 |
 | preference_followup | 0.10 | memory_bridge (LanceDB) | 偏好追问 |
 | netease | 0.12 | NeteaseService (netease/service.py) | v9: 网易云音乐话题（策略层委托） |
@@ -551,11 +553,10 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 24 节气近似日期硬编码在 `solar_terms.py`。±1 天窗口命中。零依赖。
 
-### 4.3 纪念日/倒计时
+### 4.3 纪念日
 
-`anniversary_manager.py` 管理 `anniversaries.json`。两种类型：
-- **anniversary**: 每年重复，存 "MM-DD"
-- **countdown**: 一次性，存 "YYYY-MM-DD"
+`schedule/anniversary.py`（AnniversaryManager）管理 `anniversaries.json`（原子写：tmp → os.replace）。一种类型：
+- **anniversary**: 每年重复，存 "MM-DD"（一次性倒计时 6c 起废弃，经 `--schedule-change` 写 reminder）
 
 **路径锚定（2026-07-31）**：无参构造时，若 cwd 已存在同名 `anniversaries.json` 则沿用（兼容旧版/隔离目录），否则锚定模块目录（项目根），防止从其他 cwd（如 /tmp）运行把数据写散；显式传绝对路径仍原样生效。
 
@@ -667,22 +668,20 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | 文件 | 职责 | 依赖 |
 |------|------|------|
 | `chiguo_daemon.py` | **主入口**。决策引擎，输出 JSON | state, trigger, topics, composer, eventbus |
-| `chiguo_state.py` | 情绪引擎 + 多维人格 + Bayesian + 课表 + 节假日 + 记忆 + circadian/pending_topics + 双作息迁移 (v8) | math, personality, bayesian, schedule, holiday_parser, memory_bridge, chiguo_circadian |
+| `chiguo_state.py` | 情绪引擎 + 多维人格 + Bayesian + 课表 + 节假日 + 记忆 + circadian/pending_topics + 双作息迁移 (v8) | math, personality, bayesian, schedule, memory_bridge, chiguo_circadian |
 | `chiguo_circadian.py` | 生物钟学习：双作息双桶分桶（weekday_*/weekend_* 独立估计 + 听歌活跃合并计数）（v7 新增，v8 双桶，纯函数） | 无 |
 | `netease/bridge.py` | 网易云 API 桥接 数据面（NeteaseBridge 实例化）：`fetch_recent_play` 最近播放记录（睡眠窗口内夜间活跃反证 + netease/recent_play_cache.json 缓存）（v8）；`fetch_daily_songs` 每日推荐 + `_api_get` 有限重试（瞬时/5xx 重试 retry_count 次 + 退避）与每日推荐 schema 过滤 + QR 登录（v9） | 无（requests） |
 | `netease/service.py` | 网易云策略层（v9，DI）：`NeteaseService` 健康探针/登录失效检测/故障降级链（netease_fault 话题）/音乐+故障双日配额（netease/netease_health.json 原子写）/加权随机选源+换源兜底/peek-consume 两阶段（未选中不消费配额）/话题素材组装（不含链接，零 LLM）+ 播放反证单入口 `fetch_play_proof`；测试 `tests/test_netease_service.py` | netease.bridge |
 | `chiguo_trigger.py` | 触发评估（13 种，含 v7 follow_up 接话茬）+ 加权随机选择 | state, math |
-| `chiguo_topics.py` | 话题选择器（8 来源 + 人格调制 + v9 netease 委托） | math, solar_terms, anniversary_manager, netease.service |
+| `chiguo_topics.py` | 话题选择器（8 来源 + 人格调制 + v9 netease 委托） | math, solar_terms, schedule.anniversary, netease.service |
 | `chiguo_composer.py` | Intent × Cue × Vibe 三层消息组合（v4） | 无 |
 | `chiguo_math.py` | 纯数学库：sigmoid/decay/recover/Hawkes/longing/Ebbinghaus | 无 |
 | `chiguo_personality.py` | Big Five + 角色特质（8 维人格）（v4） | 无 |
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态，在线学习）（v4） | 无 |
 | `chiguo_eventbus.py` | 轻量发布/订阅事件总线（v4） | 无 |
-| `schedule/` 包 | 课表（netease 模式拆分）：`parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `parser.py` 数据面（xlsx → JSON cache → 刷新，构造签名与 query 返回形状兼容旧版） | openpyxl（可选，惰性导入） |
-| `holiday_parser.py` | 节假日判断（2026 国务院安排 + 调休） | 无 |
+| `schedule/` 包 | 课表/假期/纪念日/安排（15 模块）：`parser.py` 数据面（xlsx → JSON cache → 刷新）/ `parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `holiday.py` 节假日判断（2026 国务院安排 + 调休）/ `anniversary.py` 纪念日 CRUD / `override_store.py` 手动覆盖存储（0600）/ `plan_store.py` 日计划存储（0600）/ `api.py` 安排读写门面（校验 + 澄清接口）/ `sources.py` 课表检索源 / `day_plan.py` 日计划组装 / `resolve_when.py` 触发时机解析 / `attention.py` 注意力快照 / `recall.py` 安排回忆检索 / `confirm.py` 写后确认 / `replan.py` 复盘（--check 明日计划） | openpyxl（可选，惰性导入） |
 | `solar_terms.py` | 24 节气日期查询（零依赖） | 无 |
 | `memory_bridge.py` | LanceDB 只读桥接 + Ebbinghaus 遗忘 | lancedb（惰性导入，可选；缺了降级 JSON） |
-| `anniversary_manager.py` | 纪念日/倒计时 CRUD | 无 |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_watchdog.py` | 零依赖独立看门狗（cron 集成）（v4） | 无 |
@@ -695,13 +694,16 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `netease/recent_play_cache.json` | 最近播放记录缓存（v8，netease/bridge.py fetch_recent_play 原子写，TTL 15 分钟） | 无 |
 | `netease/netease_health.json` | 网易云健康状态文件（v9，netease/service.py 原子写：api 存活/登录态/故障原因/音乐+故障双日配额） | 无 |
 | `schedule_cache.json` | 课表缓存（首次运行后生成） | 无 |
-| `anniversaries.json` | 纪念日数据（首次运行后生成） | 无 |
+| `anniversaries.json` | 纪念日数据（schedule/anniversary.py 原子写，首次运行后生成） | 无 |
+| `schedule_overrides.json` | 手动覆盖安排（schedule/override_store.py 原子写 0600，含隐私：课表/生日） | 无 |
+| `schedule_plan.json` | 日计划（schedule/plan_store.py 原子写 0600，replan 生成） | 无 |
+| `schedule_clarify.json` | 澄清记录（wechat-bridge/bridge.mjs writeClarify 原子写 0600，6h 过期，含消息原文） | 无 |
 | `break_state.json` | 假期覆盖状态（首次 --break 后生成） | 无 |
 | `.gitignore` | 忽略运行时备份/临时/锁/token（分析数据跟踪入库供本地分析，见 doc/README.md §运行时数据回流） | 无 |
 | `data/xskb.xlsx` | 课表源文件（替换即更新） | 无 |
 | `netease/netease_qr.png` | 网易云登录二维码（--login 生成） | 无 |
 | `tests/test_chiguo_math.py` | 数学库单元测试（26 用例，含 sigmoid/负权重/负半衰期边界） | chiguo_math |
-| `tests/test_holiday_parser.py` | 节假日单元测试（7 用例） | holiday_parser |
+| `tests/test_holiday_parser.py` | 节假日单元测试（文件名保留；内容已迁移至 schedule.holiday import） | schedule.holiday |
 | `tests/test_schedule_parser.py` | 课表单元测试（23 用例：周数/单元格回退链/上课状态/alternates 周次互斥/周次边界/xlsx 解析/缓存 roundtrip 与 mtime 重解析/损坏缓存重建/失败保留旧缓存/v1 迁移强制重解析） | schedule |
 | `tests/test_integration.py` | 集成测试（17 用例，test_1/test_8 已从纯 print 强化为真断言） | chiguo_daemon |
 | `tests/test_monitor.py` | 监控测试 + fuzz 测试（42 用例） | chiguo_monitor |
@@ -723,6 +725,16 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_personality_init.py` | 初始人格值对齐原著测试（2 用例） | chiguo_personality |
 | `tests/test_toml_binding.py` | personality toml 接线测试（7 用例：toml 存在、meta.name、cue↔模板关联、参考台词注入） | chiguo_composer, chiguo_proactive.toml |
 | `tests/test_adapt_personality.py` | 基线回归防漂移测试（v10，2 用例：300 次热情回复不甜妹化/200 次沉默不极端化） | chiguo_personality |
+| `tests/test_anniversary.py` | 纪念日单元测试（6 用例：默认合并/special_dates 迁移/countdown 移除与 6c 迁移激活/损坏容错） | schedule.anniversary, schedule.api |
+| `tests/test_schedule_override.py` | 覆盖存储单元测试（9 用例：override_store/plan_store/confirm） | schedule.override_store, schedule.plan_store, schedule.confirm |
+| `tests/test_day_plan.py` | 日计划单元测试（21 用例：sources/day_plan/resolve_when/api 写路径） | schedule.day_plan, schedule.sources, schedule.resolve_when |
+| `tests/test_recall.py` | 安排回忆检索测试（3 用例：日期/关键词/中文日期） | schedule.recall |
+| `tests/test_attention_tiers.py` | 注意力分层测试（3 用例：T1/T2/T3 组装、T2 阻塞、T3 窗口与今日例外） | schedule.attention |
+| `tests/test_availability.py` | 可用性三层重组测试（5 用例：bayesian 层/λ 单调） | schedule.query, chiguo_bayesian |
+| `tests/test_trigger_scale.py` | 引擎单点缩放测试（5 用例：special 切换/逃生阀豁免） | chiguo_daemon |
+| `tests/test_isolation.py` | 引擎隔离测试（2 用例：engine 不 import schedule/state 仅桥接） | chiguo_daemon |
+| `tests/test_schedule_plan.py` | 复盘计划测试（2 用例：dirty 矩阵/skip 与校验） | schedule.replan, schedule.plan_store |
+| `tests/test_schedule_cli.py` | 安排 CLI 测试（3 用例：--schedule-change 成功与形状/--schedule-recall 形状） | chiguo_daemon, schedule.api |
 | `scripts/pi-run.mjs` | **pi 调用统一封装**（Phase 4）：生成/分析两模式，`[host]` 配置 + PIRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage | node |
 | `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → pi-run（PIRUN_SESSION=chiguo-send）→ bridge /send → --record-send | bash, node, curl |
 | `scripts/install_pi.sh` | **pi 环境安装器**（Phase 4）：memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟（三模式幂等） | bash |
@@ -732,7 +744,13 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_pi_health.py` | pi_health 状态机测试（8 用例：阈值/去重/恢复/原因保留/toml 读取/无效阈值回退/恢复后原因重捕获/原子写） | pi_health |
 | `tests/test_bridge_health.mjs` | bridge 记账+告警链路测试（6 用例：特殊命令不记账/去重/恢复/零告警/记账崩溃不阻塞/reply 失败不误记） | bridge.mjs |
 | `tests/test_tick_health.sh` | tick 记账+告警链路测试（4 用例：temp repo + recorder 服务） | chiguo-tick.sh |
-| `tests/test_bridge_cmd.mjs` | 特殊命令测试（31 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
+| `tests/test_bridge_cmd.mjs` | 特殊命令测试（43 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
+| `tests/test_pi_run.mjs` | pi-run 封装测试（31 用例：readToml/NDJSON/<<ANALYSIS>> 提取/runPiBin） | pi-run.mjs |
+| `tests/test_bridge_askpi.mjs` | bridge 回复链路测试（17 用例） | bridge.mjs |
+| `tests/test_bridge_schedule.mjs` | schedule 澄清链路测试（17 用例：detectScheduleIntent/readClarify/writeClarify/exitWord） | command-detect, pi-run.mjs |
+| `tests/test_install_pi.sh` | pi 环境安装器测试（14 用例：假 pi/curl/crontab + 临时 HOME） | install_pi.sh |
+| `tests/test_wechat_bridge.sh` | 微信桥管理脚本测试（假 bridge 桩） | wechat-bridge.sh |
+| `tests/test_netease_api.sh` | 网易云 API 服务脚本测试（假 systemd/curl 桩） | netease-api.sh |
 | `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 | `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟用户消息/`s` 刷新状态 | 无 |
@@ -740,10 +758,10 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `scripts/wechat-bridge.sh` | 微信桥管理脚本：install/start/stop/status/login（新设备扫码兜底） | bash |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
 
-共计 **400+** 个测试用例（24 个 py 测试文件；另含 node 侧 tests/test_pi_run.mjs 19 用例 + tests/test_bridge_askpi.mjs 10 用例 + tests/test_bridge_cmd.mjs 31 用例、bash 侧 tests/test_install_pi.sh（14 用例）/ tests/test_wechat_bridge.sh，见 doc/README.md）。
+共计 **600+** 个测试用例（35 个 py 测试文件 + 9 个脚本测试；另含 node 侧 test_pi_run.mjs 31 用例 + test_bridge_askpi.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_pi.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例），见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
-> `tests/test_holiday_parser.py` 7/7 用例通过。
+> `tests/test_holiday_parser.py` 9/9 用例通过。
 
 ---
 
@@ -786,6 +804,12 @@ python3 chiguo_daemon.py --health            # 检测 daemon 最近是否正常�
 python3 chiguo_daemon.py --send-result msg_xxx --send-status success
 python3 chiguo_daemon.py --send-result msg_xxx --send-status failed --error "WeChat API timeout"
 
+# 安排子命令（schedule-center，6a-6c）
+python3 chiguo_daemon.py --attention            # 注意力快照（T1/T2/T3 + 情感快照，轻量读零写）
+python3 chiguo_daemon.py --schedule-recall "明天"  # 安排回忆检索（日期或关键词）
+python3 chiguo_daemon.py --schedule-change '{"kind":"reminder","when":{"date":"2026-08-08"},"label":"体检"}'
+                                              # 写安排（reminder/add/cancel/move/exam_week/remove）
+
 # 文件传参（避免 shell 转义问题）
 python3 chiguo_daemon.py --user-msg-file /tmp/user_msg.txt
 python3 chiguo_daemon.py --analysis-file /tmp/analysis.json
@@ -824,16 +848,19 @@ uv run python -m schedule.parser
 
 # 导出完整解析结果
 uv run python -m schedule.parser --dump
+
+# 复盘：--check 只检查明日计划（不写盘）
+uv run python -m schedule.replan --check
 ```
 
-### holiday_parser.py
+### schedule.holiday（原顶层 holiday_parser.py，迁移至包内）
 
 ```bash
 # 查询今天
-python3 holiday_parser.py
+uv run python -m schedule.holiday
 
 # 查询指定日期
-python3 holiday_parser.py 2026-10-01
+uv run python -m schedule.holiday 2026-10-01
 ```
 
 ### memory_bridge.py
@@ -1558,7 +1585,7 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 | 哥哥说 | 执行 |
 |--------|------|
 | (哥哥/主人)记住X月X日(是)XX | `--anniversary "add anniversary MM-DD <名称>"`（名称尾缀 `了`/标点剥离） |
-| YYYY年X月X日(是/为/要)XX / X月X日要XX | `--anniversary "add countdown YYYY-MM-DD <名称>"`（无年份推断：今年已过 → 明年，CST） |
+| YYYY年X月X日(是/为/要)XX / X月X日要XX | `--schedule-change {"kind":"reminder","when":{"date":"YYYY-MM-DD"},"label":"<名称>"}`（一次性提醒；6c 起 countdown 废弃 → reminder，显式日期直转写；无年份推断：今年已过 → 明年，CST） |
 | 有哪些纪念日 / 纪念日列表 | `--anniversary list` |
 | 放假了 / 放暑假了 / 我放假了 | `--break on`（**无限期** manual_override，误触发 `--break off` 关闭） |
 | 开学了 / 我开学了 | `--break off` |
@@ -1584,7 +1611,7 @@ pi 环境（memory-lancedb-pro 扩展 clone+build、`~/.pi/agent/settings.json` 
 修改 `chiguo_proactive.toml` 中 `semester_start` 日期。`semester_end` 之后的日期自动视为假期。
 
 ### 更新节假日（2027+）
-- 方式 A：修改 `holiday_parser.py` 中的 `HOLIDAYS` 和 `MAKEUP_WORKDAYS` 字典
+- 方式 A：修改 `schedule/holiday.py` 中的 `HOLIDAYS` 和 `MAKEUP_WORKDAYS` 字典
 - 方式 B：创建 `holidays.json` 文件，`HolidayParser(data_path="holidays.json")` 自动加载
 
 holidays.json 格式：

@@ -8,6 +8,8 @@ uv run python chiguo_monitor.py --summary --health          # 健康摘要
 uv run python chiguo_watchdog.py --quiet                    # 看门狗（退出码驱动）
 uv run python chiguo_envcheck.py                            # 环境就绪检查
 bash scripts/wechat-bridge.sh status                        # 微信桥状态
+uv run python -m schedule.replan --check                    # 明日计划检查（只读）
+uv run python -m schedule.holiday                           # 节假日查询
 tail -f logs/cron-tick.log                                  # 主动发送日志
 ```
 
