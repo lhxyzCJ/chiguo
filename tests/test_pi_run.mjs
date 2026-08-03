@@ -1,7 +1,7 @@
 // test_pi_run.mjs — pi-run 解析逻辑 + 调用链路测试（独立 runner）
 // 用法: node test_pi_run.mjs（退出码 0=全过，1=有失败）
 import assert from 'node:assert'
-import { readToml, parseNdjson, extractAnalysis, runPiBin, run } from '../scripts/pi-run.mjs'
+import { readToml, parseNdjson, extractAnalysis, runPiBin, run, extractBlock, runSchedule } from '../scripts/pi-run.mjs'
 
 let passed = 0
 const tests = []
@@ -133,6 +133,83 @@ t('run: runPiBin salvage 场景 → ok:true 且 text 保留', async () => {
   const code = `console.log(${JSON.stringify(NDJSON_FULL)});process.exit(3)`
   const r = await run((_bin, _args, opts) => runPiBin('node', ['-e', code], opts), { prompt: 'hi', analysisMode: false })
   assert.deepStrictEqual(r, { ok: true, text: '完整回复' })
+})
+
+// ── extractBlock 通用块提取器（批次 6a,C7 平衡括号解析）──
+t('extractBlock: 嵌套 JSON 平衡括号提取（首 } 不截断）', () => {
+  const text = 'prefix <<EXTRACT>>{"kind":"move","when":{"date":"2026-08-20"},"course":{"course":"高数","teacher":"刘洋"}}<<END>> suffix'
+  const block = extractBlock(text, 'EXTRACT')
+  const obj = JSON.parse(block)
+  assert.strictEqual(obj.kind, 'move')
+  assert.strictEqual(obj.course.course, '高数')
+  assert.strictEqual(extractBlock('no marker', 'EXTRACT'), null, '无 marker → null')
+  assert.strictEqual(extractBlock('<<EXTRACT>>{broken<<END>>', 'EXTRACT'), null, '括号不平衡 → null')
+})
+t('extractBlock: 字符串内 } 不参与配对（忽略字符串内容）', () => {
+  const text = 'x <<EXTRACT>>{"label":"a}b","when":{"date":"2026-08-20"}}<<END>> y'
+  const block = extractBlock(text, 'EXTRACT')
+  assert.strictEqual(JSON.parse(block).label, 'a}b')
+  assert.deepStrictEqual(JSON.parse(block).when, { date: '2026-08-20' })
+})
+t('extractBlock: 非 { 开头 → null；不同 marker 独立', () => {
+  assert.strictEqual(extractBlock('<<EXTRACT>>hello<<END>>', 'EXTRACT'), null, '非 JSON 块 → null')
+  assert.strictEqual(extractBlock('a <<VERIFY>>{"ok":false,"question":"q"}<<END>> b', 'VERIFY'),
+    '{"ok":false,"question":"q"}')
+  assert.strictEqual(extractBlock('a <<VERIFY>>{"ok":false,"question":"q"}<<END>> b', 'EXTRACT'), null, 'marker 不匹配')
+})
+
+// ── runSchedule 新模式（批次 6a,独立会话 chiguo-extract/verify）──
+t('runSchedule: extract 模式 → 解析 <<EXTRACT>> 块返回 parsed', async () => {
+  const stdout = JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<EXTRACT>>{"kind":"reminder","when":{"date":"2026-08-20"},"label":"交材料"}<<END>>' }] } })
+  const r = await runSchedule(async () => ({ stdout }), { mode: 'extract', prompt: '8月20号交材料', extra: { today: '2026-08-20', week_num: 3 } })
+  assert.strictEqual(r.ok, true)
+  assert.strictEqual(r.parsed.kind, 'reminder')
+  assert.strictEqual(r.parsed.when.date, '2026-08-20')
+})
+t('runSchedule: verify 模式 → ok:false + question/missing 透传', async () => {
+  const stdout = JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<VERIFY>>{"ok":false,"question":"哪天?","missing":["date"]}<<END>>' }] } })
+  const r = await runSchedule(async () => ({ stdout }), { mode: 'verify', prompt: 'x', extra: { item: '{}' } })
+  assert.strictEqual(r.ok, true)
+  assert.strictEqual(r.parsed.ok, false)
+  assert.strictEqual(r.parsed.missing[0], 'date')
+})
+t('runSchedule: 空回复 → ok:false empty reply', async () => {
+  const r = await runSchedule(async () => ({ stdout: '' }), { mode: 'extract', prompt: 'x', extra: {} })
+  assert.deepStrictEqual(r, { ok: false, error: 'empty reply' })
+})
+t('runSchedule: 无块 → ok:false malformed block', async () => {
+  const stdout = JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '没有块' }] } })
+  const r = await runSchedule(async () => ({ stdout }), { mode: 'extract', prompt: 'x', extra: {} })
+  assert.deepStrictEqual(r, { ok: false, error: 'malformed block' })
+})
+t('runSchedule: 块内非 JSON → ok:false block not json', async () => {
+  const stdout = JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<EXTRACT>>{oops}<<END>>' }] } })
+  const r = await runSchedule(async () => ({ stdout }), { mode: 'extract', prompt: 'x', extra: {} })
+  assert.deepStrictEqual(r, { ok: false, error: 'block not json' })
+})
+t('runSchedule: exec 抛错 → ok:false error message', async () => {
+  const r = await runSchedule(async () => { throw new Error('boom') }, { mode: 'extract', prompt: 'x', extra: {} })
+  assert.deepStrictEqual(r, { ok: false, error: 'boom' })
+})
+t('runSchedule: extract 独立会话 chiguo-extract + prompt 含原文/今天/周次', async () => {
+  let captured = null
+  const spyExec = async (_bin, args) => { captured = args; return { stdout: '' } }
+  await runSchedule(spyExec, { mode: 'extract', prompt: 'P', extra: { today: '2026-08-20', week_num: 3 } })
+  assert.ok(captured.includes('--session-id') && captured.includes('chiguo-extract'), '独立会话')
+  const last = captured[captured.length - 1]
+  assert.ok(last.includes('安排提取器'), 'extract 指令模板')
+  assert.ok(last.includes('今天是2026-08-20'), '注入今天')
+  assert.ok(last.includes('第 3 周'), '注入学期周次')
+  assert.ok(last.includes('消息：P'), '原文最后注入')
+})
+t('runSchedule: verify 独立会话 chiguo-verify + item 注入', async () => {
+  let captured = null
+  const spyExec = async (_bin, args) => { captured = args; return { stdout: '' } }
+  await runSchedule(spyExec, { mode: 'verify', prompt: '原文', extra: { item: '{"kind":"x"}' } })
+  assert.ok(captured.includes('--session-id') && captured.includes('chiguo-verify'), '独立会话')
+  const last = captured[captured.length - 1]
+  assert.ok(last.includes('安排校验员'), 'verify 指令模板')
+  assert.ok(last.includes('item：{"kind":"x"}'), 'item 注入')
 })
 
 // ── readToml 极简解析（临时 toml 文件）──

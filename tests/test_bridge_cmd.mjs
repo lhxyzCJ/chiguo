@@ -191,6 +191,21 @@ if (args[0] === '--break') {
 } else if (args[0] === '--anniversary' && args[1].startsWith('add')) {
   process.stdout.write(JSON.stringify({ action: 'anniversary_added', ok: false, error: 'month must be in 1..12' }))
   process.exit(1)
+} else if (args[0] === '--schedule-change') {
+  let item
+  try { item = JSON.parse(args[1]) } catch {
+    process.stdout.write(JSON.stringify({ action: 'schedule_change', ok: false, reason: 'bad_json', question: '处理失败,再试一次?' }))
+    process.exit(1)
+  }
+  if (item.kind === 'remove') {
+    process.stdout.write(JSON.stringify({ action: 'schedule_change', ok: false, reason: 'not_found', question: '没找到这条安排,哥哥再确认一下?', missing: ['period'] }))
+    process.exit(1)
+  }
+  if (item.when && item.when.date === '2026-08-01') {
+    process.stdout.write(JSON.stringify({ action: 'schedule_change', ok: false, reason: 'past_date', question: '这个日期已经过去了,告诉哥哥具体哪天的安排', missing: ['date'] }))
+    process.exit(1)
+  }
+  process.stdout.write(JSON.stringify({ action: 'schedule_change', ok: true, text: '好,8月20日周四要交材料,我记着。' }))
 } else {
   process.stdout.write(JSON.stringify({ ok: false, error: 'boom' }))
   process.exit(1)
@@ -241,6 +256,30 @@ t('executeSpecialCommand: 脚本不存在 → ok:false（不抛未捕获异常�
   const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', join(tmp, 'nope.mjs'))
   assert.strictEqual(r.ok, false)
   assert.ok(r.reply.startsWith('处理失败'))
+})
+
+// ── A4 形状契约:--schedule-change(批次 6a bridge 消费侧;二十轮点名 shape 与 test_schedule_cli.py 同源)──
+t('executeSpecialCommand: --schedule-change 成功 shape(A4)→ ok:true(确认文案含星期+日期)', async () => {
+  const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-08-20' }, label: '交材料' })], hint: 'x' }
+  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  assert.strictEqual(r.ok, true)
+})
+t('executeSpecialCommand: --schedule-change 畸形 JSON 契约(A4 bad_json)→ ok:false + 处理失败兜底', async () => {
+  const spec = { action: 'schedule_change', daemon: ['--schedule-change', '{not json'], hint: 'x' }
+  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  assert.strictEqual(r.ok, false)
+  assert.ok(r.reply.startsWith('处理失败'), r.reply)
+})
+t('executeSpecialCommand: --schedule-change ApiRejection shape(A4 reason+question+missing)→ ok:false', async () => {
+  const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-08-01' }, label: '过去' })], hint: 'x' }
+  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  assert.strictEqual(r.ok, false)
+})
+t('executeSpecialCommand: --schedule-change remove 拒绝(not_found)→ ok:false 且失败 JSON 不丢 stdout', async () => {
+  const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'remove', match: { date: '2026-08-20' } })], hint: 'x' }
+  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  assert.strictEqual(r.ok, false)
+  assert.ok(r.reply.startsWith('处理失败'), r.reply)
 })
 
 ;(async () => {

@@ -70,6 +70,29 @@ export function extractAnalysis(text) {
   }
 }
 
+/** 通用块提取器:<<MARKER>>...<<END>>;平衡括号解析(嵌套 JSON 不被首 } 截断,C7);畸形 → null */
+export function extractBlock(text, marker) {
+  const start = text.indexOf(`<<${marker}>>`)
+  if (start < 0) return null
+  const body = text.slice(start + marker.length + 4)
+  const end = body.indexOf('<<END>>')
+  const raw = end >= 0 ? body.slice(0, end) : body
+  const t = raw.trim()
+  if (!t.startsWith('{')) return null
+  let depth = 0, inStr = false, esc = false
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+    } else if (ch === '"') inStr = true
+    else if (ch === '{') depth++
+    else if (ch === '}') { depth--; if (depth === 0) return t.slice(0, i + 1) }
+  }
+  return null  // 括号不平衡 → 畸形
+}
+
 /** 用 spawn 收集 stdout（execFile 在 pi 下会挂起：pi 等 stdin EOF，execFile 管道不关） */
 export function runPiBin(bin, args, opts) {
   return new Promise((resolve, reject) => {
@@ -119,11 +142,69 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
   }
 }
 
+/** 写/回忆命令链路新模式:独立会话,知识边界(与聊天会话零共享)。提取/校验块解析,C7。 */
+export async function runSchedule(exec, { mode, prompt, extra = {} }) {
+  // 独立会话:extract/verify/recall/replan(与聊天会话零共享,知识边界)
+  const SESSIONS = { extract: 'chiguo-extract', verify: 'chiguo-verify',
+                     recall: 'chiguo-recall', replan: 'chiguo-replan' }
+  const marker = mode === 'extract' ? 'EXTRACT' : mode === 'verify' ? 'VERIFY'
+              : mode === 'recall' ? 'RECALL' : 'REPLAN'
+  let sysPrompt = prompt
+  if (mode === 'extract') {
+    sysPrompt = `你是迟菓的安排提取器。今天是${extra.today}。把哥哥的话转成写命令 item JSON。
+协议 item schema:{kind: cancel|move|add|exam_week|reminder|remove, when: 日期令牌,
+period?, to_period?, to_date?, course?, label?, match?}。
+日期令牌:显式日期 {date:"YYYY-MM-DD"} 或无年份 {date:"MM-DD"}(引擎补年份,不得自己算年份);
+相对时间 {days:n}/{weekday:1-7}/{week_offset:0|1}/{week_offset:k,weekday:d}。
+学期周次:第 ${extra.week_num} 周。
+信息不足必须返回 {ok:false, question, missing},禁止填默认值;非安排命令返回 {ok:false, not_command:true}。
+用 <<EXTRACT>>{...}<<END>> 包裹。\n\n消息：${prompt}`
+  } else if (mode === 'verify') {
+    sysPrompt = `你是迟菓的安排校验员。对照原文审查 item JSON 是否有无依据字段/自相矛盾/歧义。
+通过输出 <<VERIFY>>{"ok":true}<<END>>;不过输出 <<VERIFY>>{"ok":false,"question":"追问文案","missing":["字段"]}<<END>>。\n\n原文：${prompt}\n\nitem：${extra.item}`
+  }
+  const piArgs = ['-p', '--provider', PROVIDER, '--model', MODEL,
+    '--session-id', SESSIONS[mode] || SESSION_ID, '--no-context-files',
+    '--append-system-prompt', PERSONALITY, '--append-system-prompt', GUIDE,
+    '--thinking', THINKING, '--mode', 'json', sysPrompt]
+  try {
+    const { stdout } = await exec(PI_BIN, piArgs, { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 })
+    const text = parseNdjson(stdout)
+    if (!text) return { ok: false, error: 'empty reply' }
+    const block = extractBlock(text, marker)
+    if (!block) return { ok: false, error: 'malformed block' }
+    try {
+      return { ok: true, parsed: JSON.parse(block), raw: text }
+    } catch {
+      return { ok: false, error: 'block not json' }
+    }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2)
   const promptIdx = args.indexOf('--prompt')
-  if (promptIdx < 0) { console.error('usage: pi-run.mjs --prompt <text> [--analysis-mode|--send-mode]'); process.exit(2) }
+  if (promptIdx < 0) { console.error('usage: pi-run.mjs --prompt <text> [--analysis-mode|--send-mode|--schedule-extract|--schedule-verify]'); process.exit(2) }
   const prompt = args[promptIdx + 1]
+  if (args.includes('--schedule-extract')) {
+    const attIdx = args.indexOf('--attention')
+    let attention = {}
+    try { attention = JSON.parse(attIdx >= 0 ? args[attIdx + 1] : '{}') } catch {}
+    const wnIdx = args.indexOf('--week-num')
+    const weekNum = wnIdx >= 0 ? args[wnIdx + 1] : String(attention.week_num ?? 1)
+    const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10)  // CST 日期
+    console.log(JSON.stringify(await runSchedule(runPiBin, { mode: 'extract', prompt,
+      extra: { today, attention: JSON.stringify(attention), week_num: weekNum } })))
+    return
+  }
+  if (args.includes('--schedule-verify')) {
+    const itemIdx = args.indexOf('--item')
+    const item = itemIdx >= 0 ? args[itemIdx + 1] : '{}'
+    console.log(JSON.stringify(await runSchedule(runPiBin, { mode: 'verify', prompt, extra: { item } })))
+    return
+  }
   const analysisMode = args.includes('--analysis-mode')
   const sendMode = args.includes('--send-mode')
   console.log(JSON.stringify(await run(runPiBin, { prompt, analysisMode, sendMode })))
