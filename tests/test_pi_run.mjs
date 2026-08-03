@@ -1,7 +1,9 @@
 // test_pi_run.mjs — pi-run 解析逻辑 + 调用链路测试（独立 runner）
 // 用法: node test_pi_run.mjs（退出码 0=全过，1=有失败）
 import assert from 'node:assert'
-import { readToml, parseNdjson, extractAnalysis, runPiBin, run, extractBlock, runSchedule } from '../scripts/pi-run.mjs'
+import fs from 'node:fs'
+import path from 'node:path'
+import { readToml, parseNdjson, extractAnalysis, runPiBin, run, extractBlock, runSchedule, resolveRepo } from '../scripts/pi-run.mjs'
 
 let passed = 0
 const tests = []
@@ -249,6 +251,16 @@ t('readToml: 解析 [host] 段字符串/布尔/数字键（忽略注释与其他
 })
 t('readToml: 文件不存在 → {}（不抛错）', () => {
   assert.deepStrictEqual(readToml(join(tmp, 'nope.toml')), {})
+})
+
+// ── resolveRepo 仓库根推导（可移植性：消除 /root/chiguo 硬编码）──
+t('resolveRepo: 环境变量 CHIGUO_REPO 优先', () => {
+  assert.strictEqual(resolveRepo('file:///x/y/z.mjs', { CHIGUO_REPO: '/tmp/r' }), '/tmp/r')
+})
+t('resolveRepo: 无环境变量 → 从脚本位置两级目录推导仓库根', () => {
+  const repo = resolveRepo(new URL('.', import.meta.url).href, {})
+  assert.ok(fs.existsSync(path.join(repo, 'chiguo_proactive.toml')), `推导失败: ${repo}`)
+  assert.ok(fs.existsSync(path.join(repo, 'scripts/pi-run.mjs')))
 })
 
 ;(async () => {

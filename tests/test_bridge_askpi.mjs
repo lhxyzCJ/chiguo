@@ -16,7 +16,6 @@ const DAEMON_LOG = join(tmp, 'daemon.log')
 const PH_SCRIPT = join(tmp, 'pi_health.py')
 cpSync(new URL('../scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
 process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
-process.env.WECHAT_BRIDGE_PI_HEALTH_PY = '/root/chiguo/.venv/bin/python'
 
 writeFileSync(FAKE_PI, `
 import { readFileSync, appendFileSync } from 'node:fs'
