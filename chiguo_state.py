@@ -281,6 +281,7 @@ class ChiguoState:
         self.override_store = OverrideStore(base_dir)
         self.plan_store = PlanStore(base_dir)
         self._rc_cache: dict = {}   # {date_str: resolved_classes}(availability/schedule_status 共享)
+        self._scale_cache: dict = {}   # {date_str: trigger_scale}(计划修饰参数,每 tick 按日期缓存)
 
         self._load()
 
@@ -973,6 +974,46 @@ class ChiguoState:
             result["makeup_day"] = True
             result["makeup_reason"] = hq["hint"]
         return result
+
+    # ── 计划修饰参数(§5.2) ──────────────────────────────
+
+    def trigger_scale_now(self, now) -> dict:
+        """计划文件修饰参数(§5.2):ref → 日期解析,当日命中取 trigger_scale 映射。
+        每 tick 按日期缓存;plan 缺失/损坏 → {} 恒等;悬挂 ref → 跳过 + stderr 一次性告警。
+        ref 资格(裁决 A/N5):fact:<id> ⟺ kind == "exam_week";holiday:<name> → range_of。"""
+        today = now.date() if isinstance(now, datetime) else now
+        if getattr(self, "_scale_cache", None) and self._scale_cache.get("date") == today.isoformat():
+            return self._scale_cache["scale"]
+        scale: dict = {}
+        plan = self.plan_store.load()
+        if plan:
+            for mod in plan.get("modifiers", []):
+                ref = mod.get("ref", "")
+                ts = mod.get("trigger_scale", {})
+                if not isinstance(ts, dict):
+                    continue
+                if ref.startswith("fact:"):
+                    item = self.override_store.by_id(ref[5:])
+                    if item is None or item["kind"] != "exam_week":
+                        print(f"[schedule_plan] dangling ref: {ref}", file=sys.stderr)
+                        continue
+                    s = date_type.fromisoformat(item["date"])
+                    e = date_type.fromisoformat(item.get("end_date") or item["date"])
+                    if not (s <= today <= e):
+                        continue
+                elif ref.startswith("holiday:"):
+                    r = self.holiday_parser.range_of(ref[len("holiday:"):])
+                    if r is None:
+                        print(f"[schedule_plan] dangling ref: {ref}", file=sys.stderr)
+                        continue
+                    if not (r[0] <= today <= r[1]):
+                        continue
+                else:
+                    print(f"[schedule_plan] dangling ref: {ref}", file=sys.stderr)
+                    continue
+                scale.update(ts)   # 同日多 modifier:文件序后写覆盖(计划决策)
+        self._scale_cache = {"date": today.isoformat(), "scale": scale}
+        return scale
 
     # ── 时间推进（半衰期驱动） ──────────────────────────
 

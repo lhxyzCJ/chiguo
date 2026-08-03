@@ -327,7 +327,7 @@ class DecisionEngine:
             return decision
 
         # 3. 评估触发
-        trigger = evaluate_triggers(self.state, now)
+        trigger = evaluate_triggers(self.state, now, trigger_scale=self.state.trigger_scale_now(now))
         # ── v7: 从未交互用户（last_user_message_at is None）无逃生阀豁免 ──
         # 逃生阀语义需要既有关系；chiguo_trigger.py 直接查 longing_break_eligible
         # （state 侧暂无 never-interacted 检查），这里在 daemon 决策点兜底降级。
