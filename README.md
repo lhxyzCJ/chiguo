@@ -205,6 +205,8 @@ uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
 
 **安装/配置**：`bash scripts/wechat-bridge.sh install`；登录 `bash scripts/wechat-bridge.sh login`。
 
+**服务管理**：`bash scripts/service.sh <autostart|temp|status|stop|uninstall>`（autostart=systemd 开机自启 ollama+微信桥；temp=临时启动不注册自启；详见 doc/SYSTEM.md）。
+
 **缺失影响**：没有微信触达。daemon 依然可以 `chiguo_daemon.py` CLI 直跑——决策、情绪、记账全部正常，只是消息发不出去。
 
 ### 记忆系统（LanceDB + ollama embedding）

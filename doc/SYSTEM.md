@@ -751,14 +751,16 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_install_pi.sh` | pi 环境安装器测试（14 用例：假 pi/curl/crontab + 临时 HOME） | install_pi.sh |
 | `tests/test_wechat_bridge.sh` | 微信桥管理脚本测试（假 bridge 桩） | wechat-bridge.sh |
 | `tests/test_netease_api.sh` | 网易云 API 服务脚本测试（假 systemd/curl 桩） | netease-api.sh |
+| `tests/test_service.sh` | 服务管理脚本测试（13 用例：dry-run 只读/unit 模板/autostart 调用链/幂等/杀 temp 残留/temp 互斥接管+pidfile/temp 幂等/ollama 降级 warn/status 三态/stop 双侧/uninstall 保登录态/缺 node→2/缺 .env→1/非 root→2） | service.sh |
 | `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 | `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟用户消息/`s` 刷新状态 | 无 |
 | `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → pi 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
 | `scripts/wechat-bridge.sh` | 微信桥管理脚本：install/start/stop/status/login（新设备扫码兜底） | bash |
+| `scripts/service.sh` | 服务统一管理（ollama + wechat-bridge）：`autostart`（systemd 开机自启，写 `/etc/systemd/system/chiguo-bridge.service` + `enable --now`）/ `temp`（临时启动，nohup 后台 + pidfile `~/.chiguo/run/bridge-temp.pid`，不注册自启）/ `status` / `stop` / `uninstall`；两模式互斥接管（启动前停对方实例，避免 18790 端口冲突）；全子命令支持 `--dry-run`；测试注入 `CHIGUO_REPO_OVERRIDE/CHIGUO_SYSTEMD_DIR/CHIGUO_SYSTEMCTL/CHIGUO_PID_DIR/CHIGUO_NODE` | bash, systemd |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
 
-共计 **600+** 个测试用例（35 个 py 测试文件 + 9 个脚本测试；另含 node 侧 test_pi_run.mjs 31 用例 + test_bridge_askpi.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_pi.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例），见 doc/README.md）。
+共计 **600+** 个测试用例（35 个 py 测试文件 + 10 个脚本测试；另含 node 侧 test_pi_run.mjs 31 用例 + test_bridge_askpi.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_pi.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `tests/test_holiday_parser.py` 9/9 用例通过。

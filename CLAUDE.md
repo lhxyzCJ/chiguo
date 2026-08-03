@@ -74,6 +74,7 @@ No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python �
 - Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break/schedule rules, no pi; schedule-center CLI 子命令 `--attention`/`--schedule-recall`/`--schedule-change` + `python -m schedule.replan --check`/`schedule.holiday`) → otherwise `askPi` (pi-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
 - Sessions: reply=`chiguo-main`, proactive send=`chiguo-send` — separate sessions eliminate cross-process concurrent turns
 - Environment: `scripts/install_pi.sh` bootstraps pi (memory-lancedb-pro extension, settings/json5, ollama embedding, provider auth via toml [host].provider (default opencode-go), crontab)
+- Service management: `scripts/service.sh`（统一管理 ollama + wechat-bridge：`autostart`=systemd 开机自启（`/etc/systemd/system/chiguo-bridge.service` + enable --now）/ `temp`=临时启动不注册自启（nohup + pidfile）/ `status`/`stop`/`uninstall`；两模式互斥接管防 18790 端口冲突；`--dry-run` 支持；deploy.sh 第 5 步接 autostart）
 
 **v4 (2026-06-27)** adds: Bayesian user state inference, multi-dimensional personality (Big Five + character-specific), Ebbinghaus forgetting curves, message composition system (Intent × Cue × Vibe), probability accumulation with anxiety blocking, EventBus decoupling, personality adaptation, and dynamic sleep scheduling.
 
