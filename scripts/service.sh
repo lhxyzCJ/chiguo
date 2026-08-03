@@ -162,6 +162,59 @@ do_temp() {
   say "temp 已启动（PID $(cat "$TEMP_PIDFILE")；不注册开机自启；bash scripts/service.sh status 查看）"
 }
 
+do_status() {
+  local rc=0
+  if systemd_active; then
+    say "systemd: active（chiguo-bridge.service）"
+  else
+    warn "systemd: inactive/未注册"
+    rc=1
+  fi
+  if temp_running; then
+    say "temp: running（pidfile: $TEMP_PIDFILE）"
+  else
+    warn "temp: 未运行"
+  fi
+  if ollama_health; then
+    say "ollama: healthy（11434）"
+  else
+    warn "ollama: 不可用"
+    rc=1
+  fi
+  return $rc
+}
+
+do_stop() {
+  if [ "$DRY" = 1 ]; then
+    say "dry-run 计划: systemctl stop chiguo-bridge + 清理 temp（$TEMP_PIDFILE）"
+    return 0
+  fi
+  stop_systemd && say "systemd 实例已停止" || say "systemd 实例未在运行"
+  if temp_running; then
+    kill_temp
+    say "temp 实例已停止"
+  else
+    say "temp 实例未在运行"
+  fi
+}
+
+do_uninstall() {
+  if [ "$DRY" = 1 ]; then
+    say "dry-run 计划: stop + 删除 $BRIDGE_UNIT + daemon-reload（登录态 $HOME/.chiguo/auth/wechat/ 保留；不撤销 ollama enable）"
+    return 0
+  fi
+  stop_systemd || true
+  kill_temp || true
+  if [ ! -f "$BRIDGE_UNIT" ]; then
+    say "unit 不存在，无需删除"
+    "$SYSTEMCTL" daemon-reload 2>/dev/null || true
+    return 0
+  fi
+  rm -f "$BRIDGE_UNIT"
+  "$SYSTEMCTL" daemon-reload
+  say "uninstall 完成（unit 已删除；登录态保留；ollama 自启未动）"
+}
+
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY=1 ;;
@@ -174,5 +227,8 @@ done
 case "$CMD" in
   autostart) do_autostart ;;
   temp) do_temp ;;
+  status) do_status ;;
+  stop) do_stop ;;
+  uninstall) do_uninstall ;;
   *) usage; exit 2 ;;
 esac

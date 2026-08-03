@@ -130,3 +130,52 @@ echo "$OUT" | grep -q "ollama" || fail "ollama 不在线未 warn"
 [ -f "$TMP/pid/bridge-temp.pid" ] || fail "ollama 不在线不应阻止 temp 启动"
 rm -f "$TMP/pid/bridge-temp.pid"
 pass "temp 对 ollama 降级 warn"
+
+# ── 用例 8: status 三态（systemd active + temp 无 + ollama 健康）──
+# 恢复 curl 假件（用例 7 已替换为全失败版）
+cat > "$TMP/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "curl $*" >> "$CALLS_LOG"
+if printf '%s' "$*" | grep -q "/api/tags"; then
+  echo '{"models":[{"name":"qwen3-embedding"}]}'
+  exit 0
+fi
+exit 1
+STUB
+chmod +x "$TMP/bin/curl"
+sleep 300 & FAKE_TEMP_PID=$!
+echo "$FAKE_TEMP_PID" > "$TMP/pid/bridge-temp.pid"
+touch "$TMP/active"
+export ACTIVE_MARK="$TMP/active"
+OUT="$("$SERVICE" status 2>&1)"
+echo "$OUT" | grep -q "systemd: active" || fail "status 未显示 systemd active"
+echo "$OUT" | grep -q "temp: running" || fail "status 未显示 temp running"
+echo "$OUT" | grep -q "ollama: healthy" || fail "status 未显示 ollama healthy"
+kill "$FAKE_TEMP_PID" 2>/dev/null || true
+rm -f "$TMP/pid/bridge-temp.pid"
+unset ACTIVE_MARK
+pass "status 三态展示"
+
+# ── 用例 9: stop 停 systemd + 杀 temp ──
+sleep 300 & FAKE_TEMP_PID=$!
+echo "$FAKE_TEMP_PID" > "$TMP/pid/bridge-temp.pid"
+touch "$TMP/active"
+export ACTIVE_MARK="$TMP/active"
+: > "$CALLS_LOG"
+"$SERVICE" stop >/dev/null 2>&1 || fail "stop 退出非 0"
+grep -q "stop chiguo-bridge" "$CALLS_LOG" || fail "stop 未停 systemd"
+[ ! -f "$TMP/pid/bridge-temp.pid" ] || fail "stop 未清 temp pidfile"
+kill "$FAKE_TEMP_PID" 2>/dev/null || true
+unset ACTIVE_MARK
+pass "stop 双侧停止"
+
+# ── 用例 10: uninstall 删 unit + daemon-reload，登录态保留 ──
+mkdir -p "$TMP/home/auth/wechat"
+printf '{"token":"keep-me"}' > "$TMP/home/auth/wechat/credentials.json"
+[ -f "$TMP/systemd/chiguo-bridge.service" ] || { "$SERVICE" autostart >/dev/null 2>&1 || true; }
+: > "$CALLS_LOG"
+"$SERVICE" uninstall >/dev/null 2>&1 || fail "uninstall 退出非 0"
+[ ! -f "$TMP/systemd/chiguo-bridge.service" ] || fail "uninstall 未删 unit"
+grep -q "daemon-reload" "$CALLS_LOG" || fail "uninstall 未 daemon-reload"
+[ -f "$TMP/home/auth/wechat/credentials.json" ] || fail "uninstall 误删登录态"
+pass "uninstall 清理 + 登录态保留"
