@@ -7,7 +7,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 
-from schedule.replan import check_dirty, should_skip, validate_plan
+from schedule.replan import (check_dirty, should_skip, validate_plan,
+                             replan_env, replan_timeout)
 
 CFG = {"schedule": {"semester_start": "2026-02-23", "semester_end": "2026-07-04"}}
 
@@ -74,9 +75,32 @@ def test_skip_and_validate():
     print("  OK test_skip_and_validate")
 
 
+def test_replan_pi_env_and_timeout():
+    """replan 的 pi 子进程环境/超时:独立 thinking 档位(默认 high,不被 [host] thinking=max 拖垮)
+    与可配超时(默认 240s,下限 60s)。埋埋实机:120s 硬编码 + thinking=max 必超时(F9);
+    pi-run.mjs 内层超时读 PIRUN_TIMEOUT,须与 replan_timeout 同步,否则外层超时是死旋钮。"""
+    # 档位优先级:CHIGUO_REPLAN_THINKING > 环境 PIRUN_THINKING > 默认 high
+    assert replan_env({})["PIRUN_THINKING"] == "high", "无配置 → 默认 high"
+    assert replan_env({"PIRUN_THINKING": "max"})["PIRUN_THINKING"] == "max", "尊重显式 PIRUN_THINKING"
+    assert replan_env({"CHIGUO_REPLAN_THINKING": "medium"})["PIRUN_THINKING"] == "medium", \
+        "replan 专用档位生效"
+    assert replan_env({"CHIGUO_REPLAN_THINKING": "medium", "PIRUN_THINKING": "max"})["PIRUN_THINKING"] == "medium", \
+        "replan 专用档位优先于环境 PIRUN_THINKING"
+    e = replan_env({"A": "b"})
+    assert e["A"] == "b", "其余环境变量保留"
+    # 超时:默认 240,env 覆盖,非法值兜底;PIRUN_TIMEOUT 同步注入(pi-run.mjs 内层超时)
+    assert replan_timeout({}) == 240, "默认 240s"
+    assert replan_timeout({"CHIGUO_REPLAN_TIMEOUT": "500"}) == 500, "env 覆盖超时"
+    assert replan_timeout({"CHIGUO_REPLAN_TIMEOUT": "abc"}) == 240, "非法值兜底"
+    assert replan_timeout({"CHIGUO_REPLAN_TIMEOUT": "30"}) >= 60, "下限 60s"
+    assert replan_env({})["PIRUN_TIMEOUT"] == "240", "PIRUN_TIMEOUT 同步默认"
+    assert replan_env({"CHIGUO_REPLAN_TIMEOUT": "500"})["PIRUN_TIMEOUT"] == "500", "PIRUN_TIMEOUT 同步覆盖值"
+    print("  OK test_replan_pi_env_and_timeout")
+
+
 if __name__ == "__main__":
     print("test_schedule_plan.py\n")
-    tests = [test_dirty_matrix, test_skip_and_validate]
+    tests = [test_dirty_matrix, test_skip_and_validate, test_replan_pi_env_and_timeout]
     for t in tests:
         t()
     print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
