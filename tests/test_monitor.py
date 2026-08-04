@@ -305,22 +305,6 @@ def test_health_ok():
     print("  OK test_health_ok")
 
 
-def test_summary_no_crash():
-    """summary() 不崩溃"""
-    with tempfile.TemporaryDirectory() as td:
-        log = Path(td) / "test.jsonl"
-        log.write_text(json.dumps(make_log_entry("send"), ensure_ascii=False) + "\n")
-        state = Path(td) / "state.json"
-        state.write_text(json.dumps({"_version": 2, "last_tick": datetime.now(CST).isoformat()}))
-
-        mon = ChiguoMonitor(str(log), str(state))
-        text = mon.summary(days=7)
-        assert "迟菓" in text
-        assert "发送" in text or "send" in text.lower()
-        assert len(text) > 100
-    print("  OK test_summary_no_crash")
-
-
 def test_reply_rate_detection():
     """回复率检测逻辑"""
     with tempfile.TemporaryDirectory() as td:
@@ -592,9 +576,6 @@ def test_fuzz_random_entries():
         r = mon.report(days=14)
         assert "stats" in r and "alerts" in r and "health" in r
 
-        txt = mon.summary(days=30)
-        assert isinstance(txt, str)
-        assert len(txt) > 0
     print("  OK test_fuzz_random_entries")
 
 
@@ -638,7 +619,6 @@ def test_fuzz_boundary_values():
             mon.stats(days=7)
             mon.alerts()
             mon.health()
-            mon.summary(days=7)
         except Exception as e:
             assert False, f"boundary values caused crash: {e}"
     print("  OK test_fuzz_boundary_values")
@@ -656,7 +636,6 @@ def test_fuzz_empty_and_extreme():
         m1 = ChiguoMonitor(str(log), str(state))
         assert m1.stats()["activity"]["total_sends"] == 0
         assert m1.alerts() == [] or isinstance(m1.alerts(), list)
-        m1.summary()
 
         # 只有空白行和损坏行
         log.write_text("\n\n  \n{broken json\n\n")
@@ -747,37 +726,6 @@ def test_msg_id_on_all_actions():
     print("  OK test_msg_id_on_all_actions")
 
 
-def test_message_stats():
-    """messages_summary 返回发/收统计"""
-    with tempfile.TemporaryDirectory() as td:
-        msgs = Path(td) / "messages.jsonl"
-        # 用相对当前时间的时间戳（days=7 过滤以真实时钟为基准）
-        def ts(days_ago: int, hour: int) -> str:
-            return (datetime.now(CST) - timedelta(days=days_ago)).replace(
-                hour=hour, minute=0, second=0, microsecond=0).isoformat()
-        # Write some test messages
-        records = [
-            {"msg_id": "001", "ts": ts(0, 8), "direction": "send",
-             "text": "早上好！今天天气不错"},
-            {"msg_id": "002", "ts": ts(0, 9), "direction": "recv",
-             "text": "早啊"},
-            {"msg_id": "003", "ts": ts(0, 14), "direction": "send",
-             "text": "下午了，记得休息"},
-            {"msg_id": "004", "ts": ts(0, 15), "direction": "recv",
-             "text": "好的谢谢"},
-        ]
-        msgs.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records))
-
-        mon = ChiguoMonitor(messages_log_path=str(msgs))
-        summary = mon.messages_summary(days=7)
-        assert summary is not None
-        assert summary["total_send"] == 2
-        assert summary["total_recv"] == 2
-        assert summary["avg_send_length"] > 0
-        assert summary["avg_recv_length"] > 0
-    print("  OK test_message_stats")
-
-
 def test_recv_empty_text():
     """recv 条目空消息文本不崩溃"""
     with tempfile.TemporaryDirectory() as td:
@@ -801,9 +749,6 @@ def test_recv_empty_text():
         msgs.write_text(json.dumps({"msg_id": "001", "ts": datetime.now(CST).isoformat(),
                                     "direction": "recv", "text": ""}, ensure_ascii=False) + "\n")
         mon2 = ChiguoMonitor(messages_log_path=str(msgs))
-        summary = mon2.messages_summary(days=7)
-        assert summary is not None
-        assert summary["avg_recv_length"] == 0.0
     print("  OK test_recv_empty_text")
 
 
@@ -1143,7 +1088,6 @@ if __name__ == "__main__":
         test_alerts_crash_gap,
         test_alerts_emotion_stuck,
         test_health_ok,
-        test_summary_no_crash,
         test_reply_rate_detection,
         test_lancedb_detection,
         test_health_disk_ok,
@@ -1158,7 +1102,6 @@ if __name__ == "__main__":
         # v5: conversation logging & archive
         test_recv_entry_logged,
         test_msg_id_on_all_actions,
-        test_message_stats,
         test_recv_empty_text,
         test_messages_jsonl_created,
         test_conversation_by_date,
