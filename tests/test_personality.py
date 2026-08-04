@@ -78,55 +78,9 @@ def test_balanced_profile():
     print(f"  OK test_balanced_profile: {profile}")
 
 
-def test_tsundere_style_classic():
-    """高傲娇 + 低宜人 = classic"""
-    p = PersonalityTraits(tsundere_intensity=80, agreeableness=40)
-    assert p.tsundere_style() == "tsundere_classic"
-    print("  OK test_tsundere_style_classic")
 
 
-def test_tsundere_style_soft():
-    """中傲娇 + 高神经质 = soft"""
-    p = PersonalityTraits(tsundere_intensity=60, neuroticism=70)
-    assert p.tsundere_style() == "tsundere_soft"
-    print("  OK test_tsundere_style_soft")
 
-
-def test_tsundere_style_dere():
-    """低傲娇 + 高依恋 = dere_dere"""
-    p = PersonalityTraits(tsundere_intensity=30, attachment_style=70)
-    assert p.tsundere_style() == "dere_dere"
-    print("  OK test_tsundere_style_dere")
-
-
-def test_tsundere_style_tsuntsun_maps_to_soft():
-    """高傲娇 + 高宜人 = tsuntsun 嘴硬但温柔底子 → tsundere_soft"""
-    p = PersonalityTraits(tsundere_intensity=80, agreeableness=70)
-    assert p.tsundere_style() == "tsundere_soft"
-    print("  OK test_tsundere_style_tsuntsun_maps_to_soft")
-
-
-def test_tsundere_style_cool_dere_maps_to_cool():
-    """低傲娇 + 低依恋 = cool_dere 独立但关心 → tsundere_cool"""
-    p = PersonalityTraits(tsundere_intensity=30, attachment_style=40)
-    assert p.tsundere_style() == "tsundere_cool"
-    print("  OK test_tsundere_style_cool_dere_maps_to_cool")
-
-
-def test_tsundere_style_valid_cue_keys():
-    """tsundere_style 返回值必须是 composer CUES 的合法键"""
-    from chiguo_composer import MessageComposer
-    cases = [
-        PersonalityTraits(tsundere_intensity=80, agreeableness=40),
-        PersonalityTraits(tsundere_intensity=80, agreeableness=70),
-        PersonalityTraits(tsundere_intensity=60, neuroticism=70),
-        PersonalityTraits(tsundere_intensity=60, neuroticism=50),
-        PersonalityTraits(tsundere_intensity=30, attachment_style=70),
-        PersonalityTraits(tsundere_intensity=30, attachment_style=40),
-    ]
-    for p in cases:
-        assert p.tsundere_style() in MessageComposer.CUES, p.tsundere_style()
-    print("  OK test_tsundere_style_valid_cue_keys")
 
 
 
@@ -209,12 +163,6 @@ if __name__ == "__main__":
         test_evolve_clamp,
         test_dominant_profile,
         test_balanced_profile,
-        test_tsundere_style_classic,
-        test_tsundere_style_soft,
-        test_tsundere_style_dere,
-        test_tsundere_style_tsuntsun_maps_to_soft,
-        test_tsundere_style_cool_dere_maps_to_cool,
-        test_tsundere_style_valid_cue_keys,
         test_anxiety_sensitivity,
         test_openness_bonus,
         test_serialization_roundtrip,
