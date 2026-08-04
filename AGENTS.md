@@ -19,33 +19,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && bash tests/test_tick_health.sh && bash tests/test_service.sh && \
-uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
-uv run python tests/test_schedule_parser.py && \
-uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
-uv run python tests/test_eventbus.py && uv run python tests/test_personality.py && \
-uv run python tests/test_bayesian.py && uv run python tests/test_composer.py && \
-uv run python tests/test_ebbinghaus.py && uv run python tests/test_longing.py && \
-uv run python tests/test_escape_valve.py && uv run python tests/test_feedback.py && \
-uv run python tests/test_trigger.py && uv run python tests/test_topics.py && \
-uv run python tests/test_circadian.py && uv run python tests/test_followup.py && \
-uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
-uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
-uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
-uv run python tests/test_adapt_personality.py && uv run python tests/test_pi_health.py && \
-uv run python tests/test_anniversary.py && uv run python tests/test_schedule_override.py && \
-uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
-uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
-uv run python tests/test_trigger_scale.py && uv run python tests/test_isolation.py && \
-uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py && uv run python tests/test_docs_sync.py   # full suite (36 py + 10 script tests)
-
-uv run python tests/test_monitor.py                    # single file
-uv run python chiguo_daemon.py                   # single evaluation → JSON to stdout
-uv run python chiguo_daemon.py --stats --alerts --monitor
-uv run python chiguo_monitor.py --summary --health
-uv run python chiguo_watchdog.py                 # standalone health, exit 0/1/2
-uv run python chiguo_envcheck.py                 # env readiness, exit 0/1/2 (read-only)
-uv run python chiguo_demo.py                     # interactive demo, templates only
+bash scripts/ci-test.sh   # full suite (36 py + 10 script) — 本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
 ```
 
 - Python 3.14 via uv (`.venv` exists, Python 3.14.6). 3.14-only syntax is intentional: bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`.

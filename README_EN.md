@@ -7,6 +7,7 @@
 Zero-LLM math decision engine · LLM message generation · WeChat delivery
 
 [![Python](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![ci](https://github.com/lhxyzCJ/chiguo/actions/workflows/ci.yml/badge.svg)](https://github.com/lhxyzCJ/chiguo/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 [![zero-LLM](https://img.shields.io/badge/decision%20core-zero--LLM%20math-2ea44f)](doc/SYSTEM.md)
 [![WeChat](https://img.shields.io/badge/WeChat-07C160?logo=wechat&logoColor=white)](wechat-bridge/)
@@ -197,7 +198,7 @@ uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
 # Core tests (full suite: 36 py + 10 script standalone runners)
-uv run python tests/test_chiguo_math.py && node tests/test_pi_run.mjs
+bash scripts/ci-test.sh   # same entry point as GitHub Actions; any failure exits non-zero
 ```
 
 > Note: `uv sync` does not install lancedb by default (memory runs in JSON-fallback mode); `uv sync --all-extras` enables full memory and schedule parsing. Integration tests require `chiguo_proactive.toml` in the current directory — always run from the project root.
