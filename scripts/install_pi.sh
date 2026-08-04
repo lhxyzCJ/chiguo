@@ -190,7 +190,12 @@ if [ -f "$JSON5" ] \
    && grep -qE '"smartExtraction"[[:space:]]*:[[:space:]]*true' "$JSON5"; then
   say "memory-lancedb-pro.json5 OK（embedding=ollama qwen3-embedding:0.6b + dbPath=~/.pi-agent/memory/lancedb-pro）"
 else
-  MEM_LLM_APIKEY="${CHIGUO_MEMORY_LLM_APIKEY:-\${OPENCODE_API_KEY}}"
+  # 注意:默认值含 ${...} 时不能嵌套在 :-\${...} 里(bash 解析会残留尾 }),用显式分支
+  if [ -n "${CHIGUO_MEMORY_LLM_APIKEY:-}" ]; then
+    MEM_LLM_APIKEY="$CHIGUO_MEMORY_LLM_APIKEY"
+  else
+    MEM_LLM_APIKEY='${OPENCODE_API_KEY}'
+  fi
   MEM_LLM_MODEL="${CHIGUO_MEMORY_LLM_MODEL:-deepseek-v4-flash}"
   MEM_LLM_BASEURL="${CHIGUO_MEMORY_LLM_BASEURL:-https://opencode.ai/zen/go/v1}"
   if [ "$DRY" = 1 ]; then
