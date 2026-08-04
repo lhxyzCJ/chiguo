@@ -1465,7 +1465,7 @@ def main():
         }, ensure_ascii=False))
         return
 
-    # ── 批 5 轻量子命令（不构造 DecisionEngine/ChiguoState/ScheduleParser，毫秒级） ──
+    # ── 批 5 轻量子命令（不构造 DecisionEngine/ChiguoState，毫秒级） ──
     if args.attention:
         _cmd_attention()
         return
