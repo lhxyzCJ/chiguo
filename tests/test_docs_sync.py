@@ -45,9 +45,9 @@ for anchor, script in anchors:
     check(f"DEPLOYMENT.md 含落点 {anchor}", anchor in dep)
     check(f"{script} 与锚点 {anchor} 一致", anchor in script_txt)
 
-# d) 无 /root/chiguo 硬编码残留（生产脚本链 + mjs 测试；注释剔除后扫描）
+# d) 无 /root/chiguo 硬编码残留（全仓库脚本链 + 测试；注释剔除后扫描）
 hits = []
-for pattern in ["scripts/*.mjs", "scripts/*.sh", "wechat-bridge/*.mjs", "tests/*.mjs"]:
+for pattern in ["scripts/*.mjs", "scripts/*.sh", "wechat-bridge/*.mjs", "tests/*.mjs", "tests/*.sh"]:
     for p in ROOT.glob(pattern):
         txt = p.read_text()
         txt = re.sub(r"//.*$", "", txt, flags=re.M)
