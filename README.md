@@ -190,7 +190,7 @@ flowchart LR
 低档位可事后补装：`bash scripts/install_pi.sh --yes`（模型）、`bash scripts/wechat-bridge.sh install`（微信）。完整部署指南见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 
 ```bash
-git clone git@github.com:lhxyzCJ/chiguo.git && cd chiguo
+git clone https://github.com/lhxyzCJ/chiguo.git && cd chiguo   # 仓库公开，https/ssh 均可（ssh: git@github.com:lhxyzCJ/chiguo.git）
 
 uv sync                              # 核心（零依赖）；完整功能: uv sync --all-extras
 uv run python chiguo_demo.py         # 交互式 Demo（纯模板，无 LLM）
@@ -314,7 +314,7 @@ personality/
 bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境检查 → pi 环境 + wechat-bridge + cron
 ```
 
-**认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态/网易云 cookie/pi key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。pi key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。
+**认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态/网易云 cookie/pi key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。pi key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。微信登录态跨设备通常可直接复用：若首次**主动发送**报 `prepare failed`（context_token 过期），从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
 
 **网易云 API 服务**（可选来源）：systemd 托管（`systemctl status netease-api`），健康检查 `uv run python -m netease.bridge --test`；管理脚本 `bash scripts/netease-api.sh status`。
 
