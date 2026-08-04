@@ -119,20 +119,10 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             follow_entries.append((t, age))
 
     if follow_entries:
-        peak = trg_cfg.get("follow_up_peak_hours", 4.0)
-        sigma = trg_cfg.get("follow_up_sigma_hours", 3.0)
         for entry, age in follow_entries:
-            bell = math.exp(-((age - peak) / sigma) ** 2)
-            w = trg_cfg.get("follow_up_weight", 0.35) * bell
-            if w > trg_cfg.get("follow_up_min_weight", 0.03):
-                weighted_candidates.append({
-                    "trigger": Trigger(type="follow_up", intensity="soft",
-                                       data={"topic": entry["topic"],
-                                             "source": entry["source"],
-                                             "age_hours": round(age, 1)}),
-                    "weight": w,
-                    "topic_ref": entry,
-                })
+            cand = _followup_candidate(entry, age, trg_cfg)
+            if cand:
+                weighted_candidates.append(cand)
     elif not state.pending_topics and state.memory_bridge.available:
         # 记忆兜底:近 48h 内、用户相关的记忆,选中一条作为接话茬素材(不落盘)
         now_ts = now.timestamp()
@@ -150,20 +140,9 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
                           "created_at": now.isoformat()}, age))
                     break
         if follow_entries:
-            entry, age = follow_entries[0]
-            peak = trg_cfg.get("follow_up_peak_hours", 4.0)
-            sigma = trg_cfg.get("follow_up_sigma_hours", 3.0)
-            bell = math.exp(-((age - peak) / sigma) ** 2)
-            w = trg_cfg.get("follow_up_weight", 0.35) * bell
-            if w > trg_cfg.get("follow_up_min_weight", 0.03):
-                weighted_candidates.append({
-                    "trigger": Trigger(type="follow_up", intensity="soft",
-                                       data={"topic": entry["topic"],
-                                             "source": entry["source"],
-                                             "age_hours": round(age, 1)}),
-                    "weight": w,
-                    "topic_ref": entry,
-                })
+            cand = _followup_candidate(follow_entries[0][0], follow_entries[0][1], trg_cfg)
+            if cand:
+                weighted_candidates.append(cand)
 
     # ── 情绪驱动事件（sigmoid 权重） ─────────────────────
     emo = state.emotion
@@ -296,6 +275,24 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             trigger.intensity = "soft"
 
     return trigger
+
+
+def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
+    """follow_up 候选组装（主块与记忆兜底块共用）。权重 = weight × 年龄钟形。"""
+    peak = trg_cfg.get("follow_up_peak_hours", 4.0)
+    sigma = trg_cfg.get("follow_up_sigma_hours", 3.0)
+    bell = math.exp(-((age - peak) / sigma) ** 2)
+    w = trg_cfg.get("follow_up_weight", 0.35) * bell
+    if w <= trg_cfg.get("follow_up_min_weight", 0.03):
+        return None
+    return {
+        "trigger": Trigger(type="follow_up", intensity="soft",
+                           data={"topic": entry["topic"],
+                                 "source": entry["source"],
+                                 "age_hours": round(age, 1)}),
+        "weight": w,
+        "topic_ref": entry,
+    }
 
 
 def _should_morning(state: ChiguoState, now: datetime) -> bool:
