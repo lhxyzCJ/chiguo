@@ -1415,21 +1415,6 @@ class ChiguoState:
                 self.cooldown.crash_timestamps = self.cooldown.crash_timestamps[-50:]
         self._prune_crash_history(now)
 
-        # ── v4: Bayesian 在线学习 ──
-        try:
-            silence_h = self.cooldown.silent_hours(now, wall=True) if now else 0
-            self.bayesian_estimator.record_observation({
-                "reply_latency": None,
-                "msg_length": None,
-                "silence_hours": round(silence_h, 2),
-                "trigger": trigger_type,
-                "messages_today": self.cooldown.messages_today,
-                "loneliness": round(self.emotion.loneliness, 1),
-                "anxiety": round(self.emotion.anxiety, 1),
-                "energy": round(self.emotion.energy, 1),
-            })
-        except Exception:
-            pass
 
         self._finalize(now)
 
