@@ -929,7 +929,7 @@ class ChiguoState:
                     "on_break": False, "breaks": _breaks_info()}
         if not src.schedule_valid:
             return None  # 课表未启用/无数据/解析异常 → None 语义保持
-        # ── 组装(与现 schedule_query 返回形状逐键兼容)──
+        # ── 组装（读路径 load_sources 缓存，形状与旧 schedule_query 逐键兼容）──
         active = {p: c for p, c in rc.items() if not c.get("cancelled")}
         cp = current_period(now)
         result = {"in_class": cp in active, "on_break": False, "breaks": _breaks_info()}
