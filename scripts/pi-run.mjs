@@ -24,6 +24,8 @@ const PI_BIN = process.env.PI_BIN ?? 'pi'
 const PROVIDER = process.env.PIRUN_PROVIDER ?? HOST.provider ?? 'opencode-go'  // provider 可配：pi --provider 名（内置或 models.json 自定义）
 const MODEL = process.env.PIRUN_MODEL ?? HOST.model ?? 'deepseek-v4-flash'
 const THINKING = process.env.PIRUN_THINKING ?? HOST.thinking_level ?? 'high'
+// pi 调用超时(ms):默认 120s;replan 等长任务经 PIRUN_TIMEOUT 覆盖(replan.py replan_env 注入)
+const PI_TIMEOUT = Number(process.env.PIRUN_TIMEOUT ?? 120_000)
 const SESSION_ID = process.env.PIRUN_SESSION ?? HOST.session_id ?? 'chiguo-main'
 const PERSONALITY_DIR = HOST.personality_dir ?? `${REPO}/personality`
 const PERSONALITY = process.env.PIRUN_PERSONALITY ?? `${PERSONALITY_DIR}/SUN2.md`
@@ -138,7 +140,7 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
     '--thinking', THINKING,
     '--mode', 'json', sysPrompt]
   try {
-    const { stdout } = await exec(PI_BIN, piArgs, { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 })
+    const { stdout } = await exec(PI_BIN, piArgs, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
     const text = parseNdjson(stdout)
     if (!text) return { ok: false, error: 'empty reply' }
     if (analysisMode) {
@@ -179,7 +181,7 @@ period?, to_period?, to_date?, course?, label?, match?}。
     '--append-system-prompt', PERSONALITY, '--append-system-prompt', GUIDE,
     '--thinking', THINKING, '--mode', 'json', sysPrompt]
   try {
-    const { stdout } = await exec(PI_BIN, piArgs, { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 })
+    const { stdout } = await exec(PI_BIN, piArgs, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
     const text = parseNdjson(stdout)
     if (!text) return { ok: false, error: 'empty reply' }
     const block = extractBlock(text, marker)

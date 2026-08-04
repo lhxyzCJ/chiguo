@@ -117,8 +117,30 @@ def _lock(base_dir: str) -> bool:
             time.sleep(0.1)
 
 
+def replan_env(base: dict | None = None) -> dict:
+    """replan 的 pi 子进程环境:注入独立 thinking 档位与超时,避免 [host].thinking_level=max
+    拖垮调用(埋埋实机 2 核 VPS 实测 max 单次 ~115s+,120s 必超时)。
+    优先级:CHIGUO_REPLAN_THINKING(专用) > 环境 PIRUN_THINKING(显式) > 默认 high;
+    PIRUN_TIMEOUT 与 replan_timeout() 同步(pi-run.mjs 内层超时读该变量)。"""
+    env = dict(os.environ if base is None else base)
+    env["PIRUN_THINKING"] = (env.get("CHIGUO_REPLAN_THINKING")
+                             or env.get("PIRUN_THINKING") or "high")
+    env["PIRUN_TIMEOUT"] = str(replan_timeout(env))
+    return env
+
+
+def replan_timeout(env: dict | None = None) -> int:
+    """pi 调用超时(秒):默认 240(旧 120 在 thinking>high 时不够),CHIGUO_REPLAN_TIMEOUT 可覆盖,
+    非法值/过小值兜底。"""
+    env = os.environ if env is None else env
+    try:
+        return max(60, int(env.get("CHIGUO_REPLAN_TIMEOUT", 240)))
+    except (TypeError, ValueError):
+        return 240
+
+
 def _run_replan(base_dir: str, config: dict, sources) -> dict | None:
-    """pi 分析(facts + 类型清单 + clamp 边界),120s 超时;失败 → None(保留旧 plan + stale)。"""
+    """pi 分析(facts + 类型清单 + clamp 边界),超时默认 240s;失败 → None(保留旧 plan + stale)。"""
     facts = [{"ref": f"fact:{it['id']}", "start": it["date"], "end": it.get("end_date") or it["date"],
               "label": it.get("label", "")} for it in sources.overrides.intervals()]
     for name, (s, e) in sources.holiday.all_ranges().items():
@@ -133,13 +155,13 @@ def _run_replan(base_dir: str, config: dict, sources) -> dict | None:
                 "(ref+trigger_scale 对象;无需要调节时 modifiers 为空数组)。"},
         ensure_ascii=False)
     repo = str(Path(__file__).resolve().parent.parent)
-    env = dict(os.environ)
+    env = replan_env()
     try:
         res = subprocess.run(
             ["node", f"{repo}/scripts/pi-run.mjs", "--prompt", prompt, "--schedule-replan"],
-            capture_output=True, text=True, timeout=120, env=env)
+            capture_output=True, text=True, timeout=replan_timeout(env), env=env)
     except subprocess.TimeoutExpired:
-        print("[schedule.replan] pi 120s 超时 → 按失败处理,下轮重试", file=sys.stderr)
+        print("[schedule.replan] pi 超时 → 按失败处理,下轮重试", file=sys.stderr)
         return None
     try:
         out = json.loads(res.stdout)
