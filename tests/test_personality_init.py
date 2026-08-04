@@ -9,9 +9,7 @@ from chiguo_personality import default_personality
 
 def test_default_style_is_classic_tsundere():
     p = default_personality()
-    style = p.tsundere_style()
-    assert style in ("tsundere_classic", "tsundere_soft"), f"初始人格应为傲娇分支，实际 {style}"
-    assert style != "tsundere_cool", "初始人格不应是酷娇"
+    assert p.tsundere_intensity >= 70, f"初始傲娇应 ≥70，实际 {p.tsundere_intensity:.1f}"
 
 
 def test_default_traits_reasonable():

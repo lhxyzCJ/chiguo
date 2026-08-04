@@ -125,27 +125,6 @@ class PersonalityTraits:
 
         return "|".join(profiles)
 
-    def tsundere_style(self) -> str:
-        """
-        根据 tsundere_intensity 和 agreeableness 判断傲娇风格。
-        返回 MessageComposer.CUES 的合法键，用于消息组合系统的 Cue 选择。
-        """
-        if self.tsundere_intensity >= 70:
-            if self.agreeableness < 50:
-                return "tsundere_classic"  # 经典傲娇——嘴硬攻击型
-            else:
-                return "tsundere_soft"  # 嘴硬但温柔底子（软傲娇）
-        elif self.tsundere_intensity > 45:
-            if self.neuroticism > 60:
-                return "tsundere_soft"  # 软傲娇——快藏不住了
-            else:
-                return "tsundere_cool"  # 酷娇——冷淡但偶尔温柔
-        else:
-            if self.attachment_style > 60:
-                return "dere_dere"  # 娇——防线基本融化
-            else:
-                return "tsundere_cool"  # 酷娇——独立但关心
-
     def anxiety_sensitivity(self) -> float:
         """neuroticism 对不安变化的敏感度。0.8~1.3。"""
         return 0.8 + (self.neuroticism / 100) * 0.5
