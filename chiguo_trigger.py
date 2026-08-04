@@ -209,7 +209,6 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # anxiety：与孤独三级同款 "不触发基线" softmax 归一化（raw / (raw + baseline)）
     # v7 修复：原 0.05 硬门槛在 anxiety=40（raw≈0.103）即恒候选，沉默期确定性发满日上限。
     # 归一化后 40 → ≈0.171 < anxiety_min_weight(0.3)，不再成为唯一候选；高焦虑仍强候选。
-    trg_cfg = state.config.get("trigger", {})
     anx_baseline = trg_cfg.get("anxiety_baseline", 0.5)
     anx_min_weight = trg_cfg.get("anxiety_min_weight", 0.3)
     raw_anx = state.trigger_weight("anxiety")
@@ -320,12 +319,12 @@ def _should_night(state: ChiguoState, now: datetime) -> bool:
     return random.random() < 0.12
 
 
-def _should_meal(now: datetime, state: ChiguoState = None) -> bool:
+def _should_meal(now: datetime, state: ChiguoState) -> bool:
     """饭点触发。上课时不发。"""
     if now.hour not in (11, 12, 17, 18, 19):
         return False
     # 上课时跳过（课间可以）
-    if state and not _is_free_time(state, now):
+    if not _is_free_time(state, now):
         return False
     return random.random() < 0.05
 
