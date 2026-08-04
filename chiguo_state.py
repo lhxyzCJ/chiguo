@@ -24,6 +24,7 @@ from contextlib import contextmanager
 from chiguo_math import (
     sigmoid, decay, recover,
     dynamic_lambda, hawkes_intensity, longing_decay,
+    in_quiet_window,
 )
 from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
@@ -1613,12 +1614,8 @@ class ChiguoState:
 
         # 静默窗口禁止(配置默认 0-8;生物钟学习达标后为学习窗口)
         qs, qe = self.cooldown.quiet_window()
-        if qe < qs:
-            if now.hour >= qs or now.hour < qe:
-                return False
-        else:
-            if qs <= now.hour < qe:
-                return False
+        if in_quiet_window(now, qs, qe):
+            return False
 
         # 忙碌抑制（用户说"忙"/"晚安"等）
         if self.cooldown.is_busy_suppressed(now):
