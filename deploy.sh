@@ -32,9 +32,9 @@ else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
 
-# ── 3. 全量自检(36 py + 10 script 测试,任一失败即中止) ──────────
+# ── 3. 全量自检(35 py + 10 script 测试,任一失败即中止) ──────────
 TESTS=(test_chiguo_math test_holiday_parser test_schedule_parser
-       test_integration test_monitor test_eventbus test_personality
+       test_integration test_monitor test_personality
        test_bayesian test_composer test_ebbinghaus test_longing
        test_escape_valve test_feedback test_trigger test_topics
        test_circadian test_followup test_netease_proof test_netease_service

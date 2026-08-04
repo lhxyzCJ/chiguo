@@ -19,7 +19,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-bash scripts/ci-test.sh   # full suite (36 py + 10 script) — 本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
+bash scripts/ci-test.sh   # full suite (35 py + 10 script) — 本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
 ```
 
 - Python 3.14 via uv (`.venv` exists, Python 3.14.6). 3.14-only syntax is intentional: bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`.
@@ -28,7 +28,7 @@ bash scripts/ci-test.sh   # full suite (36 py + 10 script) — 本地与 GitHub 
 
 ## Architecture (fast map)
 
-- `chiguo_daemon.py` (DecisionEngine) → `chiguo_state.py` (5-dim emotion engine + 8-dim personality + schedule/holidays/memory + circadian/pending_topics), `chiguo_trigger.py` (13 sigmoid-weighted trigger types incl. v7 follow_up, no hard thresholds), `chiguo_topics.py` (8-source topic injection: schedule/memory/weather/general/anniversary/solar_terms/preference_followup + v9 netease via NeteaseService), `chiguo_composer.py` (Intent × Cue × Vibe), `chiguo_math.py` (pure functions), `chiguo_bayesian.py` (6 user states), `chiguo_circadian.py` (dual-bucket circadian sleep-window learning: weekday/weekend + play-activity merging), `netease/` 包 (数据面 `bridge.py` NeteaseBridge 实例 + 策略层 `service.py` NeteaseService DI：健康/登录失效检测/降级链/peek-consume 配额/随机选源/播放反证单入口 `fetch_play_proof`;运行时文件锚定 `<base_dir>/netease/`), `chiguo_eventbus.py` (pub/sub singleton), `chiguo_version.py` (project version single source: VERSION="1", +0.1 per round; decision JSON/--version/envcheck/monitor carry it).
+- `chiguo_daemon.py` (DecisionEngine) → `chiguo_state.py` (5-dim emotion engine + 8-dim personality + schedule/holidays/memory + circadian/pending_topics), `chiguo_trigger.py` (13 sigmoid-weighted trigger types incl. v7 follow_up, no hard thresholds), `chiguo_topics.py` (8-source topic injection: schedule/memory/weather/general/anniversary/solar_terms/preference_followup + v9 netease via NeteaseService), `chiguo_composer.py` (Intent × Cue × Vibe), `chiguo_math.py` (pure functions), `chiguo_bayesian.py` (6 user states), `chiguo_circadian.py` (dual-bucket circadian sleep-window learning: weekday/weekend + play-activity merging), `netease/` 包 (数据面 `bridge.py` NeteaseBridge 实例 + 策略层 `service.py` NeteaseService DI：健康/登录失效检测/降级链/peek-consume 配额/随机选源/播放反证单入口 `fetch_play_proof`;运行时文件锚定 `<base_dir>/netease/`), `chiguo_version.py` (project version single source: VERSION="1", +0.1 per round; decision JSON/--version/envcheck/monitor carry it).
 - Everything tunable in `chiguo_proactive.toml` (314 lines); hot-reloads via mtime check in `--loop` mode only (cron spawns fresh processes).
 - Output: `chiguo_decisions.jsonl` (append-only). State: `chiguo_state.json` (atomic `.tmp` → `os.replace`, `.bak` backup, SHA256 checksum, monotonic `tick_seq`). Privacy runtime files (state/decisions/messages/login state) are `.gitignore`d (local only, history rewritten); monitoring/health JSONL stays tracked for analysis.
 - CLI convention: JSON to stdout, diagnostics to stderr. Always use `CST = timezone(timedelta(hours=8))` — never naive datetimes.
@@ -52,5 +52,5 @@ bash scripts/ci-test.sh   # full suite (36 py + 10 script) — 本地与 GitHub 
 
 ## After any code change
 
-1. Run affected test files; full chain (36 py + 10 script) if touching math/state/daemon.
+1. Run affected test files; full chain (35 py + 10 script) if touching math/state/daemon.
 2. Update affected sections of `doc/SYSTEM.md`, `doc/README.md`；`doc/DEPLOYMENT.md` 在 deploy.sh/scripts 改动时同步。
