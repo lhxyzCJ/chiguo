@@ -885,13 +885,9 @@ python3 memory_bridge.py --recent 168
 ### chiguo_monitor.py
 
 ```bash
-# 人类可读摘要（默认7天）
-python3 chiguo_monitor.py
-python3 chiguo_monitor.py --summary --days 30
-
-# 结构化统计（JSON）
-python3 chiguo_monitor.py --json
-python3 chiguo_daemon.py --stats        # 委托别名
+# 结构化统计（JSON，默认7天）
+python3 chiguo_daemon.py --stats
+python3 chiguo_daemon.py --stats --days 30
 
 # 异常告警（JSON）
 python3 chiguo_monitor.py --alerts
@@ -1231,13 +1227,9 @@ path = "data/chiguo_memories.json"        # 手动记忆文件
 ### 10.1 CLI
 
 ```bash
-# 人类可读摘要（默认7天）
-python3 chiguo_monitor.py
-python3 chiguo_monitor.py --summary --days 30
-
-# 结构化统计（JSON）
-python3 chiguo_monitor.py --json
-python3 chiguo_daemon.py --stats        # 最近7天
+# 结构化统计（JSON，默认7天）
+python3 chiguo_daemon.py --stats
+python3 chiguo_daemon.py --stats --days 30
 python3 chiguo_daemon.py --stats 30     # 最近30天
 
 # 异常告警
