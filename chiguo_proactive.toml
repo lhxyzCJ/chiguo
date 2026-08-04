@@ -303,6 +303,7 @@ provider = "opencode-go"        # pi provider：= pi --provider 名与 auth.json
                                  # ~/.pi/agent/models.json 注册的自定义 OpenAI 兼容端点，见 doc/PI_INTEGRATION.md「接入任意模型 API」）
 model = "deepseek-v4-flash"     # 对应 provider 的模型（pi --model 支持 provider/id 前缀）
 thinking_level = "high"
+reply_thinking_level = "high"   # 回复侧独立档位（交互及时性:微信消息→回复的 LLM 调用用此档位;主动发送/重分析仍用 thinking_level。可设 medium/high 保响应速度,max 保质量,缺省回退 thinking_level）
 session_id = "chiguo-main"      # 回复侧会话（bridge askPi；进程内 TurnQueue 串行）
 send_session_id = "chiguo-send" # 主动发送会话（chiguo-tick.sh 经 PIRUN_SESSION 注入；与回复会话分离 → 消除跨进程并发 turn）
 wechat_bridge_url = "http://127.0.0.1:18790/send"   # 主动发送端点（chiguo-tick.sh curl 目标；--noproxy '*'）

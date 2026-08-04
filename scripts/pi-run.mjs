@@ -24,6 +24,9 @@ const PI_BIN = process.env.PI_BIN ?? 'pi'
 const PROVIDER = process.env.PIRUN_PROVIDER ?? HOST.provider ?? 'opencode-go'  // provider 可配：pi --provider 名（内置或 models.json 自定义）
 const MODEL = process.env.PIRUN_MODEL ?? HOST.model ?? 'deepseek-v4-flash'
 const THINKING = process.env.PIRUN_THINKING ?? HOST.thinking_level ?? 'high'
+// 回复侧独立档位(交互路径要快):env PIRUN_REPLY_THINKING ?? toml reply_thinking_level ?? 回退 THINKING。
+// 主动发送(send-mode)与命令/重分析路径保持 thinking_level,互不拖累(埋埋实机:max 单次 63s+,回复体验差)
+const REPLY_THINKING = process.env.PIRUN_REPLY_THINKING ?? HOST.reply_thinking_level ?? THINKING
 // pi 调用超时(ms):默认 120s;replan 等长任务经 PIRUN_TIMEOUT 覆盖(replan.py replan_env 注入)
 const PI_TIMEOUT = Number(process.env.PIRUN_TIMEOUT ?? 120_000)
 const SESSION_ID = process.env.PIRUN_SESSION ?? HOST.session_id ?? 'chiguo-main'
@@ -137,7 +140,7 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
     '--session-id', SESSION_ID, '--no-context-files',
     '--append-system-prompt', PERSONALITY,
     '--append-system-prompt', GUIDE,
-    '--thinking', THINKING,
+    '--thinking', analysisMode ? REPLY_THINKING : THINKING,
     '--mode', 'json', sysPrompt]
   try {
     const { stdout } = await exec(PI_BIN, piArgs, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
