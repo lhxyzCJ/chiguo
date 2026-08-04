@@ -16,7 +16,6 @@ from chiguo_math import weighted_trigger_choice
 class Trigger:
     type: str
     intensity: str = "soft"
-    description: str = ""
     data: dict = field(default_factory=dict)
 
 
@@ -52,28 +51,28 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         special_hit = False
     if special_hit:
         weighted_candidates.append({
-            "trigger": Trigger(type="special", intensity="soft", description="特殊日期"),
+            "trigger": Trigger(type="special", intensity="soft"),
             "weight": 3.0 * ritual_scale,  # 高权重,但非绝对
         })
 
     # 早安
     if _should_morning(state, now):
         weighted_candidates.append({
-            "trigger": Trigger(type="morning", intensity="soft", description="早安"),
+            "trigger": Trigger(type="morning", intensity="soft"),
             "weight": 2.5 * ritual_scale,
         })
 
     # 晚安
     if _should_night(state, now):
         weighted_candidates.append({
-            "trigger": Trigger(type="night", intensity="soft", description="晚安"),
+            "trigger": Trigger(type="night", intensity="soft"),
             "weight": 2.0 * ritual_scale,
         })
 
     # 用餐（上课时跳过）
     if _should_meal(now, state):
         weighted_candidates.append({
-            "trigger": Trigger(type="meal", intensity="soft", description="用餐"),
+            "trigger": Trigger(type="meal", intensity="soft"),
             "weight": 0.8 * ritual_scale,
         })
 
@@ -83,8 +82,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         if _memory_should_trigger(mem, now):
             weighted_candidates.append({
                 "trigger": Trigger(type="memory", intensity="soft",
-                                   data={"memory": mem},
-                                   description=f"记忆: {mem.get('content','')[:25]}"),
+                                   data={"memory": mem}),
                 "weight": 2.0 * ritual_scale,
             })
 
@@ -96,8 +94,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         if lancedb_mem:
             weighted_candidates.append({
                 "trigger": Trigger(type="memory", intensity="soft",
-                                   data={"lancedb_memory": lancedb_mem},
-                                   description=f"想起: {lancedb_mem.get('l0_abstract','')[:25] or lancedb_mem.get('text','')[:25]}"),
+                                   data={"lancedb_memory": lancedb_mem}),
                 "weight": 1.5 * ritual_scale,
             })
 
@@ -132,8 +129,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
                     "trigger": Trigger(type="follow_up", intensity="soft",
                                        data={"topic": entry["topic"],
                                              "source": entry["source"],
-                                             "age_hours": round(age, 1)},
-                                       description=f"接话茬: {entry['topic'][:20]}"),
+                                             "age_hours": round(age, 1)}),
                     "weight": w,
                     "topic_ref": entry,
                 })
@@ -164,8 +160,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
                     "trigger": Trigger(type="follow_up", intensity="soft",
                                        data={"topic": entry["topic"],
                                              "source": entry["source"],
-                                             "age_hours": round(age, 1)},
-                                       description=f"接话茬: {entry['topic'][:20]}"),
+                                             "age_hours": round(age, 1)}),
                     "weight": w,
                     "topic_ref": entry,
                 })
@@ -195,22 +190,19 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
 
     if w_low > 0.03:
         weighted_candidates.append({
-            "trigger": Trigger(type="lonely_low", intensity="soft",
-                               description="低度孤独 — 轻松试探"),
+            "trigger": Trigger(type="lonely_low", intensity="soft"),
             "weight": w_low,
         })
 
     if w_mid > 0.03:
         weighted_candidates.append({
-            "trigger": Trigger(type="lonely_mid", intensity="medium",
-                               description="中度孤独 — 嘴硬联系"),
+            "trigger": Trigger(type="lonely_mid", intensity="medium"),
             "weight": w_mid,
         })
 
     if w_high > 0.02:
         weighted_candidates.append({
-            "trigger": Trigger(type="lonely_high", intensity="intense",
-                               description="高度孤独 — 防线崩溃"),
+            "trigger": Trigger(type="lonely_high", intensity="intense"),
             "weight": w_high,
         })
 
@@ -224,8 +216,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     w_anx = raw_anx / (raw_anx + anx_baseline) if raw_anx + anx_baseline > 0 else 0.0
     if w_anx > anx_min_weight:
         weighted_candidates.append({
-            "trigger": Trigger(type="anxiety", intensity="medium",
-                               description="不安驱动 — 确认被需要"),
+            "trigger": Trigger(type="anxiety", intensity="medium"),
             "weight": w_anx,
         })
 
@@ -240,8 +231,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         w_bored = 0.15 * (emo.energy / 100) * aff_factor * pers_extra_factor
         if w_bored > 0.03:
             weighted_candidates.append({
-                "trigger": Trigger(type="playful", intensity="soft",
-                                   description="元气过剩 — 调皮捣蛋/分享日常"),
+                "trigger": Trigger(type="playful", intensity="soft"),
                 "weight": w_bored,
             })
 
@@ -255,8 +245,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             w_reflect = 0.08 * (emo.affection / 100) * (1 - neuroticism / 100) * (emo.energy / 100)
             if w_reflect > 0.02:
                 weighted_candidates.append({
-                    "trigger": Trigger(type="reflect", intensity="soft",
-                                       description="角色内省 — 觉察自己的变化"),
+                    "trigger": Trigger(type="reflect", intensity="soft"),
                     "weight": w_reflect,
                 })
 
@@ -270,8 +259,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         if w_longing > 0.03:
             weighted_candidates.append({
                 "trigger": Trigger(type="longing", intensity="soft",
-                                   data={"held_count": held, "accumulated_lambda": round(acc_lam, 3)},
-                                   description=f"累积想念溢出 — {held} 次 idle 后按捺不住"),
+                                   data={"held_count": held, "accumulated_lambda": round(acc_lam, 3)}),
                 "weight": w_longing,
             })
 
@@ -301,12 +289,10 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # ── v4.1: 安全阀 — 连续崩溃降级 ──
     safety = state.safety_level(now)
     if safety >= 1 and trigger.type == "lonely_high":
-        trigger = Trigger(type="lonely_mid", intensity="soft",
-                          description="崩溃冷却降级 — 距上次崩溃不足24h")
+        trigger = Trigger(type="lonely_mid", intensity="soft")
     elif safety >= 2:
         if trigger.type == "anxiety":
-            trigger = Trigger(type="lonely_low", intensity="soft",
-                              description="强制温和模式 — 48h内多次崩溃")
+            trigger = Trigger(type="lonely_low", intensity="soft")
         else:
             trigger.intensity = "soft"
 
