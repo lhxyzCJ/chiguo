@@ -13,8 +13,8 @@ TODAY = date(2026, 8, 5)        # 周三;学期第 24 周(08-03 周一 ~ 08-07 �
 NOW = datetime(2026, 8, 5, 14, 0, tzinfo=CST)   # 周三 14:00 = 第 5 节上课中
 
 from schedule.sources import load_sources
-from schedule.day_plan import (week_number, week_courses, resolve_classes, day_plan,
-                               is_in_class, availability_base, class_load_adjust)
+from schedule.day_plan import (week_number, week_courses, resolve_classes,
+                               availability_base, class_load_adjust)
 from schedule.resolve_when import resolve_when, ResolveReject
 from schedule.attention import t1_items, t2_block, t3_window, today_exceptions, build_attention
 from schedule.recall import recall
@@ -79,46 +79,10 @@ def test_week_courses_active_and_alternates():
 
 # ═══ day_plan 事实窗口(§4)═══
 
-def test_day_plan_window():
-    """多日窗口:全部来源并列、cancelled 标记、无优先级字段、break/holiday/facts"""
-    with tempfile.TemporaryDirectory() as td:
-        src = _mk(td, anniv=[
-            {"id": "a1", "type": "anniversary", "name": "哥哥的生日", "date": "10-01",
-             "note": "", "created_at": "2026-01-01"}],
-            breaks={"manual_override": True, "breaks": []},
-            cache={"schedule": {"3": {"3": {"course": "高数", "teacher": "刘洋",
-                    "weeks": [30, 31, 32, 33], "weeks_raw": "30-33周", "location": "A301",
-                    "alternates": []}}}},
-            ovr=[
-                {"id": "o1", "date": "2026-10-01", "kind": "cancel", "period": 3,
-                 "note": "临时停课", "created_at": "2026-08-01T10:00:00+08:00"},
-                {"id": "o2", "date": "2026-10-02", "kind": "reminder", "label": "交材料",
-                 "created_at": "2026-08-01T10:00:00+08:00"},
-                {"id": "o3", "date": "2026-10-03", "end_date": "2026-10-05",
-                 "kind": "exam_week", "label": "期末考试周", "created_at": "2026-08-01T10:00:00+08:00"}])
-        dp = day_plan(date(2026, 10, 1), 3, src)
-        assert len(dp["dates"]) == 3
-        d1, d2, d3 = dp["dates"]
-        assert d1["date"] == "2026-10-01" and d1["holiday"] == {"name": "国庆节"}
-        assert d1["weekend"] is False and d1["makeup"] is False
-        assert d1["break"] == {"manual": True, "start": None, "end": None, "note": ""}
-        assert d1["anniversary"] == [{"name": "哥哥的生日", "days_until": 0}]
-        assert d2["reminders"] == [{"label": "交材料", "days_until": 1}]
-        assert d3["facts"] == [{"kind": "exam_week", "label": "期末考试周"}]
-        assert any(c["period"] == 3 and c["cancelled"] is True for c in d1["classes"]), "cancel 保留并标记"
-        for day in dp["dates"]:
-            assert "priority" not in day and "weight" not in day, "纯事实无优先级字段"
-            for c in day["classes"]:
-                assert "weeks" not in c and "alternates" not in c, "M8 平铺:不投影存储形态"
-    print("  OK test_day_plan_window")
-
-
 def test_day_plan_no_files_on_read():
     """零写断言:读路径不产生任何文件(M5)"""
     with tempfile.TemporaryDirectory() as td:
         src = _mk(td)
-        day_plan(TODAY, 3, src)
-        is_in_class(NOW, src)
         availability_base(NOW, src)
         t1_items(src, TODAY)
         recall("考试周", src, TODAY)
@@ -263,25 +227,6 @@ def test_class_load_adjust():
     assert class_load_adjust(0.85, cancelled(rc3, 5), between) == 0.85, "cancel 后剩余 0 → 0.85"
     print("  OK test_class_load_adjust")
 
-
-def test_is_in_class_rules():
-    """规则链 on_break > 节假日 > 周末 > 调休 > 课表含例外;cancel 槽位不算课"""
-    with tempfile.TemporaryDirectory() as td:
-        src = _mk(td, cache=CACHE_3PERIOD)
-        assert is_in_class(datetime(2026, 3, 4, 14, 0, tzinfo=CST), src) is True, "周三 14:00 第 5 节"
-        assert is_in_class(datetime(2026, 3, 4, 10, 20, tzinfo=CST), src) is True, "周三 10:20 第 3 节"
-        assert is_in_class(datetime(2026, 3, 4, 9, 36, tzinfo=CST), src) is False, "课间不算课"
-        assert is_in_class(datetime(2026, 10, 1, 14, 0, tzinfo=CST), src) is False, "节假日"
-        assert is_in_class(datetime(2026, 8, 8, 14, 0, tzinfo=CST), src) is False, "周末"
-        assert is_in_class(datetime(2026, 8, 5, 14, 0, tzinfo=CST), src) is False, "学期已结束(break)"
-        with tempfile.TemporaryDirectory() as td2:
-            src2 = _mk(td2, cache=CACHE_3PERIOD, ovr=[
-                {"id": "c1", "date": "2026-03-04", "kind": "cancel", "period": 5,
-                 "created_at": "2026-03-01T10:00:00+08:00"}])
-            assert is_in_class(datetime(2026, 3, 4, 14, 0, tzinfo=CST), src2) is False, "cancel 槽位不算课"
-    print("  OK test_is_in_class_rules")
-
-# ═══ resolve_when 全令牌矩阵(§4.2,纯换算三参)═══
 
 def _reject(when, **kw):
     try:
@@ -542,3 +487,17 @@ def test_api_move_source_and_snapshot():
         assert r["ok"] is True, "源槽来自 add 例外 → 允许"
     print("  OK test_api_move_source_and_snapshot")
 
+if __name__ == "__main__":
+    print("test_day_plan.py\n")
+    tests = [test_week_number_monday_alignment, test_week_courses_active_and_alternates,
+             test_day_plan_no_files_on_read,
+             test_resolve_classes_move_dual_slot, test_availability_tiers_and_overlap,
+             test_class_load_adjust,
+             test_rw_explicit_and_mmdd, test_rw_days, test_rw_weekday,
+             test_rw_week_offset_interval, test_rw_combo, test_rw_start_end,
+             test_rw_structural_rejects, test_api_shape_constraints, test_api_to_date_forms,
+             test_api_past_checks_by_kind, test_api_semester_boundary,
+             test_api_move_source_and_snapshot]
+    for t in tests:
+        t()
+    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

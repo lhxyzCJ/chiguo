@@ -123,55 +123,6 @@ def _in_exam(today: date, intervals: list[dict]) -> bool:
     return False
 
 
-def day_plan(start: date, days: int, sources) -> dict:
-    """多日纯事实窗口(§4):无优先级字段;break 恒在(null 或投影);classes 平铺(M8)。"""
-    end = start + timedelta(days=days - 1)
-    dates = []
-    hp = sources.holiday
-    for i in range(days):
-        d = start + timedelta(days=i)
-        hq = hp.query(d)
-        entry = {"date": d.isoformat(), "break": _break_projection(sources.break_state, d),
-                 "weekend": hq["is_weekend"], "makeup": hq["is_makeup_workday"],
-                 "anniversary": [], "reminders": [], "classes": [], "facts": []}
-        if hq["is_holiday"]:
-            entry["holiday"] = {"name": hq["holiday_name"]}
-        mmdd = d.strftime("%m-%d")
-        for a in sources.anniversaries.visible_items():
-            if a.get("type") == "anniversary" and a.get("date") == mmdd:
-                entry["anniversary"].append({"name": a["name"], "days_until": i})
-        for r in sources.overrides.reminders_in(start, end):
-            if r["date"] == d.isoformat():
-                entry["reminders"].append({"label": r["label"], "days_until": i})
-        for it in sources.overrides.intervals():
-            s = date.fromisoformat(it["date"])
-            e = date.fromisoformat(it.get("end_date") or it["date"])
-            if s <= d <= e:
-                entry["facts"].append({"kind": it["kind"], "label": it.get("label", "")})
-        entry["classes"] = [dict(c) for c in resolve_classes(d, sources).values()]
-        dates.append(entry)
-    return {"dates": dates}
-
-
-def is_in_class(now, sources) -> bool:
-    """规则链 on_break > 法定节假日 > 周末 > 调休补课日 > 课表(含例外);cancel 槽位不算课(§5.1)。"""
-    today = now.date() if hasattr(now, "date") else now
-    hp = sources.holiday
-    if _on_break(sources.break_state, sources.semester_end, today):
-        return False
-    if hp.is_holiday(today):
-        return False
-    if not hp.is_school_day(today):
-        return False
-    if not sources.schedule_valid:
-        return False
-    cp = current_period(now)
-    if cp is None:
-        return False
-    classes = resolve_classes(today, sources)
-    return cp in classes and not classes[cp].get("cancelled")
-
-
 def availability_base(now, sources) -> dict:
     """第一层学校日判定(§5.1):{"base", "tier"}。
     重叠优先级(C5,与现码三处统一):考周×寒暑假 → break 0.85;考周×法定节假日 → 节假日 0.85
