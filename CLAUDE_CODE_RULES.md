@@ -76,7 +76,6 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 ├── chiguo_trigger.py       evaluate_triggers() → 13 trigger types (incl. v7 follow_up), sigmoid-weighted
 ├── chiguo_topics.py        TopicPicker — 8 sources (incl. v9 netease), Ebbinghaus-weighted memory
 ├── chiguo_composer.py      MessageComposer — Intent × Cue × Vibe (389 lines)
-├── chiguo_eventbus.py      EventBus — lightweight pub/sub singleton (subscribe/publish only)
 ├── chiguo_rotation.py      Monthly log rotation → archive/
 ├── chiguo_version.py       Project version single source (VERSION="1", +0.1 per round)
 └── chiguo_monitor.py       ChiguoMonitor + AlertManager + DecisionIndex (1196 lines)
@@ -376,7 +375,6 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 6. **Test order**: Integration tests need `chiguo_proactive.toml` in CWD. Run from the repo root.
 7. **Ritual weight scale**: `evaluate_triggers()` multiplies all ritual weights by `ritual_weight_scale`. Set to 0.3 to balance with emotion weights.
 8. **character_rules ⑦ vs condensed**: Full rules (guidance variable) missing 喵/嘻嘻. Condensed version (context dict) has them. Both now fixed (2026-07-02).
-9. **EventBus return type**: `publish()` returns `list[Any]` — backward compatible. Failed handlers get `None` appended (not silently dropped).
 10. **Bayesian normalization**: `update_from_label()` normalizes cached P(obs|state) to sum=1.0. Uncached values default to 0.05 but are not in the normalization group.
 
 ---
@@ -393,7 +391,6 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | chiguo_composer.py | 389 | Message composition | MessageComposer |
 | chiguo_personality.py | 231 | Personality system | PersonalityTraits, PersonalityDelta, PersonalityDeltas |
 | chiguo_bayesian.py | 474 | User inference | UserStateEstimator, BayesianLearner |
-| chiguo_eventbus.py | 56 | Pub/sub | EventBus, get_eventbus(), reset_eventbus() |
 | chiguo_monitor.py | 1196 | Analytics | ChiguoMonitor, AlertManager, DecisionIndex |
 | chiguo_watchdog.py | 294 | Health checks | run_all_checks(), cli() |
 | chiguo_rotation.py | 165 | Log rotation | rotate_if_needed(), force_rotate() |

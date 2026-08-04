@@ -66,7 +66,6 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_trigger.py  → sigmoid 加权随机触发（13 种类型 + v6 逃生阀直接触发 + v7 follow_up 接话茬）
   ├─ chiguo_topics.py   → 8 源话题选择器（v9 含 netease 委托）+ 人格调制 + Ebbinghaus 加权
   ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 (v4 NEW)
-  ├─ chiguo_eventbus.py → 轻量发布/订阅事件总线 (v4 NEW)
   ├─ solar_terms.py     → 24 节气
   ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康）
   ├─ chiguo_rotation.py → 对话日志轮转与归档 + 告警持久化 + 索引查询（v5 NEW）
@@ -667,7 +666,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 | 文件 | 职责 | 依赖 |
 |------|------|------|
-| `chiguo_daemon.py` | **主入口**。决策引擎，输出 JSON | state, trigger, topics, composer, eventbus |
+| `chiguo_daemon.py` | **主入口**。决策引擎，输出 JSON | state, trigger, topics, composer |
 | `chiguo_state.py` | 情绪引擎 + 多维人格 + Bayesian + 课表 + 节假日 + 记忆 + circadian/pending_topics + 双作息迁移 (v8) | math, personality, bayesian, schedule, memory_bridge, chiguo_circadian |
 | `chiguo_circadian.py` | 生物钟学习：双作息双桶分桶（weekday_*/weekend_* 独立估计 + 听歌活跃合并计数）（v7 新增，v8 双桶，纯函数） | 无 |
 | `netease/bridge.py` | 网易云 API 桥接 数据面（NeteaseBridge 实例化）：`fetch_recent_play` 最近播放记录（睡眠窗口内夜间活跃反证 + netease/recent_play_cache.json 缓存）（v8）；`fetch_daily_songs` 每日推荐 + `_api_get` 有限重试（瞬时/5xx 重试 retry_count 次 + 退避）与每日推荐 schema 过滤 + QR 登录（v9） | 无（requests） |
@@ -678,7 +677,6 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_math.py` | 纯数学库：sigmoid/decay/recover/Hawkes/longing/Ebbinghaus | 无 |
 | `chiguo_personality.py` | Big Five + 角色特质（8 维人格）（v4） | 无 |
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态，在线学习）（v4） | 无 |
-| `chiguo_eventbus.py` | 轻量发布/订阅事件总线（v4） | 无 |
 | `schedule/` 包 | 课表/假期/纪念日/安排（15 模块）：`parser.py` 数据面（xlsx → JSON cache → 刷新）/ `parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `holiday.py` 节假日判断（2026 国务院安排 + 调休）/ `anniversary.py` 纪念日 CRUD / `override_store.py` 手动覆盖存储（0600）/ `plan_store.py` 日计划存储（0600）/ `api.py` 安排读写门面（校验 + 澄清接口）/ `sources.py` 课表检索源 / `day_plan.py` 日计划组装 / `resolve_when.py` 触发时机解析 / `attention.py` 注意力快照 / `recall.py` 安排回忆检索 / `confirm.py` 写后确认 / `replan.py` 复盘（--check 明日计划） | openpyxl（可选，惰性导入） |
 | `solar_terms.py` | 24 节气日期查询（零依赖） | 无 |
 | `memory_bridge.py` | LanceDB 只读桥接 + Ebbinghaus 遗忘 | lancedb（惰性导入，可选；缺了降级 JSON） |
@@ -1706,9 +1704,6 @@ rm <仓库根目录>/chiguo_state.json
 ### 人格自适应
 参考 soulforge。每次互动微调人格（< 0.2）。正面互动→更外向/宜人/低神经质；负面互动→反之。新增 reflect 触发（高好感+低沉默+高元气+低神经质→角色内省）。
 
-### EventBus 架构
-轻量发布/订阅模式。模块通过事件通信而非直接 import。事件类型：tick, user_message, character_message, trigger_evaluated, decision_made, state_changed, config_reloaded。
-
 ### 动态休眠调度
 参考 Sebastian。`--loop` 模式不再固定 sleep。按 idle reason 计算最优休眠：quiet_hours → sleep 到 quiet_end, daily_limit → sleep 到明天 8:00, low_energy → sleep 到能量恢复, user_sleeping/busy → 等 1-2 小时。上限 2h 下限 1min。用户设定的 `--loop N` 作为最大上限（`N < 60` 时按 60 处理并 stderr 提示）。
 
@@ -1737,7 +1732,7 @@ rm <仓库根目录>/chiguo_state.json
 | v1 | 2025-12 | 初始版本。线性情绪 + 硬阈值触发 |
 | v2 | 2026-01 | sigmoid 概率替代硬阈值，Poisson 过程，半衰期情绪模型 |
 | v3 | 2026-03 | Hawkes 自激过程，话题注入，LLM 分析接口，忙碌抑制 |
-| **v4** | **2026-06-27** | **Bayesian 用户推断，多维人格，Ebbinghaus 遗忘，Composer，Longing 概率累积，EventBus，人格自适应，动态休眠** |
+| **v4** | **2026-06-27** | **Bayesian 用户推断，多维人格，Ebbinghaus 遗忘，Composer，Longing 概率累积，人格自适应，动态休眠** |
 | v5 | 2026-06-30 | 鲁棒性增强：状态备份/fsync/tick_seq/dampen/审计日志/PID锁/校验和 |
 | **v6** | **2026-07-31** | **溢出逃生阀、状态路径锚定、flock写锁、反馈闭环、文件传参** |
 | v7 | 2026-07-31 | 逃生阀约束：从未交互用户不触发逃生阀；`escape_valve_sleep_block` 睡觉门控二次确认；busy_suppressed 独立 reason 不累积 longing；**v7 补充（daemon 遗留修复）**：cwd 隔离（移除模块级 os.chdir）、`--loop` 最小 60s 提示、`--ack` 自动联动 `--alerts`、`--rotate` 锚定 base_dir |
