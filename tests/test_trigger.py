@@ -228,6 +228,19 @@ def test_longing_overflow_candidate():
     print("  OK test_longing_overflow_candidate")
 
 
+def test_longing_overflow_zero_base_lambda_no_crash():
+    """base_lambda=0 时 longing 分支不应 ZeroDivisionError（回归 B4）"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, energy=40)
+        s.cooldown.held_count = 5
+        s.cooldown.accumulated_lambda = 0.5
+        s.config["poisson"]["base_lambda"] = 0
+        t = evaluate_triggers(s, now)
+        assert t is None or t.type != "longing", f"base_lambda=0 不应产出 longing, got {t}"
+    print("  OK test_longing_overflow_zero_base_lambda_no_crash")
+
+
 # ═══════════════════════════════════════════════════════════
 # 特殊日期 ritual + 记忆触发（tz 防护）
 # ═══════════════════════════════════════════════════════════
