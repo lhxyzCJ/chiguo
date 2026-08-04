@@ -59,15 +59,20 @@ fi
 # pi 已产出消息 → 先记 success（发送失败不丢成功信号）；再发送
 record_health success
 BODY="$(python3 -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$TEXT")"
-if ! curl -sf --noproxy '*' -X POST "$BRIDGE_URL" \
-  -H 'Content-Type: application/json' -d "$BODY" >/dev/null 2>&1; then
-  echo "[chiguo-tick] bridge 发送失败，下个 tick 重试" >&2
-  exit 0
-fi
-# 回传发送结果
 MSG_ID="$(printf '%s' "$OUT" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("msg_id",""))
 except: print("")' 2>/dev/null || true)"
+if ! curl -sf --noproxy '*' -X POST "$BRIDGE_URL" \
+  -H 'Content-Type: application/json' -d "$BODY" >/dev/null 2>&1; then
+  echo "[chiguo-tick] bridge 发送失败，下个 tick 重试" >&2
+  # 回传失败 → daemon 侧 refund_send（energy/quota 回滚 + Hawkes 事件剔除），反馈闭环不静默断
+  if [ -n "$MSG_ID" ]; then
+    "$PY" "$REPO/chiguo_daemon.py" --send-result "$MSG_ID" --send-status failed --error "bridge unreachable" >/dev/null 2>&1 \
+      || echo "[chiguo-tick] send-result(failed) 回传失败 msg_id=$MSG_ID" >&2
+  fi
+  exit 0
+fi
+# 回传发送结果
 if [ -n "$MSG_ID" ]; then
   "$PY" "$REPO/chiguo_daemon.py" --record-send "$MSG_ID" --text "$TEXT" >/dev/null 2>&1 \
     || echo "[chiguo-tick] record-send 失败 msg_id=$MSG_ID" >&2
