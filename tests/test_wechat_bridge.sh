@@ -23,6 +23,9 @@ STUB
 cat > "$TMP/bin/npm" <<'STUB'
 #!/usr/bin/env bash
 echo "npm $*" >> "$NPM_LOG"
+if [ "${1:-}" = run ] && [ "${2:-}" = build ]; then
+  mkdir -p "$(pwd)/dist" && touch "$(pwd)/dist/index.js"
+fi
 mkdir -p "$(pwd)/node_modules/@wechatbot"
 STUB
 cat > "$TMP/bin/pgrep" <<'STUB'
@@ -52,18 +55,28 @@ set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "install 期望 0 实得 $RC"
 grep -q "git clone --depth 1 https://github.com/lhxyzCJ/wechatbot.git $TMP/wechatbot" "$GIT_LOG" || fail "未按预期 clone wechatbot"
 grep -q "npm install @wechatbot/wechatbot@file:$TMP/wechatbot/nodejs" "$NPM_LOG" || fail "npm install file: 参数不对"
+grep -q "npm run build" "$NPM_LOG" || fail "SDK 首次安装未构建（dist 缺失应 npm run build）"
 [ -d "$TMP/repo/wechat-bridge/node_modules/@wechatbot" ] || fail "node_modules 未生成"
 grep -q "WECHAT_BRIDGE_OWNER=owner_test@im.wechat" "$TMP/repo/wechat-bridge/.env" || fail ".env 未从 toml 读 OWNER"
 grep -q "WECHAT_BRIDGE_STORAGE=$TMP/home/.chiguo/auth/wechat" "$TMP/repo/wechat-bridge/.env" || fail ".env STORAGE 路径不对（应指向集中认证目录）"
 pass "首次 install：clone + npm file: + .env 生成"
 
-# ── 用例 3: 重跑 install 幂等 → 不重复 clone（走 pull）──
-: > "$GIT_LOG"
+# ── 用例 3: 重跑 install 幂等 → 不重复 clone（走 pull）+ dist 存在不重复构建 ──
+: > "$GIT_LOG"; : > "$NPM_LOG"
 set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "重跑 install 期望 0 实得 $RC"
 grep -q "git clone" "$GIT_LOG" && fail "重复 clone（应走 pull）" || true
 grep -q "git -C $TMP/wechatbot pull" "$GIT_LOG" || fail "已存在时应 pull 更新"
-pass "重跑 install：不重复 clone"
+grep -q "npm run build" "$NPM_LOG" && fail "dist 已存在不应重复构建" || true
+pass "重跑 install：不重复 clone/build"
+
+# ── 用例 3b: dist 缺失（如 clone 后首次）→ 自动构建 ──
+: > "$NPM_LOG"
+rm -f "$TMP/wechatbot/nodejs/dist/index.js"
+set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] || fail "dist 缺失重装期望 0 实得 $RC"
+grep -q "npm run build" "$NPM_LOG" || fail "dist 缺失应触发重新构建"
+pass "dist 缺失 → 自动重新构建"
 
 # ── 用例 4: 无登录态 → status 退出 1 且提示扫码 ──
 set +e; OUT=$(bash scripts/wechat-bridge.sh status 2>&1); RC=$?; set -e
