@@ -1323,10 +1323,17 @@ class ChiguoState:
         """
         cfg = self.config.get("emotion", {})
 
-        # 钳位到有效范围
-        warmth = max(-1.0, min(1.0, analysis.get("warmth", 0.0)))
-        effort = max(0.0, min(1.0, analysis.get("effort", 0.0)))
-        attention = max(0.0, min(1.0, analysis.get("attention", 0.0)))
+        # 钳位到有效范围（LLM 输出可能为字符串/None → 强转失败回退默认，防 TypeError）
+        def _num(key: str, default: float, lo: float, hi: float) -> float:
+            try:
+                v = float(analysis.get(key, default))
+            except (TypeError, ValueError):
+                v = default
+            return max(lo, min(hi, v))
+
+        warmth = _num("warmth", 0.0, -1.0, 1.0)
+        effort = _num("effort", 0.0, 0.0, 1.0)
+        attention = _num("attention", 0.0, 0.0, 1.0)
 
         # ── 温暖度 → 好感 & 元气 ──
         self.emotion.affection += warmth * cfg.get("affection_warmth_factor", 1.5)
@@ -1353,9 +1360,9 @@ class ChiguoState:
                 self.emotion.anxiety = self._anxiety_before_analysis + delta * anx_sens
 
         # ── 忙碌抑制（LLM 检测到用户想结束话题）──
-        suppress_hours = analysis.get("suppress_hours", 0)
+        suppress_hours = _num("suppress_hours", 0, 0, 24)
         if suppress_hours > 0 and now is not None:
-            until = (now + timedelta(hours=min(suppress_hours, 24))).isoformat()
+            until = (now + timedelta(hours=suppress_hours)).isoformat()
             # 取两者中较晚的（已设抑制期 → 新值更晚时覆盖延长）
             if self.cooldown.busy_suppress_until:
                 try:

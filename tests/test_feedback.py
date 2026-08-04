@@ -308,6 +308,25 @@ def test_recv_dedup_same_text_skipped():
     print("  OK test_recv_dedup_same_text_skipped")
 
 
+def test_analysis_string_values_sanitized():
+    """LLM 输出字符串数值（warmth="1.0"）→ 强转不崩溃，正常应用"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        st = engine.state
+        now = datetime.now(CST)
+        st.cooldown.current_date = now.strftime("%Y-%m-%d")
+
+        engine.record_user_message("哥哥在吗", '{"warmth": "1.0", "effort": "1.0", "attention": "1.0", "suppress_hours": "3"}')
+        e0 = st.emotion.energy
+        engine.record_user_message("哥哥在吗", '{"warmth": "bad", "effort": null}')
+        # 坏值回退默认 → 不崩溃；warmth=0 → energy 不变
+        assert abs(st.emotion.energy - e0) < 1e-6, f"坏值应回退默认, energy 变化 {st.emotion.energy - e0}"
+        # suppress_hours 字符串 → 强转 3 小时
+        engine.record_user_message("哥哥在吗", '{"suppress_hours": "2"}')
+        assert st.cooldown.busy_suppress_until, "suppress_hours 字符串应生效"
+    print("  OK test_analysis_string_values_sanitized")
+
+
 def test_recv_dedup_analysis_upgrade():
     """v9: bridge 先记录（无分析），standing order 补 --analysis → 只叠加分析微调，不重复基础效果"""
     with tempfile.TemporaryDirectory() as td:
@@ -365,6 +384,7 @@ if __name__ == "__main__":
         test_recv_dedup_same_text_skipped,
         test_recv_dedup_analysis_upgrade,
         test_recv_dedup_different_text_full_record,
+        test_analysis_string_values_sanitized,
     ]
     failed = 0
     for t in tests:
