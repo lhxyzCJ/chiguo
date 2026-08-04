@@ -265,7 +265,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     held = getattr(state.cooldown, 'held_count', 0)
     acc_lam = state.cooldown.accumulated_lambda or 0
     base_lambda = state.config.get("poisson", {}).get("base_lambda", 0.25)
-    if state.is_longing_overflow():
+    if state.is_longing_overflow() and base_lambda > 0:
         w_longing = min(0.5, (acc_lam / base_lambda - 1) * 0.3)
         if w_longing > 0.03:
             weighted_candidates.append({
