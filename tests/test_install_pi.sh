@@ -89,6 +89,9 @@ done
 
 export CALLS_LOG="$TMP/calls.log" CRON_STATE="$TMP/cron_state" TAGS_FILE="$TMP/tags.json"
 export CHIGUO_REPO_OVERRIDE="$TMP/repo" HOME="$TMP/home"
+# 环境变量隔离：install_pi.sh 的 KEY_VAR 优先 PI_API_KEY 再 OPENCODE_API_KEY，
+# 外部（部署机/CI 机）携带任一变量都会改变用例 3/7/12 的行为 → 先清空兜底。
+unset PI_API_KEY OPENCODE_API_KEY
 
 # 默认 tags：含 qwen3-embedding（阶段 4 通过；用例 8 覆盖为空）
 printf '{"models":[{"name":"qwen3-embedding:0.6b","capabilities":["embedding"]}]}' > "$TAGS_FILE"
@@ -133,7 +136,7 @@ pass "dry-run 零写入（无 clone/npm/crontab 写入）"
 # ── 用例 3: 全部就绪 + 无 OPENCODE_API_KEY → 退出 0 ──
 setup_ready
 : > "$CALLS_LOG"
-set +e; env -u OPENCODE_API_KEY bash scripts/install_pi.sh --dry-run >/dev/null 2>&1; RC=$?; set -e
+set +e; env -u PI_API_KEY -u OPENCODE_API_KEY bash scripts/install_pi.sh --dry-run >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] && pass "全部就绪 dry-run → 退出 0" || fail "期望 0 实得 $RC"
 grep -q 'crontab -$' "$CALLS_LOG" && fail "就绪态 dry-run 不应写 crontab" || true
 
@@ -168,7 +171,7 @@ pass "非 TTY 默认 dry-run（无 ask 确认）"
 # ── 用例 7: auth.json 缺 opencode-go + OPENCODE_API_KEY 缺失 → 提示环境变量 ──
 setup_ready
 printf '{"deepseek":{"type":"api_key","key":"old"}}' > "$HOME/.pi/agent/auth.json"
-set +e; OUT=$(env -u OPENCODE_API_KEY bash scripts/install_pi.sh --dry-run 2>&1); RC=$?; set -e
+set +e; OUT=$(env -u PI_API_KEY -u OPENCODE_API_KEY bash scripts/install_pi.sh --dry-run 2>&1); RC=$?; set -e
 [ "$RC" = 1 ] || fail "auth 缺 key 期望 1 实得 $RC"
 echo "$OUT" | grep -q "OPENCODE_API_KEY" || fail "未提示 OPENCODE_API_KEY 缺失"
 pass "auth 缺 opencode-go → 提示 OPENCODE_API_KEY"
@@ -208,7 +211,7 @@ set +e; OUT=$(bash scripts/install_pi.sh --skip-pi 2>&1); RC=$?; set -e
 # ── 用例 12: 干净环境 --yes 模拟失败工具（git 桩 exit 1）→ 阶段 1 失败归 PENDING，退出 1；
 #             阶段 2/3/6 仍写入（settings.json/json5/crontab 产物断言），auth 不写（无 key）──
 clean_home
-set +e; OUT=$(env -u OPENCODE_API_KEY bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
+set +e; OUT=$(env -u PI_API_KEY -u OPENCODE_API_KEY bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 1 ] || fail "--yes clone 失败期望 1 实得 $RC"
 echo "$OUT" | grep -q "clone/build 失败" || fail "缺少 clone/build 失败警告"
 SET_EXT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["extensions"][0])' "$HOME/.pi/agent/settings.json")
@@ -235,7 +238,7 @@ AUTH_MERGE=$(python3 -c 'import json,sys;print(json.dumps(json.load(open(sys.arg
 set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "auth 合并写第二遍期望 0 实得 $RC"
 [ ! -f "$HOME/.pi/agent/auth.json.bak.bak" ] || fail ".bak 被重复备份"
-unset OPENCODE_API_KEY
+unset OPENCODE_API_KEY PI_API_KEY
 pass "auth.json 合并写入（保留旧条目 + chmod 600）+ .bak 不重复"
 
 # ── 用例 14: --yes 两遍幂等（crontab 单行 / extensions 单条 / 零 .bak / 不重复 clone）──
@@ -256,7 +259,7 @@ EXT_N=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["exte
   && [ ! -f "$HOME/.pi/agent/auth.json.bak" ] || fail "两遍 --yes 不应产生 .bak"
 [ "$(grep -c "^git " "$CALLS_LOG" || true)" = "$GIT1" ] || fail "第二遍重复 clone"
 [ "$(grep -c "^npm install" "$CALLS_LOG" || true)" = "$NPM1" ] || fail "第二遍重复 npm install"
-unset OPENCODE_API_KEY
+unset OPENCODE_API_KEY PI_API_KEY
 pass "--yes 两遍幂等（不重复 crontab/扩展/.bak/clone）"
 
 # ── 用例 15: toml [host].provider=deepseek + PI_API_KEY → 写 deepseek 条目 + 冒烟用 deepseek ──
