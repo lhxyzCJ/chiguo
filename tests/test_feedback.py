@@ -281,7 +281,7 @@ def test_monitor_empty_send_result():
 
 
 def test_recv_dedup_same_text_skipped():
-    """v9: 窗口内同文本重复记录（bridge 确定性记录 2 次，均无分析）→ 第二次完全跳过"""
+    """v9/B2: 仅"无分析→带分析"升级副本去重；用户真实重发同文本（均无分析）→ 第二条完整处理"""
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
         st = engine.state
@@ -293,13 +293,11 @@ def test_recv_dedup_same_text_skipped():
         e1 = st.emotion.energy
         a1 = st.emotion.affection
         lat1 = len(st.cooldown.reply_latencies)
-        mwr1 = st.cooldown.messages_without_reply
 
-        engine.record_user_message("哥哥在吗")  # 重复 → 应跳过
-        assert st.emotion.energy == e1, "重复记录不应二次 +10 元气"
-        assert st.emotion.affection == a1, "重复记录不应二次加好感"
-        assert len(st.cooldown.reply_latencies) == lat1, "重复记录不应二次追加延迟"
-        assert st.cooldown.messages_without_reply == mwr1
+        engine.record_user_message("哥哥在吗")  # 真实重发（无分析）→ 完整处理
+        assert st.emotion.affection > a1, "真实重发应二次加好感"
+        assert len(st.cooldown.reply_latencies) > lat1, "真实重发应二次追加延迟"
+        assert st.cooldown.messages_without_reply == 0, "收到消息即清零（重复亦然）"
 
         # 去重标记持久化：重新加载状态后仍在
         engine2 = DecisionEngine(engine.config_path, engine.log_path)
