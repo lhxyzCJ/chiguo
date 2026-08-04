@@ -16,8 +16,14 @@ export CHIGUO_PID_DIR="$TMP/pid"
 export HOME="$TMP/home"
 CALLS_LOG="$TMP/calls.log"
 export CALLS_LOG
-: > "$CALLS_LOG"
 PATH="$TMP/bin:$PATH"
+
+# ── 假 id：root 视角（CI runner 非 root；用例 13 用 $TMP/nonroot 的 fake id 模拟非 root）──
+cat > "$TMP/bin/id" <<'STUB'
+#!/usr/bin/env bash
+echo 0
+STUB
+chmod +x "$TMP/bin/id"
 
 # ── 假 node：记录 "$0 $*"；模拟常驻（exec sleep）供 temp 存活校验 ──
 cat > "$TMP/bin/node" <<'STUB'
