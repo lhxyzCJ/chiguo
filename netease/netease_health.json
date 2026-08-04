@@ -1,12 +1,12 @@
 {
   "api_alive": true,
-  "logged_in": false,
-  "faulty": true,
-  "last_check": "2026-08-02T20:46:27.977515+08:00",
-  "last_failure": "2026-08-01T21:09:36.447435+08:00",
-  "failure_reason": "login_expired",
-  "quota_music_day": "2026-08-02",
-  "quota_music_used": 0,
-  "quota_fault_day": "2026-08-02",
-  "quota_fault_used": 1
+  "logged_in": true,
+  "faulty": false,
+  "last_check": "2026-08-04T15:30:02.133255+08:00",
+  "last_failure": null,
+  "failure_reason": null,
+  "quota_music_day": "2026-08-04",
+  "quota_music_used": 1,
+  "quota_fault_day": "2026-08-04",
+  "quota_fault_used": 0
 }

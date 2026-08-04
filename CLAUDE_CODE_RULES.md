@@ -1,6 +1,6 @@
 # Claude Code Rules — Chiguo Proactive Message System
 
-> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-03. 36 py + 10 script runners, zero framework, pure Python stdlib.
+> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-03. 35 py + 10 script runners, zero framework, pure Python stdlib.
 > **Iron law**: decision/generation separation. Daemon outputs JSON. pi-agent generates messages (Phase 4).
 
 ---
@@ -8,7 +8,7 @@
 ## 1. Build & Test
 
 ```bash
-# Run ALL tests: 36 py + 10 script runners (every runner exits non-zero on failure)
+# Run ALL tests: 35 py + 10 script runners (every runner exits non-zero on failure)
 node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && \
 node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
 bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \

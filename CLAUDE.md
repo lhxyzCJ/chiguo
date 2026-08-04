@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required) — 36 py + 10 script tests
+# Run all tests (Python 3.14+ required) — 35 py + 10 script tests
 bash scripts/ci-test.sh   # 本地与 GitHub Actions ci.yml 同一入口
 ```
 
@@ -119,7 +119,7 @@ All auto-generated at first run, all in `.gitignore`:
 - **Emotion trends**: first-half vs second-half mean comparison; no heavy regression needed.
 - **Reply rate estimation**: inferred from `messages_without_reply` deltas between consecutive sends (no explicit reply tracking in logs).
 - **Config hot-reload**: `_maybe_reload_config()` checks toml mtime before each `evaluate()` call. Only matters for `--loop` mode; cron spawns fresh processes.
-- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 36 py test runners (+ 10 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
+- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 35 py test runners (+ 10 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
 
 ## 安全边界
 
