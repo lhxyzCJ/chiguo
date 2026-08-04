@@ -110,12 +110,13 @@ t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json
   assert.strictEqual(a[0], '-p')
   // 期望值按真实 toml 推导（与 pi-run.mjs 同款:env ?? toml ?? 缺省）——部署机自定义
   // provider/thinking 时测试不误挂（埋埋实机闭环验证发现;CI 默认 toml 仍验缺省值）
+  // 注意:env 键名(PIRUN_*)与 toml 键名(provider/model/...)不同,须分开传参
   const host = readToml(path.join(resolveRepo(import.meta.url), 'chiguo_proactive.toml')).host ?? {}
-  const want = (k, d) => process.env[k] ?? host[k] ?? d
-  const wantProvider = want('PIRUN_PROVIDER', 'opencode-go')
-  const wantModel = want('PIRUN_MODEL', 'deepseek-v4-flash')
-  const wantSession = want('PIRUN_SESSION', 'chiguo-main')
-  const wantThinking = want('PIRUN_THINKING', 'high')
+  const want = (envKey, hostKey, d) => process.env[envKey] ?? host[hostKey] ?? d
+  const wantProvider = want('PIRUN_PROVIDER', 'provider', 'opencode-go')
+  const wantModel = want('PIRUN_MODEL', 'model', 'deepseek-v4-flash')
+  const wantSession = want('PIRUN_SESSION', 'session_id', 'chiguo-main')
+  const wantThinking = want('PIRUN_THINKING', 'thinking_level', 'high')
   assert.ok(a.includes('--provider') && a.includes(wantProvider), `provider=${wantProvider}（toml/缺省）`)
   assert.ok(a.includes('--model') && a.includes(wantModel), `model=${wantModel}（toml/缺省）`)
   assert.ok(a.includes('--session-id') && a.includes(wantSession), `session-id=${wantSession}（toml/缺省）`)
