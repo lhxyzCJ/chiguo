@@ -10,10 +10,11 @@ trap 'kill ${SRV_PID:-} 2>/dev/null || true; rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok - $*"; }
 
-REAL_TICK="/root/chiguo/scripts/chiguo-tick.sh"
+REPO_ROOT="${CHIGUO_REPO_OVERRIDE:-$(cd "$(dirname "$0")/.." && pwd)}"
+REAL_TICK="$REPO_ROOT/scripts/chiguo-tick.sh"
 REPO="$TMP/repo"
 mkdir -p "$REPO/scripts" "$REPO/.venv/bin"
-ln -s /root/chiguo/.venv/bin/python "$REPO/.venv/bin/python"
+ln -s "$REPO_ROOT/.venv/bin/python" "$REPO/.venv/bin/python"
 
 # ── pi-auth.sh 共同 sourcing(opencode-go 优先 → toml provider 回退)──
 pass "pi-auth: sourcing sets OPENCODE_API_KEY from auth.json"
@@ -21,8 +22,8 @@ test_pi_auth() {
   local AUTH_DIR="$TMP/pi-auth"
   mkdir -p "$AUTH_DIR"
   mkdir -p "$REPO/scripts"
-  ln -sf /root/chiguo/scripts/pi-auth.sh "$REPO/scripts/pi-auth.sh" 2>/dev/null || \
-    cp /root/chiguo/scripts/pi-auth.sh "$REPO/scripts/pi-auth.sh"
+  ln -sf "$REPO_ROOT/scripts/pi-auth.sh" "$REPO/scripts/pi-auth.sh" 2>/dev/null || \
+    cp "$REPO_ROOT/scripts/pi-auth.sh" "$REPO/scripts/pi-auth.sh"
   # 用例 1:opencode-go 优先
   mkdir -p "$AUTH_DIR/.pi/agent"
   cat > "$AUTH_DIR/.pi/agent/auth.json" <<'JSON'
@@ -93,7 +94,7 @@ if (mode === 'success') {
 }
 JS
 
-cp /root/chiguo/scripts/pi_health.py "$REPO/scripts/pi_health.py"
+cp "$REPO_ROOT/scripts/pi_health.py" "$REPO/scripts/pi_health.py"
 export FAKE_PI_MODE_FILE="$TMP/pi_mode"
 echo fail > "$FAKE_PI_MODE_FILE"
 
@@ -213,7 +214,7 @@ test_replan_lock() {
   touch "$LOCK"
   local T0 T1
   T0="$(date +%s)"
-  if python3 -c "import sys; sys.path.insert(0, '/root/chiguo'); from schedule.replan import _lock; sys.exit(0 if _lock('$TMP') else 1)"; then
+  if "$REPO_ROOT/.venv/bin/python" -c "import sys; sys.path.insert(0, '$REPO_ROOT'); from schedule.replan import _lock; sys.exit(0 if _lock('$TMP') else 1)"; then
     fail "replan lockfile 占用中应超时让位"
   fi
   T1="$(date +%s)"
@@ -221,7 +222,7 @@ test_replan_lock() {
   # 用例 2:陈旧锁(mtime > 10min)→ 强制接管(_lock 返回 True)
   rm -f "$LOCK"
   touch -d "12 minutes ago" "$LOCK"
-  python3 -c "import sys; sys.path.insert(0, '/root/chiguo'); from schedule.replan import _lock; sys.exit(0 if _lock('$TMP') else 1)" || fail "陈旧锁应被接管"
+  "$REPO_ROOT/.venv/bin/python" -c "import sys; sys.path.insert(0, '$REPO_ROOT'); from schedule.replan import _lock; sys.exit(0 if _lock('$TMP') else 1)" || fail "陈旧锁应被接管"
   rm -f "$LOCK"
   pass "replan: lockfile 5s timeout and stale-lock takeover"
 }
