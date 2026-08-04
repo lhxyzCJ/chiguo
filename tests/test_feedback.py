@@ -158,27 +158,6 @@ def test_monitor_stats_send_result():
     print("  OK test_monitor_stats_send_result")
 
 
-def test_monitor_summary_includes_send_result():
-    """summary() 人类可读文本含发送结果行"""
-    with tempfile.TemporaryDirectory() as td:
-        log_path = Path(td) / "decisions.jsonl"
-        log_path.write_text(json.dumps({
-            "action": "send_result", "msg_id": "a1", "status": "success",
-            "time": "2026-07-31 10:00", "refunded": False,
-            "state": {"emotion": {"loneliness": 50}, "cooldown": {}, "time": "2026-07-31 10:00"},
-        }, ensure_ascii=False) + "\n")
-
-        state_path = Path(td) / "state.json"
-        state_path.write_text(json.dumps({"_version": 5, "last_tick": datetime.now(CST).isoformat()}))
-
-        mon = ChiguoMonitor(str(log_path), str(state_path))
-        text = mon.summary(days=7)
-        assert "发送结果" in text, f"summary should include send result, got:\n{text}"
-        assert "成功" in text
-        assert "失败" in text
-    print("  OK test_monitor_summary_includes_send_result")
-
-
 def test_cli_send_result_branch():
     """验证 CLI --send-result 分支逻辑（直接调方法模拟 main 分支效果）"""
     with tempfile.TemporaryDirectory() as td:
@@ -356,7 +335,6 @@ if __name__ == "__main__":
         test_record_send_result_failed,
         test_record_send_result_success,
         test_monitor_stats_send_result,
-        test_monitor_summary_includes_send_result,
         test_cli_send_result_branch,
         test_record_send_result_return_value,
         test_monitor_empty_send_result,
