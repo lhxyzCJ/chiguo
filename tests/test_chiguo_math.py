@@ -190,6 +190,19 @@ def test_hawkes_one_event():
     print("  OK test_hawkes_one_event")
 
 
+def test_hawkes_naive_and_broken_ts_guarded():
+    """naive（无 tz）事件时间与坏字符串 → 不抛 TypeError，正常计算其余事件（B5）"""
+    now = datetime.now(CST)
+    events = [
+        {"time": datetime(2026, 7, 1, 10, 0)},          # naive → 补 CST
+        {"time": "not-a-date"},                          # 坏字符串 → 跳过
+        {"time": (now - timedelta(hours=1)).isoformat()},  # 正常事件 → 计入
+    ]
+    r = hawkes_intensity(0.25, events, now, alpha=0.3, beta=0.5)
+    assert 0.40 < r < 0.44, f"naive 事件应被计入（1h 事件 ~0.432），got {r}"
+    print("  OK test_hawkes_naive_and_broken_ts_guarded")
+
+
 def test_hawkes_multiple_events():
     """多事件叠加验证"""
     now = datetime.now(CST)
@@ -246,6 +259,7 @@ if __name__ == "__main__":
         # Hawkes
         test_hawkes_no_events, test_hawkes_one_event, test_hawkes_multiple_events,
         test_hawkes_old_events, test_hawkes_monotonic,
+        test_hawkes_naive_and_broken_ts_guarded,
     ]
     for t in tests:
         t()

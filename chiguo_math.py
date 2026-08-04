@@ -4,7 +4,9 @@
 
 import math
 import random
-from datetime import datetime as _dt
+from datetime import datetime as _dt, timezone, timedelta
+
+_CST = timezone(timedelta(hours=8))
 
 
 # ── Sigmoid（逻辑函数）────────────────────────────────────
@@ -107,10 +109,19 @@ def hawkes_intensity(
     for ev in events:
         ev_time = ev.get("time")
         if isinstance(ev_time, str):
-            ev_time = _dt.fromisoformat(ev_time)
+            try:
+                ev_time = _dt.fromisoformat(ev_time)
+            except ValueError:
+                continue  # 单条坏时间戳跳过，不影响整链
         if ev_time is None:
             continue
-        dt_hours = (now - ev_time).total_seconds() / 3600
+        # naive 事件时间（旧状态迁移/手改文件可能写入无 tz 时间戳）→ 补 CST，防 TypeError
+        if ev_time.tzinfo is None:
+            ev_time = ev_time.replace(tzinfo=_CST)
+        try:
+            dt_hours = (now - ev_time).total_seconds() / 3600
+        except TypeError:
+            continue  # 单条坏时间戳跳过，不影响整链
         if 0 < dt_hours < window_hours:  # ponytail: skip events at now (dt=0) — they are the current event, not historical excitation
             intensity += alpha * math.exp(-beta * dt_hours)
     return intensity
