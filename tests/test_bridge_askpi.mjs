@@ -48,7 +48,7 @@ process.exit(Number(process.env.FAKE_DAEMON_EXIT ?? 0))
 `)
 
 process.env.WECHAT_BRIDGE_PI_RUN = FAKE_PI
-process.env.WECHAT_BRIDGE_DAEMON_PY = '/usr/bin/node'
+process.env.WECHAT_BRIDGE_DAEMON_PY = process.execPath
 process.env.WECHAT_BRIDGE_DAEMON = FAKE_DAEMON
 process.env.FAKE_PI_LOG = PI_LOG
 process.env.FAKE_DAEMON_LOG = DAEMON_LOG
