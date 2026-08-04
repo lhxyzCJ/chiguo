@@ -400,7 +400,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | chiguo_demo.py | 191 | Interactive demo | Demo class |
 | chiguo_version.py | 5 | Project version | VERSION |
 | memory_bridge.py | 506 | Memory access | MemoryBridge |
-| schedule/ 包 | — | Schedule/holiday/anniversary/arrangements | parser.py: ScheduleParser; parsing.py; query.py; holiday.py: HolidayParser; anniversary.py: AnniversaryManager; override_store.py; plan_store.py; api.py; sources.py; day_plan.py; resolve_when.py; attention.py; recall.py; confirm.py; replan.py |
+| schedule/ 包 | — | Schedule/holiday/anniversary/arrangements | parser.py: refresh_schedule_cache; parsing.py; query.py(current_period/PERIOD_TIMES); holiday.py: HolidayParser; anniversary.py: AnniversaryManager; override_store.py; plan_store.py; api.py; sources.py; day_plan.py; resolve_when.py; attention.py; recall.py; confirm.py; replan.py |
 | solar_terms.py | 85 | Solar terms | SolarTerms |
 | netease/ | 939 | Netease package | bridge.py: NeteaseBridge (login/fetch_recent_play/fetch_daily_songs); service.py: NeteaseService (DI) |
 | chiguo_envcheck.py | 178 | Env readiness | run_checks() |

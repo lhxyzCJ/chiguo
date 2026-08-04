@@ -20,7 +20,7 @@ class TopicPicker:
     def __init__(self, state, config: dict, netease_service=None):
         """
         Args:
-            state: ChiguoState 实例（访问 schedule_parser / holiday_parser / memory_bridge）
+            state: ChiguoState 实例（访问 schedule/holiday/memory 数据面）
             config: chiguo_proactive.toml 的 [topic_picker] 段
             netease_service: 网易云策略层(NeteaseService 实例)，可为 None(降级)
         """

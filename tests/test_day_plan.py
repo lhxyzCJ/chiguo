@@ -542,35 +542,3 @@ def test_api_move_source_and_snapshot():
         assert r["ok"] is True, "源槽来自 add 例外 → 允许"
     print("  OK test_api_move_source_and_snapshot")
 
-
-def test_query_delegates_to_week_courses():
-    """D3:schedule_query 委托 week_courses —— day_plan/T3/schedule_query 三处同值"""
-    from schedule.query import schedule_query
-    now = datetime(2026, 3, 4, 14, 0, tzinfo=CST)   # 第 2 周周三
-    sched = load_sources("x", _cfg(), schedule_cache_dict=CACHE_3PERIOD).schedule
-    q = schedule_query(sched, SS, now)
-    wc = week_courses(sched, SS, 2)[2]             # 周三,第 2 周
-    q_periods = {(p["period"], p["course"]) for p in q["periods_today"]}
-    wc_periods = {(p, c["course"]) for p, c in wc.items()}
-    assert q_periods == wc_periods == {(3, "高数"), (5, "线代")}, \
-        f"delegation mismatch: {q_periods} vs {wc_periods}"
-    tw = t3_window(load_sources("x", _cfg(), schedule_cache_dict=CACHE_3PERIOD), date(2026, 3, 4))
-    tw_periods = {(p, c["course"]) for p, c in tw["this_week"].get(2, {}).items()}
-    assert tw_periods == wc_periods, "T3 与 week_courses 同值"
-    print("  OK test_query_delegates_to_week_courses")
-
-
-if __name__ == "__main__":
-    print("test_day_plan.py\n")
-    tests = [test_week_number_monday_alignment, test_week_courses_active_and_alternates,
-             test_day_plan_window, test_day_plan_no_files_on_read,
-             test_resolve_classes_move_dual_slot, test_availability_tiers_and_overlap,
-             test_class_load_adjust, test_is_in_class_rules,
-             test_rw_explicit_and_mmdd, test_rw_days, test_rw_weekday,
-             test_rw_week_offset_interval, test_rw_combo, test_rw_start_end,
-             test_rw_structural_rejects, test_api_shape_constraints, test_api_to_date_forms,
-             test_api_past_checks_by_kind, test_api_semester_boundary,
-             test_api_move_source_and_snapshot, test_query_delegates_to_week_courses]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

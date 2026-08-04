@@ -29,7 +29,7 @@ from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
     personality_to_dict, personality_from_dict,
 )
-from schedule import ScheduleParser
+from schedule.parser import refresh_schedule_cache
 from schedule.holiday import HolidayParser
 from schedule.anniversary import AnniversaryManager
 from schedule.override_store import OverrideStore
@@ -245,9 +245,9 @@ class ChiguoState:
             except (ValueError, TypeError):
                 pass
         # 考试周范围(3c:已移除 exam_ranges 属性,唯一来源 = override 区间门面 exam_season_now;M18)
-        self.schedule_parser = ScheduleParser(
-            self._anchored(xlsx_path),
-            cache_path=self._anchored("schedule_cache.json"),
+        refresh_schedule_cache(
+            str(self._anchored(xlsx_path)),
+            str(self._anchored("schedule_cache.json")),
             semester_start=sem_start,
             enabled=bool(sched.get("enabled", True)),
         )
@@ -929,7 +929,7 @@ class ChiguoState:
                     "on_break": False, "breaks": _breaks_info()}
         if not src.schedule_valid:
             return None  # 课表未启用/无数据/解析异常 → None 语义保持
-        # ── 组装(与现 schedule_query 返回形状逐键兼容)──
+        # ── 组装（读路径 load_sources 缓存，形状与旧 schedule_query 逐键兼容）──
         active = {p: c for p, c in rc.items() if not c.get("cancelled")}
         cp = current_period(now)
         result = {"in_class": cp in active, "on_break": False, "breaks": _breaks_info()}

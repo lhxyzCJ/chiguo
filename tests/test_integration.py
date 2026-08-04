@@ -203,20 +203,19 @@ def test_7b_schedule_disabled_availability(cfg):
     print("  OK test_7b: schedule disabled → status None + availability 1.0")
 
 def test_7c_schedule_parser_disabled(cfg):
-    """ScheduleParser(enabled=False) → 不解析、query available=False"""
-    from schedule import ScheduleParser
+    """refresh_schedule_cache(enabled=False) → 不解析不落盘"""
+    from schedule.parser import refresh_schedule_cache
     import tempfile
     from pathlib import Path
     from datetime import date as date_cls
     with tempfile.TemporaryDirectory() as td:
-        p = ScheduleParser(xlsx_path=str(Path(td) / "none.xlsx"),
-                           cache_path=str(Path(td) / "cache.json"),
-                           semester_start=date_cls(2026, 2, 23),
-                           enabled=False)
-        r = p.query(datetime(2026, 6, 15, 8, 30))
-        assert r["available"] is False, r
-        assert r["in_class"] is False, r
-        print("  OK test_7c: ScheduleParser(enabled=False) → available=False")
+        ok = refresh_schedule_cache(str(Path(td) / "none.xlsx"),
+                                    str(Path(td) / "cache.json"),
+                                    semester_start=date_cls(2026, 2, 23),
+                                    enabled=False)
+        assert ok is False
+        assert not Path(td, "cache.json").exists()
+        print("  OK test_7c: refresh_schedule_cache(enabled=False) → False 且不落盘")
 def test_8_morning_window(cfg):
     """早安窗口 (09:00) → 应有触发，且 type 合法"""
     s = make_state(cfg, loneliness=40)
