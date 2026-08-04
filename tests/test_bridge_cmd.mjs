@@ -227,25 +227,25 @@ import { spawn } from 'node:child_process'
 
 t('executeSpecialCommand: break on → ok + 迟菓确认', async () => {
   const spec = detectSpecialCommand('放假了')
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
   assert.ok(r.reply.includes('放假了'))
 })
 t('executeSpecialCommand: reminder → ok + result.text 渲染（含 label+date）', async () => {
   const spec = detectSpecialCommand('2026年12月25日要考试')
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
   assert.ok(r.reply.includes('考试') && r.reply.includes('2026-12-25'), r.reply)
 })
 t('executeSpecialCommand: add anniversary（真实 shape）→ 记住了！MM-DD——名称', async () => {
   const spec = detectSpecialCommand('记住5月11日是迟菓生日')
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
   assert.ok(r.reply.includes('记住了！05-11——迟菓生日'), r.reply)
 })
 t('executeSpecialCommand: list → 真实 shape 行渲染（含倒计时标记 + count）', async () => {
   const spec = detectSpecialCommand('有哪些纪念日')
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
   assert.ok(r.reply.includes('有 2 个'), r.reply)
   assert.ok(r.reply.includes('· 生日（05-11）'), r.reply)
@@ -253,19 +253,19 @@ t('executeSpecialCommand: list → 真实 shape 行渲染（含倒计时标记 +
 })
 t('executeSpecialCommand: break off（真实 shape）→ 开学确认', async () => {
   const spec = detectSpecialCommand('开学了')
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
   assert.ok(r.reply.includes('开学了'), r.reply)
 })
 t('executeSpecialCommand: daemon 非零退出 + error JSON → ok:false + 处理失败', async () => {
   const spec = { action: 'x', daemon: ['--bad'], hint: 'hint' }
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, false)
   assert.ok(r.reply.includes('处理失败：boom'))
 })
 t('executeSpecialCommand: 脚本不存在 → ok:false（不抛未捕获异常）', async () => {
   const spec = detectSpecialCommand('放假了')
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', join(tmp, 'nope.mjs'))
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, join(tmp, 'nope.mjs'))
   assert.strictEqual(r.ok, false)
   assert.ok(r.reply.startsWith('处理失败'))
 })
@@ -273,31 +273,31 @@ t('executeSpecialCommand: 脚本不存在 → ok:false（不抛未捕获异常�
 // ── A4 形状契约:--schedule-change(批次 6a bridge 消费侧;二十轮点名 shape 与 test_schedule_cli.py 同源)──
 t('executeSpecialCommand: --schedule-change 成功 shape(A4)→ ok:true(确认文案含星期+日期)', async () => {
   const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-08-20' }, label: '交材料' })], hint: 'x' }
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
 })
 t('executeSpecialCommand: reminder_added past_date → ok:false + result.question 呈现', async () => {
   const spec = detectSpecialCommand('2026年8月1日要考试')
   assert.strictEqual(spec.action, 'reminder_added')
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, false)
   assert.ok(r.reply.includes('处理失败'), r.reply)
   assert.ok(r.reply.includes('已经过去了'), r.reply)
 })
 t('executeSpecialCommand: --schedule-change 畸形 JSON 契约(A4 bad_json)→ ok:false + 处理失败兜底', async () => {
   const spec = { action: 'schedule_change', daemon: ['--schedule-change', '{not json'], hint: 'x' }
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, false)
   assert.ok(r.reply.startsWith('处理失败'), r.reply)
 })
 t('executeSpecialCommand: --schedule-change ApiRejection shape(A4 reason+question+missing)→ ok:false', async () => {
   const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-08-01' }, label: '过去' })], hint: 'x' }
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, false)
 })
 t('executeSpecialCommand: --schedule-change remove 拒绝(not_found)→ ok:false 且失败 JSON 不丢 stdout', async () => {
   const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'remove', match: { date: '2026-08-20' } })], hint: 'x' }
-  const r = await executeSpecialCommand(spawn, spec, '/usr/bin/node', FAKE_DAEMON)
+  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, false)
   assert.ok(r.reply.startsWith('处理失败'), r.reply)
 })
