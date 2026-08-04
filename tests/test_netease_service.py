@@ -39,6 +39,17 @@ def _plays():
     return [{"playTime": 1722441600000, "name": "夜曲", "artist": "周杰伦"}]
 
 
+def _mt(svc, now, **kw):
+    """music_topic 删除后的测试替身：peek + 选中即消费（保持原一体调用语义）。"""
+    t = svc.peek_music_topic(now, **kw)
+    if t:
+        if t.get("type") == "netease_fault":
+            svc.consume_fault_topic(now)
+        else:
+            svc.consume_music_topic(now)
+    return t
+
+
 def _make_service(td, quota=2, fault_quota=1, weights=None, enabled=True, **bridge_fakes):
     """构造 NeteaseService:重试 0 次/backoff 0(测试不真实 sleep);bridge 注入 _FakeBridge 桩"""
     cfg = {
@@ -92,8 +103,8 @@ def test_disabled_returns_none():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, enabled=False)
-        assert svc.music_topic(NOW) is None
-        assert svc.music_topic(NOW, in_class=False, in_quiet_window=False) is None
+        assert svc.peek_music_topic(NOW) is None
+        assert svc.peek_music_topic(NOW, in_class=False, in_quiet_window=False) is None
     print("  OK test_disabled_returns_none")
 
 
@@ -143,7 +154,9 @@ def test_health_file_atomic_write():
     """save 后文件存在、内容合法(原子写无 .tmp 残留);quota 字段持久化到新实例"""
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
-        assert svc.music_topic(NOW) is not None  # 触发消费 → _save_health
+        topic = svc.peek_music_topic(NOW)
+        assert topic is not None
+        svc.consume_music_topic(NOW)  # 消费 → _save_health
         hf = os.path.join(td, "netease", "netease_health.json")
         assert os.path.exists(hf)
         assert not os.path.exists(hf + ".tmp")  # 原子写无残留
@@ -165,9 +178,15 @@ def test_quota_shared_across_sources():
     random.seed(42)
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
-        t1 = svc.music_topic(NOW)
-        t2 = svc.music_topic(NOW)
-        t3 = svc.music_topic(NOW)
+        t1 = svc.peek_music_topic(NOW)
+        if t1:
+            svc.consume_music_topic(NOW)
+        t2 = svc.peek_music_topic(NOW)
+        if t2:
+            svc.consume_music_topic(NOW)
+        t3 = svc.peek_music_topic(NOW)
+        if t3:
+            svc.consume_music_topic(NOW)
         assert t1 is not None and t2 is not None
         assert t3 is None
         assert svc._health["quota_music_used"] == 2
@@ -179,10 +198,10 @@ def test_quota_rolls_over_day():
     random.seed(42)
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
-        assert svc.music_topic(NOW) is not None
-        assert svc.music_topic(NOW) is not None
+        assert _mt(svc, NOW) is not None
+        assert _mt(svc, NOW) is not None
         assert svc._music_quota_left(NOW) == 0  # 当天配额耗尽
-        t = svc.music_topic(NEXT_DAY)
+        t = _mt(svc, NEXT_DAY)
         assert t is not None  # 跨天自动重置
         assert svc._health["quota_music_day"] == "2026-08-01"
         assert svc._health["quota_music_used"] == 1
@@ -198,7 +217,7 @@ def test_random_source_selection():
                             daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
         daily = 0
         for _ in range(2000):
-            t = svc.music_topic(NOW)
+            t = _mt(svc, NOW)
             assert t is not None
             if t["data"]["source"] == "daily":
                 daily += 1
@@ -211,7 +230,7 @@ def test_source_fallback_when_daily_down():
     random.seed(42)
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, daily=lambda *a, **k: None, recent=lambda *a, **k: _plays())
-        t = svc.music_topic(NOW)
+        t = _mt(svc, NOW)
         assert t is not None and t["type"] == "netease_music"
         assert t["data"]["source"] == "recent"
         assert t["data"]["name"] == "夜曲"
@@ -224,7 +243,7 @@ def test_time_gate_in_class():
     random.seed(42)
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
-        assert svc.music_topic(NOW, in_class=True) is None
+        assert _mt(svc, NOW, in_class=True) is None
         assert svc._health["quota_music_used"] == 0
     print("  OK test_time_gate_in_class")
 
@@ -234,7 +253,7 @@ def test_time_gate_quiet_window():
     random.seed(42)
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
-        assert svc.music_topic(NOW, in_quiet_window=True) is None
+        assert _mt(svc, NOW, in_quiet_window=True) is None
         assert svc._health["quota_music_used"] == 0
     print("  OK test_time_gate_quiet_window")
 
@@ -248,7 +267,7 @@ def test_fault_topic_bypasses_time_gate():
         svc = _make_service(td, health=_down_health)
         svc.refresh_health(NOW)
         assert svc.health()["faulty"] is True
-        t = svc.music_topic(NOW, in_class=True)
+        t = _mt(svc, NOW, in_class=True)
         assert t is not None and t["type"] == "netease_fault"
         assert t["data"] == {"source": "fault", "reason": "unreachable"}
     print("  OK test_fault_topic_bypasses_time_gate")
@@ -259,9 +278,9 @@ def test_fault_quota():
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, fault_quota=1, health=_down_health)
         svc.refresh_health(NOW)
-        t1 = svc.music_topic(NOW)
+        t1 = _mt(svc, NOW)
         assert t1 is not None and t1["type"] == "netease_fault"
-        t2 = svc.music_topic(NOW)
+        t2 = _mt(svc, NOW)
         assert t2 is None
         assert svc._health["quota_fault_used"] == 1
     print("  OK test_fault_quota")
@@ -301,7 +320,7 @@ def test_faulty_fast_skip_until_reprobe():
         svc = _make_service(td, daily=fd, recent=fr, health=fh)
         svc.refresh_health(NOW)
         assert svc.health()["faulty"] is True
-        t = svc.music_topic(NOW)
+        t = _mt(svc, NOW)
         assert t is not None and t["type"] == "netease_fault"
         assert calls["health"] == 1   # refresh_health 那次,music_topic 未重探
         assert calls["daily"] == 0 and calls["recent"] == 0  # 无任何 fetch
@@ -320,7 +339,7 @@ def test_faulty_reprobe_after_interval():
         svc = _make_service(td, health=fh)
         svc.refresh_health(NOW)  # 第一次探针(计数 1)
         svc._health["last_check"] = (NOW - timedelta(minutes=40)).isoformat()
-        t = svc.music_topic(NOW + timedelta(minutes=1))  # 距 last_check 41 分钟 ≥ 30
+        t = _mt(svc, NOW + timedelta(minutes=1))  # 距 last_check 41 分钟 ≥ 30
         assert t is not None and t["type"] == "netease_fault"
         assert calls["health"] == 2  # 重探发生
     print("  OK test_faulty_reprobe_after_interval")
@@ -363,12 +382,12 @@ def test_fetch_failure_marks_faulty_next_call_fault_topic():
             return None
 
         svc = _make_service(td, daily=fd, recent=fr, health=fh)
-        t1 = svc.music_topic(NOW)
+        t1 = _mt(svc, NOW)
         assert t1 is None
         assert svc._health["quota_music_used"] == 0  # 失败不消费配额
         assert svc.health()["faulty"] is True        # 探针已判定故障
         assert svc.health()["failure_reason"] == "unreachable"
-        t2 = svc.music_topic(NOW)                    # 同 now:重探间隔内 → 不重探
+        t2 = _mt(svc, NOW)                    # 同 now:重探间隔内 → 不重探
         assert t2 is not None and t2["type"] == "netease_fault"
         assert calls["health"] == 1                  # 只有第一次调用内的探针
     print("  OK test_fetch_failure_marks_faulty_next_call_fault_topic")
@@ -386,8 +405,8 @@ def test_fetch_failure_healthy_probe_silent():
 
         svc = _make_service(td, daily=lambda *a, **k: None,
                             recent=lambda *a, **k: None, health=fh)
-        assert svc.music_topic(NOW) is None
-        assert svc.music_topic(NOW) is None
+        assert _mt(svc, NOW) is None
+        assert _mt(svc, NOW) is None
         assert svc.health()["faulty"] is False
         assert svc.health()["failure_reason"] is None
         assert svc._health["quota_music_used"] == 0
@@ -425,7 +444,7 @@ def test_health_file_bad_value_types_rebuild():
         with open(hf, "w") as f:
             json.dump({"quota_music_used": "abc"}, f)
         svc3 = _make_service(td, daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
-        t = svc3.music_topic(NOW)
+        t = _mt(svc3, NOW)
         assert t is not None
         assert svc3._health["quota_music_used"] == 1
     print("  OK test_health_file_bad_value_types_rebuild")
@@ -510,21 +529,21 @@ def test_fault_topic_no_link_in_data():
         svc_f = _make_service(td_f, daily=lambda *a, **k: _songs(),
                               recent=lambda *a, **k: _plays(), health=_down_health)
         svc_f.refresh_health(NOW)
-        t_fault = svc_f.music_topic(NOW)
+        t_fault = _mt(svc_f, NOW)
         assert t_fault["type"] == "netease_fault"
         assert set(t_fault["data"].keys()) == {"source", "reason"}
         # daily 话题(权重 [1,0] 强制 daily 源)
         svc_d = _make_service(td_d, weights=[1, 0],
                               daily=lambda *a, **k: _songs(),
                               recent=lambda *a, **k: _plays(), health=_down_health)
-        t_daily = svc_d.music_topic(NOW)
+        t_daily = _mt(svc_d, NOW)
         assert t_daily["data"]["source"] == "daily"
         assert set(t_daily["data"].keys()) == {"source", "name", "artist"}
         # recent 话题(权重 [0,1] 强制 recent 源)
         svc_r = _make_service(td_r, weights=[0, 1],
                               daily=lambda *a, **k: _songs(),
                               recent=lambda *a, **k: _plays(), health=_down_health)
-        t_recent = svc_r.music_topic(NOW)
+        t_recent = _mt(svc_r, NOW)
         assert t_recent["data"]["source"] == "recent"
         assert set(t_recent["data"].keys()) == {"source", "name", "artist"}
         for t in (t_fault, t_daily, t_recent):
@@ -544,7 +563,7 @@ def test_recent_uses_newest_play():
     ]
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, daily=lambda *a, **k: None, recent=lambda *a, **k: plays)
-        t = svc.music_topic(NOW)
+        t = _mt(svc, NOW)
         assert t["data"]["source"] == "recent"
         assert t["data"]["name"] == "最新"
         assert t["data"]["artist"] == "手B"
@@ -614,7 +633,7 @@ def test_music_topic_naive_now():
     random.seed(42)
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
-        t = svc.music_topic(datetime(2026, 7, 31, 22, 30, 0))  # naive
+        t = _mt(svc, datetime(2026, 7, 31, 22, 30, 0))  # naive
         assert t is not None and t["type"] == "netease_music"
         assert t["data"]["name"]  # 素材非空
     print("  OK test_music_topic_naive_now")
@@ -628,7 +647,7 @@ def test_source_weights_from_toml():
                             daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
         assert svc.source_weights == [1.0, 0.0]
         for _ in range(5):
-            t = svc.music_topic(NOW)
+            t = _mt(svc, NOW)
             assert t is not None
             assert t["data"]["source"] == "daily"
     print("  OK test_source_weights_from_toml")

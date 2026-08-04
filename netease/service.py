@@ -253,20 +253,6 @@ class NeteaseService:
             now = now.replace(tzinfo=CST)
         self._consume_fault(now)
 
-    def music_topic(self, now: datetime, in_class: bool = False,
-                    in_quiet_window: bool = False) -> dict | None:
-        """探测+消费一体(peek + consume):返回话题即已消费配额。
-        供非 TopicPicker 调用方使用(语义与既有版本一致)。"""
-        if not self.enabled:
-            return None
-        topic = self.peek_music_topic(now, in_class=in_class, in_quiet_window=in_quiet_window)
-        if topic:
-            if topic.get("type") == "netease_fault":
-                self.consume_fault_topic(now)
-            else:
-                self.consume_music_topic(now)
-        return topic
-
     def _pick_and_fetch(self, now: datetime, consume: bool = True) -> dict | None:
         """加权随机选源;选中源不可用 → 自动换另一个;都不可用 → None(不消费配额)。
         consume=False(peek 路径):跳过 _consume_music,但拉取成功仍 _sync_success
