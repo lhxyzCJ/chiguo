@@ -69,8 +69,7 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_eventbus.py → 轻量发布/订阅事件总线 (v4 NEW)
   ├─ solar_terms.py     → 24 节气
   ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康）
-  ├─ chiguo_rotation.py → 对话日志轮转与归档 + 告警持久化 + 索引查询（v5 NEW）
-  └─ chiguo_watchdog.py → 零依赖独立看门狗（cron 集成）
+  └─ chiguo_rotation.py → 对话日志轮转与归档 + 告警持久化 + 索引查询（v5 NEW）
 
   输出: chiguo_decisions.jsonl（追加式结构化日志）
   对话归档: chiguo_messages.jsonl（完整对话记录）
@@ -684,8 +683,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `memory_bridge.py` | LanceDB 只读桥接 + Ebbinghaus 遗忘 | lancedb（惰性导入，可选；缺了降级 JSON） |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
-| `chiguo_watchdog.py` | 零依赖独立看门狗（cron 集成）（v4） | 无 |
-| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、LanceDB、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重（与 watchdog 一致），路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
+| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、LanceDB、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
 | `chiguo_version.py` | 项目版本号单一来源（`VERSION="1"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
@@ -907,22 +905,6 @@ python3 chiguo_monitor.py --health
 python3 chiguo_monitor.py --report
 ```
 
-### chiguo_watchdog.py
-
-```bash
-python3 chiguo_watchdog.py              # 完整检查，输出 JSON
-python3 chiguo_watchdog.py --quiet      # 仅异常时输出（退出码驱动）
-python3 chiguo_watchdog.py --notify     # 异常时 stderr 输出告警摘要
-```
-
-退出码：0=正常, 1=警告(warn), 2=严重(critical)。适合 cron：
-
-```
-# crontab: 每30分钟检查一次
-*/30 * * * * cd <仓库根目录> && .venv/bin/python chiguo_watchdog.py --notify 2>&1 | logger -t chiguo_watchdog
-```
-
----
 
 ## 八、JSON 输出格式
 
@@ -1313,12 +1295,6 @@ python3 chiguo_monitor.py --health
 | `lancedb_possible_degradation` | 10+次发送无 memory 触发 | info |
 | `manual_break_active` | 手动假期模式长期开启 | info |
 
-### 10.4 独立看门狗（Watchdog）
-
-`chiguo_watchdog.py` — 零依赖，可被 cron/systemd timer 独立调用。不依赖 daemon 进程存活，直接读状态文件 + 日志做判断。详见 §7 CLI。
-
-**tick_seq 停滞/重启判定（2026-07-31 修复）**：`tick_seq` 回退（本次 < 上次）→ 视为 state 文件被删/重建后的重启：重置 `stall_since`、不告警、输出 `tick_restarted=True`；相等且 >3h 不增 → 停滞告警（现有逻辑）；前向推进 → 自动清除误报 `stall_since`。
-
 ### 10.5 Fuzz 测试
 
 `tests/test_monitor.py` 含 fuzz 测试：随机 200 条合法条目、边界极值（None/负数/超长字符串）、空日志+100条纯idle。确保 monitor 在任意输入下不崩溃。
@@ -1331,7 +1307,7 @@ python3 chiguo_monitor.py --health
 - **防御式解析** — `state=None` / `emotion=None` / `cooldown=None` / 损坏行 → 自动规范化（`_normalize_entry`，stats() 与 alerts() 共用同一归一化，保证口径一致），不崩溃
 - **回复率口径** — 相邻 send 的 `messages_without_reply` 双方均为数值才比较，None/非数值视为未知不计为回复变化（stats 与 alerts B5 一致）
 - **配置回退** — `[monitor]` 配置相对路径在当前 cwd 找不到时回退模块目录，避免从其他 cwd 运行阈值静默回落默认值（与 health() 的 config 检测一致）；`lancedb_path` 优先 `[monitor]`，未定义时回退 `[memory]`（v10 统一，原代码只读 `[monitor]` 与 toml 注释约定不符）；路径值一律 `expanduser`（`~` 展开，v10）
-- **独立可运行** — `python3 chiguo_monitor.py` / `python3 chiguo_watchdog.py`
+- **独立可运行** — `python3 chiguo_monitor.py`
 
 ### 10.7 对话日志与归档 (v5)
 
@@ -1771,7 +1747,7 @@ rm <仓库根目录>/chiguo_state.json
 v5 新增功能：
 - **状态备份 `.bak`**：每次 save 前备份当前状态，JSON 损坏时自动恢复
 - **`fsync` 落盘**：`os.replace` 前强制冲刷内核缓冲区
-- **`tick_seq` 计数器**：每次 save 递增，watchdog 可检测前向进展
+- **`tick_seq` 计数器**：每次 save 递增（单调前向进展检测用）
 - **tmp 验证**：`os.replace` 前验证 tmp 是合法 JSON，防止截断写入覆盖好状态
 - **OSError 保护**：磁盘满时不崩溃，跳过本次 save
 - **损坏审计日志**：`chiguo_state_audit.jsonl` 记录所有恢复/删除事件
@@ -1841,7 +1817,7 @@ cron tick / bridge 停止时 daemon 不执行。恢复后：
 - **原子写入**：tmp→fsync→验证→os.replace（POSIX 原子 rename）
 - **`.bak` 备份**：每次 save 前 `shutil.copy2`，单文件永远只有最新快照
 - **损坏恢复链**：main → .tmp → .bak → 删除重建
-- **tick_seq 单调递增**：每次成功 save +1，watchdog 持久化上次值到 `chiguo_watchdog_state.json`，seq 停滞超过 3h 则告警（`stall_since` 记录首次停滞时刻，seq 恢复自动清除）
+- **tick_seq 单调递增**：每次成功 save +1（停滞/重启检测的单调基准）
 - **审计日志**：所有恢复/删除/校验失败/时钟异常事件记录到 `chiguo_state_audit.jsonl`
 - **校验和**：`save()` 时 SHA256(payload) → `_checksum` 字段，`_load()` 时验证，不匹配 → raise ValueError 强制走 `.bak` 恢复链（v6，位翻转/手改后宁可回退也不带病运行）
 - **跨进程写锁**：`state_lock()` contextmanager（fcntl flock + 模块级 fd 缓存可重入 + 5s LOCK_NB 超时审计），`save()` 复用统一锁；cron（trigger-script 评估）与 agent（standing order 调 --user-msg）并发时 read-modify-write 临界区可显式加锁
@@ -1853,7 +1829,6 @@ cron tick / bridge 停止时 daemon 不执行。恢复后：
 - PID 锁仅 `--loop` 模式生效，cron 单次执行无需
 - 反馈闭环依赖 tick/bridge 主动回传 --record-send/--send-result，若链路中断则发送结果仍不可知
 - `state_lock()` 是显式锁：`save()` 内部已持锁，但 cron 与 agent（--user-msg）各自的 read-modify-write 若未包在 `with state_lock():` 内，仍存在 lost update 窗口
-- watchdog 的 `stall_since` 检测对 state 文件重建（tick_seq 归零）会误报 —— **2026-07-31 已修复**：tick_seq 回退（< prev_seq）视为重启（重置 `stall_since`、不告警、输出 `tick_restarted` 标记）；仅相等且 >3h 不增才告警停滞；下一次运行自动自愈清除旧误报（现网 `stall_since=16:41` 误报已实测清除）
 - 生物钟学习依赖用户回复样本：冷启动（<7 个有回复日或置信度 <0.5）该桶回退配置默认静默窗口 0-8；学习窗口是统计估计，异常作息（考试周熬夜/时区变化）由置信度门槛与滚动窗口自动衰减
 - 双作息迁移是启发式：历史无 bucket 字段的条目按 `weekday() < 5` 补桶，无节假日判定——节假日/调休日的历史回复可能被补入错误桶，随滚动窗口自然衰减
 - 周末数据天然稀疏（每周仅 2/7 天）：周末桶的 sample_days 累积慢，约 3-4 周才可能激活周末学习窗口；未达标时周末回退配置默认 0-8（不影响工作日桶）
