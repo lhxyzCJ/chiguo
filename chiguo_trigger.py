@@ -9,7 +9,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 
 from chiguo_state import CST, ChiguoState
-from chiguo_math import weighted_trigger_choice
+from chiguo_math import weighted_trigger_choice, in_quiet_window
 
 
 @dataclass
@@ -348,10 +348,7 @@ def _is_free_time(state: ChiguoState, now: datetime) -> bool:
     """主人是否空闲（非上课、非深夜）。"""
     # 深夜不开(配置默认 0-8;生物钟学习达标后为学习窗口)
     qs, qe = state.cooldown.quiet_window()
-    if qe < qs:
-        if now.hour >= qs or now.hour < qe:
-            return False
-    elif qs <= now.hour < qe:
+    if in_quiet_window(now, qs, qe):
         return False
     # 节假日/周末 → 空闲
     if state.holiday_parser.is_holiday(now):

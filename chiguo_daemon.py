@@ -587,12 +587,8 @@ class DecisionEngine:
             return "min_interval"
         # 检查是否在静默时段
         qs, qe = self.state.cooldown.quiet_window()
-        if qe < qs:
-            if now.hour >= qs or now.hour < qe:
-                return "quiet_hours"
-        else:
-            if qs <= now.hour < qe:
-                return "quiet_hours"
+        if in_quiet_window(now, qs, qe):
+            return "quiet_hours"
 
         # 门禁全部放行后 → 报告 Bayesian 状态（v4: 概率推断的用户状态）
         if user_state:
