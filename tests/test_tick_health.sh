@@ -213,7 +213,7 @@ pass "登录后收件人自动注入（credentials userId 生效）"
 kill ${SRV_PID:-} 2>/dev/null || true
 export SEND_RESULT_LOG="$TMP/sendresult.log"
 : > "$SEND_RESULT_LOG"
-set +e; CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
+set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "bridge 不可达 tick 仍应退出 0（下个 tick 重试）"
 grep -q "send-result.*failed" "$SEND_RESULT_LOG" \
   || fail "bridge 不可达应回传 --send-result failed: $(cat "$SEND_RESULT_LOG")"
