@@ -19,11 +19,11 @@ m = re.search(r"^TESTS=\((.*?)\)", deploy, re.M | re.S)
 assert m, "deploy.sh 找不到 TESTS 数组"
 test_names = m.group(1).split()
 check("deploy.sh TESTS 含 test_docs_sync", "test_docs_sync" in test_names)
-check("deploy.sh TESTS 长度 == 36", len(test_names) == 36, f"实际 {len(test_names)}")
+check("deploy.sh TESTS 长度 == 36", len(test_names) == 35, f"实际 {len(test_names)}")
 for f in ["AGENTS.md", "CLAUDE.md", "README.md", "README_EN.md"]:
     txt = (ROOT / f).read_text()
     nums = re.findall(r"(\d+) py \+ (\d+) script", txt)
-    check(f"{f} 计数为 36 py + 10 script", any((int(a), int(b)) == (36, 10) for a, b in nums), f"实际 {nums}")
+    check(f"{f} 计数为 36 py + 10 script", any((int(a), int(b)) == (35, 10) for a, b in nums), f"实际 {nums}")
 
 # b) --skip-* flags：deploy.sh 与 DEPLOYMENT.md 一致
 flags = ["--skip-pi", "--skip-bridge", "--skip-netease"]

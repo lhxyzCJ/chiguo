@@ -41,7 +41,6 @@ from netease.service import NeteaseService
 from chiguo_composer import MessageComposer
 from chiguo_version import VERSION
 from chiguo_math import in_quiet_window, longing_accumulate
-from chiguo_eventbus import get_eventbus
 from chiguo_circadian import bucket_for
 
 CST = timezone(timedelta(hours=8))
@@ -75,8 +74,6 @@ class DecisionEngine:
         print(f"[chiguo_daemon] state={self.state.state_path}", file=sys.stderr)
         print(f"[chiguo_daemon] log={self.log_path}", file=sys.stderr)
 
-        # ── v4: EventBus ──
-        self.bus = get_eventbus()
 
         # ── v5: monotonic 锚点（不持久化，用于检测壁钟跳变）──
         self._monotonic_at_save: float = 0.0
@@ -323,7 +320,6 @@ class DecisionEngine:
                     "utility": user_state["utility"],
                 }
             self._log(decision)
-            self.bus.publish("decision_made", decision=decision)
             return decision
 
         # 3. 评估触发
@@ -371,7 +367,6 @@ class DecisionEngine:
                     "utility": user_state["utility"],
                 }
             self._log(decision)
-            self.bus.publish("decision_made", decision=decision)
             return decision
 
         # 3.5 记录触发历史（用于话题多样性检查）
@@ -434,7 +429,6 @@ class DecisionEngine:
                 "utility": user_state["utility"],
             }
         self._log(decision)
-        self.bus.publish("decision_made", decision=decision)
         return decision
 
     def _tick(self, now: datetime):
