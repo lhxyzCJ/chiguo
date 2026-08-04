@@ -102,6 +102,7 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 
 - 备份/迁移清单：`~/.chiguo/auth/`、`~/.pi-agent/`、`~/.pi/`、仓库内运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`schedule_overrides.json`、`schedule_plan.json`、`schedule_clarify.json`、`anniversaries.json`、`break_state.json`）、`data/`（课表/手动记忆）
 - 新机器：clone → 拷贝上述 → `bash deploy.sh`（自动接入；pi key 100% 迁移可用；微信/网易云跨设备自动重登兜底）
+- 微信登录态跨设备实测可复用：迁移后轮询正常，但首次**主动发送**可能被服务端拒（`[send error] prepare failed`，context_token 过期）——从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
 
 ## 十、常见问题
 

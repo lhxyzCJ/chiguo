@@ -190,7 +190,7 @@ Deployment comes in three tiers — pick what you need:
 Lower tiers can be upgraded later: `bash scripts/install_pi.sh --yes` (model), `bash scripts/wechat-bridge.sh install` (WeChat). Full deployment guide: [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
 
 ```bash
-git clone git@github.com:lhxyzCJ/chiguo.git && cd chiguo
+git clone https://github.com/lhxyzCJ/chiguo.git && cd chiguo   # public repo: https or ssh (git@github.com:lhxyzCJ/chiguo.git)
 
 uv sync                              # core (zero deps); full features: uv sync --all-extras
 uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
@@ -314,7 +314,7 @@ Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (3
 bash deploy.sh   # install uv/Python 3.14 → create venv → full test → env check → pi env + wechat-bridge + cron
 ```
 
-**Auth migration**: credentials live in `~/.chiguo/auth/` (WeChat login state / NetEase cookie / pi keys, mode 700, outside the repo). Moving to a new machine: copy that directory → run `deploy.sh` and everything hooks up automatically. pi keys migrate 100%; WeChat/NetEase web sessions may trigger an automatic re-login (QR scan) on a different device.
+**Auth migration**: credentials live in `~/.chiguo/auth/` (WeChat login state / NetEase cookie / pi keys, mode 700, outside the repo). Moving to a new machine: copy that directory → run `deploy.sh` and everything hooks up automatically. pi keys migrate 100%; WeChat/NetEase web sessions may trigger an automatic re-login (QR scan) on a different device. In practice the migrated WeChat session is usually reusable: if the first **proactive send** fails with `prepare failed` (stale context_token), send one message from WeChat to the bot to refresh the token — no re-scan needed.
 
 **NetEase API service** (optional): managed by systemd (`systemctl status netease-api`); health check `uv run python -m netease.bridge --test`; management via `bash scripts/netease-api.sh status`.
 
