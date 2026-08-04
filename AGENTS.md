@@ -40,6 +40,16 @@ bash scripts/ci-test.sh   # full suite (36 py + 10 script) — 本地与 GitHub 
 - `schedule/parser.py` requires `xskb.xlsx`; if missing, falls back to availability=0.85 (free time). `_parse()` returns bool and never overwrites a valid cache with a failed parse.
 - `tests/test_topics.py` anchors `_real_state` with `semester_end` in the past — don't "fix" it to real dates (time-bomb test).
 
+## Git 工作流（代码改动）
+
+- 代码改动（refactor:/fix:/feat:）一律走分支 + PR：
+  - 分支名 `simplify/<issue-N>-<slug>`（如 `simplify/12-composer-cue`）
+  - 每分支对应一个 GitHub Issue（`gh issue create`），PR 正文 `Closes #N`
+  - 出口条件：CI 全链绿 + 子代理自审 + 用户批准 → squash merge
+- docs:/chore: 小改动可直接 main（CI 仍自动验证）。
+- 简化单元跟踪：从审查报告（~/chiguo-meta/audit/）拆出的每单元建 Issue，
+  标题 `[simplify] <模块>: <改动>`，正文含文件清单、改动内容、删行预估、依赖单元。
+
 ## After any code change
 
 1. Run affected test files; full chain (36 py + 10 script) if touching math/state/daemon.

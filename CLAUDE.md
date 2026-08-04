@@ -5,44 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 注意，在你开始修复前一定记得做个计划或者todolist，然后尽量多开子代理，让事情做起来更高效，不要吝啬token消耗,做完事情后也要多开代理进行自我审计，这是铁律。
 ## 所有子代理（Agent/Workflow）开工前必须继承主模型，不得通过 model 参数覆盖（如 opus/haiku/fable），除非任务明确需要专用模型。
 ## 修改代码或开 agents 时，如需要调用 opus 模型，必须立即中断并提示用户授权，不得擅自使用。
+## Git 工作流（代码改动）
+- 代码改动（refactor:/fix:/feat:）一律走分支 + PR：分支名 `simplify/<issue-N>-<slug>`；每分支对应一个 GitHub Issue（`gh issue create`），PR 正文 `Closes #N`；出口条件 = CI 全链绿 + 子代理自审 + 用户批准 → squash merge。
+- docs:/chore: 小改动可直接 main（CI 仍自动验证）。
+- 简化单元跟踪：从审查报告（~/chiguo-meta/audit/）拆出的每单元建 Issue，标题 `[simplify] <模块>: <改动>`，正文含文件清单、改动内容、删行预估、依赖单元。
 每次修改代码后必须：
 1. 更新相关文档（`doc/SYSTEM.md`、`doc/README.md` 中受影响的章节）
 ## Build & Test
 
 ```bash
 # Run all tests (Python 3.14+ required) — 36 py + 10 script tests
-node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
-bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && bash tests/test_tick_health.sh && \
-uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
-uv run python tests/test_schedule_parser.py && \
-uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
-uv run python tests/test_eventbus.py && uv run python tests/test_personality.py && \
-uv run python tests/test_bayesian.py && uv run python tests/test_composer.py && \
-uv run python tests/test_ebbinghaus.py && uv run python tests/test_longing.py && \
-uv run python tests/test_escape_valve.py && uv run python tests/test_feedback.py && \
-uv run python tests/test_trigger.py && uv run python tests/test_topics.py && \
-uv run python tests/test_circadian.py && uv run python tests/test_followup.py && \
-uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
-uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
-uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
-uv run python tests/test_adapt_personality.py && uv run python tests/test_pi_health.py && \
-uv run python tests/test_anniversary.py && uv run python tests/test_schedule_override.py && \
-uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
-uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
-uv run python tests/test_trigger_scale.py && uv run python tests/test_isolation.py && \
-uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py && uv run python tests/test_docs_sync.py   # full suite (36 py + 10 script tests)
-
-# Or individually
-uv run python tests/test_monitor.py
-
-# Decision engine (single evaluation, prints JSON to stdout)
-uv run python chiguo_daemon.py
-
-# Monitor
-uv run python chiguo_daemon.py --stats        # 7-day stats
-uv run python chiguo_daemon.py --alerts       # anomaly detection
-uv run python chiguo_daemon.py --monitor      # full report
-uv run python chiguo_monitor.py --summary     # human-readable summary
+bash scripts/ci-test.sh   # 本地与 GitHub Actions ci.yml 同一入口
 ```
 
 **Python 3.14+ required** (via uv). Setup:
