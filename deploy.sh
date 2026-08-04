@@ -157,5 +157,4 @@ cat <<EOF
   $PROJECT_DIR/.venv/bin/python chiguo_daemon.py            # 单次决策 → JSON
   $PROJECT_DIR/.venv/bin/python chiguo_daemon.py --stats --alerts --monitor
   $PROJECT_DIR/.venv/bin/python chiguo_monitor.py --summary --health
-  $PROJECT_DIR/.venv/bin/python chiguo_watchdog.py          # 健康检查,exit 0/1/2
 EOF
