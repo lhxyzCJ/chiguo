@@ -279,48 +279,7 @@ class DecisionEngine:
 
         if not can_send:
             reason = "sleeping_guard" if sleeping_guard else self._idle_reason(now, user_state)
-
-            # ── v5: 概率累积移到 save 之前（防止崩溃丢失累积）──
-            if reason in ("no_trigger", "user_busy"):
-                self.state.cooldown.held_count += 1
-                cfg_cooldown = self.config.get("cooldown", {})
-                cfg_poisson = self.config.get("poisson", {})
-                base_lambda = cfg_poisson.get("base_lambda", 0.25)
-                current_lam = self.state.cooldown.accumulated_lambda or self.state.current_lambda(now)
-                new_lam, blocked = longing_accumulate(
-                    current_lam,
-                    base_lambda,
-                    growth_factor=cfg_cooldown.get("longing_growth_factor", 0.08),
-                    anxiety=self.state.emotion.anxiety,
-                    anxiety_block_threshold=cfg_cooldown.get("anxiety_block_threshold", 70.0),
-                    held_count=self.state.cooldown.held_count,
-                    max_lambda_multiplier=cfg_cooldown.get("max_lambda_multiplier", 5.0),
-                )
-                self.state.cooldown.accumulated_lambda = new_lam
-
-            self.state.save()
-            self._monotonic_at_save = time.monotonic()  # v5
-
-            decision = {
-                "action": "idle",
-                "version": VERSION,
-                "reason": reason,
-                "state": self.state.snapshot(now, user_state),
-            }
-            nxt = self._estimate_next_check(now, reason)
-            if nxt:
-                decision["next_evaluation_at"] = nxt
-            if data_warning:
-                decision["data_warning"] = data_warning
-            # v4: Bayesian 状态
-            if user_state:
-                decision["bayesian"] = {
-                    "most_likely": user_state["most_likely"],
-                    "confidence": user_state["confidence"],
-                    "utility": user_state["utility"],
-                }
-            self._log(decision)
-            return decision
+            return self._emit_idle(reason, now, user_state, data_warning)
 
         # 3. 评估触发
         trigger = evaluate_triggers(self.state, now, trigger_scale=self.state.trigger_scale_now(now))
@@ -330,44 +289,7 @@ class DecisionEngine:
         if trigger is not None and trigger.data.get("escape_valve") and never_interacted:
             trigger = None  # 从未交互 → 按普通无触发处理（不破防）
         if trigger is None:
-            # ── v5: 概率累积移到 save 之前 ──
-            self.state.cooldown.held_count += 1
-            cfg_cooldown = self.config.get("cooldown", {})
-            cfg_poisson = self.config.get("poisson", {})
-            base_lambda = cfg_poisson.get("base_lambda", 0.25)
-            current_lam = self.state.cooldown.accumulated_lambda or self.state.current_lambda(now)
-            new_lam, blocked = longing_accumulate(
-                current_lam, base_lambda,
-                growth_factor=cfg_cooldown.get("longing_growth_factor", 0.08),
-                anxiety=self.state.emotion.anxiety,
-                anxiety_block_threshold=cfg_cooldown.get("anxiety_block_threshold", 70.0),
-                held_count=self.state.cooldown.held_count,
-                max_lambda_multiplier=cfg_cooldown.get("max_lambda_multiplier", 5.0),
-            )
-            self.state.cooldown.accumulated_lambda = new_lam
-
-            self.state.save()
-            self._monotonic_at_save = time.monotonic()  # v5
-
-            decision = {
-                "action": "idle",
-                "version": VERSION,
-                "reason": "no_trigger",
-                "state": self.state.snapshot(now, user_state),
-            }
-            nxt = self._estimate_next_check(now, "no_trigger")
-            if nxt:
-                decision["next_evaluation_at"] = nxt
-            if data_warning:
-                decision["data_warning"] = data_warning
-            if user_state:
-                decision["bayesian"] = {
-                    "most_likely": user_state["most_likely"],
-                    "confidence": user_state["confidence"],
-                    "utility": user_state["utility"],
-                }
-            self._log(decision)
-            return decision
+            return self._emit_idle("no_trigger", now, user_state, data_warning)
 
         # 3.5 记录触发历史（用于话题多样性检查）
         cfg_topic = self.config.get("topic_picker", {})
@@ -550,6 +472,47 @@ class DecisionEngine:
         except Exception as e:
             print(f"[warn] netease play proof failed: {e}", file=sys.stderr)
         return play_proof
+
+
+    def _emit_idle(self, reason: str, now, user_state, data_warning: bool) -> dict:
+        """idle 决策统一出口：概率累积（no_trigger/user_busy）+ 落盘。"""
+        if reason in ("no_trigger", "user_busy"):
+            self.state.cooldown.held_count += 1
+            cfg_cooldown = self.config.get("cooldown", {})
+            base_lambda = self.config.get("poisson", {}).get("base_lambda", 0.25)
+            current_lam = self.state.cooldown.accumulated_lambda or self.state.current_lambda(now)
+            new_lam, _ = longing_accumulate(
+                current_lam, base_lambda,
+                growth_factor=cfg_cooldown.get("longing_growth_factor", 0.08),
+                anxiety=self.state.emotion.anxiety,
+                anxiety_block_threshold=cfg_cooldown.get("anxiety_block_threshold", 70.0),
+                held_count=self.state.cooldown.held_count,
+                max_lambda_multiplier=cfg_cooldown.get("max_lambda_multiplier", 5.0),
+            )
+            self.state.cooldown.accumulated_lambda = new_lam
+
+        self.state.save()
+        self._monotonic_at_save = time.monotonic()
+
+        decision = {
+            "action": "idle",
+            "version": VERSION,
+            "reason": reason,
+            "state": self.state.snapshot(now, user_state),
+        }
+        nxt = self._estimate_next_check(now, reason)
+        if nxt:
+            decision["next_evaluation_at"] = nxt
+        if data_warning:
+            decision["data_warning"] = data_warning
+        if user_state:
+            decision["bayesian"] = {
+                "most_likely": user_state["most_likely"],
+                "confidence": user_state["confidence"],
+                "utility": user_state["utility"],
+            }
+        self._log(decision)
+        return decision
 
     def _idle_reason(self, now: datetime, user_state: dict = None) -> str:
         # ── v7: 忙碌抑制期（用户说"别烦我"）→ 独立 reason，抑制期不累积 longing ──
