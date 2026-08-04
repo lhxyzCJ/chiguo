@@ -210,8 +210,7 @@ else
     "apiKey": "ollama",
     "model": "qwen3-embedding:0.6b",
     "baseURL": "http://localhost:11434/v1",
-    "dimensions": 1024,
-    "normalized": true
+    "dimensions": 1024
   },
   "llm": {
     "apiKey": "__MEM_LLM_APIKEY__",
