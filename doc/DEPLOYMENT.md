@@ -39,9 +39,9 @@
 
 ## 五、完整部署六步（T2）
 
-### 1. uv + Python 3.14
+### 1. uv + Python 3.14 + 依赖
 
-自动装到 `~/.local/bin`；创建 `.venv`。验证：`uv run python --version`。
+自动装到 `~/.local/bin`；首次部署建 `.venv` 并 `uv sync --all-extras`（安装 lancedb 记忆与 openpyxl 课表解析）。验证：`uv run python --version`。
 
 ### 2. 全量自检
 

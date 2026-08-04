@@ -21,7 +21,8 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 uv python install 3.14 >/dev/null 2>&1 || true
 if [ ! -x .venv/bin/python ]; then
-    uv venv --python 3.14 >/dev/null
+    say "首次建 venv + 同步依赖（uv sync --all-extras：lancedb 记忆 / openpyxl 课表）..."
+    uv sync --all-extras || fail "uv sync --all-extras 失败,请检查网络后重试（可先手动: uv sync --all-extras）"
 fi
 say "Python: $(uv run python --version)($(uv run python -c 'import sys;print(sys.executable)'))"
 
