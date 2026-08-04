@@ -77,9 +77,12 @@ fail_threshold = 3
 TOML
 
 cat > "$REPO/chiguo_daemon.py" <<'PY'
-import json, sys
+import json, sys, os
 if "--compact" in sys.argv:
     print(json.dumps({"action": "send", "msg_id": "abc123", "trigger": "lonely_mid", "context": {}}))
+elif "--send-result" in sys.argv:
+    with open(os.environ.get("SEND_RESULT_LOG", "/dev/null"), "a") as f:
+        f.write(json.dumps(sys.argv) + "\n")
 else:
     sys.exit(0)
 PY
@@ -205,6 +208,16 @@ HOME="$TMP/home" CHIGUO_REPO="$REPO" env -u OPENCODE_API_KEY bash "$REAL_TICK" >
 grep -q "real_openid@im.wechat" "$POST_LOG" || fail "主动消息应发往真实 userId: $(cat "$POST_LOG")"
 grep -q '"to": "owner@im.wechat"' "$POST_LOG" && fail "不应发往占位符" || true
 pass "登录后收件人自动注入（credentials userId 生效）"
+
+# ── 用例 7: bridge 不可达 → 回传 --send-result failed（refund 反馈闭环不断）──
+kill ${SRV_PID:-} 2>/dev/null || true
+export SEND_RESULT_LOG="$TMP/sendresult.log"
+: > "$SEND_RESULT_LOG"
+set +e; CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] || fail "bridge 不可达 tick 仍应退出 0（下个 tick 重试）"
+grep -q "send-result.*failed" "$SEND_RESULT_LOG" \
+  || fail "bridge 不可达应回传 --send-result failed: $(cat "$SEND_RESULT_LOG")"
+pass "bridge 不可达 → 回传 failed（refund 闭环）"
 
 # ── replan lockfile(5s 超时 + 陈旧锁 10min 接管,M15)──
 # 直接调产品 schedule/replan._lock(R5):测试的是真实现,非逻辑拷贝
