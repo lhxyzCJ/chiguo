@@ -2,6 +2,7 @@
 // 用法: node test_pi_run.mjs（退出码 0=全过，1=有失败）
 import assert from 'node:assert'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { readToml, parseNdjson, extractAnalysis, runPiBin, run, extractBlock, runSchedule, resolveRepo } from '../scripts/pi-run.mjs'
 
@@ -128,6 +129,31 @@ t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json
   assert.ok(a.some((x) => x.includes('SUN2.md')), '注入 SUN2.md 路径')
   assert.ok(a.some((x) => x.includes('迟菓语言技巧指南.md')), '注入语言技巧指南路径')
   assert.strictEqual(a[a.length - 1], 'P', 'prompt 为最后参数')
+})
+
+t('run: analysis-mode 用 reply_thinking_level（回复及时性,与主动发送 thinking_level 分离）', async () => {
+  // 用临时 toml + 缓存击穿重导入,让本用例可红可绿(默认 toml 两值相同测不出差异)
+  const td = fs.mkdtempSync(path.join(os.tmpdir(), 'chiguo-thinking-'))
+  fs.writeFileSync(path.join(td, 'chiguo_proactive.toml'),
+    '[host]\nthinking_level = "max"\nreply_thinking_level = "medium"\n')
+  const prev = process.env.CHIGUO_REPO
+  process.env.CHIGUO_REPO = td
+  try {
+    const mod = await import(`../scripts/pi-run.mjs?t=${Date.now()}-${Math.random()}`)
+    let captured = null
+    const spy = async (_b, a) => { captured = a; return { stdout: '' } }
+    await mod.run(spy, { prompt: 'P', analysisMode: true })
+    const ri = captured.indexOf('--thinking')
+    assert.ok(ri >= 0 && captured[ri + 1] === 'medium',
+      `analysis-mode 应用 reply_thinking_level=medium，实得 ${captured[ri + 1]}`)
+    await mod.run(spy, { prompt: 'P', sendMode: true })
+    const si = captured.indexOf('--thinking')
+    assert.ok(si >= 0 && captured[si + 1] === 'max',
+      `send-mode 应保留 thinking_level=max，实得 ${captured[si + 1]}`)
+  } finally {
+    process.env.CHIGUO_REPO = prev
+    fs.rmSync(td, { recursive: true, force: true })
+  }
 })
 
 // ── runPiBin 真实 spawn（node -e 模拟 pi 退出码/stdout）──
