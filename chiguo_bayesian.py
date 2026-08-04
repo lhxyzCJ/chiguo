@@ -440,35 +440,3 @@ class BayesianLearner:
                     old_val = self.estimator._likelihood_cache.get(k2, 0.05)
                     self.estimator._likelihood_cache[k2] = old_val / group_sum  # ponytail: no clamp, let sum=1.0 naturally
 
-    def update_from_implicit(self, observations: dict, was_good_timing: bool):
-        """
-        无监督学习：从隐性信号学习。
-        was_good_timing: 消息发送后用户很快回复 → True；发送后无回复 → False
-        """
-        # 推断当时最可能的状态
-        result = self.estimator.infer(observations)
-        most_likely = result["most_likely"]
-
-        # 调整 P(obs | most_likely) 的方向
-        # 如果时机好 → 当前状态的似然应该提高（EMA 推向 1.0）
-        # 如果时机不好 → 当前状态的似然应该降低（向 0 衰减，不加正向调整）
-        obs_map = {
-            "reply_latency": self.estimator.classify_latency(
-                observations.get("reply_latency")
-            ),
-            "msg_length": self.estimator.classify_msg_length(
-                observations.get("msg_length")
-            ),
-            "silence": self.estimator.classify_silence(
-                observations.get("silence_hours", 0)
-            ),
-        }
-
-        for obs_key, obs_value in obs_map.items():
-            key = (most_likely, obs_key, obs_value)
-            old = self.estimator._likelihood_cache.get(key, 0.05)
-            if was_good_timing:
-                new_val = old * (1 - self.lr) + self.lr  # EMA 推向 1.0
-            else:
-                new_val = old * (1 - self.lr)  # 真实衰减向 0
-            self.estimator._likelihood_cache[key] = max(0.01, min(0.99, new_val))

@@ -183,22 +183,6 @@ def test_learner_update_from_label():
     print(f"  OK test_learner_update_from_label: {old_lik:.3f} → {new_lik:.3f}")
 
 
-def test_learner_update_from_implicit():
-    """无监督学习：好时机 → 强化"""
-    est = make_estimator()
-    learner = BayesianLearner(est, learning_rate=0.1)
-
-    obs = {"reply_latency": 0.5, "msg_length": 20, "silence_hours": 2.0}
-    result_before = est.infer(obs)
-    ml_before = result_before["most_likely"]
-    old_lik = est._get_likelihood(ml_before, "reply_latency", "normal")
-
-    # 好时机 → 强化当前状态
-    learner.update_from_implicit(obs, was_good_timing=True)
-    new_lik = est._get_likelihood(ml_before, "reply_latency", "normal")
-    assert new_lik > old_lik  # 好时机应该强化
-    print(f"  OK test_learner_update_from_implicit: {old_lik:.3f} → {new_lik:.3f}")
-
 
 def test_record_observation_supervised():
     """record_observation() 带真实标签时触发监督学习（似然表更新）"""
@@ -211,26 +195,6 @@ def test_record_observation_supervised():
     est.record_observation({"reply_latency": 5.0, "silence_hours": 8.0}, None)
     print("  OK test_record_observation_supervised")
 
-
-def test_learner_update_from_implicit_bad_timing():
-    """bad timing → 似然严格下降（向 0 衰减）"""
-    est = make_estimator()
-    learner = BayesianLearner(est, learning_rate=0.1)
-    obs = {"reply_latency": 0.5, "msg_length": 20, "silence_hours": 2.0}
-    result_before = est.infer(obs)
-    ml_before = result_before["most_likely"]
-
-    latency_cat = UserStateEstimator.classify_latency(0.5)  # "normal"
-    old_lik = est._get_likelihood(ml_before, "reply_latency", latency_cat)
-
-    learner.update_from_implicit(obs, was_good_timing=False)
-    new_lik = est._get_likelihood(ml_before, "reply_latency", latency_cat)
-    assert new_lik < old_lik  # 真实衰减，必须严格下降
-
-    learner.update_from_implicit(obs, was_good_timing=False)
-    newer_lik = est._get_likelihood(ml_before, "reply_latency", latency_cat)
-    assert newer_lik < new_lik  # 连续 bad timing 持续衰减
-    print(f"  OK test_learner_update_from_implicit_bad_timing: {old_lik:.3f} → {new_lik:.3f} → {newer_lik:.3f}")
 
 
 def test_all_states_in_posterior():
@@ -259,9 +223,7 @@ if __name__ == "__main__":
         test_in_class_boosts_busy,
         test_should_send_bayesian,
         test_learner_update_from_label,
-        test_learner_update_from_implicit,
         test_record_observation_supervised,
-        test_learner_update_from_implicit_bad_timing,
         test_all_states_in_posterior,
     ]
     for t in tests:
