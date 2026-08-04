@@ -400,7 +400,7 @@ def test_memory_sources_unavailable_skipped():
         picker = TopicPicker(state, _picker_cfg())
         now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
         assert state.memory_bridge.available is False, "precondition: lancedb unavailable"
-        assert picker._memory_topic(now) is None
+        assert picker._memory_topic() is None
         assert picker._preference_followup_topic(now) is None
     print("  OK test_memory_sources_unavailable_skipped")
 
@@ -415,7 +415,7 @@ def test_memory_and_preference_topics_with_bridge():
         # → random.choice 50/50 挑 PREF/EVENT，依赖模块级未播种 RNG 残留会偶发抽中
         # EVENT → "乌龙茶" 断言 flaky。seed(1) 首个 choice 命中 PREF，确定性。
         random.seed(1)
-        t = picker._memory_topic(now)
+        t = picker._memory_topic()
         assert t and t["type"] == "memory", t
         assert t["data"]["memory"]["l0_abstract"], t
         random.seed(1)

@@ -4,7 +4,6 @@
 
 import math
 import random
-from datetime import datetime
 from datetime import datetime as _dt
 
 
@@ -168,7 +167,7 @@ def longing_decay(
     return base_lambda + (current_lambda - base_lambda) * decay_factor
 
 
-def in_quiet_window(dt: datetime, start: int, end: int) -> bool:
+def in_quiet_window(dt: _dt, start: int, end: int) -> bool:
     """跨午夜静默窗口判定:end < start → [start, 24)∪[0, end);否则 [start, end)。"""
     if end < start:
         return dt.hour >= start or dt.hour < end

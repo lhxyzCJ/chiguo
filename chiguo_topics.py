@@ -76,7 +76,7 @@ class TopicPicker:
         if sched:
             candidates.append({"topic": sched, "weight": weights["schedule"]})
 
-        mem = self._memory_topic(now)
+        mem = self._memory_topic()
         if mem:
             candidates.append({"topic": mem, "weight": weights["memory"]})
 
@@ -181,7 +181,7 @@ class TopicPicker:
 
     # ── 来源 2：LanceDB 记忆 ────────────────────────────────
 
-    def _memory_topic(self, now: datetime) -> dict | None:
+    def _memory_topic(self) -> dict | None:
         """基于 LanceDB 随机记忆的话题。数据库不可用时静默跳过。
         v4: 使用 Ebbinghaus 遗忘权重（新记忆更可能被选中）。
              50% 概率使用 search_with_forgetting 做相关性搜索。"""
