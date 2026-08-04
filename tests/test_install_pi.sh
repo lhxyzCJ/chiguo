@@ -225,14 +225,14 @@ pass "--yes 阶段失败 → PENDING + 退出 1（阶段 2/3/6 产物已断言�
 clean_home
 set +e; OUT=$(CHIGUO_MEMORY_LLM_APIKEY=sk-ds-secret CHIGUO_MEMORY_LLM_BASEURL=https://api.deepseek.com/v1 CHIGUO_MEMORY_LLM_MODEL=deepseek-v4-pro bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 1 ] || fail "env 覆盖 json5 期望 1（阶段 1 失败）实得 $RC"
-grep -q 'sk-ds-secret' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "CHIGUO_MEMORY_LLM_APIKEY 未写入 json5"
-grep -q 'https://api.deepseek.com/v1' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "CHIGUO_MEMORY_LLM_BASEURL 未写入 json5"
-grep -q 'deepseek-v4-pro' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "CHIGUO_MEMORY_LLM_MODEL 未写入 json5"
+grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"sk-ds-secret"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "CHIGUO_MEMORY_LLM_APIKEY 未写入 json5 的 apiKey 字段"
+grep -qE '"baseURL"[[:space:]]*:[[:space:]]*"https://api\.deepseek\.com/v1"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "CHIGUO_MEMORY_LLM_BASEURL 未写入 json5 的 baseURL 字段"
+grep -qE '"model"[[:space:]]*:[[:space:]]*"deepseek-v4-pro"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "CHIGUO_MEMORY_LLM_MODEL 未写入 json5 的 model 字段"
 pass "json5 llm 端点可配置（env 覆盖写入）"
 clean_home
-set +e; OUT=$(bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
-grep -q 'https://opencode.ai/zen/go/v1' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "缺省 baseURL 应为 opencode 网关"
-grep -qF '${OPENCODE_API_KEY}' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "缺省 apiKey 应为 \${OPENCODE_API_KEY}"
+set +e; OUT=$(env -u CHIGUO_MEMORY_LLM_APIKEY -u CHIGUO_MEMORY_LLM_BASEURL -u CHIGUO_MEMORY_LLM_MODEL bash scripts/install_pi.sh --yes 2>&1); RC=$?; set -e
+grep -qE '"baseURL"[[:space:]]*:[[:space:]]*"https://opencode\.ai/zen/go/v1"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "缺省 baseURL 应为 opencode 网关"
+grep -qF '"apiKey": "${OPENCODE_API_KEY}"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "缺省 apiKey 应为 \${OPENCODE_API_KEY}"
 pass "json5 llm 缺省值（opencode 网关 + env key 引用）"
 
 # ── 用例 13: --yes 合并写 auth.json（保留旧 provider 条目 + opencode-go + chmod 600 + .bak 不重复）──

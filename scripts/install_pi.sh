@@ -226,15 +226,13 @@ else
   "sessionMemory": { "enabled": false }
 }
 EOJ
-    "$PY" - "$JSON5" "$MEM_LLM_APIKEY" "$MEM_LLM_MODEL" "$MEM_LLM_BASEURL" <<'PYR' || PENDING=1
-import sys
-p, api, model, base = sys.argv[1:5]
-src = open(p, encoding="utf-8").read()
-for token, val in (("__MEM_LLM_APIKEY__", api), ("__MEM_LLM_MODEL__", model), ("__MEM_LLM_BASEURL__", base)):
-    src = src.replace(token, val)
-open(p, "w", encoding="utf-8").write(src)
-PYR
-    say "memory-lancedb-pro.json5 已写入（llm=$MEM_LLM_BASEURL）"
+    if "$PY" - "$JSON5" "$MEM_LLM_APIKEY" "$MEM_LLM_MODEL" "$MEM_LLM_BASEURL" <<'PYR'; then
+      say "memory-lancedb-pro.json5 已写入（llm=$MEM_LLM_BASEURL）"
+    else
+      rm -f "$JSON5"
+      PENDING=1
+      warn "json5 占位符替换失败,已删除待下轮重写（.bak 已保留）"
+    fi
   fi
 fi
 
