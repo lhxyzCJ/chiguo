@@ -75,6 +75,17 @@ do_install() {
     if [ ! -d "$WECHATBOT_DIR/nodejs" ]; then
         fail "wechatbot 仓库缺少 nodejs/ SDK 目录，无法安装"
     fi
+    # SDK 是 TS 源码：dist 被上游 gitignore，npm install file: 只拷源码不构建 →
+    # 缺 dist/index.js 时 bridge.mjs 顶层 import 必挂（干净部署实测）。与 install_pi.sh
+    # 对 memory-lancedb-pro 的 clone+build 同款处理；幂等：dist 已存在跳过。
+    if [ ! -f "$WECHATBOT_DIR/nodejs/dist/index.js" ]; then
+        say "SDK 未构建（dist 缺失），执行 npm install && npm run build ..."
+        ( cd "$WECHATBOT_DIR/nodejs" && npm install --no-fund --no-audit >/dev/null 2>&1 \
+            && npm run build >/dev/null 2>&1 ) \
+            || fail "SDK 构建失败（手工: cd $WECHATBOT_DIR/nodejs && npm install && npm run build）"
+    else
+        say "SDK 已构建（dist 存在，跳过 build）"
+    fi
     say "安装 npm 依赖（@wechatbot/wechatbot <- $WECHATBOT_DIR/nodejs）..."
     ( cd "$BRIDGE_DIR" && npm install "@wechatbot/wechatbot@file:$WECHATBOT_DIR/nodejs" --no-fund --no-audit >/dev/null ) \
         || fail "npm install 失败"
