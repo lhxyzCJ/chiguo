@@ -176,7 +176,10 @@ PYJ
   fi
 fi
 
-# ── 阶段 3: memory-lancedb-pro.json5（dbPath + ollama embedding）──
+# ── 阶段 3: memory-lancedb-pro.json5（dbPath + ollama embedding + llm 端点可配置）──
+# llm 段(扩展的 smart extraction/upgrade 调用)端点可配:CHIGUO_MEMORY_LLM_APIKEY /
+# CHIGUO_MEMORY_LLM_MODEL / CHIGUO_MEMORY_LLM_BASEURL(缺省 opencode 网关 + ${OPENCODE_API_KEY} 引用;
+# opencode 网关不可用时切任意 OpenAI 兼容端点,如官方 API)。
 say "阶段 3: ~/.pi/agent/memory-lancedb-pro.json5..."
 if [ -f "$JSON5" ] \
    && grep -q 'qwen3-embedding' "$JSON5" \
@@ -187,9 +190,17 @@ if [ -f "$JSON5" ] \
    && grep -qE '"smartExtraction"[[:space:]]*:[[:space:]]*true' "$JSON5"; then
   say "memory-lancedb-pro.json5 OK（embedding=ollama qwen3-embedding:0.6b + dbPath=~/.pi-agent/memory/lancedb-pro）"
 else
+  # 注意:默认值含 ${...} 时不能嵌套在 :-\${...} 里(bash 解析会残留尾 }),用显式分支
+  if [ -n "${CHIGUO_MEMORY_LLM_APIKEY:-}" ]; then
+    MEM_LLM_APIKEY="$CHIGUO_MEMORY_LLM_APIKEY"
+  else
+    MEM_LLM_APIKEY='${OPENCODE_API_KEY}'
+  fi
+  MEM_LLM_MODEL="${CHIGUO_MEMORY_LLM_MODEL:-deepseek-v4-flash}"
+  MEM_LLM_BASEURL="${CHIGUO_MEMORY_LLM_BASEURL:-https://opencode.ai/zen/go/v1}"
   if [ "$DRY" = 1 ]; then
     PENDING=1
-    echo "  [dry-run] 将写 $JSON5：dbPath=~/.pi-agent/memory/lancedb-pro、embedding=ollama qwen3-embedding:0.6b、llm=deepseek、autoCapture/autoRecall/smartExtraction（含 .bak 备份）"
+    echo "  [dry-run] 将写 $JSON5：dbPath=~/.pi-agent/memory/lancedb-pro、embedding=ollama qwen3-embedding:0.6b、llm=$MEM_LLM_BASEURL、autoCapture/autoRecall/smartExtraction（含 .bak 备份）"
   elif confirm "写入 $JSON5（memory-lancedb-pro 配置：dbPath 沿用历史库 + ollama embedding）"; then
     mkdir -p "$(dirname "$JSON5")"
     [ -f "$JSON5" ] && cp -a "$JSON5" "$JSON5.bak"
@@ -197,20 +208,19 @@ else
 {
   // memory-lancedb-pro configuration for the pi coding agent (install_pi.sh 生成)
   // embedding: local Ollama (qwen3-embedding:0.6b, 1024 dims)
-  // llm: DeepSeek (smart extraction / upgrades)
+  // llm: smart extraction / upgrades 端点（install_pi.sh 按 CHIGUO_MEMORY_LLM_* 生成）
   "dbPath": "~/.pi-agent/memory/lancedb-pro",
   "embedding": {
     "provider": "openai-compatible",
     "apiKey": "ollama",
     "model": "qwen3-embedding:0.6b",
     "baseURL": "http://localhost:11434/v1",
-    "dimensions": 1024,
-    "normalized": true
+    "dimensions": 1024
   },
   "llm": {
-    "apiKey": "${OPENCODE_API_KEY}",
-    "model": "deepseek-v4-flash",
-    "baseURL": "https://opencode.ai/zen/go/v1"
+    "apiKey": "__MEM_LLM_APIKEY__",
+    "model": "__MEM_LLM_MODEL__",
+    "baseURL": "__MEM_LLM_BASEURL__"
   },
   "autoCapture": true,
   "autoRecall": true,
@@ -221,7 +231,20 @@ else
   "sessionMemory": { "enabled": false }
 }
 EOJ
-    say "memory-lancedb-pro.json5 已写入"
+    if "$PY" - "$JSON5" "$MEM_LLM_APIKEY" "$MEM_LLM_MODEL" "$MEM_LLM_BASEURL" <<'PYR'; then
+import sys
+p, api, model, base = sys.argv[1:5]
+src = open(p, encoding="utf-8").read()
+for token, val in (("__MEM_LLM_APIKEY__", api), ("__MEM_LLM_MODEL__", model), ("__MEM_LLM_BASEURL__", base)):
+    src = src.replace(token, val)
+open(p, "w", encoding="utf-8").write(src)
+PYR
+      say "memory-lancedb-pro.json5 已写入（llm=$MEM_LLM_BASEURL）"
+    else
+      rm -f "$JSON5"
+      PENDING=1
+      warn "json5 占位符替换失败,已删除待下轮重写（.bak 已保留）"
+    fi
   fi
 fi
 
