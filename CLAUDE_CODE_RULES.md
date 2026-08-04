@@ -45,7 +45,7 @@ python3 chiguo_demo.py
 python3 chiguo_daemon.py --stats 7     # 7-day stats
 python3 chiguo_daemon.py --alerts      # anomaly detection
 python3 chiguo_daemon.py --monitor     # full report
-python3 chiguo_monitor.py --summary    # human-readable summary
+python3 chiguo_daemon.py --stats      # structured stats
 python3 chiguo_monitor.py --health     # system health check
 python3 chiguo_monitor.py --alerts     # alert list
 python3 chiguo_monitor.py --alerts-all # incl. resolved
