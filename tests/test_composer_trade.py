@@ -51,8 +51,7 @@ def test_cue_weights_rebalanced():
     assert w.get("tsundere_classic", 0) >= w.get("caring_gentle", 1), "经典傲娇应高于温柔关心"
     assert "trade_tsundere" in c.CUES, "应有交易式撒娇 cue"
     assert w.get("trade_tsundere", 0) > 0, "trade_tsundere 应有基础权重"
-    assert "cool_mysterious" in c.CUES, "cool_mysterious 应保留在字典（兼容）"
-    assert w.get("cool_mysterious", 1) == 0, "cool_mysterious 权重应为 0（保留但禁用）"
+    assert "cool_mysterious" not in c.CUES, "cool_mysterious 不可达，应已删除"
     print("  OK test_cue_weights_rebalanced")
 
 

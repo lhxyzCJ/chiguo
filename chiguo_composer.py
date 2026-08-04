@@ -25,69 +25,69 @@ class MessageComposer:
     # ── Intent 库（A）：按触发类型分类 ──
     INTENTS = {
         "lonely_low": [
-            {"text": "轻松试探——假装恰好想到哥哥，找个小话题", "tone": "light"},
-            {"text": "分享趣事引注意——讲一件今天发生的小趣事", "tone": "playful"},
-            {"text": "随便问问——装作不经意地问哥哥在干嘛", "tone": "casual"},
-            {"text": "找借口联系——编个理由发消息（比如'有个问题想问你'）", "tone": "tsundere"},
-            {"text": "丢个表情包试探——用表情包/语气词开头看哥哥反应", "tone": "cute"},
+            {"text": "轻松试探——假装恰好想到哥哥，找个小话题"},
+            {"text": "分享趣事引注意——讲一件今天发生的小趣事"},
+            {"text": "随便问问——装作不经意地问哥哥在干嘛"},
+            {"text": "找借口联系——编个理由发消息（比如'有个问题想问你'）"},
+            {"text": "丢个表情包试探——用表情包/语气词开头看哥哥反应"},
         ],
         "lonely_mid": [
-            {"text": "嘴硬关心——用攻击性语言包装的关心", "tone": "tsundere"},
-            {"text": "傲娇提醒——暗示哥哥太久没联系但不明说", "tone": "tsundere"},
-            {"text": "间接表达想念——不直说想你但话里有话", "tone": "soft"},
-            {"text": "确认存在感——试探哥哥是否还愿意聊天", "tone": "anxious"},
-            {"text": "小抱怨——抱怨哥哥不回消息但马上又嘴硬说不在意", "tone": "tsundere"},
+            {"text": "嘴硬关心——用攻击性语言包装的关心"},
+            {"text": "傲娇提醒——暗示哥哥太久没联系但不明说"},
+            {"text": "间接表达想念——不直说想你但话里有话"},
+            {"text": "确认存在感——试探哥哥是否还愿意聊天"},
+            {"text": "小抱怨——抱怨哥哥不回消息但马上又嘴硬说不在意"},
         ],
         "lonely_high": [
-            {"text": "防线崩溃——嘴硬突然断裂，真实感情涌出", "tone": "vulnerable"},
-            {"text": "直接表达想念——不再伪装，直说想你", "tone": "sincere"},
-            {"text": "情绪爆发——委屈/想念/不安一起涌出", "tone": "intense"},
-            {"text": "脆弱请求——用破碎的语气请求哥哥回复", "tone": "vulnerable"},
+            {"text": "防线崩溃——嘴硬突然断裂，真实感情涌出"},
+            {"text": "直接表达想念——不再伪装，直说想你"},
+            {"text": "情绪爆发——委屈/想念/不安一起涌出"},
+            {"text": "脆弱请求——用破碎的语气请求哥哥回复"},
         ],
         "anxiety": [
-            {"text": "确认被需要——试探哥哥是否还需要自己", "tone": "anxious"},
-            {"text": "不安试探——'你最近……都没来找我'，用试探代替自我否定", "tone": "anxious"},
-            {"text": "低声请求——小心翼翼地请求哥哥回应", "tone": "soft"},
+            {"text": "确认被需要——试探哥哥是否还需要自己"},
+            {"text": "不安试探——'你最近……都没来找我'，用试探代替自我否定"},
+            {"text": "低声请求——小心翼翼地请求哥哥回应"},
         ],
         "morning": [
-            {"text": "元气早安——活泼地说早上好", "tone": "energetic"},
-            {"text": "温馨提醒——提醒哥哥吃早餐/带伞", "tone": "caring"},
-            {"text": "计划今天——问哥哥今天有什么安排", "tone": "casual"},
+            {"text": "元气早安——活泼地说早上好"},
+            {"text": "温馨提醒——提醒哥哥吃早餐/带伞"},
+            {"text": "计划今天——问哥哥今天有什么安排"},
         ],
         "night": [
-            {"text": "温柔晚安——温馨地说晚安", "tone": "soft"},
-            {"text": "总结一天——问哥哥今天过得怎么样", "tone": "caring"},
-            {"text": "睡前碎碎念——分享自己今天的感受", "tone": "casual"},
+            {"text": "温柔晚安——温馨地说晚安"},
+            {"text": "总结一天——问哥哥今天过得怎么样"},
+            {"text": "睡前碎碎念——分享自己今天的感受"},
         ],
         "meal": [
-            {"text": "关心吃饭——提醒/询问哥哥有没有好好吃饭", "tone": "caring"},
+            {"text": "关心吃饭——提醒/询问哥哥有没有好好吃饭"},
         ],
         "playful": [
-            {"text": "分享趣事——讲一件今天发生的好玩的事", "tone": "energetic"},
-            {"text": "调皮邀功——'哥哥你看我做了这个！厉害吧！'", "tone": "playful"},
-            {"text": "日常碎碎念——纯粹想跟哥哥分享日常", "tone": "casual"},
-            {"text": "无厘头发言——突然说个莫名其妙的话题", "tone": "random"},
+            {"text": "分享趣事——讲一件今天发生的好玩的事"},
+            {"text": "调皮邀功——'哥哥你看我做了这个！厉害吧！'"},
+            {"text": "日常碎碎念——纯粹想跟哥哥分享日常"},
+            {"text": "无厘头发言——突然说个莫名其妙的话题"},
         ],
         "memory": [
-            {"text": "自然回忆——'突然想起来...'，把记忆当话头", "tone": "casual"},
-            {"text": "共同记忆——提到和哥哥相关的共同经历", "tone": "warm"},
+            {"text": "自然回忆——'突然想起来...'，把记忆当话头"},
+            {"text": "共同记忆——提到和哥哥相关的共同经历"},
         ],
         "special": [
-            {"text": "庆祝特殊日子——生日快乐/节日祝福", "tone": "warm"},
+            {"text": "庆祝特殊日子——生日快乐/节日祝福"},
         ],
         "reflect": [
-            {"text": "自我内省——'最近好像变温柔了...'，意识到自己的变化", "tone": "soft"},
-            {"text": "表达成长——'最近好像变温柔了...'，意识到自己的变化但不自夸", "tone": "sincere"},
+            {"text": "自我内省——'最近好像变温柔了...'，意识到自己的变化"},
+            {"text": "表达成长——'最近好像变温柔了...'，意识到自己的变化但不自夸"},
         ],
         "longing": [
-            {"text": "累积想念——已经好几轮想找哥哥但忍住了，这次终于没忍住", "tone": "sincere"},
-            {"text": "憋不住——'本来不想打扰哥哥的但是...'，积累的思念溢出", "tone": "soft"},
-            {"text": "自然流露——没想好理由，就是突然想跟哥哥说话", "tone": "casual"},
+            {"text": "累积想念——已经好几轮想找哥哥但忍住了，这次终于没忍住"},
+            {"text": "憋不住——'本来不想打扰哥哥的但是...'，积累的思念溢出"},
+            {"text": "自然流露——没想好理由，就是突然想跟哥哥说话"},
         ],
         "compensate": [
-            {"text": "两不相欠——用'扯平了'包装关心（'上次的奶茶，扯平。'）", "tone": "tsundere"},
-            {"text": "快过期了——'再不吃就过期了'式补偿邀请", "tone": "playful"},
-            {"text": "补偿方案——'这个给你，算是补偿。'", "tone": "soft"},
+            {"text": "两不相欠——用'扯平了'包装关心（'上次的奶茶，扯平。'）"},
+            {"text": "快过期了——'再不吃就过期了'式补偿邀请"},
+            {"text": "补偿方案——'这个给你，算是补偿。'"},
         ],
     }
 
@@ -125,10 +125,6 @@ class MessageComposer:
             "description": "交易式撒娇——用交易/补偿框架包装关心与接受。",
             "style_hint": "两不相欠、补偿方案、'交易，做吗？——不和你做。'、倒计时威胁",
         },
-        "cool_mysterious": {
-            "description": "酷酷的神秘感——话不多但每句都让人想知道更多。",
-            "style_hint": "短句，句号结尾，偶尔分享一个只有自己知道的趣事。",
-        },
     }
 
     # ── Vibe 库（C）：时间/情境氛围 ──
@@ -143,8 +139,6 @@ class MessageComposer:
         "weekend_morning": "周末早晨的懒洋洋",
         "weekend_evening": "周末晚上的自由惬意",
         "holiday": "节日/假期的放松氛围",
-        "rainy": "下雨天的安静和一点点忧郁",
-        "sunny": "晴天的明朗心情",
         "exam_season": "考试季的紧张和理解",
     }
 
@@ -197,7 +191,6 @@ class MessageComposer:
             "anxious_clingy": self.config.get("cue_anxious_weight", 0.10),
             "caring_gentle": self.config.get("cue_caring_weight", 0.10),
             "trade_tsundere": self.config.get("cue_trade_weight", 0.15),
-            "cool_mysterious": self.config.get("cue_cool_weight", 0.00),
         }
 
         # personality toml 接线（Task 7）：cue ↔ 原著台词模板
@@ -279,7 +272,7 @@ class MessageComposer:
         # Step 1: 选择 Intent
         intents = self.INTENTS.get(trigger_type, self.INTENTS.get("lonely_low", []))
         if not intents:
-            intents = [{"text": "想联系哥哥", "tone": "casual"}]
+            intents = [{"text": "想联系哥哥"}]
         intent = random.choice(intents)
 
         # Step 2: 确定 combo 尺寸
@@ -365,10 +358,8 @@ class MessageComposer:
         # agreeableness → 调制 caring vs cool
         if agreeableness > 65:
             weights["caring_gentle"] *= 1.3
-            weights["cool_mysterious"] *= 0.5
         elif agreeableness < 40:
             weights["caring_gentle"] *= 0.4
-            weights["cool_mysterious"] *= 1.8
 
         # trigger_type 调制
         if trigger_type == "lonely_high":
