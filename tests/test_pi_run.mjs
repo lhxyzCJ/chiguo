@@ -108,10 +108,18 @@ t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json
   assert.strictEqual(captured.bin, 'pi')
   const a = captured.args
   assert.strictEqual(a[0], '-p')
-  assert.ok(a.includes('--provider') && a.includes('opencode-go'), 'provider 默认 opencode-go')
-  assert.ok(a.includes('--model') && a.includes('deepseek-v4-flash'), 'model 默认 deepseek-v4-flash')
-  assert.ok(a.includes('--session-id') && a.includes('chiguo-main'), 'session-id 默认 chiguo-main')
-  assert.ok(a.includes('--thinking') && a.includes('high'), 'thinking 默认 high')
+  // 期望值按真实 toml 推导（与 pi-run.mjs 同款:env ?? toml ?? 缺省）——部署机自定义
+  // provider/thinking 时测试不误挂（埋埋实机闭环验证发现;CI 默认 toml 仍验缺省值）
+  const host = readToml(path.join(resolveRepo(import.meta.url), 'chiguo_proactive.toml')).host ?? {}
+  const want = (k, d) => process.env[k] ?? host[k] ?? d
+  const wantProvider = want('PIRUN_PROVIDER', 'opencode-go')
+  const wantModel = want('PIRUN_MODEL', 'deepseek-v4-flash')
+  const wantSession = want('PIRUN_SESSION', 'chiguo-main')
+  const wantThinking = want('PIRUN_THINKING', 'high')
+  assert.ok(a.includes('--provider') && a.includes(wantProvider), `provider=${wantProvider}（toml/缺省）`)
+  assert.ok(a.includes('--model') && a.includes(wantModel), `model=${wantModel}（toml/缺省）`)
+  assert.ok(a.includes('--session-id') && a.includes(wantSession), `session-id=${wantSession}（toml/缺省）`)
+  assert.ok(a.includes('--thinking') && a.includes(wantThinking), `thinking=${wantThinking}（toml/缺省）`)
   assert.ok(a.includes('--no-context-files'), '隔离仓库开发上下文')
   assert.ok(a.includes('--mode') && a.includes('json'), '--mode json')
   const appends = a.filter((x) => x === '--append-system-prompt').length
