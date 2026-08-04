@@ -856,6 +856,8 @@ class DecisionEngine:
         # 同一条消息会被记录两次：bridge 先确定性 --user-msg（无分析），
         # standing order 随后补 --user-msg --analysis。基础回复效果
         # （延迟/情绪骤降/好感/元气）只应应用一次；第二次只补分析微调。
+        # 去重仅对"带分析"副本生效：无分析真实重发 → 完整处理；
+        # 带分析重复上报（窗口内第二次）→ 升级分支内兜底静默跳过，防双重应用。
         text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
         dedup = self.state.cooldown.recv_dedup
         is_dup = bool(dedup and dedup.get("text_sha") == text_sha and dedup.get("at"))
@@ -865,6 +867,7 @@ class DecisionEngine:
                 is_dup = (now - prev_at).total_seconds() < self.RECV_DEDUP_WINDOW_S
             except (ValueError, TypeError):
                 is_dup = False
+        is_dup = is_dup and analysis_dict is not None
 
         if is_dup:
             if analysis_dict and not dedup.get("analysis"):
