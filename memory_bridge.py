@@ -148,87 +148,6 @@ class MemoryBridge:
             return []  # 结果行防御：任何行级异常 → 优雅降级为空
         return results
 
-    def recent(self, hours: float = 168, limit: int = 20,
-               category: str = None,
-               min_importance: float = 0.3) -> list[dict]:
-        """
-        获取最近 N 小时的记忆。
-        用 SQL WHERE timestamp 过滤（自动检测 epoch-ms vs epoch-s）。
-        LanceDB 不可用时返回空列表。
-        """
-        if not self.available:
-            return []
-        cutoff_ms = (datetime.now(CST) - timedelta(hours=hours)).timestamp() * 1000
-        try:
-            where = f"timestamp >= {cutoff_ms}"
-            if category:
-                esc = category.replace("'", "''")
-                where += f" AND category = '{esc}'"
-            df = (self.table.search()
-                  .where(where)
-                  .limit(limit)
-                  .to_pandas())
-        except Exception:
-            # timestamp 可能是秒级，尝试另一种方式
-            return self._recent_fallback(hours, limit, category, min_importance)
-
-        # ponytail: detect ms-vs-s timestamp by checking if zero results on non-empty table.
-        # If LanceDB stores epoch-s, the ms-based SQL matches nothing without error.
-        if len(df) == 0:
-            try:
-                total = self.table.count_rows()
-                if total and total > 0:
-                    return self._recent_fallback(hours, limit, category, min_importance)
-            except Exception:
-                pass
-
-        results = []
-        try:
-            for _, row in df.iterrows():
-                meta = self._parse_meta(row)
-                if self._clean_importance(row) < min_importance:
-                    continue
-                results.append(self._row_to_dict(row, meta))
-        except Exception:
-            return []
-        return results
-
-    def _recent_fallback(self, hours, limit, category, min_importance):
-        """timestamp 可能是 epoch 秒的情况"""
-        cutoff_s = _time_module.time() - hours * 3600
-        try:
-            where = f"timestamp >= {cutoff_s}"
-            if category:
-                esc = category.replace("'", "''")
-                where += f" AND category = '{esc}'"
-            df = (self.table.search()
-                  .where(where)
-                  .limit(limit * 3)
-                  .to_pandas())
-        except Exception:
-            # 全量扫描取前 N 条
-            df = self.table.search().limit(limit * 10).to_pandas()
-
-        results = []
-        try:
-            for _, row in df.iterrows():
-                meta = self._parse_meta(row)
-                ts = row.get("timestamp") or 0
-                if ts > 1e12:
-                    age_h = (_time_module.time() - ts / 1000) / 3600
-                else:
-                    age_h = (_time_module.time() - ts) / 3600
-                if age_h > hours:
-                    continue
-                if self._clean_importance(row) < min_importance:
-                    continue
-                results.append(self._row_to_dict(row, meta))
-                if len(results) >= limit:
-                    break
-        except Exception:
-            return []
-        return results
-
     def user_relevant(self, limit: int = 20,
                       min_importance: float = 0.3,
                       prefer_categories: list[str] = None) -> list[dict]:
@@ -493,14 +412,9 @@ if __name__ == "__main__":
                 print(json.dumps(m, indent=2, ensure_ascii=False, default=str))
             else:
                 print("无相关记忆")
-        elif cmd == "--recent":
-            hours = float(sys.argv[2]) if len(sys.argv) > 2 else 168
-            results = bridge.recent(hours=hours)
-            for m in results:
-                print(f"[{m['category']}] {m['datetime']} | {m['l0_abstract'] or m['text'][:80]}")
         elif cmd == "--stats":
             print(json.dumps(bridge.stats(), indent=2, ensure_ascii=False))
         else:
-            print(f"用法: {sys.argv[0]} [--search|--random|--recent|--stats]")
+            print(f"用法: {sys.argv[0]} [--search|--random|--stats]")
     else:
         print(json.dumps(bridge.stats(), indent=2, ensure_ascii=False))
