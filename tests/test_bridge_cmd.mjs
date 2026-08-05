@@ -4,7 +4,7 @@ import assert from 'node:assert'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { detectSpecialCommand, inferYear, buildReply, executeSpecialCommand } from '../wechat-bridge/command-detect.mjs'
+import { detectSpecialCommand, inferYear, buildReply, executeSpecialCommand, detectSlashCommand, executeSlashCommand, backupSessionFile, encodeSessionDir } from '../wechat-bridge/command-detect.mjs'
 
 let passed = 0
 const tests = []
@@ -306,3 +306,42 @@ t('executeSpecialCommand: --schedule-change remove 拒绝(not_found)→ ok:false
   await runAll()
   console.log(`test_bridge_cmd: ${passed}/${tests.length} passed`)
 })().catch((e) => { console.error('FAIL', e); process.exit(1); })
+// ── 微信端斜杠命令 ──
+t('slash: 白名单命中/未知拒绝/普通消息放行', () => {
+  assert.strictEqual(detectSlashCommand('/new').action, 'new_session')
+  assert.strictEqual(detectSlashCommand('/status').action, 'status')
+  assert.strictEqual(detectSlashCommand('/记忆').action, 'memory_stats')
+  assert.strictEqual(detectSlashCommand('/记得什么 火锅').action, 'memory_search')
+  assert.strictEqual(detectSlashCommand('/记得什么 火锅').arg, '火锅')
+  assert.strictEqual(detectSlashCommand('/help').action, 'help')
+  assert.strictEqual(detectSlashCommand('/xyz').action, 'unknown_slash')
+  assert.strictEqual(detectSlashCommand('你好呀'), null)
+  assert.strictEqual(detectSlashCommand('记住5月11日是生日'), null)
+})
+t('slash: encodeSessionDir 与 pi 同编码(路径斜杠→横线,双横线包裹)', () => {
+  assert.strictEqual(encodeSessionDir('/a/b/c'), '--a-b-c--')
+})
+t('slash: unknown_slash 迟菓风拒绝(不进 LLM)', async () => {
+  const r = await executeSlashCommand(spawn, { action: 'unknown_slash' }, process.cwd())
+  assert.strictEqual(r.ok, true)
+  assert.ok(r.reply.includes('咒语'), r.reply)
+})
+t('slash: /help 列出白名单', async () => {
+  const r = await executeSlashCommand(spawn, { action: 'help' }, process.cwd())
+  assert.ok(r.reply.includes('/new') && r.reply.includes('/status') && r.reply.includes('/记忆'))
+})
+t('slash: /new 移走最近 chiguo-main 会话文件到备份目录', async () => {
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'slash-new-'))
+  const dir = path.join(os.homedir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
+  fs.mkdirSync(dir, { recursive: true })
+  const fake = path.join(dir, '2099-01-01T00-00-00-000Z_chiguo-main.jsonl')
+  fs.writeFileSync(fake, '{"type":"session"}\n')
+  const r = await executeSlashCommand(spawn, { action: 'new_session' }, cwd)
+  assert.strictEqual(r.ok, true)
+  assert.ok(!fs.existsSync(fake), '会话文件已移走')
+  const backups = path.join(os.homedir(), '.chiguo', 'session-backups')
+  assert.ok(fs.readdirSync(backups).some((f) => f.endsWith('-chiguo-main.jsonl')), '备份文件存在')
+})

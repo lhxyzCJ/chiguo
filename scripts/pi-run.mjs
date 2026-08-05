@@ -30,6 +30,19 @@ const REPLY_THINKING = process.env.PIRUN_REPLY_THINKING ?? HOST.reply_thinking_l
 // pi 调用超时(ms):默认 120s;replan 等长任务经 PIRUN_TIMEOUT 覆盖(replan.py replan_env 注入)
 const PI_TIMEOUT = Number(process.env.PIRUN_TIMEOUT ?? 120_000)
 const SESSION_ID = process.env.PIRUN_SESSION ?? HOST.session_id ?? 'chiguo-main'
+
+// PIRUN_NEW_SESSION=1:执行前把当前 chiguo-main 会话移入备份(与微信 /new 共享逻辑),
+// 本次调用从全新会话开始。仅对默认回复会话生效(PIRUN_SESSION 显式指定时不移)。
+if (process.env.PIRUN_NEW_SESSION === '1' && !process.env.PIRUN_SESSION) {
+  try {
+    const { backupSessionFile } = await import(pathToFileURL(join(REPO, 'wechat-bridge', 'command-detect.mjs')))
+    const { homedir } = await import('node:os')
+    const dst = backupSessionFile(process.cwd(), join(homedir(), '.chiguo', 'session-backups'))
+    if (dst) console.error(`[new-session] 旧会话已备份: ${dst}`)
+  } catch (err) {
+    console.error('[new-session] 备份失败:', err instanceof Error ? err.message : String(err))
+  }
+}
 const PERSONALITY_DIR = HOST.personality_dir ?? `${REPO}/personality`
 const PERSONALITY = process.env.PIRUN_PERSONALITY ?? `${PERSONALITY_DIR}/迟菓人格-精简版.md`
 const GUIDE = process.env.PIRUN_GUIDE ?? `${PERSONALITY_DIR}/记忆用法.md`
@@ -89,9 +102,11 @@ export function parseUsage(stdout) {
   return usage
 }
 
-/** 遥测:一行一轮,追加写 {REPO}/logs/pi-run.log(gitignore)。/status 与验收依赖此文件。 */
+/** 遥测:一行一轮,追加写 {REPO}/logs/pi-run.log(gitignore)。/status 与验收依赖此文件。
+ *  PIRUN_TELEMETRY=0 时跳过(测试环境)。 */
 export function appendTelemetry(entry, repo = REPO) {
   try {
+    if (process.env.PIRUN_TELEMETRY === '0') return
     const dir = `${repo}/logs`
     mkdirSync(dir, { recursive: true })
     appendFileSync(`${dir}/pi-run.log`, `${JSON.stringify(entry)}\n`)
