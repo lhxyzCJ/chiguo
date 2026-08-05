@@ -14,6 +14,8 @@
  */
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { mkdirSync, readdirSync, renameSync, statSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 
 const CST_OFFSET_MS = 8 * 3600 * 1000
 const MAX_LEN = 40
@@ -195,4 +197,149 @@ export async function executeSpecialCommand(spawnFn, spec, daemonPy, daemonScrip
     return { ok: false, reply: `${spec.hint}（daemon 输出异常）` }
   }
   return { ok: !(result.error || result.ok === false), reply: buildReply(spec.action, result) }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 微信端斜杠命令（白名单制,确定性执行,不经 pi;其余 / 开头一律迟菓风拒绝）
+// ─────────────────────────────────────────────────────────────
+
+const SLASH_HELP = [
+  '/help — 命令列表',
+  '/new — 清空当前对话上下文（记忆保留,之前的事我还都记着）',
+  '/status — 上下文/缓存/记忆状态',
+  '/记忆 — 记忆库统计',
+  '/记得什么 <词> — 搜索记忆',
+].join('\n')
+
+/** 斜杠命令检测:全部 / 开头消息都命中(未知命令 → unknown_slash,由执行侧拒绝)。 */
+export function detectSlashCommand(text) {
+  if (typeof text !== 'string') return null
+  const t = text.trim()
+  if (!t.startsWith('/')) return null
+  const parts = t.split(/\s+/)
+  const cmd = parts[0]
+  const arg = parts.slice(1).join(' ').trim()
+  switch (cmd) {
+    case '/new': return { action: 'new_session', slash: true }
+    case '/status': return { action: 'status', slash: true }
+    case '/记忆': case '/memory': return { action: 'memory_stats', slash: true }
+    case '/记得什么': case '/remember': return { action: 'memory_search', slash: true, arg }
+    case '/help': case '/帮助': return { action: 'help', slash: true }
+    default: return { action: 'unknown_slash', slash: true, arg: cmd }
+  }
+}
+
+/** pi 会话目录编码:--root-chiguo-wechat-bridge-- 同款(packageManager getDefaultSessionDirPath)。 */
+export function encodeSessionDir(cwd) {
+  return '--' + cwd.replace(/^\//, '').replaceAll('/', '-') + '--'
+}
+
+/** 备份并移走最近一个 chiguo-main 会话文件(与 PIRUN_NEW_SESSION 共享逻辑)。返回备份路径或 null。 */
+export function backupSessionFile(cwd, backupsDir) {
+  const dir = join(homedir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
+  let files = []
+  try { files = readdirSync(dir).filter((f) => f.endsWith('_chiguo-main.jsonl')) } catch {}
+  if (!files.length) return null
+  files.sort()
+  const src = join(dir, files[files.length - 1])
+  mkdirSync(backupsDir, { recursive: true })
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  const dst = join(backupsDir, `${ts}-chiguo-main.jsonl`)
+  renameSync(src, dst)
+  return dst
+}
+
+function runCli(spawnFn, args, timeoutMs = 30_000) {
+  return new Promise((resolve, reject) => {
+    const c = spawnFn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs })
+    let out = ''
+    let err = ''
+    c.stdout.on('data', (d) => { out += d })
+    c.stderr.on('data', (d) => { err += d })
+    c.on('error', (e) => reject(e))
+    c.on('close', (code) => {
+      if (code !== 0 && !out.trim()) reject(new Error(`exit ${code}: ${err.trim().slice(0, 120)}`))
+      else resolve(out)
+    })
+  })
+}
+
+function fmtTokens(n) {
+  if (n == null) return '?'
+  return n.toLocaleString('en-US')
+}
+
+/** 执行斜杠命令(纯 node 侧:文件操作 + memory-pro CLI),不经 pi/daemon。 */
+export async function executeSlashCommand(spawnFn, spec, cwd) {
+  const repo = dirname(cwd)
+  const backups = join(homedir(), '.chiguo', 'session-backups')
+  const cliMain = join(homedir(), '.pi-agent', 'TestForPi-memory-lancedb-pro', 'dist', 'pi-adapter', 'cli-main.js')
+  switch (spec.action) {
+    case 'new_session': {
+      try {
+        const dst = backupSessionFile(cwd, backups)
+        return { ok: true, reply: dst ? '好，清一下。之前的事我都还记着。' : '嗯？现在没有可清的对话呀。' }
+      } catch (err) {
+        return { ok: false, reply: `处理失败：${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+    case 'status': {
+      try {
+        let tele = null
+        try {
+          const lines = readFileSync(join(repo, 'logs', 'pi-run.log'), 'utf8').trim().split('\n')
+          if (lines.length) tele = JSON.parse(lines[lines.length - 1])
+        } catch {}
+        const usage = tele?.usage ?? {}
+        const total = (usage.cacheRead ?? 0) + (usage.input ?? 0)
+        let fileSize = 0
+        try {
+          const dir = join(homedir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
+          const files = readdirSync(dir).filter((f) => f.endsWith('_chiguo-main.jsonl')).sort()
+          if (files.length) fileSize = statSync(join(dir, files[files.length - 1])).size
+        } catch {}
+        let memCount = '?'
+        try {
+          const out = await runCli(spawnFn, [cliMain, 'stats'])
+          const m = out.match(/Total memories:\s*(\d+)/)
+          if (m) memCount = m[1]
+        } catch {}
+        const pct = total ? ((total / 1_000_000) * 100).toFixed(2) : '0'
+        const dur = tele?.dur_ms != null ? `${(tele.dur_ms / 1000).toFixed(1)}s` : '?'
+        return {
+          ok: true,
+          reply: `会话 ${fmtTokens(total)} tokens / 1M（${pct}%）| 文件 ${Math.round(fileSize / 1024)}KB | 上次耗时 ${dur} | 缓存命中 ${fmtTokens(usage.cacheRead ?? 0)} | 记忆 ${memCount} 条`,
+        }
+      } catch (err) {
+        return { ok: false, reply: `处理失败：${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+    case 'memory_stats': {
+      try {
+        const out = await runCli(spawnFn, [cliMain, 'stats'])
+        const m = out.match(/Total memories:\s*(\d+)/)
+        const n = m ? m[1] : '?'
+        return { ok: true, reply: `记忆库共 ${n} 条。哼，重要的事我都记着呢。` }
+      } catch (err) {
+        return { ok: false, reply: `记忆库打盹了：${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+    case 'memory_search': {
+      if (!spec.arg) return { ok: true, reply: '想查什么？给我个词呀——比如说「记得什么 火锅」。' }
+      try {
+        const out = await runCli(spawnFn, [cliMain, 'search', spec.arg, '--limit', '3'])
+        const lines = out.split('\n').filter((l) => /^\d+\./.test(l)).slice(0, 3)
+        if (!lines.length) return { ok: true, reply: `……「${spec.arg}」？没印象。哼，记性不好的是你吧。` }
+        const items = lines.map((l) => l.replace(/^\d+\.\s*\[[^\]]*\]\s*/, '').slice(0, 60))
+        return { ok: true, reply: `记得的：\n${items.map((s) => `· ${s}`).join('\n')}` }
+      } catch (err) {
+        return { ok: false, reply: `记忆库打盹了：${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+    case 'help':
+      return { ok: true, reply: SLASH_HELP }
+    case 'unknown_slash':
+    default:
+      return { ok: true, reply: '这是什么咒语啦？我可不会~（发 /help 看看我会的）' }
+  }
 }

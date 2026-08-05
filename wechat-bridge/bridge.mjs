@@ -32,7 +32,7 @@ import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent } from './command-detect.mjs'
+import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand } from './command-detect.mjs'
 import { parseNdjson, extractAnalysis, resolveRepo } from '../scripts/pi-run.mjs'
 
 const execFileP = promisify(execFile)
@@ -455,6 +455,23 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   if (clarify && exitWordMatch(text)) {
     clearClarify(repoRoot)
     exitWord = true   // 退出词:清记录后本消息不再进命令路径(短消息兜底不再重写记录)
+  }
+
+  // 微信端斜杠命令（白名单制）：全部 / 开头消息确定性接管，不经 pi/daemon
+  const slash = detectSlashCommand(text)
+  if (slash) {
+    await queue.run(async () => {
+      try {
+        const r = await executeSlashCommand(spawn, slash, process.cwd())
+        console.log(`[slash] ${slash.action} → ok=${r.ok}`)
+        await bot.reply(msg, r.reply)
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        console.error('[slash error]', reason)
+        await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
+      }
+    })
+    return 'slash'
   }
 
   // 特殊命令（纪念日/假期）确定性接管：命中则直接执行 daemon，不经 pi（Phase 4 Task 14）
