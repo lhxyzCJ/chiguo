@@ -123,6 +123,7 @@ t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json
   assert.ok(a.includes('--session-id') && a.includes(wantSession), `session-id=${wantSession}（toml/缺省）`)
   assert.ok(a.includes('--thinking') && a.includes(wantThinking), `thinking=${wantThinking}（toml/缺省）`)
   assert.ok(a.includes('--no-context-files'), '隔离仓库开发上下文')
+  assert.ok(a.includes('--no-skills'), '禁用技能发现（砍 ~5,300 token 编码技能噪音）')
   assert.ok(a.includes('--mode') && a.includes('json'), '--mode json')
   const appends = a.filter((x) => x === '--append-system-prompt').length
   assert.strictEqual(appends, 2, '两份人格注入（SUN2 + 语言技巧指南）')
