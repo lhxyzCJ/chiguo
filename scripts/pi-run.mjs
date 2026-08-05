@@ -46,6 +46,7 @@ if (process.env.PIRUN_NEW_SESSION === '1' && !process.env.PIRUN_SESSION) {
 const PERSONALITY_DIR = HOST.personality_dir ?? `${REPO}/personality`
 const PERSONALITY = process.env.PIRUN_PERSONALITY ?? `${PERSONALITY_DIR}/迟菓人格-精简版.md`
 const GUIDE = process.env.PIRUN_GUIDE ?? `${PERSONALITY_DIR}/记忆用法.md`
+const TOOLS = process.env.PIRUN_TOOLS ?? `${PERSONALITY_DIR}/工具用法.md`
 
 export function readToml(p) {
   const out = {}
@@ -174,6 +175,7 @@ export function buildBasePiArgs({ analysisMode } = {}) {
     '--session-id', SESSION_ID, '--no-context-files', '--no-skills',
     '--append-system-prompt', PERSONALITY,
     '--append-system-prompt', GUIDE,
+    '--append-system-prompt', TOOLS,
     '--thinking', analysisMode ? REPLY_THINKING : THINKING]
 }
 
@@ -240,6 +242,7 @@ period?, to_period?, to_date?, course?, label?, match?}。
   const piArgs = ['-p', '--provider', PROVIDER, '--model', MODEL,
     '--session-id', SESSIONS[mode] || SESSION_ID, '--no-context-files',
     '--append-system-prompt', PERSONALITY, '--append-system-prompt', GUIDE,
+    '--append-system-prompt', TOOLS,
     '--thinking', THINKING, '--mode', 'json', sysPrompt]
   try {
     const { stdout } = await exec(PI_BIN, piArgs, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
