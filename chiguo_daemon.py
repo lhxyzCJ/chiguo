@@ -782,7 +782,7 @@ class DecisionEngine:
 
         # ── 构造指令 ──
         instruction = (
-            f"请以迟菓（{personality_dir}/SUN2.md 设定）的身份，用上述语气发一条微信消息给哥哥。"
+            f"请以迟菓（{personality_dir}/迟菓人格-精简版.md 设定）的身份，用上述语气发一条微信消息给哥哥。"
             "1-3句话。自然。允许适当的动作/神态描写。不打破第四面墙。"
             "每句话最多一个感叹号。一句话里波浪线和感叹号不同时出现。问号最多一个。"
         )
@@ -804,7 +804,7 @@ class DecisionEngine:
 
         return {
             "character": "迟菓",
-            "personality_source": f"{personality_dir}/SUN2.md",
+            "personality_source": f"{personality_dir}/迟菓人格-精简版.md",
             "situation": situation,
             "schedule_hint": schedule_hint,
             "layer": emo.dominant_layer,

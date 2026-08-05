@@ -6,7 +6,7 @@
  * 输出: {ok:true, text, analysis?} 或 {ok:false, error}
  */
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdirSync, appendFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
@@ -31,8 +31,8 @@ const REPLY_THINKING = process.env.PIRUN_REPLY_THINKING ?? HOST.reply_thinking_l
 const PI_TIMEOUT = Number(process.env.PIRUN_TIMEOUT ?? 120_000)
 const SESSION_ID = process.env.PIRUN_SESSION ?? HOST.session_id ?? 'chiguo-main'
 const PERSONALITY_DIR = HOST.personality_dir ?? `${REPO}/personality`
-const PERSONALITY = process.env.PIRUN_PERSONALITY ?? `${PERSONALITY_DIR}/SUN2.md`
-const GUIDE = process.env.PIRUN_GUIDE ?? `${PERSONALITY_DIR}/迟菓语言技巧指南.md`
+const PERSONALITY = process.env.PIRUN_PERSONALITY ?? `${PERSONALITY_DIR}/迟菓人格-精简版.md`
+const GUIDE = process.env.PIRUN_GUIDE ?? `${PERSONALITY_DIR}/记忆用法.md`
 
 export function readToml(p) {
   const out = {}
@@ -72,6 +72,30 @@ export function parseNdjson(stdout) {
     } catch {}
   }
   return finalText
+}
+
+/** 从 NDJSON 事件流取最后一次 message_end 的 usage(含 DeepSeek prompt_cache_hit/miss_tokens)。 */
+export function parseUsage(stdout) {
+  let usage = null
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const ev = JSON.parse(line)
+      if (ev.type === 'message_end' && ev.message?.usage && Object.keys(ev.message.usage).length > 0) {
+        usage = ev.message.usage
+      }
+    } catch {}
+  }
+  return usage
+}
+
+/** 遥测:一行一轮,追加写 {REPO}/logs/pi-run.log(gitignore)。/status 与验收依赖此文件。 */
+export function appendTelemetry(entry, repo = REPO) {
+  try {
+    const dir = `${repo}/logs`
+    mkdirSync(dir, { recursive: true })
+    appendFileSync(`${dir}/pi-run.log`, `${JSON.stringify(entry)}\n`)
+  } catch {}
 }
 
 export function extractAnalysis(text) {
@@ -132,9 +156,9 @@ export function runPiBin(bin, args, opts) {
 export async function run(exec, { prompt, analysisMode, sendMode }) {
   let sysPrompt = prompt
   if (analysisMode) {
-    sysPrompt = `你是迟菓。以下是当前收到的一条微信消息。先输出 JSON 情绪分析：{"warmth":-1~1,"effort":0~1,"attention":0~1,"topic":"可选","suppress_hours":"可选","recall":"可选(涉及登记事实/过去日期时给检索词,否则省略)"}，用 <<ANALYSIS>>{...}<<END>> 包裹。然后以 SUN2.md 人格自然回复哥哥。\n\n消息：${prompt}`
+    sysPrompt = `你是迟菓。以下是当前收到的一条微信消息。先输出 JSON 情绪分析：{"warmth":-1~1,"effort":0~1,"attention":0~1,"topic":"可选","suppress_hours":"可选","recall":"可选(涉及登记事实/过去日期时给检索词,否则省略)"}，用 <<ANALYSIS>>{...}<<END>> 包裹。然后以迟菓人格自然回复哥哥。\n\n消息：${prompt}`
   } else if (sendMode) {
-    sysPrompt = `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按 SUN2.md 人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${prompt}`
+    sysPrompt = `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${prompt}`
   }
   const piArgs = ['-p', '--provider', PROVIDER, '--model', MODEL,
     '--session-id', SESSION_ID, '--no-context-files', '--no-skills',
@@ -142,9 +166,15 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
     '--append-system-prompt', GUIDE,
     '--thinking', analysisMode ? REPLY_THINKING : THINKING,
     '--mode', 'json', sysPrompt]
+  const t0 = Date.now()
   try {
     const { stdout } = await exec(PI_BIN, piArgs, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
     const text = parseNdjson(stdout)
+    const usage = parseUsage(stdout)
+    appendTelemetry({
+      ts: new Date().toISOString(), mode: analysisMode ? 'analysis' : sendMode ? 'send' : 'other',
+      dur_ms: Date.now() - t0, ok: !!text, text_len: text?.length ?? 0, usage: usage ?? null,
+    })
     if (!text) return { ok: false, error: 'empty reply' }
     if (analysisMode) {
       const { analysis, reply } = extractAnalysis(text)
@@ -152,6 +182,10 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
     }
     return { ok: true, text }
   } catch (err) {
+    appendTelemetry({
+      ts: new Date().toISOString(), mode: analysisMode ? 'analysis' : sendMode ? 'send' : 'other',
+      dur_ms: Date.now() - t0, ok: false, error: err.message?.slice(0, 200) ?? String(err),
+    })
     return { ok: false, error: err.message }
   }
 }
