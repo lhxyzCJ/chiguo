@@ -28,7 +28,7 @@ const THINKING = process.env.PIRUN_THINKING ?? HOST.thinking_level ?? 'high'
 // 主动发送(send-mode)与命令/重分析路径保持 thinking_level,互不拖累(埋埋实机:max 单次 63s+,回复体验差)
 const REPLY_THINKING = process.env.PIRUN_REPLY_THINKING ?? HOST.reply_thinking_level ?? THINKING
 // pi 调用超时(ms):默认 120s;replan 等长任务经 PIRUN_TIMEOUT 覆盖(replan.py replan_env 注入)
-const PI_TIMEOUT = Number(process.env.PIRUN_TIMEOUT ?? 120_000)
+export const PI_TIMEOUT = Number(process.env.PIRUN_TIMEOUT ?? 120_000)
 const SESSION_ID = process.env.PIRUN_SESSION ?? HOST.session_id ?? 'chiguo-main'
 
 // PIRUN_NEW_SESSION=1:执行前把当前 chiguo-main 会话移入备份(与微信 /new 共享逻辑),
@@ -168,19 +168,28 @@ export function runPiBin(bin, args, opts) {
   })
 }
 
-export async function run(exec, { prompt, analysisMode, sendMode }) {
-  let sysPrompt = prompt
-  if (analysisMode) {
-    sysPrompt = `你是迟菓。以下是当前收到的一条微信消息。先输出 JSON 情绪分析：{"warmth":-1~1,"effort":0~1,"attention":0~1,"topic":"可选","suppress_hours":"可选","recall":"可选(涉及登记事实/过去日期时给检索词,否则省略)"}，用 <<ANALYSIS>>{...}<<END>> 包裹。然后以迟菓人格自然回复哥哥。\n\n消息：${prompt}`
-  } else if (sendMode) {
-    sysPrompt = `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${prompt}`
-  }
-  const piArgs = ['-p', '--provider', PROVIDER, '--model', MODEL,
+/** 共享 pi 参数构造(print 模式与 RPC 常驻复用):不含 -p/--mode/prompt。 */
+export function buildBasePiArgs({ analysisMode } = {}) {
+  return ['--provider', PROVIDER, '--model', MODEL,
     '--session-id', SESSION_ID, '--no-context-files', '--no-skills',
     '--append-system-prompt', PERSONALITY,
     '--append-system-prompt', GUIDE,
-    '--thinking', analysisMode ? REPLY_THINKING : THINKING,
-    '--mode', 'json', sysPrompt]
+    '--thinking', analysisMode ? REPLY_THINKING : THINKING]
+}
+
+/** analysis-mode 用户消息模板(print 与 RPC 共用)。 */
+export function buildAnalysisPrompt(message) {
+  return `你是迟菓。以下是当前收到的一条微信消息。先输出 JSON 情绪分析：{"warmth":-1~1,"effort":0~1,"attention":0~1,"topic":"可选","suppress_hours":"可选","recall":"可选(涉及登记事实/过去日期时给检索词,否则省略)"}，用 <<ANALYSIS>>{...}<<END>> 包裹。然后以迟菓人格自然回复哥哥。\n\n消息：${message}`
+}
+
+export async function run(exec, { prompt, analysisMode, sendMode }) {
+  let sysPrompt = prompt
+  if (analysisMode) {
+    sysPrompt = buildAnalysisPrompt(prompt)
+  } else if (sendMode) {
+    sysPrompt = `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${prompt}`
+  }
+  const piArgs = ['-p', ...buildBasePiArgs({ analysisMode }), '--mode', 'json', sysPrompt]
   const t0 = Date.now()
   try {
     const { stdout } = await exec(PI_BIN, piArgs, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
