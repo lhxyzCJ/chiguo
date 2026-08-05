@@ -39,6 +39,8 @@ const execFileP = promisify(execFile)
 
 const DEBOUNCE_MS = 4000
 const PI_RUN_SCRIPT = process.env.WECHAT_BRIDGE_PI_RUN
+// RPC 常驻(仿 OpenClaw gateway):env WECHAT_BRIDGE_PI_RPC=1 启用;失败自动回退 spawn
+const PI_RPC_ENABLED = process.env.WECHAT_BRIDGE_PI_RPC === '1'
   ?? new URL('../scripts/pi-run.mjs', import.meta.url).pathname
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
@@ -72,6 +74,17 @@ export class TurnQueue {
 /** 调用 pi-agent（pi-run.mjs），一次完成「情绪分析 JSON + 回复」。
  * 返回 { text, analysis }；analysis 为解析后的对象或 null。失败抛错。 */
 export async function askPi(text) {
+  // RPC 常驻优先:失败 → 回退 spawn(pi-rpc 抛错即回退)
+  if (PI_RPC_ENABLED) {
+    try {
+      const { PiRpc } = await import('./pi-rpc.mjs')
+      if (!globalThis.__piRpc) globalThis.__piRpc = new PiRpc()
+      const r = await globalThis.__piRpc.prompt(text)
+      return { text: r.text, analysis: r.analysis ?? null }
+    } catch (err) {
+      console.error('[pi-rpc] 失败,回退 spawn:', err instanceof Error ? err.message : String(err))
+    }
+  }
   const { stdout } = await execFileP('node', [PI_RUN_SCRIPT, '--prompt', text, '--analysis-mode'], {
     timeout: 180_000,
     maxBuffer: 16 * 1024 * 1024,
@@ -463,6 +476,11 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     await queue.run(async () => {
       try {
         const r = await executeSlashCommand(spawn, slash, process.cwd())
+        // /new 后常驻 pi 仍持有旧会话句柄 → 重启,下一轮 prompt 重载最新 chiguo-main
+        if (slash.action === 'new_session' && PI_RPC_ENABLED && globalThis.__piRpc) {
+          globalThis.__piRpc.restart()
+          console.log('[slash] pi-rpc 已重启(新会话)')
+        }
         console.log(`[slash] ${slash.action} → ok=${r.ok}`)
         await bot.reply(msg, r.reply)
       } catch (err) {
