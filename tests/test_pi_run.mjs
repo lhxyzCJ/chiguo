@@ -98,7 +98,7 @@ t('run: --send-mode → 决策指令包装（发送侧生成消息）', async ()
   await run(spyExec, { prompt: decision, sendMode: true })
   const last = captured[captured.length - 1]
   assert.ok(last.includes('主动消息决策结果'), 'send-mode 应含决策指令')
-  assert.ok(last.includes('按 SUN2.md 人格'), 'send-mode 应要求按人格生成')
+  assert.ok(last.includes('按迟菓人格'), 'send-mode 应要求按人格生成')
   assert.ok(last.includes('1-3 句'), 'send-mode 应要求 1-3 句')
   assert.ok(last.includes('action=send'), 'send-mode 应标注 action=send')
 })
@@ -126,9 +126,9 @@ t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json
   assert.ok(a.includes('--no-skills'), '禁用技能发现（砍 ~5,300 token 编码技能噪音）')
   assert.ok(a.includes('--mode') && a.includes('json'), '--mode json')
   const appends = a.filter((x) => x === '--append-system-prompt').length
-  assert.strictEqual(appends, 2, '两份人格注入（SUN2 + 语言技巧指南）')
-  assert.ok(a.some((x) => x.includes('SUN2.md')), '注入 SUN2.md 路径')
-  assert.ok(a.some((x) => x.includes('迟菓语言技巧指南.md')), '注入语言技巧指南路径')
+  assert.strictEqual(appends, 2, '两份人格注入（精简版 + 记忆用法）')
+  assert.ok(a.some((x) => x.includes('迟菓人格-精简版.md')), '注入 精简版路径')
+  assert.ok(a.some((x) => x.includes('记忆用法.md')), '注入记忆用法路径')
   assert.strictEqual(a[a.length - 1], 'P', 'prompt 为最后参数')
 })
 
