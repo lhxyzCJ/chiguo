@@ -127,9 +127,10 @@ t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json
   assert.ok(a.includes('--no-skills'), '禁用技能发现（砍 ~5,300 token 编码技能噪音）')
   assert.ok(a.includes('--mode') && a.includes('json'), '--mode json')
   const appends = a.filter((x) => x === '--append-system-prompt').length
-  assert.strictEqual(appends, 2, '两份人格注入（精简版 + 记忆用法）')
+  assert.strictEqual(appends, 3, '三份注入（精简版 + 记忆用法 + 工具用法）')
   assert.ok(a.some((x) => x.includes('迟菓人格-精简版.md')), '注入 精简版路径')
   assert.ok(a.some((x) => x.includes('记忆用法.md')), '注入记忆用法路径')
+  assert.ok(a.some((x) => x.includes('工具用法.md')), '注入工具用法路径')
   assert.strictEqual(a[a.length - 1], 'P', 'prompt 为最后参数')
 })
 
