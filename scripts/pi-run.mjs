@@ -137,7 +137,7 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
     sysPrompt = `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按 SUN2.md 人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${prompt}`
   }
   const piArgs = ['-p', '--provider', PROVIDER, '--model', MODEL,
-    '--session-id', SESSION_ID, '--no-context-files',
+    '--session-id', SESSION_ID, '--no-context-files', '--no-skills',
     '--append-system-prompt', PERSONALITY,
     '--append-system-prompt', GUIDE,
     '--thinking', analysisMode ? REPLY_THINKING : THINKING,
