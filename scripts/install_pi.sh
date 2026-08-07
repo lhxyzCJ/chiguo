@@ -393,6 +393,13 @@ else
   else
     SMOKE_BAD=1; warn "memory-pro stats 失败（见上方错误）"
   fi
+  # 冒烟: config-path 断言生效 dbPath == 配置值 (防 INC-001 双脑分裂复发)
+  if CONFIG_PATH_OUT="$($MEMORY_PRO config-path 2>&1)" \
+     && grep -q "dbPath: .*memory/lancedb-pro (source: config)" <<<"$CONFIG_PATH_OUT"; then
+    say "config-path OK (dbPath 来自配置文件)"
+  else
+    SMOKE_BAD=1; warn "config-path 断言失败 — 生效 dbPath 与预期不一致: $CONFIG_PATH_OUT"
+  fi
   if auth_has_key; then
     MODEL="$(sed -n 's/^model *= *"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
     [ -n "$MODEL" ] || MODEL=deepseek-v4-flash
