@@ -58,7 +58,6 @@ class ChiguoMonitor:
             "mem0_qdrant_path": "data/mem0/qdrant",
             "mem0_history_db": "data/mem0/history.db",
             "backend": "mem0",         # v1.9: 记忆后端抽象（mem0/自定义类路径）
-            "manual_path": "data/chiguo_memories.json",
         }
         candidates = [config_path]
         if not config_path.is_absolute():
@@ -76,9 +75,8 @@ class ChiguoMonitor:
                 if "mem0_history_db" not in monitor:
                     defaults["mem0_history_db"] = (cfg.get("memory", {}).get("mem0_history_db")
                                                    or defaults["mem0_history_db"])
-                # v1.8: 记忆后端与手动记忆路径单一事实来源 = [memory] 段
+                # v1.9: 记忆后端单一事实来源 = [memory] 段
                 defaults["backend"] = cfg.get("memory", {}).get("backend") or defaults["backend"]
-                defaults["manual_path"] = cfg.get("memory", {}).get("manual_path") or defaults["manual_path"]
                 break
             except Exception:
                 continue
@@ -94,16 +92,8 @@ class ChiguoMonitor:
         return Path(__file__).resolve().parent / p
 
     def _memory_backend(self) -> str:
-        """v1.8: 记忆后端类型（[memory].backend，缺省 auto）。"""
-        return self._monitor_config.get("backend", "auto")
-
-    def _json_memory_path(self) -> Path:
-        """v1.8: JSON 记忆后端文件路径（相对路径锚定模块目录，~ 展开）。"""
-        raw = self._monitor_config.get("manual_path", "data/chiguo_memories.json")
-        p = Path(os.path.expanduser(raw))
-        if p.is_absolute():
-            return p
-        return Path(__file__).resolve().parent / p
+        """v1.9: 记忆后端类型（[memory].backend，缺省 mem0）。"""
+        return self._monitor_config.get("backend", "mem0")
 
     # ═══════════════════════════════════════════════════════════
     # 内部：流式解析
@@ -677,7 +667,7 @@ class ChiguoMonitor:
     # ═══════════════════════════════════════════════════════════
 
     def health(self) -> dict:
-        """增强版健康检查：检测 daemon + LanceDB + 数据新鲜度"""
+        """增强版健康检查：检测 daemon + mem0 记忆 + 数据新鲜度"""
         now = self._now()
         state = self._read_state()
         issues = []

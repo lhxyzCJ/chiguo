@@ -682,8 +682,8 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `memory/` 包 | **记忆后端抽象（v1.8 解耦，任意替换）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）/ `mem0_backend.py` Mem0Backend（mem0ai：LLM 事实提取 + ollama 向量 + qdrant 嵌入式）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=Mem0Backend 别名 + CLI） | mem0ai+ollama（必需依赖；无 key/ollama 未启动 → available=False 优雅降级） |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
-| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、LanceDB、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
-| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.8"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
+| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
+| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.9"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
 | `chiguo_state.json` | 运行时状态（STATE_VERSION=10，首次运行后生成；v10 含 `personality_baseline`/`personality_history`） | 无 |
@@ -862,7 +862,7 @@ uv run python -m schedule.holiday
 uv run python -m schedule.holiday 2026-10-01
 ```
 
-### memory/ 包（记忆后端抽象，v1.8）
+### memory/ 包（记忆后端抽象，v1.9）
 
 v1.8 起记忆模块解耦为 `memory/` 包，可任意替换（chiguo_state.py 经 `create_backend(mem_cfg, base_dir)` 接入）：
 
@@ -870,19 +870,16 @@ v1.8 起记忆模块解耦为 `memory/` 包，可任意替换（chiguo_state.py 
   Ebbinghaus 遗忘包装（`ebbinghaus_weight`/`search_with_forgetting`/`user_relevant_with_forgetting`/`random_memory_with_forgetting`）
   与 `user_relevant` 多关键词召回等通用逻辑在基类共享，后端只负责「存什么、怎么搜」
 - `memory/mem0_backend.py` — `Mem0Backend`（v1.9 唯一内置后端）：mem0ai 记忆层（LLM 事实提取写入 + 向量语义检索 + qdrant 嵌入式存储）
-- `memory/json.py` — `JsonMemoryBackend`：手动记忆 JSON 文件（`manual_path`），零依赖兜底
 - `memory/factory.py` — `create_backend(config, base_dir)` 工厂，按 toml `[memory].backend` 选择后端
 
-**backend 四取值**（toml `[memory].backend`，默认 `auto`）：
+**backend 两取值**（toml `[memory].backend`，默认 `mem0`）：
 
 | 取值 | 行为 |
 |------|------|
 | `mem0` | mem0ai 记忆层（默认；库缺失/无 key/ollama 未启动 → available=False 优雅降级） |
 | `module.path.ClassName` | 自定义后端类（importlib 动态加载，须继承 MemoryBackend；见 factory.py） |
-| `json` | 显式 JSON 手动记忆文件（`manual_path`） |
-| `module.path.ClassName` | 自定义后端类（importlib 动态加载，须为 MemoryBackend 子类；实例化 kwargs = [memory] 段其余键） |
 
-`memory_bridge.py` 保留为兼容门面（`MemoryBridge = LanceDbBackend` 别名 + CLI 保留，经工厂创建、尊重 toml backend）：
+`memory_bridge.py` 保留为兼容门面（`MemoryBridge = Mem0Backend` 别名 + CLI 保留，经工厂创建、尊重 toml backend）：
 
 ```bash
 # 统计
@@ -1025,7 +1022,6 @@ mem0_qdrant_path = "data/mem0/qdrant"     # 本地向量库（qdrant 嵌入式�
 mem0_history_db = "data/mem0/history.db"  # mem0 操作历史（SQLite）
 mem0_llm_model = "deepseek-v4-flash"      # 事实提取 LLM（OpenAI 兼容）
 mem0_embedder_model = "qwen3-embedding:0.6b"  # 本地 embedding（ollama）
-manual_path = "data/chiguo_memories.json"  # 手动记忆文件（backend=json 数据源；auto 时兜底）
 ebbinghaus_strength = 168               # 记忆强度 S（小时），168h=7天（v4；Ebbinghaus 在 MemoryBackend 基类）
 ebbinghaus_min_weight = 0.1             # 最低权重，不彻底遗忘（v4）
 
@@ -1238,9 +1234,8 @@ disk_critical_mb = 100                 # 磁盘剩余小于此 → critical
 memory_warn_mb = 500                   # 进程 RSS 大于此 → warn
 memory_critical_mb = 1000              # 进程 RSS 大于此 → critical
 
-[memory]        # 记忆后端抽象（v1.8；backend 四取值见「七、CLI 参考 → memory/ 包」）
+[memory]        # 记忆后端抽象（v1.9；backend 两取值见「七、CLI 参考 → memory/ 包」）
 backend = "mem0"                          # mem0（默认）/ module.path.ClassName
-manual_path = "data/chiguo_memories.json" # 手动记忆文件（backend=json 数据源；auto 时兜底）
 ```
 
 ---
@@ -1740,6 +1735,7 @@ rm <仓库根目录>/chiguo_state.json
 | **v8** | **2026-07-31** | **用户状态渠道增强：双作息分桶学习（工作日/周末两桶独立窗口 + 调休/假期修正，STATE_VERSION 7→8）+ 听歌双向联动（睡眠窗口内播放反证：sleeping 置信度 ×0.5 压制 + record_active 反向校正生物钟）** |
 | **v9** | **2026-07-31** | **网易云音乐渠道增强：对话内容源 + 鲁棒性 —— TopicPicker 第 8 源 netease（netease_weight=0.12）+ 网易云策略层 chiguo_netease（健康探针/登录失效检测/降级链/共享日配额 2/随机选源/peek-consume 两阶段，netease_health.json；STATE_VERSION 不变，无状态迁移）** |
 | **v10** | **2026-08-02** | **人格基线回归 + personality_history（STATE_VERSION 9→10）**：`PersonalityTraits.regress_to_baseline()` 每步 `v += (baseline - v) * regress_rate` 向构造时初始值软回归（基线随状态持久化 `personality_baseline`，旧状态回退 toml `[personality]` 初始值；速率 `regress_rate` 默认 0.01，0=关闭）——修复热情回复甜妹化/持续沉默极端化两类人格漂移；`adapt_personality` 每次追加 `{ts, dims}` 到 `personality_history`（滚动 200 条持久化） |
+| **v1.9** | **2026-08-09** | **记忆后端替换为 mem0**：新增 `memory/mem0_backend.py`（Mem0Backend：mem0ai LLM 事实提取写入 + ollama 本地向量 + qdrant 嵌入式 `data/mem0/`；四原语 + add_messages + 60s 节流探测 + CHIGUO_MEM0_DISABLED 测试隔离），`memory/lancedb.py` 与 `memory/json.py` 删除（不保留兼容层）；daemon 对话后自动写入（`_mem0_autowrite`，<8 字跳过、失败静默）；factory 默认 backend=mem0；toml `[memory]` 段迁移为 `mem0_*` 键；mem0ai+ollama 升为必需依赖；envcheck check_mem0 / monitor mem0_direct 检查；测试 36 py + 10 script 全绿 |
 | **v1.8** | **2026-08-09** | **后端解耦：agent 与记忆模块可任意替换**：新增 `memory/` 包——base.py（MemoryBackend 抽象基类：available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）、lancedb.py（LanceDbBackend，原 memory_bridge.py 实现迁移）、json.py（JsonMemoryBackend 零依赖兜底）、factory.py（create_backend 工厂），chiguo_state.py 改经 `create_backend(mem_cfg, base_dir)` 接入；memory_bridge.py 降为兼容门面（MemoryBridge=LanceDbBackend 别名 + CLI 保留）；toml 新增 `[memory].backend`（auto/lancedb/json/module.path.ClassName，默认 auto）与 `[host].runner`（pi/command，默认 pi）+ `[host].agent_command`（数组）；pi-run.mjs 抽象 agent runner（runner=command 时按 `<cmd> --prompt <完整提示词> --mode <mode>` 统一契约调用任意 CLI agent，stdout JSON/NDJSON 兼容，导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand，readToml 支持数组解析）；bridge RPC 仅 runner=pi 且 WECHAT_BRIDGE_PI_RPC=1 启用；envcheck check_pi 支持 runner/agent_command、新增 check_json_memory、run_checks 按 backend 分流；monitor health 第 9 项按 backend 分流；测试计数 36 py + 10 script（新增 tests/test_memory_backends.py） |
 | **v1.7** | **2026-08-02** | **README 开源化重构 + 项目整洁化**：README 重写为面向开发者的开源项目文档（中文为主 + 每节英文精炼段 + 双语 TOC；定位边界/组件依赖表/迟菓由来（三色绘恋系列官方角色，合规声明：非官方二次演绎、版权归绘恋企划屋/山百合、异议即移除）/公开前清理警示（登录态与对话随 git 跟踪）/mermaid 双链路架构图/脱敏示例（赛博生命口径：纯消息域无现实互动）/快速开始（uv sync）/接入任意模型/配置/自定义人格/FAQ/贡献）；新增 `pyproject.toml`（核心零依赖 + optional extras：memory=lancedb、schedule=openpyxl）；spec/plan 归档迁移至项目外 `~/chiguo-meta/`（AGENTS.md 约定）；清理 `.superpowers/` 台账、`archive/` 归档、`.claude/` 移出 git；doc/README.md 收敛运维速查；SYSTEM.md 模块表修正 pandas 幽灵依赖；生产 venv 升级为 `uv sync --all-extras`（记忆启用） |
 | **v1.6** | **2026-08-02** | **后端 provider 去绑定（接入任意模型 API）**：表述全部改为「pi-agent 后端、provider 可配、opencode-go 为默认示例」；`chiguo_envcheck.py` check_pi_auth 随 toml [host].provider（新增 home 注入参数）；`install_pi.sh` 阶段 0/5/7 provider 化（key 环境变量通用名 `PI_API_KEY`，兼容回退 `OPENCODE_API_KEY`）；`chiguo-tick.sh`/`wechat-bridge.sh` 的 OPENCODE_API_KEY 注入优先 opencode-go 条目（memory 扩展端点固定）、无则回退 [host].provider 条目；`doc/PI_INTEGRATION.md` 新增「七、接入任意模型 API」（内置 provider 切换 + `~/.pi/agent/models.json` 自定义 OpenAI 兼容端点，完全依赖 pi 官方机制） |

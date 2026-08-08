@@ -77,7 +77,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         })
 
     # ── 记忆触发 ──
-    # 两层：① JSON 手动记忆（习惯提醒等）② LanceDB 随机回忆
+    # 两层：① JSON 手动记忆（习惯提醒等）② mem0 随机回忆
     for mem in state.memories:
         if _memory_should_trigger(mem, now):
             weighted_candidates.append({

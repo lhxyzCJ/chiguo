@@ -122,18 +122,15 @@ class Mem0Backend(MemoryBackend):
     def available(self) -> bool:
         """mem0 是否可用。不可用时所有查询返回空列表。
 
-        探测失败后不永久缓存 False——每次探测间隔 >= _RETRY_SECONDS
-        就重新尝试，长驻/定时场景故障恢复可自愈。
+        探测结果（无论 True/False）只缓存 _RETRY_SECONDS 秒，超时即重探——
+        长驻/定时场景下 mem0 运行期故障（qdrant 满、ollama 挂、key 失效）恢复后可自愈。
         测试隔离：CHIGUO_MEM0_DISABLED=1 时恒不可用（确定性，不碰真实库）。
         """
         if os.environ.get("CHIGUO_MEM0_DISABLED") == "1":
             return False
-        if self._available is True:
-            return True
-        if self._available is False and (
-            _time_module.time() - self._last_probe < _RETRY_SECONDS
-        ):
-            return False
+        now = _time_module.time()
+        if self._available is not None and now - self._last_probe < _RETRY_SECONDS:
+            return self._available
         try:
             if not self._mem0_config():
                 raise RuntimeError("mem0: 无 LLM API key（~/.pi/agent/auth.json opencode-go 或配置 mem0_llm_api_key）")

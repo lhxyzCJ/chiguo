@@ -408,23 +408,27 @@ memory_critical_mb = 1000
 
 
 def test_health_mem0_direct():
-    """health() 应包含 mem0_direct 字段（True/False/None）"""
+    """health() mem0_direct：注入临时 toml 指向不存在 qdrant 目录 → 确定性 False。"""
+    import re as _re
     with tempfile.TemporaryDirectory() as td:
         log = Path(td) / "decisions.jsonl"
         log.write_text("")
         state = Path(td) / "state.json"
         state.write_text(json.dumps({"_version": 1, "last_tick": datetime.now(CST).isoformat()}))
+        # 复制真实 toml 并把 qdrant 路径指向临时不存在目录 → mem0_direct 确定性 False
+        cfg = Path(td) / "chiguo_proactive.toml"
+        src = Path("chiguo_proactive.toml").read_text()
+        src = _re.sub(r'(?m)^mem0_qdrant_path\s*=.*$',
+                      f'mem0_qdrant_path = "{Path(td) / "no_qdrant"}"', src)
+        cfg.write_text(src)
 
         cwd = os.getcwd()
         os.chdir(td)
         try:
             mon = ChiguoMonitor("decisions.jsonl", "state.json")
             h = mon.health()
-            # mem0_direct 可为 True/False/None，取决于环境
-            # 只验证字段存在 + 类型正确
             assert "mem0_direct" in h, f"health() missing 'mem0_direct': {list(h.keys())}"
-            ldb = h["mem0_direct"]
-            assert ldb in (True, False, None), f"mem0_direct should be bool or None, got {type(ldb)}: {ldb}"
+            assert h["mem0_direct"] is False, f"qdrant 目录缺失 → mem0_direct 应为 False: {h['mem0_direct']}"
         finally:
             os.chdir(cwd)
     print("  OK test_health_mem0_direct")

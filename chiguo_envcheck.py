@@ -3,7 +3,7 @@
 # chiguo_envcheck.py — 环境就绪检查(v10.3)
 # 检查:Python/uv 版本、pi-agent(pi --version)、pi 扩展路径(settings.json)、
 #       ollama embedding(qwen3-embedding)、auth.json [host].provider 条目（缺省 opencode-go）、
-#       LanceDB lancedb-pro、网易云 API+登录、数据文件完整。
+#       mem0 记忆层(qdrant 目录 + key + mem0ai)、网易云 API+登录、数据文件完整。
 # 输出:JSON → stdout,汇总退出码 0=就绪 1=warn 2=critical(与 watchdog 一致)。
 # 只读:不建目录、不写缓存、不启动服务;网易云/ollama 检查仅发轻量健康请求
 #       (localhost 目标绕过系统代理,等价 curl --noproxy '*')。
@@ -233,24 +233,6 @@ def check_mem0(qdrant_dir: Path, history_db: Path) -> dict:
                 "detail": f"mem0 OK ({qdrant_dir}，历史库未创建)"}
     return {"name": "mem0", "ok": True, "severity": "ok",
             "detail": f"mem0 OK ({qdrant_dir})"}
-
-
-def check_json_memory(mem_path: Path) -> dict:
-    """JSON 手动记忆后端文件存在且可解析（[memory].backend = json 时检查）。"""
-    if not mem_path.is_file():
-        return {"name": "json_memory", "ok": False, "severity": "info",
-                "detail": f"{mem_path} 不存在 → 记忆未启用(可选,手动记忆文件缺失)"}
-    try:
-        import json as _json
-        data = _json.loads(mem_path.read_text(encoding="utf-8"))
-        if not isinstance(data, list):
-            return {"name": "json_memory", "ok": False, "severity": "info",
-                    "detail": f"{mem_path} 不是 JSON 数组 → 记忆未启用"}
-    except Exception as e:
-        return {"name": "json_memory", "ok": False, "severity": "info",
-                "detail": f"{mem_path} 解析失败: {e} → 记忆未启用"}
-    return {"name": "json_memory", "ok": True, "severity": "ok",
-            "detail": f"JSON 记忆 OK ({mem_path})"}
 
 
 def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:

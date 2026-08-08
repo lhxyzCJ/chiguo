@@ -79,11 +79,11 @@ chiguo_daemon.py (DecisionEngine)
   ├─ netease/service.py → NetEase strategy layer 策略层 (v9, DI: health probe/degradation chain/peek-consume quota/music topic/fetch_play_proof 单入口)
   ├─ schedule/ 包   → 课表数据面 parser.py / 纯解析 parsing.py / 策略 query.py + 节假日 holiday.py + 纪念日 anniversary.py + 覆盖/计划/澄清 override_store.py/plan_store.py/api.py + 检索与安排 sources.py/day_plan.py/resolve_when.py/attention.py/recall.py + 确认 confirm.py + 复盘 replan.py
   ├─ solar_terms.py      → 24 solar terms
-  ├─ memory/ 包        → 记忆后端抽象：MemoryBackend 基类 + LanceDbBackend + JsonMemoryBackend + create_backend 工厂（Ebbinghaus 包装在基类；memory_bridge.py 兼容门面）
+  ├─ memory/ 包        → 记忆后端抽象：MemoryBackend 基类 + Mem0Backend + create_backend 工厂（Ebbinghaus 包装在基类；memory_bridge.py 兼容门面）
   ├─ chiguo_watchdog.py  → daemon health checks (disk, memory, tick freshness)
   ├─ chiguo_rotation.py  → monthly log rotation → archive/
   ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
-  ├─ chiguo_version.py   → project version single source (VERSION="1.8", +0.1 per round)
+  ├─ chiguo_version.py   → project version single source (VERSION="1.9", +0.1 per round)
   └─ chiguo_monitor.py   → streaming JSONL analytics (stats/alerts/health)
 
   Output: chiguo_decisions.jsonl (append-only structured log)
@@ -92,7 +92,7 @@ chiguo_daemon.py (DecisionEngine)
 
 **Config**: `chiguo_proactive.toml` — all parameters (309 lines). Legacy host section from Task 14 (superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
-**Version**: `chiguo_version.py` is the single source (`VERSION="1.8"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
+**Version**: `chiguo_version.py` is the single source (`VERSION="1.9"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
 
 **5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h).
 
