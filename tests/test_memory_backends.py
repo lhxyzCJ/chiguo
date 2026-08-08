@@ -125,9 +125,9 @@ def test_search_unavailable():
 def test_random_memory_weighted():
     with tempfile.TemporaryDirectory() as td:
         b = _fake_backend([_mem0_row(importance=0.9), _mem0_row(importance=0.1, mem_id="m2")], Path(td))
-        # 高 importance 条目应被稳定选中（权重 0.81 vs 0.01）
-        picked = [b.random_memory(min_importance=0.3)["id"] for _ in range(30)]
-        assert all(i == "m1" for i in picked), "加权随机应偏向高 importance"
+        # min_importance=0.05 保留两条；权重 0.81 vs 0.01（p≈0.988）→ 频率显著偏向 m1
+        picked = [b.random_memory(min_importance=0.05)["id"] for _ in range(30)]
+        assert picked.count("m1") >= 25, f"加权随机应偏向高 importance: {picked}"
         # prefer_categories 排序不炸
         m = b.random_memory(prefer_categories=["preferences"])
         assert m is not None
@@ -172,13 +172,16 @@ def test_add_messages():
 def test_ebbinghaus_inherited():
     """Ebbinghaus 包装在基类，mem0 后端同样生效。"""
     import time
+    from datetime import datetime as _dt, timezone as _tz
     now_ts = int(time.time())
+    def _iso(hours_ago):
+        return _dt.fromtimestamp(now_ts - hours_ago * 3600, tz=_tz.utc).isoformat()
     with tempfile.TemporaryDirectory() as td:
         b = _fake_backend([
             {"id": "old", "memory": "一起看过的电影", "metadata": {"importance": 0.9},
-             "created_at": "2026-08-08T10:00:00+00:00"},
+             "created_at": _iso(30)},
             {"id": "new", "memory": "主人新分享的记忆", "metadata": {"importance": 0.9},
-             "created_at": "2026-08-09T10:00:00+00:00"},
+             "created_at": _iso(1)},
         ], Path(td))
         r = b.search_with_forgetting("记忆", limit=5)
         assert r and r[0]["id"] == "new", "遗忘权重应让新记忆排前"
@@ -234,6 +237,46 @@ def test_factory_unknown_string():
     print("  OK test_factory_unknown_string")
 
 
+# ── 可用性隔离与节流 ─────────────────────────────────────
+
+def test_disabled_env_forced_unavailable():
+    """CHIGUO_MEM0_DISABLED=1 → 恒不可用（测试隔离确定性，不碰真实库/网络）。"""
+    os.environ["CHIGUO_MEM0_DISABLED"] = "1"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            b = Mem0Backend(qdrant_path=str(Path(td) / "qdrant"),
+                            history_db=str(Path(td) / "h.db"))
+            assert not b.available
+            assert b.search("x") == []
+            assert b.random_memory() is None
+            assert b.stats()["available"] is False
+    finally:
+        os.environ.pop("CHIGUO_MEM0_DISABLED", None)
+    print("  OK test_disabled_env_forced_unavailable")
+
+
+def test_available_throttle_retry():
+    """探测失败后 60s 节流：窗口内不重试，窗口外重新探测（自愈路径）。"""
+    with tempfile.TemporaryDirectory() as td:
+        b = _fake_backend([], Path(td))
+        b._available = None  # 走真实探测路径
+        b._m = None
+        b.llm_api_key = "fake-key"  # 不依赖真实 auth.json，探测路径确定
+        calls = []
+        orig_ensure = b._ensure_mem0
+        b._ensure_mem0 = lambda: calls.append(1) or (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            assert not b.available, "首次探测失败 → False"
+            assert not b.available, "窗口内不重试"
+            assert len(calls) == 1
+            b._last_probe = 0.0  # 模拟 60s 节流窗口已过
+            assert not b.available, "窗口外重新探测仍失败 → False"
+            assert len(calls) == 2
+        finally:
+            b._ensure_mem0 = orig_ensure
+    print("  OK test_available_throttle_retry")
+
+
 if __name__ == "__main__":
     test_row_contract()
     test_row_defaults()
@@ -247,4 +290,6 @@ if __name__ == "__main__":
     test_factory_custom_class()
     test_factory_custom_class_bad()
     test_factory_unknown_string()
-    print(f"test_memory_backends.py: ALL 12 TESTS PASSED")
+    test_disabled_env_forced_unavailable()
+    test_available_throttle_retry()
+    print(f"test_memory_backends.py: ALL 14 TESTS PASSED")

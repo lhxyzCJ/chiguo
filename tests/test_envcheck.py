@@ -190,6 +190,27 @@ def test_check_mem0_missing_dir_info():
     print("  OK test_check_mem0_missing_dir_info")
 
 
+def test_check_mem0_ok_branch():
+    """check_mem0 ok 分支：mem0ai 可导入 + key 存在 + qdrant 目录就绪 → severity=ok。"""
+    import chiguo_envcheck as _ec
+    with tempfile.TemporaryDirectory() as td:
+        qdir = Path(td) / "qdrant"
+        qdir.mkdir()
+        orig = _ec._pi_api_key
+        _ec._pi_api_key = lambda: "test-key"
+        try:
+            r = _ec.check_mem0(qdir, Path(td) / "no_history.db")
+            assert r["severity"] == "ok" and r["ok"], f"ok 分支应返回 ok: {r}"
+            # 历史库存在时同样 ok（两个 return 分支都覆盖）
+            hist = Path(td) / "history.db"
+            hist.write_text("x")
+            r2 = _ec.check_mem0(qdir, hist)
+            assert r2["severity"] == "ok" and r2["ok"]
+        finally:
+            _ec._pi_api_key = orig
+    print("  OK test_check_mem0_ok_branch")
+
+
 def test_check_netease_no_cookie_info():
     with tempfile.TemporaryDirectory() as td:
         r = ec.check_netease("http://127.0.0.1:1/", Path(td) / "netease_cookie.txt",
@@ -242,7 +263,6 @@ def test_run_checks_never_crashes():
 
 
 def test_mem0_default_path_anchored():
-    test_run_checks_custom_backend_skips_mem0()
     """mem0 记忆库路径：相对路径锚定 config 所在目录（_cfg_path 不展开错位）。"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
@@ -284,6 +304,7 @@ if __name__ == "__main__":
     test_check_ollama_unreachable_info()
     test_check_ollama_proxy_bypassed()
     test_check_mem0_missing_dir_info()
+    test_check_mem0_ok_branch()
     test_check_netease_no_cookie_info()
     test_check_data_missing_info()
     test_check_data_ok()
@@ -291,4 +312,4 @@ if __name__ == "__main__":
     test_run_checks_never_crashes()
     test_mem0_default_path_anchored()
     test_run_checks_custom_backend_skips_mem0()
-    print(f"test_envcheck.py: ALL {21} TESTS PASSED")
+    print(f"test_envcheck.py: ALL {22} TESTS PASSED")

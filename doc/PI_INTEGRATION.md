@@ -239,8 +239,6 @@ class MyBackend(MemoryBackend):
   自定义后端零成本获得遗忘曲线
 - 行契约（search/random_memory 返回 dict 字段）：id/text/category/scope/importance/timestamp/datetime/
   memory_category/l0_abstract/l2_content/tier/source；importance 必须清洗为非 NaN
-- **JsonMemoryBackend** 读 `[memory].manual_path`（默认 `data/chiguo_memories.json`），
-  大小写不敏感子串匹配 + importance² 加权随机；文件缺失/损坏 → available=False 优雅降级
 - 自定义后端示例骨架：
 
 ```python
