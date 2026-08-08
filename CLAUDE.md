@@ -5,6 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 注意，在你开始修复前一定记得做个计划或者todolist，然后尽量多开子代理，让事情做起来更高效，不要吝啬token消耗,做完事情后也要多开代理进行自我审计，这是铁律。
 ## 所有子代理（Agent/Workflow）开工前必须继承主模型，不得通过 model 参数覆盖（如 opus/haiku/fable），除非任务明确需要专用模型。
 ## 修改代码或开 agents 时，如需要调用 opus 模型，必须立即中断并提示用户授权，不得擅自使用。
+## 工程原则
+1. 不保留向后兼容，过时路径直接删，别加兼容层
+2. 选满足当前需求的最简实现，别搞多余抽象配置
+3. 先跑通最小可用版本，再叠新功能，别换现有能跑的代码
+4. 组件模块化，业务关注点分离
+5. 优先用成熟维护的第三方库，没理由别重复造轮子
+6. 先查现有项目依赖的能力，再考虑加包或自研
+7. 架构决策看长期，别用临时凑合用的过渡方案
+8. 参考成熟产品的验证方案，别从零发明
 ## Git 工作流（代码改动）
 - 代码改动（refactor:/fix:/feat:）一律走分支 + PR：分支名 `simplify/<issue-N>-<slug>`；每分支对应一个 GitHub Issue（`gh issue create`），PR 正文 `Closes #N`；出口条件 = CI 全链绿 + 子代理自审 + 用户批准 → squash merge。
 - docs:/chore: 小改动可直接 main（CI 仍自动验证）。
