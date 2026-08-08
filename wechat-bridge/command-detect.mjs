@@ -250,8 +250,13 @@ export function backupSessionFile(cwd, backupsDir) {
 }
 
 function runCli(spawnFn, args, timeoutMs = 30_000) {
+  return runCmd(spawnFn, process.execPath, args, timeoutMs)
+}
+
+/** 任意命令 spawn（v1.8：记忆斜杠命令改走 memory_bridge.py 抽象 CLI，不再硬编码 pi 扩展）。 */
+function runCmd(spawnFn, cmd, args, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
-    const c = spawnFn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs })
+    const c = spawnFn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs })
     let out = ''
     let err = ''
     c.stdout.on('data', (d) => { out += d })
@@ -269,11 +274,15 @@ function fmtTokens(n) {
   return n.toLocaleString('en-US')
 }
 
-/** 执行斜杠命令(纯 node 侧:文件操作 + memory-pro CLI),不经 pi/daemon。 */
+/** 执行斜杠命令(纯 node 侧:文件操作 + 记忆后端 CLI),不经 pi/daemon。
+ *  v1.8: 记忆命令走 memory_bridge.py（经 memory/ 工厂，尊重 [memory].backend），
+ *  不再硬编码 pi 记忆扩展路径——任意记忆后端都可用 /记忆、/记得什么。 */
 export async function executeSlashCommand(spawnFn, spec, cwd) {
-  const repo = dirname(cwd)
+  const repo = process.env.CHIGUO_REPO ?? dirname(cwd)
   const backups = join(homedir(), '.chiguo', 'session-backups')
-  const cliMain = join(homedir(), '.pi-agent', 'TestForPi-memory-lancedb-pro', 'dist', 'pi-adapter', 'cli-main.js')
+  // 记忆后端 CLI：解释器/脚本均可 env 覆盖（测试注入 fake；生产默认 .venv python + 仓库脚本）
+  const memPy = process.env.WECHAT_BRIDGE_MEMORY_PY ?? join(repo, '.venv', 'bin', 'python')
+  const memBridge = process.env.WECHAT_BRIDGE_MEMORY_BRIDGE ?? join(repo, 'memory_bridge.py')
   switch (spec.action) {
     case 'new_session': {
       try {
@@ -300,8 +309,8 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
         } catch {}
         let memCount = '?'
         try {
-          const out = await runCli(spawnFn, [cliMain, 'stats'])
-          const m = out.match(/Total memories:\s*(\d+)/)
+          const out = await runCmd(spawnFn, memPy, [memBridge, '--stats'])
+          const m = out.match(/"total_memories":\s*(\d+)/)
           if (m) memCount = m[1]
         } catch {}
         const pct = total ? ((total / 1_000_000) * 100).toFixed(2) : '0'
@@ -316,9 +325,9 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
     }
     case 'memory_stats': {
       try {
-        const out = await runCli(spawnFn, [cliMain, 'stats'])
-        const m = out.match(/Total memories:\s*(\d+)/)
-        const n = m ? m[1] : '?'
+        const out = await runCmd(spawnFn, memPy, [memBridge, '--stats'])
+        let n = '?'
+        try { n = JSON.parse(out).total_memories ?? '?' } catch {}
         return { ok: true, reply: `记忆库共 ${n} 条。哼，重要的事我都记着呢。` }
       } catch (err) {
         return { ok: false, reply: `记忆库打盹了：${err instanceof Error ? err.message : String(err)}` }
@@ -327,10 +336,10 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
     case 'memory_search': {
       if (!spec.arg) return { ok: true, reply: '想查什么？给我个词呀——比如说「记得什么 火锅」。' }
       try {
-        const out = await runCli(spawnFn, [cliMain, 'search', spec.arg, '--limit', '3'])
-        const lines = out.split('\n').filter((l) => /^\d+\./.test(l)).slice(0, 3)
+        const out = await runCmd(spawnFn, memPy, [memBridge, '--search', spec.arg])
+        const lines = out.split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 3)
         if (!lines.length) return { ok: true, reply: `……「${spec.arg}」？没印象。哼，记性不好的是你吧。` }
-        const items = lines.map((l) => l.replace(/^\d+\.\s*\[[^\]]*\]\s*/, '').slice(0, 60))
+        const items = lines.map((l) => l.replace(/^\[[^\]]*\]\s*/, '').slice(0, 60))
         return { ok: true, reply: `记得的：\n${items.map((s) => `· ${s}`).join('\n')}` }
       } catch (err) {
         return { ok: false, reply: `记忆库打盹了：${err instanceof Error ? err.message : String(err)}` }

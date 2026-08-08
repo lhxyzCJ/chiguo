@@ -57,7 +57,7 @@
 系统为「哥哥」（角色设定中的称呼，也是唯一用户）一人服务。要跑起来你需要准备：
 
 - **一台 Linux 机器**（Debian + systemd 最佳——微信桥自启需要）
-- **一个模型 API key**（消息生成与情绪分析走 pi-agent，支持任意 OpenAI 兼容后端）
+- **一个模型 API key**（消息生成与情绪分析走 agent 后端——默认 pi-agent，支持任意 OpenAI 兼容后端；也可用 `[host].runner = command` 换成任意 CLI agent）
 - **可选**：一个微信账号（bot 收发）、ollama（记忆嵌入）、课表 Excel、网易云账号
 
 > 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API；登录态与对话数据仅存本机，不进 git。
@@ -86,11 +86,11 @@
 
 系统由两条消息链路组成，全部本地运行，模型 API 与本地自建的网易云 API 服务是仅有的外部调用。
 
-**主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh` → 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/pi-run.mjs --send-mode` 让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）。
+**主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh` → 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/pi-run.mjs --send-mode`（agent 抽象，默认 pi-agent）让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）。
 
 **被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假/开学）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `pi-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `pi-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
 
-**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（LanceDB）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 pi 调用成败都记入 `pi_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
+**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 默认 LanceDB，可切 json/自定义类）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 pi 调用成败都记入 `pi_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 60, "curve": "basis", "fontSize": 18}}}%%
@@ -197,7 +197,7 @@ uv run python chiguo_demo.py         # 交互式 Demo（纯模板，无 LLM）
 uv run python chiguo_daemon.py       # 单次决策 → 输出 JSON
 uv run python chiguo_daemon.py --status   # 查看当前状态
 
-# 核心测试（完整测试链：35 py + 10 script 独立 runner）
+# 核心测试（完整测试链：36 py + 10 script 独立 runner）
 bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败退出非零
 ```
 
@@ -219,9 +219,9 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 ### pi-agent（模型后端）
 
-**作用**：所有 LLM 能力都从这里来：主动消息的生成、回复时的情绪分析与回复文本，全部经 pi-agent 调用模型 API。支持任意 provider（OpenAI / DeepSeek / Anthropic / 自建网关…），由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定。
+**作用**：agent 后端抽象——所有 LLM 能力都从这里来：主动消息的生成、回复时的情绪分析与回复文本。默认经 pi-agent 调用模型 API，支持任意 provider（OpenAI / DeepSeek / Anthropic / 自建网关…），由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定；`[host].runner = command` 时可替换为任意 CLI agent（`[host].agent_command` 指定，统一契约 `--prompt <完整提示词> --mode <mode>`，stdout 输出 JSON 或 NDJSON）。
 
-**安装/配置**：`export PI_API_KEY=... && bash scripts/install_pi.sh --yes`，或 `pi` 交互式 `/login <provider>`。详见 [🧠 接入模型后端](#-接入模型后端) 与 [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md)。
+**安装/配置**：默认 pi 模式：`export PI_API_KEY=... && bash scripts/install_pi.sh --yes`，或 `pi` 交互式 `/login <provider>`；command 模式只需任意可执行 agent。详见 [🧠 接入模型后端](#-接入模型后端) 与 [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md)。
 
 **缺失影响**：消息无法生成——决策引擎照常评估"该不该发"，但没有 LLM 就没有话可说。
 
@@ -235,13 +235,13 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 **缺失影响**：没有微信触达。daemon 依然可以 `chiguo_daemon.py` CLI 直跑——决策、情绪、记账全部正常，只是消息发不出去。
 
-### 记忆系统（LanceDB + ollama embedding）
+### 记忆系统（记忆后端抽象）
 
-**作用**：迟菓的长期记忆——比情绪更持久的"记得"。对话中值得记的内容由 pi-agent 的 [memory-lancedb-pro](https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro) 扩展自动沉淀进记忆库（回忆、旧事、你的偏好），决策引擎经 `memory_bridge.py` **只读召回**（BM25 全文搜索，零 token、零额外调用），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
+**作用**：迟菓的长期记忆——比情绪更持久的"记得"。v1.8 起为**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类 + `LanceDbBackend` + `JsonMemoryBackend` + `create_backend` 工厂（`memory_bridge.py` 降为兼容门面），由 `chiguo_proactive.toml` 的 `[memory].backend` 切换——`auto`（默认，LanceDB 可用则用、否则 JSON 兜底）/ `lancedb` / `json` / 自定义类 `module.path.ClassName`。LanceDB 模式下，对话中值得记的内容由 pi-agent 的 [memory-lancedb-pro](https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro) 扩展自动沉淀进记忆库（回忆、旧事、你的偏好），决策引擎**只读召回**（BM25 全文搜索，零 token、零额外调用），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
 
-**安装/配置**：`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`（初始化记忆库）。记忆库位于 `~/.pi-agent/memory/lancedb-pro`（迟菓侧只读，写入由 pi 扩展完成）；`data/chiguo_memories.json` 是手动记忆文件，**始终生效**作为补充。
+**安装/配置**：LanceDB 后端：`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`（初始化记忆库），记忆库位于 `~/.pi-agent/memory/lancedb-pro`（迟菓侧只读，写入由 pi 扩展完成）；零依赖 JSON 后端：`[memory].backend = "json"`（数据源 `data/chiguo_memories.json`，**始终生效**作为补充）。
 
-**缺失影响**：LanceDB 不可用时优雅降级（`available=False`，查询返回空、不抛异常）——记忆话题源减少，`chiguo_envcheck.py` 报 warn（不影响运行）；手动 JSON 记忆不受影响。装与不装的差异见 [❓ FAQ](#-faq)。
+**缺失影响**：LanceDB 不可用时优雅降级（`available=False`，查询返回空、不抛异常）——记忆话题源减少，`chiguo_envcheck.py` 报 warn（不影响运行）；`backend = "json"` 零依赖照常工作。装与不装的差异见 [❓ FAQ](#-faq)。
 
 ### 网易云音乐桥
 
@@ -273,10 +273,11 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 ## 🧠 接入模型后端
 
-消息生成与情绪分析全部走 **pi-agent**，provider 由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定（缺省示例 opencode-go，可换任意 pi 支持的接入方式）：
+消息生成与情绪分析走 **agent 后端**（默认 pi-agent），provider 由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定（缺省示例 opencode-go，可换任意 pi 支持的接入方式）；`[host].runner = command` 时替换为任意 CLI agent（`[host].agent_command`，契约 `--prompt` + `--mode`，stdout JSON/NDJSON）：
 
 - **内置 provider**：`pi` 交互式 `/login <provider>` 写入 auth.json，或 `export PI_API_KEY=... && bash scripts/install_pi.sh --yes`
 - **自定义 OpenAI 兼容端点**：写 `~/.pi/agent/models.json`（pi 官方机制，支持 ollama/vLLM/自建网关）
+- **任意 CLI agent**：`[host].runner = "command"` + `[host].agent_command = [...]`（RPC 常驻仅 pi 模式）
 
 ```toml
 [host]
@@ -347,7 +348,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 欢迎任何形式的贡献——尤其是"她"的成长：
 
 - **测试先行（TDD）**：铁律是先写失败测试再实现（红→绿），`tests/` 下每个 `test_*.py` 是独立 runner
-- **改完跑全链**：完整测试链见 `AGENTS.md`（35 py + 10 script），全绿再提交
+- **改完跑全链**：完整测试链见 `AGENTS.md`（36 py + 10 script），全绿再提交
 - **文档同步**：行为变化必须同步 `doc/SYSTEM.md`
 - **Commit 风格**：`feat:` / `fix:` / `docs:` / `chore:` 前缀 + 中文描述
 - **设计文档**：大改动先在项目外 `~/chiguo-meta/specs/` 写设计文档，评审通过再动手
@@ -360,7 +361,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 源自《三色△绘恋》系列官方角色（见[🎀 她是谁](#-她是谁)）。本项目是二次演绎，剧本仅作学习参考，版权归原作者；权利方异议即移除。
 
 **记忆系统装不装有什么区别？**
-不装（`uv sync`）：记忆话题源减少，JSON 兜底，`envcheck` 报 warn。装齐（`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`）：LanceDB 记忆 + 听歌联动全功能。
+`[memory].backend` 默认 `auto`：LanceDB 可用则用、否则 JSON 兜底。不装（`uv sync`）：记忆话题源减少，JSON 兜底，`envcheck` 报 warn。装齐（`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`）：LanceDB 记忆 + 听歌联动全功能。
 
 **怎么换人格/调性格？**
 迟菓的人格是固定的（系统围绕单一角色设计），不可替换角色。想调整行为？改 `chiguo_proactive.toml` 的参数即可——`SUN2.md` 是唯一权威设定，语感在《迟菓语言技巧指南》。
@@ -388,10 +389,11 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 chiguo_proactive.toml    # 主配置（所有参数，热重载）
 chiguo_daemon.py         # 决策引擎（主入口，零 LLM）
 chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian
+memory/                  # 记忆后端抽象（base/lancedb/json/factory；memory_bridge.py 兼容门面）
 schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan）
-scripts/                 # tick/replan crontab 入口 + pi 封装（extract/verify/recall/replan/pi-auth）
-                         #   + 环境安装 + 假死检测
+scripts/                 # tick/replan crontab 入口 + agent runner 抽象（pi-run.mjs，默认 pi）
+                         #   + 环境安装 + 假死检测（pi_health.py）
 wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs）
 personality/             # 人格设定（SUN2.md + 语言指南 + 措辞素材 toml）
 doc/                     # 系统文档（SYSTEM.md / PI_INTEGRATION.md / 日光雨剧本）

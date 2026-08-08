@@ -12,12 +12,20 @@ wechat_recipient = "owner@im.wechat"   # 发送目标占位符：登录后自动
 #                                  # 也可在此手动配真实值（非占位符即生效）
 
 [memory]
+# ── 记忆后端抽象（v1.8 解耦：任意替换记忆模块）──
+# backend 取值：
+#   "auto"    （默认）LanceDB 可用则用，否则 JSON 手动记忆兜底
+#   "lancedb"           显式 LanceDB（库缺失/路径不可用 → available=False 优雅降级）
+#   "json"              显式 JSON 手动记忆文件（零依赖）
+#   "module.path.ClassName"  自定义后端类（实现 memory/base.py MemoryBackend 四原语，
+#                             实例化 kwargs = 本段其余键；见 doc/SYSTEM.md「记忆后端抽象」）
+backend = "auto"
 # ── pi-agent memory-lancedb-pro 记忆系统（只读，不写）──
 # 记忆库位于 ~/.pi-agent/memory/lancedb-pro（只读）
 # 如果 LanceDB 不可用，自动降级到 JSON 模式
 lancedb_path = "~/.pi-agent/memory/lancedb-pro"
 lancedb_table = "memories"
-# 手动记忆文件（始终生效，作为补充）
+# 手动记忆文件（backend=json 时的数据源；backend=auto 时作为兜底）
 manual_path = "data/chiguo_memories.json"
 # ── v4: Ebbinghaus 遗忘参数 ──
 ebbinghaus_strength = 168    # 记忆强度 S（小时），越大遗忘越慢，168h=7天
@@ -307,6 +315,15 @@ reply_thinking_level = "high"   # 回复侧独立档位（交互及时性:微信
 session_id = "chiguo-main"      # 回复侧会话（bridge askPi；进程内 TurnQueue 串行）
 send_session_id = "chiguo-send" # 主动发送会话（chiguo-tick.sh 经 PIRUN_SESSION 注入；与回复会话分离 → 消除跨进程并发 turn）
 wechat_bridge_url = "http://127.0.0.1:18790/send"   # 主动发送端点（chiguo-tick.sh curl 目标；--noproxy '*'）
+
+# ── agent 后端抽象（v1.8 解耦：任意替换 agent）──
+# runner = "pi"      （默认）pi-agent 二进制（provider/model 见上，PIRUN_* 可覆盖）
+# runner = "command"  任意 CLI agent：agent_command 指定可执行命令，pi-run.mjs 按统一契约调用：
+#                      <agent_command> --prompt <完整提示词> --mode <analysis|send|extract|verify|recall|replan>
+#                      期望 stdout JSON：{"ok":true,"text":...,"analysis"?:...,"parsed"?:...,"raw"?:...}
+#                      （也兼容 pi 风格 NDJSON message_end）。详见 doc/PI_INTEGRATION.md「接入自定义 agent」
+runner = "pi"
+# agent_command = ["node", "/path/to/my-agent.mjs"]   # command 模式必填；pi 模式忽略
 
 [health]
 fail_threshold = 3   # pi 假死判定：连续失败次数 ≥ 此值 → 告警（bridge 记账/tick 记账共用；<1 视为无效回退 3）

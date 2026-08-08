@@ -72,9 +72,38 @@ def _urlopen(req, timeout: float = 5):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def check_pi(pi_bin: str = "pi", skip_pi: bool = False) -> dict:
-    """pi-agent 可执行且可报告版本。缺失/不可运行 → critical(消息生成端缺失);
-    --skip-pi 下缺失降为 warn(用户显式跳过 pi,不阻塞部署但如实报告降级)。"""
+def check_pi(pi_bin: str = "pi", skip_pi: bool = False,
+             runner: str = "pi", agent_command: list[str] = None) -> dict:
+    """消息生成后端可执行且可报告版本。缺失/不可运行 → critical(消息生成端缺失);
+    --skip-pi 下缺失降为 warn(用户显式跳过,不阻塞部署但如实报告降级)。
+    v1.8: runner=command 时检查自定义 agent 命令(任意 CLI 后端,
+    经 scripts/pi-run.mjs 契约调用,见 doc/PI_INTEGRATION.md)。"""
+    if runner != "pi":
+        # 自定义 agent 后端:检查 agent_command[0] 可执行(绝对路径或 PATH)
+        cmd = (agent_command or ["agent"])[0]
+        name = "agent"
+        resolved = None
+        if cmd.startswith("/") or cmd.startswith("./"):
+            resolved = cmd if os.path.exists(cmd) else None
+        else:
+            resolved = shutil.which(cmd)
+        if not resolved:
+            if skip_pi:
+                return {"name": name, "ok": False, "severity": "warn",
+                        "detail": f"agent 命令 {cmd} 不可用(--skip-pi) → 消息生成端缺失"
+                                  f"(需先安装/配置 [host].agent_command)"}
+            return {"name": name, "ok": False, "severity": "critical",
+                    "detail": f"agent 命令 {cmd} 不可用 → 消息生成端缺失"
+                              f"(配置 [host].runner/agent_command 后重跑 deploy.sh)"}
+        try:
+            out = subprocess.run([resolved, "--version"], capture_output=True,
+                                 text=True, timeout=15)
+            ver = out.stdout.strip().splitlines()[0] if out.stdout.strip() else "?"
+        except Exception as e:
+            return {"name": name, "ok": False, "severity": "critical",
+                    "detail": f"{cmd} --version 失败: {e}"}
+        return {"name": name, "ok": True, "severity": "ok",
+                "detail": f"agent OK ({cmd} {ver})"}
     resolved = shutil.which(pi_bin)
     if not resolved:
         if skip_pi:
@@ -176,7 +205,8 @@ def _key_env_hint(provider: str) -> str:
 
 
 def check_lancedb(db_path: Path) -> dict:
-    """lancedb 库可导入 + 数据库可只读连接。任一缺失 → warn(JSON 降级可用)。"""
+    """lancedb 库可导入 + 数据库可只读连接。任一缺失 → info(JSON 降级可用)。
+    v1.8: 仅 [memory].backend ∈ {auto, lancedb} 时由 run_checks 调用。"""
     try:
         import lancedb
     except ImportError:
@@ -194,6 +224,24 @@ def check_lancedb(db_path: Path) -> dict:
     except Exception as e:
         return {"name": "lancedb", "ok": False, "severity": "info",
                 "detail": f"LanceDB 不可用: {e}(可选,JSON 兜底)"}
+
+
+def check_json_memory(mem_path: Path) -> dict:
+    """JSON 手动记忆后端文件存在且可解析（[memory].backend = json 时检查）。"""
+    if not mem_path.is_file():
+        return {"name": "json_memory", "ok": False, "severity": "info",
+                "detail": f"{mem_path} 不存在 → 记忆未启用(可选,手动记忆文件缺失)"}
+    try:
+        import json as _json
+        data = _json.loads(mem_path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            return {"name": "json_memory", "ok": False, "severity": "info",
+                    "detail": f"{mem_path} 不是 JSON 数组 → 记忆未启用"}
+    except Exception as e:
+        return {"name": "json_memory", "ok": False, "severity": "info",
+                "detail": f"{mem_path} 解析失败: {e} → 记忆未启用"}
+    return {"name": "json_memory", "ok": True, "severity": "ok",
+            "detail": f"JSON 记忆 OK ({mem_path})"}
 
 
 def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
@@ -256,16 +304,33 @@ def run_checks(base_dir: Path = None, skip_pi: bool = False, home: Path = None) 
     pi_auth = home / ".pi" / "agent" / "auth.json"
     ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
     provider = cfg.get("host", {}).get("provider") or "opencode-go"
+    # v1.8: agent 后端抽象（runner=pi 默认；command=自定义 CLI agent）+
+    # 记忆后端抽象（backend=auto/lancedb/json/自定义类路径）
+    runner = cfg.get("host", {}).get("runner") or "pi"
+    agent_command = cfg.get("host", {}).get("agent_command") or None
+    memory_backend = cfg.get("memory", {}).get("backend") or "auto"
     checks = [
         check_env(),
-        check_pi(skip_pi=skip_pi),
-        check_pi_ext(pi_settings, pi_ext),
-        check_lancedb(lancedb_path),
-        check_ollama(ollama_url),
-        check_pi_auth(pi_auth, provider=provider),
-        check_netease(api_base, base / "netease" / "netease_cookie.txt", base / "netease" / "netease_health.json"),
-        check_data(xlsx, mem),
+        check_pi(skip_pi=skip_pi, runner=runner, agent_command=agent_command),
     ]
+    if runner == "pi":
+        checks.append(check_pi_ext(pi_settings, pi_ext))
+    # 记忆后端检查：json 显式 → JSON 文件检查；auto/lancedb → LanceDB 直检；
+    # 自定义类路径（含 "."）→ 具体可用性由后端自身降级，envcheck 只提示不误检
+    if memory_backend == "json":
+        checks.append(check_json_memory(mem))
+    elif memory_backend in ("auto", "lancedb"):
+        checks.append(check_lancedb(lancedb_path))
+    else:
+        checks.append({"name": "memory_backend", "ok": True, "severity": "ok",
+                       "detail": f"自定义记忆后端 {memory_backend}（envcheck 不直检，由后端自身降级）"})
+    if runner == "pi":
+        checks.append(check_ollama(ollama_url))
+        checks.append(check_pi_auth(pi_auth, provider=provider))
+    checks.append(
+        check_netease(api_base, base / "netease" / "netease_cookie.txt", base / "netease" / "netease_health.json"),
+    )
+    checks.append(check_data(xlsx, mem))
     summary = {"ok": 0, "info": 0, "warn": 0, "critical": 0}
     for c in checks:
         summary[c["severity"]] = summary.get(c["severity"], 0) + 1

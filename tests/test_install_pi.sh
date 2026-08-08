@@ -72,7 +72,7 @@ cat > "$TMP/bin-ok/npm" <<'STUB'
 echo "npm $*" >> "$CALLS_LOG"
 if [ "${1:-}" = install ]; then
   mkdir -p "$PWD/node_modules/.bin"
-  printf '#!/usr/bin/env bash\necho "memory-pro stats OK"\n' > "$PWD/node_modules/.bin/memory-pro"
+  printf '#!/usr/bin/env bash\nif [ "${1:-}" = config-path ]; then echo "dbPath: ~/.pi-agent/memory/lancedb-pro (source: config)"; else echo "memory-pro stats OK"; fi\n' > "$PWD/node_modules/.bin/memory-pro"
   chmod +x "$PWD/node_modules/.bin/memory-pro"
 fi
 STUB

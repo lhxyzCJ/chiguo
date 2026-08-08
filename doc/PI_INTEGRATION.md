@@ -1,6 +1,6 @@
-# pi-agent 集成指南（Phase 4，v1.6）
+# pi-agent 集成指南（Phase 4，v1.8）
 
-> 寄主迁移后的当前架构：**消息生成与情绪分析全部走 pi-agent**（provider 可配，opencode-go 为默认示例；
+> 寄主迁移后的当前架构：**消息生成与情绪分析全部走 agent 后端**（v1.8 起 runner 可替换：默认 runner=pi 走 pi-agent，provider 可配，opencode-go 为默认示例；
 > 定时触发走系统 crontab（chiguo-tick），微信收发走 wechat-bridge，记忆走 memory-lancedb-pro
 > （pi 版扩展 + ollama embedding，复用历史 LanceDB 库）。
 
@@ -64,10 +64,12 @@ node scripts/pi-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + 回�
   （PIRUN_PROVIDER/PIRUN_MODEL/PIRUN_THINKING/PIRUN_SESSION；PIRUN_PERSONALITY/PIRUN_GUIDE 仅测试/开发用，生产人格固定仓库内 personality/）
 - **[host] 键**：`provider`（默认 opencode-go）、`model`（deepseek-v4-flash）、`thinking_level`（high）、
   `session_id`（chiguo-main，回复侧）、`send_session_id`（chiguo-send，主动发送）、
+  `runner`（pi/command，默认 pi；v1.8 agent runner 抽象，见 §八）、`agent_command`（数组；runner=command 必填，PIRUN_AGENT_COMMAND 覆盖）、
   personality 固定仓库内 personality/（[host].personality_dir 已移除，见 DEPLOYMENT.md；注入 SUN2.md + 迟菓语言技巧指南.md）、
   `wechat_bridge_url`（`http://127.0.0.1:18790/send`）
-- **pi 参数**：`-p` 非交互 + `--no-context-files`（隔离仓库开发上下文）+ `--mode json`（NDJSON 事件流）
-  + `--append-system-prompt` ×2（SUN2 + 语言技巧指南）+ `--session-id <会话>` + `--thinking`
+- **pi 参数**（仅 runner=pi）：`-p` 非交互 + `--no-context-files`（隔离仓库开发上下文）+ `--mode json`（NDJSON 事件流）
+  + `--append-system-prompt` ×2（SUN2 + 语言技巧指南）+ `--session-id <会话>` + `--thinking`；
+  runner=command 时忽略这些参数，改走 §八 统一契约
 - **输出解析**：NDJSON 取最后一条 `message_end` 的 text 拼接；analysis-mode 提取
   `<<ANALYSIS>>{...}<<END>>` 块
 - **失败语义**：`{"ok":false,"error":"..."}`；非零退出但 stdout 含完整回复 → salvage 不丢回复
@@ -170,7 +172,104 @@ chiguo 对后端模型不做绑定：**消息生成/情绪分析全部走 pi-age
 - install_pi.sh 的 auth 写入与冒烟自动跟随 `[host].provider`（key 环境变量用通用名 `PI_API_KEY`，兼容回退 `OPENCODE_API_KEY`）
 - 换 provider 后会话记忆（chiguo-main/chiguo-send）保留；模型能力差异（thinking 档位等）按 pi 侧 model 配置生效
 
-## 八、memory-lancedb-pro 配置（记忆）
+## 八、接入自定义 agent（runner=command）
+
+v1.8 起 agent 后端可任意替换：`scripts/pi-run.mjs` 抽象 agent runner，`[host].runner` 决定实现——
+`pi`（默认，pi-agent 二进制）或 `command`（任意 CLI agent，如自定义 node/python 脚本或本地推理进程）。
+
+**配置**
+
+```toml
+[host]
+runner = "command"                            # 切到任意 CLI agent
+agent_command = ["node", "/path/to/agent.mjs"]  # 必填：可执行命令 + 固定参数（数组）
+```
+
+环境变量覆盖：`PIRUN_RUNNER`（pi/command）与 `PIRUN_AGENT_COMMAND`（JSON 数组字符串）优先于 toml。
+
+**统一契约**（runner=command 时，pi-run.mjs 对每次调用执行）：
+
+```
+<agent_command> --prompt <完整提示词> --mode <analysis|send|extract|verify|recall|replan>
+```
+
+- `--prompt` 是**完整提示词**：pi-run.mjs 按模式模板构造（发送/分析沿用 SUN2.md 人格注入，
+  安排链路 extract/verify/recall/replan 复用原 pi 提示词模板），agent 无需自行拼装
+- `--mode` 语义与 pi 路径一一对应：`send` 生成消息、`analysis` 情绪分析+回复、
+  `extract`/`verify`/`recall`/`replan` 安排澄清链路
+- **stdout 契约**：单行 JSON `{"ok":true,"text":"...","analysis":{...},"parsed":{...},"raw":"..."}`
+  （失败时 `{"ok":false,"error":"..."}`）；也兼容 pi 的 NDJSON 输出（`parseAgentOutput` 兜底解析）。
+  非零退出但 stdout 含完整回复 → salvage 不丢回复（与 pi 路径一致）
+- 任意语言/运行时皆可：只需读 `--prompt`/`--mode` 参数、向 stdout 输出 JSON
+
+**限制与运维**
+
+- bridge 的 **RPC 常驻模式仅 `runner=pi` 可用**（`WECHAT_BRIDGE_PI_RPC=1`）；command 模式下
+  bridge askPi 走进程内 `TurnQueue` 串行调用 pi-run.mjs（与 pi 路径一致）
+- `chiguo_envcheck.py` 的 `check_pi` 支持 `runner`/`agent_command` 参数：runner=command 时检查
+  agent_command 可执行性（不再要求 pi 二进制）
+- 失败排查：askPi 报「⚠️ 处理失败」时，除 bridge 日志（logs/wechat-bridge.log）外，手跑
+  `<agent_command> --prompt '测试' --mode send` 直接看 agent 自身输出/日志
+
+## 九、记忆后端抽象（[memory].backend）
+
+v1.8 起记忆模块解耦为 `memory/` 包（`memory_bridge.py` 保留兼容门面：MemoryBridge=LanceDbBackend 别名 + CLI）。
+`[memory].backend` 四取值：
+
+| 取值 | 行为 |
+|------|------|
+| `auto`（默认） | LanceDB 可导入 → LanceDbBackend；否则 JsonMemoryBackend 兜底 |
+| `lancedb` | 显式 LanceDB（pi memory-lancedb-pro 扩展写入的历史库，只读） |
+| `json` | 显式 JSON 手动记忆文件（`manual_path`） |
+| `module.path.ClassName` | 自定义后端类（importlib 动态加载，须继承 `memory/base.py` 的 `MemoryBackend`） |
+
+**MemoryBackend 四原语**（子类实现；不可用 → 查询返回空，不抛）：
+
+```python
+class MyBackend(MemoryBackend):
+    @property
+    def available(self) -> bool: ...                       # 后端是否可用
+    def search(self, query, limit=10, category=None,
+               min_importance=0.3) -> list[dict]: ...      # 关键词检索 → 统一行契约 dict
+    def random_memory(self, category=None, min_importance=0.5,
+                      prefer_categories=None) -> dict | None: ...  # 加权随机
+    def stats(self) -> dict: ...                           # 统计（total/user_relevant/available…）
+```
+
+- **Ebbinghaus 在基类**：`ebbinghaus_weight`/`search_with_forgetting`/`user_relevant_with_forgetting`/
+  `random_memory_with_forgetting` 由基类基于原语包装（R = e^(-t/(S×importance))，S=168h、min_weight=0.1），
+  自定义后端零成本获得遗忘曲线
+- 行契约（search/random_memory 返回 dict 字段）：id/text/category/scope/importance/timestamp/datetime/
+  memory_category/l0_abstract/l2_content/tier/source；importance 必须清洗为非 NaN
+- **JsonMemoryBackend** 读 `[memory].manual_path`（默认 `data/chiguo_memories.json`），
+  大小写不敏感子串匹配 + importance² 加权随机；文件缺失/损坏 → available=False 优雅降级
+- 自定义后端示例骨架：
+
+```python
+# my_memory.py — toml [memory].backend = "my_memory.MyBackend"
+from memory.base import MemoryBackend
+
+class MyBackend(MemoryBackend):
+    def __init__(self, manual_path=None, **kwargs):   # kwargs = [memory] 段其余键
+        ...
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    def search(self, query, limit=10, category=None, min_importance=0.3):
+        return [...]                                   # 统一行契约 dict 列表
+
+    def random_memory(self, category=None, min_importance=0.5, prefer_categories=None):
+        return {...} or None
+
+    def stats(self) -> dict:
+        return {...}
+```
+
+（自定义类放仓库任意模块路径即可；实例化 kwargs = [memory] 段其余键，按构造签名过滤。）
+
+## 十、memory-lancedb-pro 配置（记忆）
 
 - 扩展：`~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`
   （settings.json `extensions` 注册；安装器修正 Windows 残留路径）
@@ -179,9 +278,9 @@ chiguo 对后端模型不做绑定：**消息生成/情绪分析全部走 pi-age
   llm=deepseek、autoCapture/autoRecall/smartExtraction 开、sessionMemory 关
 - CLI 冒烟：`~/.pi-agent/.../node_modules/.bin/memory-pro stats`
 - 降级：ollama 不可达 → 记忆 embedding 降级（自动捕获/召回不可用，不影响 daemon 主链路）；
-  daemon 侧 LanceDB 仍经 `memory_bridge.py` 只读（缺 lancedb → `available=False` JSON 兜底）
+  daemon 侧记忆经 `memory/` 包只读（backend=auto 时默认 LanceDbBackend；缺 lancedb → available=False、JsonMemoryBackend 兜底）
 
-## 九、故障排查
+## 十一、故障排查
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
@@ -193,8 +292,9 @@ chiguo 对后端模型不做绑定：**消息生成/情绪分析全部走 pi-age
 | bridge 回复「⚠️ 处理失败」 | askPi 抛错（pi-run 非 JSON/失败） | bridge 日志（logs/wechat-bridge.log）看具体 error |
 | 特殊命令回「处理失败」 | daemon CLI 报错（如日期格式错） | 命令 JSON 输出含 error；对照 §五 命令表手跑验证 |
 | memory-pro stats 失败 | 扩展未 build/ollama 停 | install_pi.sh 阶段 1/4；`ollama serve` 后重跑 |
+| command runner 下 askPi 失败/回「⚠️ 处理失败」 | agent 脚本自身报错（非 JSON/非零退出/脚本缺失） | 手跑 `<agent_command> --prompt '测试' --mode send` 看 agent stdout/日志；核对 `PIRUN_RUNNER`/`PIRUN_AGENT_COMMAND` 生效配置与 `[host].agent_command` |
 
-## 十、维护速查
+## 十二、维护速查
 
 ```bash
 # 手动决策 + 生成 + 发送链路（分步）

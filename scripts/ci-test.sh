@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 全量测试链（35 py + 10 script）——本地与 CI 同一入口；任一失败即退出非零
+# 全量测试链（36 py + 10 script）——本地与 CI 同一入口；任一失败即退出非零
 # 前置: .venv 存在（本地 dev 机已有；CI 由 uv sync 创建）
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
@@ -56,6 +56,7 @@ uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
 uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
 uv run python tests/test_trigger_scale.py && uv run python tests/test_isolation.py && \
 uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py && \
+uv run python tests/test_memory_backends.py && \
 uv run python tests/test_docs_sync.py
 ); then
   echo "TEST FAILED" >&2

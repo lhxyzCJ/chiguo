@@ -14,7 +14,7 @@ def check(name, cond, detail=""):
         print(f"  FAIL - {name} {detail}")
 
 # a) 测试链单一入口：deploy.sh 复用 ci-test.sh（不维护内联列表），
-#    ci-test.sh 实际测试集合 ↔ 文档计数（35 py + 10 script）
+#    ci-test.sh 实际测试集合 ↔ 文档计数（36 py + 10 script）
 deploy = (ROOT / "deploy.sh").read_text()
 citesh = (ROOT / "scripts" / "ci-test.sh").read_text()
 check("deploy.sh 调用 ci-test.sh（单一测试入口）", "ci-test.sh" in deploy)
@@ -22,14 +22,14 @@ check("deploy.sh 无内联 TESTS 数组（防重复维护漂移）", "TESTS=(" n
 py_tests = sorted(set(re.findall(r"test_[a-z_0-9]+\.py", citesh)))
 mjs_tests = sorted(set(re.findall(r"test_[a-z_0-9]+\.mjs", citesh)))
 sh_tests = sorted(set(re.findall(r"test_[a-z_0-9]+\.sh", citesh)))
-check("ci-test.sh 运行 35 个 py 测试", len(py_tests) == 35, f"实际 {len(py_tests)}")
+check("ci-test.sh 运行 36 个 py 测试", len(py_tests) == 36, f"实际 {len(py_tests)}")
 check("ci-test.sh 运行 5 个 node 测试", len(mjs_tests) == 5, f"实际 {len(mjs_tests)}")
 check("ci-test.sh 运行 5 个 script 测试", len(sh_tests) == 5, f"实际 {len(sh_tests)}")
 check("ci-test.sh 含 test_docs_sync", "test_docs_sync.py" in citesh)
 for f in ["AGENTS.md", "CLAUDE.md", "README.md", "README_EN.md"]:
     txt = (ROOT / f).read_text()
     nums = re.findall(r"(\d+) py \+ (\d+) script", txt)
-    check(f"{f} 计数为 35 py + 10 script", any((int(a), int(b)) == (35, 10) for a, b in nums), f"实际 {nums}")
+    check(f"{f} 计数为 36 py + 10 script", any((int(a), int(b)) == (36, 10) for a, b in nums), f"实际 {nums}")
 
 # b) --skip-* flags：deploy.sh 与 DEPLOYMENT.md 一致
 flags = ["--skip-pi", "--skip-bridge", "--skip-netease"]

@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required) — 35 py + 10 script tests
+# Run all tests (Python 3.14+ required) — 36 py + 10 script tests
 bash scripts/ci-test.sh   # 本地与 GitHub Actions ci.yml 同一入口
 ```
 
@@ -36,13 +36,14 @@ Key 3.14 features used:
 - `X | None` union syntax instead of `Optional[X]` (3.10+)
 - `random.choices()` instead of manual weighted random loops
 
-No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python ≥3.11). LanceDB integration is optional — `memory_bridge.py` gracefully degrades when LanceDB is unavailable.
+No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python ≥3.11). LanceDB integration is optional — the `memory/` backend package degrades gracefully (`available=False`, queries return empty; `[memory].backend = "auto"` falls back to JSON).
 
 ## Architecture
 
-**Decision/generation separation** — the core design principle. `chiguo_daemon.py` is a zero-LLM math engine that evaluates state and outputs structured JSON. Message generation happens externally via **pi-agent** (Phase 4 host), which reads that JSON, generates text per `personality/SUN2.md`, and sends via wechat-bridge.
+**Decision/generation separation** — the core design principle. `chiguo_daemon.py` is a zero-LLM math engine that evaluates state and outputs structured JSON. Message generation happens externally via the **agent backend** (Phase 4 host; v1.8 抽象：默认 pi-agent，`[host].runner = command` 可替换为任意 CLI agent，见下), which reads that JSON, generates text per `personality/SUN2.md`, and sends via wechat-bridge.
 
 **pi-agent integration** (see `doc/PI_INTEGRATION.md`, Phase 4):
+- **v1.8 agent 抽象**：`[host].runner` — `pi`（默认，pi-agent 二进制）| `command`（任意 CLI agent，`[host].agent_command` 指定；统一契约 `--prompt <完整提示词> --mode <mode>`，stdout JSON 或 NDJSON；RPC 常驻仅 pi 模式）。**记忆后端抽象**：`[memory].backend` — `auto`（默认，LanceDB 可用则用、否则 JSON 兜底）/ `lancedb` / `json` / `module.path.ClassName` 自定义类（`memory/` 包：MemoryBackend 基类 + LanceDbBackend + JsonMemoryBackend + create_backend 工厂；`memory_bridge.py` 兼容门面）
 - Send side: system crontab `*/15 * * * * scripts/chiguo-tick.sh` — runs `chiguo_daemon.py --compact` with zero model calls; idle → silent exit, send → `scripts/pi-run.mjs` (session `chiguo-send`) generates message per SUN2.md → curl `[host].wechat_bridge_url` → `--record-send` writes back
 - Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break/schedule rules, no pi; schedule-center CLI 子命令 `--attention`/`--schedule-recall`/`--schedule-change` + `python -m schedule.replan --check`/`schedule.holiday`) → otherwise `askPi` (pi-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
 - Sessions: reply=`chiguo-main`, proactive send=`chiguo-send` — separate sessions eliminate cross-process concurrent turns
@@ -69,11 +70,11 @@ chiguo_daemon.py (DecisionEngine)
   ├─ netease/service.py → NetEase strategy layer 策略层 (v9, DI: health probe/degradation chain/peek-consume quota/music topic/fetch_play_proof 单入口)
   ├─ schedule/ 包   → 课表数据面 parser.py / 纯解析 parsing.py / 策略 query.py + 节假日 holiday.py + 纪念日 anniversary.py + 覆盖/计划/澄清 override_store.py/plan_store.py/api.py + 检索与安排 sources.py/day_plan.py/resolve_when.py/attention.py/recall.py + 确认 confirm.py + 复盘 replan.py
   ├─ solar_terms.py      → 24 solar terms
-  ├─ memory_bridge.py    → LanceDB read-only bridge + Ebbinghaus forgetting (v4)
+  ├─ memory/ 包        → 记忆后端抽象：MemoryBackend 基类 + LanceDbBackend + JsonMemoryBackend + create_backend 工厂（Ebbinghaus 包装在基类；memory_bridge.py 兼容门面）
   ├─ chiguo_watchdog.py  → daemon health checks (disk, memory, tick freshness)
   ├─ chiguo_rotation.py  → monthly log rotation → archive/
   ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
-  ├─ chiguo_version.py   → project version single source (VERSION="1.4", +0.1 per round)
+  ├─ chiguo_version.py   → project version single source (VERSION="1.8", +0.1 per round)
   └─ chiguo_monitor.py   → streaming JSONL analytics (stats/alerts/health)
 
   Output: chiguo_decisions.jsonl (append-only structured log)
@@ -82,7 +83,7 @@ chiguo_daemon.py (DecisionEngine)
 
 **Config**: `chiguo_proactive.toml` — all parameters (309 lines). Legacy host section from Task 14 (superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
-**Version**: `chiguo_version.py` is the single source (`VERSION="1.4"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
+**Version**: `chiguo_version.py` is the single source (`VERSION="1.8"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
 
 **5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h).
 
@@ -118,10 +119,10 @@ All auto-generated at first run, all in `.gitignore`:
 - **Emotion trends**: first-half vs second-half mean comparison; no heavy regression needed.
 - **Reply rate estimation**: inferred from `messages_without_reply` deltas between consecutive sends (no explicit reply tracking in logs).
 - **Config hot-reload**: `_maybe_reload_config()` checks toml mtime before each `evaluate()` call. Only matters for `--loop` mode; cron spawns fresh processes.
-- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 35 py test runners (+ 10 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
+- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 36 py test runners (+ 10 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
 
 ## 安全边界
 
-**安全边界**：记忆库位于 `~/.pi-agent/memory/lancedb-pro`，本项目只通过 `memory_bridge.py` 进行只读查询。
+**安全边界**：LanceDB 记忆库位于 `~/.pi-agent/memory/lancedb-pro`，本项目只读访问经 `memory/` 包（默认 `LanceDbBackend`；`memory_bridge.py` 为兼容门面）。
 
 

@@ -1,6 +1,6 @@
 # Claude Code Rules — Chiguo Proactive Message System
 
-> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-03. 35 py + 10 script runners, zero framework, pure Python stdlib.
+> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-03. 36 py + 10 script runners, zero framework, pure Python stdlib.
 > **Iron law**: decision/generation separation. Daemon outputs JSON. pi-agent generates messages (Phase 4).
 
 ---
@@ -8,7 +8,7 @@
 ## 1. Build & Test
 
 ```bash
-# Run ALL tests: 35 py + 10 script runners (every runner exits non-zero on failure)
+# Run ALL tests: 36 py + 10 script runners (every runner exits non-zero on failure)
 node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && \
 node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
 bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
@@ -58,7 +58,7 @@ python3 update_holidays.py 2027 --solar --force  # generate holiday data
 python3 chiguo_rotation.py --force
 ```
 
-**No build step. No pip install.** Python 3.14-only (PEP 758 bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`). Optional: `openpyxl` (schedule), `lancedb` (memory bridge). Note: `memory_bridge.py` lazy-imports `lancedb` inside `_ensure_table()`; when absent it runs with `available=False` and memory queries degrade gracefully — the daemon never crashes on missing lancedb.
+**No build step. No pip install.** Python 3.14-only (PEP 758 bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`). Optional: `openpyxl` (schedule), `lancedb` (memory bridge). Note: `memory/lancedb.py` (`LanceDbBackend`) lazy-imports `lancedb` inside `_ensure_table()`; when absent it runs with `available=False` and memory queries degrade gracefully — the daemon never crashes on missing lancedb. With `[memory].backend=auto` (default), `memory/factory.py` `create_backend()` falls back to `JsonMemoryBackend` (zero-dependency).
 
 ---
 
@@ -71,13 +71,13 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 │   ├── chiguo_personality.py  PersonalityTraits (8 dims) + PersonalityDelta + Deltas (231 lines)
 │   ├── chiguo_bayesian.py     UserStateEstimator (6 states) + BayesianLearner
 │   ├── schedule/ 包        schedule 数据面 parser.py (xskb.xlsx → schedule_cache.json → query) + parsing.py 纯解析 + query.py 策略 + holiday.py (节假日) + anniversary.py (纪念日) + override_store/plan_store/api (覆盖/计划/澄清存储) + sources/day_plan/resolve_when/attention/recall (检索与安排) + confirm + replan
-│   ├── memory_bridge.py       LanceDB read-only (lazy import, available=False degrade) + Ebbinghaus forgetting (506 lines)
+│   ├── memory/ 包            MemoryBackend abstraction (v1.8): base.py (available/search/random_memory/stats primitives + base-class Ebbinghaus) / lancedb.py LanceDbBackend (LanceDB read-only, lazy import, available=False degrade) / json.py JsonMemoryBackend (zero-dep fallback) / factory.py create_backend; memory_bridge.py kept as compat facade (MemoryBridge alias + CLI)
 │   └── chiguo_circadian.py    dual-bucket sleep-window learning (weekday/weekend + active-time merging)
 ├── chiguo_trigger.py       evaluate_triggers() → 13 trigger types (incl. v7 follow_up), sigmoid-weighted
 ├── chiguo_topics.py        TopicPicker — 8 sources (incl. v9 netease), Ebbinghaus-weighted memory
 ├── chiguo_composer.py      MessageComposer — Intent × Cue × Vibe (389 lines)
 ├── chiguo_rotation.py      Monthly log rotation → archive/
-├── chiguo_version.py       Project version single source (VERSION="1", +0.1 per round)
+├── chiguo_version.py       Project version single source (VERSION="1.8", +0.1 per round)
 └── chiguo_monitor.py       ChiguoMonitor + AlertManager + DecisionIndex (1196 lines)
 
 Supporting (not imported by daemon):
@@ -243,7 +243,7 @@ Intent × Cue × Vibe three-layer system:
 
 ## 9. Ship of Theseus — Config Parameters (chiguo_proactive.toml)
 
-277 lines, 20 sections: 遗留 section（已废弃，Task 14；仅 wechat_recipient 仍读取）`[memory]` `[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]` `[host]`（pi 调用配置，见 §11）。Key tunables:
+277 lines, 20 sections: 遗留 section（已废弃，Task 14；仅 wechat_recipient 仍读取）`[memory]`（v1.8 记忆后端抽象：backend/lancedb_path/lancedb_table/manual_path/ebbinghaus_*）`[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]` `[host]`（agent 调用配置：runner/agent_command/provider/model/…，见 §11）。Key tunables:
 
 | Section | Key params | Effect |
 |---------|-----------|--------|
@@ -293,6 +293,12 @@ Intent × Cue × Vibe three-layer system:
 > Current architecture: system crontab `chiguo-tick.sh` (send side, session `chiguo-send`) + wechat-bridge
 > `askPi` (reply side, session `chiguo-main`) + `scripts/pi-run.mjs` + `scripts/install_pi.sh`.
 > See `doc/PI_INTEGRATION.md`.
+>
+> v1.8 agent runner abstraction: `[host].runner` = `pi` (default, pi binary) or `command` (any CLI agent
+> via `[host].agent_command` array). In command mode pi-run.mjs executes
+> `<agent_command> --prompt <full prompt> --mode <analysis|send|extract|verify|recall|replan>` and parses
+> stdout JSON `{ok,text,analysis?,parsed?,raw?}` (NDJSON compatible); prompts are built from pi-run.mjs
+> per-mode templates. The RPC persistent mode stays pi-only (`WECHAT_BRIDGE_PI_RPC=1`).
 
 ### Send side — trigger-script gate (zero model calls on idle)
 1. **Cron**: system crontab `*/15 * * * *` runs `scripts/chiguo-tick.sh` (send side, session `chiguo-send`; registered by `scripts/install_pi.sh`)
@@ -396,7 +402,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | chiguo_rotation.py | 165 | Log rotation | rotate_if_needed(), force_rotate() |
 | chiguo_demo.py | 191 | Interactive demo | Demo class |
 | chiguo_version.py | 5 | Project version | VERSION |
-| memory_bridge.py | 506 | Memory access | MemoryBridge |
+| memory/ 包 | — | Memory abstraction | base.py: MemoryBackend (available/search/random_memory/stats + base-class Ebbinghaus); lancedb.py: LanceDbBackend; json.py: JsonMemoryBackend; factory.py: create_backend; memory_bridge.py: compat facade (MemoryBridge=LanceDbBackend alias + CLI) |
 | schedule/ 包 | — | Schedule/holiday/anniversary/arrangements | parser.py: refresh_schedule_cache; parsing.py; query.py(current_period/PERIOD_TIMES); holiday.py: HolidayParser; anniversary.py: AnniversaryManager; override_store.py; plan_store.py; api.py; sources.py; day_plan.py; resolve_when.py; attention.py; recall.py; confirm.py; replan.py |
 | solar_terms.py | 85 | Solar terms | SolarTerms |
 | netease/ | 939 | Netease package | bridge.py: NeteaseBridge (login/fetch_recent_play/fetch_daily_songs); service.py: NeteaseService (DI) |
@@ -408,7 +414,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 
 ## 16. Security Boundary
 
-**READ-ONLY**: `~/.pi-agent/memory/lancedb-pro` LanceDB — accessed only via `memory_bridge.py`.
+**READ-ONLY**: `~/.pi-agent/memory/lancedb-pro` LanceDB — accessed only via `memory/lancedb.py` (`LanceDbBackend`, default `[memory].backend=auto`).
 
 ---
 

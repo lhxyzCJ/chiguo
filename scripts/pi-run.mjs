@@ -20,6 +20,16 @@ export function resolveRepo(fileURL, env = process.env) {
 
 const REPO = resolveRepo(import.meta.url)
 const HOST = readToml(`${REPO}/chiguo_proactive.toml`)?.host ?? {}
+// v1.8 agent 后端抽象：runner=pi（默认，pi-agent 二进制）| command（任意 CLI agent，
+// 经 [host].agent_command 指定，契约见 doc/PI_INTEGRATION.md「接入自定义 agent」）。
+// PIRUN_RUNNER/PIRUN_AGENT_COMMAND 环境变量可覆盖（AGENT_COMMAND 为 JSON 数组字符串）。
+export const RUNNER = process.env.PIRUN_RUNNER ?? HOST.runner ?? 'pi'
+export const AGENT_COMMAND = (() => {
+  if (process.env.PIRUN_AGENT_COMMAND) {
+    try { return JSON.parse(process.env.PIRUN_AGENT_COMMAND) } catch { return [] }
+  }
+  return Array.isArray(HOST.agent_command) ? HOST.agent_command : []
+})()
 const PI_BIN = process.env.PI_BIN ?? 'pi'
 const PROVIDER = process.env.PIRUN_PROVIDER ?? HOST.provider ?? 'opencode-go'  // provider 可配：pi --provider 名（内置或 models.json 自定义）
 const MODEL = process.env.PIRUN_MODEL ?? HOST.model ?? 'deepseek-v4-flash'
@@ -66,6 +76,12 @@ export function readToml(p) {
       else if (v === 'true') v = true
       else if (v === 'false') v = false
       else if (/^-?\d+(\.\d+)?$/.test(v)) v = Number(v)
+      else if (v.startsWith('[') && v.endsWith(']')) {
+        // v1.8: 数组值（如 agent_command = ["node", "/path/x.mjs"]）→ 字符串数组
+        v = v.slice(1, -1).split(',')
+          .map((s) => s.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1'))
+          .filter((s) => s !== '')
+      }
       out[section][m[1]] = v
     }
   } catch {}
@@ -159,14 +175,35 @@ export function runPiBin(bin, args, opts) {
     c.on('close', (code, signal) => {
       // 非零退出但 stdout 已含完整回复（如 teardown/session 保存失败）→ 不丢回复；
       // parseNdjson 取最后 message_end，无完整回复仍按失败处理
-      if (code !== 0 && !parseNdjson(stdout)) {
-        const err = new Error(`pi exited ${code ?? `(${signal})`}${stderr ? `: ${stderr.trim().slice(0, 200)}` : ''}`)
+      if (code !== 0 && !parseNdjson(stdout) && !parseAgentOutput(stdout)) {
+        const err = new Error(`${bin} exited ${code ?? `(${signal})`}${stderr ? `: ${stderr.trim().slice(0, 200)}` : ''}`)
         err.code = code
         return reject(err)
       }
       resolve({ stdout })
     })
   })
+}
+
+/** 自定义 agent 契约输出解析：整段 JSON（含 ok 字段）→ 对象；否则 null（回退 NDJSON 路径）。 */
+export function parseAgentOutput(stdout) {
+  try {
+    const obj = JSON.parse(stdout)
+    if (obj && typeof obj === 'object' && !Array.isArray(obj) && 'ok' in obj) return obj
+  } catch {}
+  return null
+}
+
+/** v1.8: 按 runner 构造子进程命令。pi → null（调用方走 piArgs）；command → {bin, args}。
+ *  契约：<agent_command> --prompt <完整提示词> --mode <mode>，stdout 输出
+ *  {"ok":true,"text":...,"analysis"?:...,"parsed"?:...,"raw"?:...}（或 NDJSON 兼容）。
+ *  mode: analysis|send|other（run）/ extract|verify|recall|replan（runSchedule）。 */
+export function runnerCommand(mode, sysPrompt) {
+  if (RUNNER !== 'command' || !AGENT_COMMAND.length) return null
+  return {
+    bin: AGENT_COMMAND[0],
+    args: [...AGENT_COMMAND.slice(1), '--prompt', sysPrompt, '--mode', mode],
+  }
 }
 
 /** 共享 pi 参数构造(print 模式与 RPC 常驻复用):不含 -p/--mode/prompt。 */
@@ -191,27 +228,51 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
   } else if (sendMode) {
     sysPrompt = `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${prompt}`
   }
-  const piArgs = ['-p', ...buildBasePiArgs({ analysisMode }), '--mode', 'json', sysPrompt]
+  const mode = analysisMode ? 'analysis' : sendMode ? 'send' : 'other'
+  const custom = runnerCommand(mode, sysPrompt)
+  const bin = custom ? custom.bin : PI_BIN
+  const args = custom ? custom.args
+    : ['-p', ...buildBasePiArgs({ analysisMode }), '--mode', 'json', sysPrompt]
   const t0 = Date.now()
+  const tele = (ok, text, usage, error) => appendTelemetry({
+    ts: new Date().toISOString(), mode, runner: RUNNER,
+    dur_ms: Date.now() - t0, ok, text_len: text?.length ?? 0,
+    usage: usage ?? null, error: error?.slice(0, 200) ?? null,
+  })
   try {
-    const { stdout } = await exec(PI_BIN, piArgs, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
-    const text = parseNdjson(stdout)
-    const usage = parseUsage(stdout)
-    appendTelemetry({
-      ts: new Date().toISOString(), mode: analysisMode ? 'analysis' : sendMode ? 'send' : 'other',
-      dur_ms: Date.now() - t0, ok: !!text, text_len: text?.length ?? 0, usage: usage ?? null,
-    })
-    if (!text) return { ok: false, error: 'empty reply' }
-    if (analysisMode) {
-      const { analysis, reply } = extractAnalysis(text)
-      return { ok: true, text: reply, analysis }
+    const { stdout } = await exec(bin, args, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
+    let text = ''
+    let analysis = null
+    let usage = null
+    const agentJson = custom ? parseAgentOutput(stdout) : null
+    if (agentJson) {
+      if (agentJson.ok === false) {
+        tele(false, null, null, agentJson.error ?? 'agent error')
+        return { ok: false, error: agentJson.error ?? 'agent error' }
+      }
+      text = agentJson.text ?? ''
+      analysis = agentJson.analysis ?? null
+      usage = agentJson.usage ?? null
+      // 契约 JSON 未带 analysis 但文本含分析块 → 兼容剥离
+      if (analysisMode && analysis == null) {
+        const ex = extractAnalysis(text)
+        analysis = ex.analysis
+        text = ex.reply
+      }
+    } else {
+      text = parseNdjson(stdout)
+      usage = parseUsage(stdout)
+      if (analysisMode) {
+        const { analysis: an, reply } = extractAnalysis(text)
+        analysis = an
+        text = reply
+      }
     }
-    return { ok: true, text }
+    tele(!!text, text, usage)
+    if (!text) return { ok: false, error: 'empty reply' }
+    return analysisMode ? { ok: true, text, analysis } : { ok: true, text }
   } catch (err) {
-    appendTelemetry({
-      ts: new Date().toISOString(), mode: analysisMode ? 'analysis' : sendMode ? 'send' : 'other',
-      dur_ms: Date.now() - t0, ok: false, error: err.message?.slice(0, 200) ?? String(err),
-    })
+    tele(false, null, null, err.message)
     return { ok: false, error: err.message }
   }
 }
@@ -239,14 +300,28 @@ period?, to_period?, to_date?, course?, label?, match?}。
   } else if (mode === 'recall') {
     sysPrompt = `你是迟菓。依据检索事实回答哥哥的问题。只依据事实回答,禁止编造;检索无结果时反问用户('哥哥,那是什么时候呀?我帮你记上')。\n\n检索事实：${extra.facts}\n\n消息：${prompt}`
   }
-  const piArgs = ['-p', '--provider', PROVIDER, '--model', MODEL,
-    '--session-id', SESSIONS[mode] || SESSION_ID, '--no-context-files',
-    '--append-system-prompt', PERSONALITY, '--append-system-prompt', GUIDE,
-    '--append-system-prompt', TOOLS,
-    '--thinking', THINKING, '--mode', 'json', sysPrompt]
+  const custom = runnerCommand(mode, sysPrompt)
+  const bin = custom ? custom.bin : PI_BIN
+  const args = custom ? custom.args
+    : ['-p', '--provider', PROVIDER, '--model', MODEL,
+      '--session-id', SESSIONS[mode] || SESSION_ID, '--no-context-files',
+      '--append-system-prompt', PERSONALITY, '--append-system-prompt', GUIDE,
+      '--append-system-prompt', TOOLS,
+      '--thinking', THINKING, '--mode', 'json', sysPrompt]
   try {
-    const { stdout } = await exec(PI_BIN, piArgs, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
-    const text = parseNdjson(stdout)
+    const { stdout } = await exec(bin, args, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
+    let text = ''
+    const agentJson = custom ? parseAgentOutput(stdout) : null
+    if (agentJson) {
+      if (agentJson.ok === false) return { ok: false, error: agentJson.error ?? 'agent error' }
+      // 契约 JSON 直接带 parsed → 免块解析（自定义 agent 的最短路径）
+      if (agentJson.parsed !== undefined) {
+        return { ok: true, parsed: agentJson.parsed, raw: agentJson.raw ?? agentJson.text ?? '' }
+      }
+      text = agentJson.raw ?? agentJson.text ?? ''
+    } else {
+      text = parseNdjson(stdout)
+    }
     if (!text) return { ok: false, error: 'empty reply' }
     const block = extractBlock(text, marker)
     if (!block) {

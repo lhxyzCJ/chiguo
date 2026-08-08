@@ -345,3 +345,38 @@ t('slash: /new 移走最近 chiguo-main 会话文件到备份目录', async () =
   const backups = path.join(os.homedir(), '.chiguo', 'session-backups')
   assert.ok(fs.readdirSync(backups).some((f) => f.endsWith('-chiguo-main.jsonl')), '备份文件存在')
 })
+t('slash: /记忆 → memory_bridge.py --stats（经 memory 抽象 CLI，不硬编码 pi 扩展）', async () => {
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const td = fs.mkdtempSync(path.join(os.tmpdir(), 'slash-mem-'))
+  const fake = path.join(td, 'fake-mem.mjs')
+  fs.writeFileSync(fake, `
+const args = process.argv.slice(2)
+if (args[0] === '--stats') console.log(JSON.stringify({ total_memories: 42, available: true }))
+else if (args[0] === '--search') {
+  if (args[1] !== '不存在的东西') console.log('[preferences] 一起吃过火锅\\n[events] 火锅店新开张')
+}
+`)
+  const prev = [process.env.WECHAT_BRIDGE_MEMORY_PY, process.env.WECHAT_BRIDGE_MEMORY_BRIDGE, process.env.CHIGUO_REPO]
+  process.env.WECHAT_BRIDGE_MEMORY_PY = process.execPath
+  process.env.WECHAT_BRIDGE_MEMORY_BRIDGE = fake
+  process.env.CHIGUO_REPO = td
+  try {
+    const r = await executeSlashCommand(spawn, { action: 'memory_stats' }, td)
+    assert.strictEqual(r.ok, true)
+    assert.ok(r.reply.includes('42'), r.reply)
+    const r2 = await executeSlashCommand(spawn, { action: 'memory_search', arg: '火锅' }, td)
+    assert.strictEqual(r2.ok, true)
+    assert.ok(r2.reply.includes('一起吃过火锅'), r2.reply)
+    assert.ok(r2.reply.includes('火锅店新开张'), '最多 3 条全部列出')
+    const r3 = await executeSlashCommand(spawn, { action: 'memory_search', arg: '不存在的东西' }, td)
+    assert.ok(r3.reply.includes('没印象'), r3.reply)
+  } finally {
+    for (let i = 0; i < 3; i++) {
+      if (prev[i] === undefined) delete process.env[['WECHAT_BRIDGE_MEMORY_PY', 'WECHAT_BRIDGE_MEMORY_BRIDGE', 'CHIGUO_REPO'][i]]
+      else process.env[['WECHAT_BRIDGE_MEMORY_PY', 'WECHAT_BRIDGE_MEMORY_BRIDGE', 'CHIGUO_REPO'][i]] = prev[i]
+    }
+    fs.rmSync(td, { recursive: true, force: true })
+  }
+})
