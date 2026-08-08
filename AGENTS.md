@@ -14,6 +14,17 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 - **Security boundary**: LanceDB 记忆库位于 `~/.pi-agent/memory/lancedb-pro`，只读访问经 `memory/` 包（默认 `LanceDbBackend`；`memory_bridge.py` 为兼容门面）。
 - Before fixing: make a plan/todolist, dispatch parallel subagents, and self-audit with subagents after finishing. Subagents inherit the main model (do not override via `model` param); never use opus without explicit user authorization.
 
+## 工程原则
+
+1. 不保留向后兼容，过时路径直接删，别加兼容层
+2. 选满足当前需求的最简实现，别搞多余抽象配置
+3. 先跑通最小可用版本，再叠新功能，别换现有能跑的代码
+4. 组件模块化，业务关注点分离
+5. 优先用成熟维护的第三方库，没理由别重复造轮子
+6. 先查现有项目依赖的能力，再考虑加包或自研
+7. 架构决策看长期，别用临时凑合用的过渡方案
+8. 参考成熟产品的验证方案，别从零发明
+
 ## Test & run
 
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
