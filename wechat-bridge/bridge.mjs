@@ -33,15 +33,15 @@ import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand } from './command-detect.mjs'
-import { parseNdjson, extractAnalysis, resolveRepo } from '../scripts/pi-run.mjs'
+import { parseNdjson, extractAnalysis, resolveRepo, RUNNER } from '../scripts/pi-run.mjs'
 
 const execFileP = promisify(execFile)
 
 const DEBOUNCE_MS = 4000
 const PI_RUN_SCRIPT = process.env.WECHAT_BRIDGE_PI_RUN
-// RPC 常驻(仿 OpenClaw gateway):env WECHAT_BRIDGE_PI_RPC=1 启用;失败自动回退 spawn
-const PI_RPC_ENABLED = process.env.WECHAT_BRIDGE_PI_RPC === '1'
-  ?? new URL('../scripts/pi-run.mjs', import.meta.url).pathname
+// RPC 常驻(仿 OpenClaw gateway):env WECHAT_BRIDGE_PI_RPC=1 显式启用;失败自动回退 spawn。
+// v1.8: RPC 是 pi 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
+const PI_RPC_ENABLED = RUNNER === 'pi' && process.env.WECHAT_BRIDGE_PI_RPC === '1'
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 // 仓库根 = 本文件位置推导（可移植，随仓库克隆到任何路径）

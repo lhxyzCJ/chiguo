@@ -33,7 +33,7 @@ else
     warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
 fi
 
-# ── 3. 全量自检(ci-test.sh 单一入口: 35 py + 10 script + stub 自举) ──
+# ── 3. 全量自检(ci-test.sh 单一入口: 36 py + 10 script + stub 自举) ──
 say "运行全量自检(bash scripts/ci-test.sh,任一失败即中止) ..."
 bash "$PROJECT_DIR/scripts/ci-test.sh" || fail "全量测试失败,中止部署"
 say "全部测试通过 ✓"

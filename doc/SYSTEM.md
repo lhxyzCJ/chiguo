@@ -17,7 +17,7 @@
 │  ├─ 时间（hour, weekday, week_num）                                │
 │  ├─ 节假日（schedule.holiday → 2026 国务院安排）                     │
 │  ├─ 课表（schedule/ 包 → xskb.xlsx）                              │
-│  ├─ 记忆（memory_bridge → LanceDB 只读（历史记忆库）+ Ebbinghaus）     │
+│  ├─ 记忆（memory/ 包 → LanceDB 只读（历史记忆库）+ Ebbinghaus）       │
 │  ├─ 交互历史（silent_hours, messages_today）                       │
 │  ├─ 情绪状态（loneliness, anxiety, affection, energy, tsundere）   │
 │  ├─ 多维人格（Big Five + 角色特质，缓慢演变）                      │
@@ -53,7 +53,7 @@ chiguo_daemon.py (DecisionEngine)
   │     │                    存储 override_store.py / plan_store.py / api.py；检索与安排 sources.py /
   │     │                    day_plan.py / resolve_when.py / attention.py / recall.py；确认 confirm.py；
   │     │                    复盘 replan.py）
-  │     ├─ memory_bridge.py    → LanceDB 只读桥接 + Ebbinghaus 遗忘
+  │     ├─ memory/ 包         → 记忆后端抽象（LanceDB 只读/JSON 兜底可替换）+ Ebbinghaus 遗忘
   │     └─ chiguo_circadian.py → 生物钟学习（双作息双桶分桶学习：工作日/周末独立窗口 + 置信度，
   │                             听歌活跃合并计数）(v7 NEW, v8 双桶)
   ├─ netease/ 包 → 数据面 bridge.py（NeteaseBridge 实例）+ 策略层 service.py（NeteaseService DI）：
@@ -508,7 +508,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
 
   ② LanceDB 只读（pi-agent memory-lancedb-pro 记忆系统）
      路径: ~/.pi-agent/memory/lancedb-pro/memories.lance（~ 展开为 $HOME，v10 起多机可移植）
-     访问: memory_bridge.py（FTS BM25 关键词搜索 + Ebbinghaus 加权）
+     访问: memory/ 包（默认 LanceDbBackend：FTS BM25 关键词搜索 + Ebbinghaus 加权；[memory].backend 可替换）
      表结构: id, text, vector(1024d), category, scope, importance, timestamp, metadata
      降级: LanceDB 不可用 → available=False → 自动跳过，JSON 兜底
      - lancedb 在 `_ensure_table()` 内**惰性导入**：未安装时 daemon 照常启动（import 失败也被 available=False 捕获）
@@ -519,7 +519,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
      R = e^(-t / (S × importance))
      新/重要记忆权重高，旧/不重要记忆权重低
      S=168h（7天），min_weight=0.1（不彻底遗忘）
-     memory_bridge 导出 ebbinghaus_weight(), search_with_forgetting(), random_memory_with_forgetting()
+     MemoryBackend 基类共享 ebbinghaus_weight()/search_with_forgetting()/user_relevant_with_forgetting()/random_memory_with_forgetting()（后端无关）
 ```
 
 ---
@@ -533,12 +533,12 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 | 来源 | 权重 | 数据源 | 说明 |
 |------|:--:|------|------|
 | schedule | 0.30 | schedule/ 包（parser/query/holiday） | 课表/假期/周末/调休 |
-| memory | 0.25 | memory_bridge (LanceDB + Ebbinghaus) | 随机高重要性记忆 |
+| memory | 0.25 | memory/ 包 (LanceDB + Ebbinghaus) | 随机高重要性记忆 |
 | general | 0.25 | 当前小时数 | 按时段通用关心 |
 | weather_season | 0.20 | 当前月份 | 季节感知 |
 | anniversary | 0.15 | schedule/anniversary | 纪念日 |
 | solar_terms | 0.10 | solar_terms | 24节气 |
-| preference_followup | 0.10 | memory_bridge (LanceDB) | 偏好追问 |
+| preference_followup | 0.10 | memory/ 包 (LanceDB) | 偏好追问 |
 | netease | 0.12 | NeteaseService (netease/service.py) | v9: 网易云音乐话题（策略层委托） |
 
 - `chiguo_topics.py`: TopicPicker 类，`pick(now)` → weighted_trigger_choice
@@ -666,7 +666,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | 文件 | 职责 | 依赖 |
 |------|------|------|
 | `chiguo_daemon.py` | **主入口**。决策引擎，输出 JSON | state, trigger, topics, composer |
-| `chiguo_state.py` | 情绪引擎 + 多维人格 + Bayesian + 课表 + 节假日 + 记忆 + circadian/pending_topics + 双作息迁移 (v8) | math, personality, bayesian, schedule, memory_bridge, chiguo_circadian |
+| `chiguo_state.py` | 情绪引擎 + 多维人格 + Bayesian + 课表 + 节假日 + 记忆 + circadian/pending_topics + 双作息迁移 (v8) | math, personality, bayesian, schedule, memory, chiguo_circadian |
 | `chiguo_circadian.py` | 生物钟学习：双作息双桶分桶（weekday_*/weekend_* 独立估计 + 听歌活跃合并计数）（v7 新增，v8 双桶，纯函数） | 无 |
 | `netease/bridge.py` | 网易云 API 桥接 数据面（NeteaseBridge 实例化）：`fetch_recent_play` 最近播放记录（睡眠窗口内夜间活跃反证 + netease/recent_play_cache.json 缓存）（v8）；`fetch_daily_songs` 每日推荐 + `_api_get` 有限重试（瞬时/5xx 重试 retry_count 次 + 退避）与每日推荐 schema 过滤 + QR 登录（v9） | 无（requests） |
 | `netease/service.py` | 网易云策略层（v9，DI）：`NeteaseService` 健康探针/登录失效检测/故障降级链（netease_fault 话题）/音乐+故障双日配额（netease/netease_health.json 原子写）/加权随机选源+换源兜底/peek-consume 两阶段（未选中不消费配额）/话题素材组装（不含链接，零 LLM）+ 播放反证单入口 `fetch_play_proof`；测试 `tests/test_netease_service.py` | netease.bridge |
@@ -678,11 +678,11 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态，在线学习）（v4） | 无 |
 | `schedule/` 包 | 课表/假期/纪念日/安排（15 模块）：`parser.py` 数据面（xlsx → JSON cache → 刷新）/ `parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `holiday.py` 节假日判断（2026 国务院安排 + 调休）/ `anniversary.py` 纪念日 CRUD / `override_store.py` 手动覆盖存储（0600）/ `plan_store.py` 日计划存储（0600）/ `api.py` 安排读写门面（校验 + 澄清接口）/ `sources.py` 课表检索源 / `day_plan.py` 日计划组装 / `resolve_when.py` 触发时机解析 / `attention.py` 注意力快照 / `recall.py` 安排回忆检索 / `confirm.py` 写后确认 / `replan.py` 复盘（--check 明日计划） | openpyxl（可选，惰性导入） |
 | `solar_terms.py` | 24 节气日期查询（零依赖） | 无 |
-| `memory_bridge.py` | LanceDB 只读桥接 + Ebbinghaus 遗忘 | lancedb（惰性导入，可选；缺了降级 JSON） |
+| `memory/` 包 | **记忆后端抽象（v1.8 解耦，任意替换）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）/ `lancedb.py` LanceDbBackend（原 memory_bridge.py 实现迁移）/ `json.py` JsonMemoryBackend（零依赖兜底）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=LanceDbBackend 别名 + CLI） | lancedb（LanceDbBackend 惰性导入，可选；缺了降级 JSON） |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、LanceDB、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
-| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
+| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.8"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
 | `chiguo_state.json` | 运行时状态（STATE_VERSION=10，首次运行后生成；v10 含 `personality_baseline`/`personality_history`） | 无 |
@@ -707,14 +707,14 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_personality.py` | 人格系统单元测试（19 用例） | chiguo_personality |
 | `tests/test_bayesian.py` | Bayesian 推断测试（18 用例） | chiguo_bayesian |
 | `tests/test_composer.py` | 消息组合测试（10 用例） | chiguo_composer |
-| `tests/test_ebbinghaus.py` | Ebbinghaus 遗忘测试（8 用例） | memory_bridge |
+| `tests/test_ebbinghaus.py` | Ebbinghaus 遗忘测试（8 用例） | memory.base |
 | `tests/test_longing.py` | 概率累积测试（8 用例） | chiguo_math |
 | `tests/test_escape_valve.py` | 逃生阀单元测试（15 用例，含 v7 sleeping_guard 降级 + 0.85 对照） | chiguo_state, chiguo_trigger |
 | `tests/test_feedback.py` | 反馈闭环测试（10 用例） | chiguo_state, chiguo_monitor |
 | `tests/test_trigger.py` | 触发器引擎单元测试（16 用例：softmax 竞争/anxiety 归一化/时间窗口/memory tz 防护） | chiguo_trigger |
-| `tests/test_topics.py` | 话题选择器单元测试（23 用例：8 源权重/人格调制/Ebbinghaus 路径/v9 netease 注入、门控参数、选中才消费、fail-closed） | chiguo_topics, memory_bridge, netease.service |
+| `tests/test_topics.py` | 话题选择器单元测试（23 用例：8 源权重/人格调制/Ebbinghaus 路径/v9 netease 注入、门控参数、选中才消费、fail-closed） | chiguo_topics, memory, netease.service |
 | `tests/test_circadian.py` | 生物钟学习单元测试（34 用例：环形滑动窗口/置信度/损坏数据防护/学习窗口作用于门禁/双桶分桶/迁移/按桶选窗/record_active 合并） | chiguo_circadian |
-| `tests/test_followup.py` | 接话茬单元测试（14 用例：pending 管理/钟形权重/多话题/记忆兜底/FakeBridge） | chiguo_state, chiguo_trigger, memory_bridge |
+| `tests/test_followup.py` | 接话茬单元测试（14 用例：pending 管理/钟形权重/多话题/记忆兜底/FakeBridge） | chiguo_state, chiguo_trigger, memory |
 | `tests/test_netease_proof.py` | 听歌反证单元测试（31 用例：fetch_recent_play 解析/缓存/降级 + `_api_get` 重试策略与每日推荐 schema 过滤 + 非 dict 响应降级 + 窗口内反证 sleeping 压制/按播放时刻分桶/逃生阀放行 + netease 跨触发注入规则） | netease.bridge, chiguo_daemon |
 | `tests/test_netease_service.py` | 网易云策略层单元测试（30 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题绕过门控+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | netease.service, netease.bridge |
 | `tests/test_composer_trade.py` | 组合权衡测试（5 用例：cue 权重重排、trade_tsundere 交易式撒娇） | chiguo_composer |
@@ -731,7 +731,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_isolation.py` | 引擎隔离测试（2 用例：engine 不 import schedule/state 仅桥接） | chiguo_daemon |
 | `tests/test_schedule_plan.py` | 复盘计划测试（2 用例：dirty 矩阵/skip 与校验） | schedule.replan, schedule.plan_store |
 | `tests/test_schedule_cli.py` | 安排 CLI 测试（3 用例：--schedule-change 成功与形状/--schedule-recall 形状） | chiguo_daemon, schedule.api |
-| `scripts/pi-run.mjs` | **pi 调用统一封装**（Phase 4）：生成/分析两模式，`[host]` 配置 + PIRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage | node |
+| `scripts/pi-run.mjs` | **agent 调用统一封装**（Phase 4，v1.8 runner 抽象）：runner=pi（默认，pi-agent 二进制）/ runner=command（任意 CLI agent，`<agent_command> --prompt <完整提示词> --mode <mode>` 统一契约，stdout JSON/NDJSON 兼容）；生成/分析/安排多模式，`[host]` 配置 + PIRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage；导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand | node |
 | `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → pi-run（PIRUN_SESSION=chiguo-send）→ bridge /send → --record-send | bash, node, curl |
 | `scripts/install_pi.sh` | **pi 环境安装器**（Phase 4）：memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟（三模式幂等） | bash |
 | `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askPi 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
@@ -756,7 +756,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `scripts/service.sh` | 服务统一管理（ollama + wechat-bridge）：`autostart`（systemd 开机自启，写 `/etc/systemd/system/chiguo-bridge.service` + `enable --now`）/ `temp`（临时启动，nohup 后台 + pidfile `~/.chiguo/run/bridge-temp.pid`，不注册自启）/ `status` / `stop` / `uninstall`；两模式互斥接管（启动前停对方实例，避免 18790 端口冲突）；全子命令支持 `--dry-run`；测试注入 `CHIGUO_REPO_OVERRIDE/CHIGUO_SYSTEMD_DIR/CHIGUO_SYSTEMCTL/CHIGUO_PID_DIR/CHIGUO_NODE` | bash, systemd |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
 
-共计 **600+** 个测试用例（35 个 py 测试文件 + 10 个脚本测试；另含 node 侧 test_pi_run.mjs 31 用例 + test_bridge_askpi.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_pi.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
+共计 **600+** 个测试用例（36 个 py 测试文件 + 10 个脚本测试；另含 node 侧 test_pi_run.mjs 31 用例 + test_bridge_askpi.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_pi.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `tests/test_holiday_parser.py` 9/9 用例通过。
@@ -861,7 +861,27 @@ uv run python -m schedule.holiday
 uv run python -m schedule.holiday 2026-10-01
 ```
 
-### memory_bridge.py
+### memory/ 包（记忆后端抽象，v1.8）
+
+v1.8 起记忆模块解耦为 `memory/` 包，可任意替换（chiguo_state.py 经 `create_backend(mem_cfg, base_dir)` 接入）：
+
+- `memory/base.py` — `MemoryBackend` 抽象基类：四原语 `available`/`search()`/`random_memory()`/`stats()`（子类实现）；
+  Ebbinghaus 遗忘包装（`ebbinghaus_weight`/`search_with_forgetting`/`user_relevant_with_forgetting`/`random_memory_with_forgetting`）
+  与 `user_relevant` 多关键词召回等通用逻辑在基类共享，后端只负责「存什么、怎么搜」
+- `memory/lancedb.py` — `LanceDbBackend`（原 memory_bridge.py 实现迁移）：LanceDB FTS 只读（pi 记忆扩展写入）
+- `memory/json.py` — `JsonMemoryBackend`：手动记忆 JSON 文件（`manual_path`），零依赖兜底
+- `memory/factory.py` — `create_backend(config, base_dir)` 工厂，按 toml `[memory].backend` 选择后端
+
+**backend 四取值**（toml `[memory].backend`，默认 `auto`）：
+
+| 取值 | 行为 |
+|------|------|
+| `auto` | LanceDB 可导入 → LanceDbBackend；否则 JsonMemoryBackend 兜底 |
+| `lancedb` | 显式 LanceDB（库缺失/路径不可用 → available=False 优雅降级） |
+| `json` | 显式 JSON 手动记忆文件（`manual_path`） |
+| `module.path.ClassName` | 自定义后端类（importlib 动态加载，须为 MemoryBackend 子类；实例化 kwargs = [memory] 段其余键） |
+
+`memory_bridge.py` 保留为兼容门面（`MemoryBridge = LanceDbBackend` 别名 + CLI 保留，经工厂创建、尊重 toml backend）：
 
 ```bash
 # 统计
@@ -872,9 +892,6 @@ python3 memory_bridge.py --search "菓菓"
 
 # 随机记忆
 python3 memory_bridge.py --random
-
-# 最近记忆
-python3 memory_bridge.py --recent 168
 ```
 
 特性：
@@ -985,9 +1002,11 @@ idle reason 枚举：
 [wechat]     # 微信发送目标（chiguo-tick.sh / wechat-bridge.sh 按 key 名读取发送目标）
 wechat_recipient = "owner@im.wechat"     # 发送目标占位符：登录后自动注入真实 openid；也可手动配真实值（tick/bridge 管理脚本按 key 名读取）
 
-[host]       # pi 调用配置（Phase 4；scripts/pi-run.mjs 读取；PIRUN_* 环境变量可覆盖）
+[host]       # agent 调用配置（Phase 4；scripts/pi-run.mjs 读取；PIRUN_* 环境变量可覆盖）
 provider = "opencode-go"                 # pi provider（= auth.json 键名；支持任意 pi provider，见 PI_INTEGRATION.md 七）
 model = "deepseek-v4-flash"
+runner = "pi"                            # v1.8 agent runner 抽象：pi（默认，pi-agent 二进制）/ command（任意 CLI agent）
+agent_command = ["node", "/path/to/agent.mjs"]  # runner=command 必填（数组：命令+固定参数）；pi 模式忽略；PIRUN_RUNNER/PIRUN_AGENT_COMMAND 覆盖
 thinking_level = "high"                  # off/minimal/low/medium/high/xhigh/max
 session_id = "chiguo-main"               # 回复侧会话（bridge askPi）
 send_session_id = "chiguo-send"          # 主动发送会话（chiguo-tick.sh）——与回复会话分离，消除跨进程并发 turn
@@ -999,10 +1018,11 @@ age = 16
 identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
 
 [memory]
-lancedb_path = "~/.pi-agent/memory/lancedb-pro"  # LanceDB 路径（~ 展开为 $HOME）
+backend = "auto"                        # v1.8 记忆后端抽象：auto（默认）/ lancedb / json / module.path.ClassName（自定义）
+lancedb_path = "~/.pi-agent/memory/lancedb-pro"  # LanceDB 路径（~ 展开为 $HOME；backend=lancedb/auto 使用）
 lancedb_table = "memories"              # 表名
-manual_path = "data/chiguo_memories.json"  # 手动记忆文件
-ebbinghaus_strength = 168               # 记忆强度 S（小时），168h=7天（v4）
+manual_path = "data/chiguo_memories.json"  # 手动记忆文件（backend=json 数据源；auto 时兜底）
+ebbinghaus_strength = 168               # 记忆强度 S（小时），168h=7天（v4；Ebbinghaus 在 MemoryBackend 基类）
 ebbinghaus_min_weight = 0.1             # 最低权重，不彻底遗忘（v4）
 
 [emotion]
@@ -1214,8 +1234,9 @@ disk_critical_mb = 100                 # 磁盘剩余小于此 → critical
 memory_warn_mb = 500                   # 进程 RSS 大于此 → warn
 memory_critical_mb = 1000              # 进程 RSS 大于此 → critical
 
-[memories]
-path = "data/chiguo_memories.json"        # 手动记忆文件
+[memory]        # 记忆后端抽象（v1.8；backend 四取值见「七、CLI 参考 → memory/ 包」）
+backend = "auto"                          # auto（默认）/ lancedb / json / module.path.ClassName
+manual_path = "data/chiguo_memories.json" # 手动记忆文件（backend=json 数据源；auto 时兜底）
 ```
 
 ---
@@ -1538,9 +1559,17 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 
 ---
 
-## 十一、LLM 集成（pi-agent，Phase 4）
+## 十一、LLM 集成（agent 后端抽象，Phase 4）
 
 详见 `PI_INTEGRATION.md`（当前架构）。关键链路：
+
+v1.8 起 agent 模块可任意替换：`scripts/pi-run.mjs` 抽象 agent runner（toml `[host].runner`，默认 `pi`）：
+- `runner = "pi"`（默认）：pi-agent 二进制，provider/model/session 见 `[host]` 与 PI_INTEGRATION.md 七
+- `runner = "command"`：任意 CLI agent —— pi-run.mjs 按统一契约执行
+  `<agent_command> --prompt <完整提示词> --mode <analysis|send|extract|verify|recall|replan>`，
+  stdout 期望 JSON `{ok,text,analysis?,parsed?,raw?}`（兼容 NDJSON）；提示词由 pi-run.mjs 按模式模板构造，语义与 pi 一致
+- bridge 的 RPC 常驻模式仅 `runner=pi` 且 `WECHAT_BRIDGE_PI_RPC=1` 时启用；`chiguo_envcheck.py` 的 check_pi
+  支持 runner/agent_command 参数按 runner 检查
 
 1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_pi.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/pi-run.mjs`（`PIRUN_SESSION=chiguo-send`）按 SUN2.md 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
 2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/pi-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，600s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
@@ -1642,7 +1671,7 @@ rm <仓库根目录>/chiguo_state.json
 1. **零 LLM token 消耗** — 决策引擎纯 Python 数学，不调用任何 LLM
 2. **只读不写** — 对记忆库 LanceDB 只读，不获取文件锁
 3. **解耦记忆系统** — 所有强依赖通过 TOML 配置注入，路径/表名/通道均可改
-4. **优雅降级** — LanceDB 不可用（未安装/连接失败，`memory_bridge` 惰性导入 + 60s 节流重试）→ 自动跳过，JSON 记忆兜底；课表不可用 → 默认开放
+4. **优雅降级** — LanceDB 不可用（未安装/连接失败，`memory.lancedb.LanceDbBackend` 惰性导入 + 60s 节流重试；backend=auto 时工厂自动切 JsonMemoryBackend）→ 自动跳过，JSON 记忆兜底；课表不可用 → 默认开放
 5. **确定性优先** — 课表/节假日用确定性解析，不靠 LLM
 6. **平滑概率** — sigmoid 替代硬阈值，Hawkes 自激过程替代固定间隔，半衰期替代线性增减
 7. **决策/生成分离** — daemon 只输出结构化 JSON，消息生成由 pi-agent 完成（Phase 4）
@@ -1661,7 +1690,7 @@ rm <仓库根目录>/chiguo_state.json
 在线学习：BayesianLearner 用指数移动平均（lr=0.05）从观察中调优似然参数。
 
 ### Ebbinghaus 遗忘曲线
-参考 MATE。R = e^(-t / (S × importance))。新/重要记忆权重高，旧/不重要记忆权重低。S=168h（7 天），min_weight=0.1（不彻底遗忘）。memory_bridge 新增 ebbinghaus_weight(), search_with_forgetting(), random_memory_with_forgetting()。
+参考 MATE。R = e^(-t / (S × importance))。新/重要记忆权重高，旧/不重要记忆权重低。S=168h（7 天），min_weight=0.1（不彻底遗忘）。MemoryBackend 基类共享 ebbinghaus_weight(), search_with_forgetting(), user_relevant_with_forgetting(), random_memory_with_forgetting()（各后端通用）。
 
 ### 概率累积（Longing）
 参考 revive-companion。不发消息时 `accumulated_lambda` 递增（每次 +growth_factor × held_count）。上限 base×5。焦虑 > `anxiety_block_threshold`（70）时阻塞累积。用户回复后 λ 回退（decay_factor=0.5）。
@@ -1707,6 +1736,7 @@ rm <仓库根目录>/chiguo_state.json
 | **v8** | **2026-07-31** | **用户状态渠道增强：双作息分桶学习（工作日/周末两桶独立窗口 + 调休/假期修正，STATE_VERSION 7→8）+ 听歌双向联动（睡眠窗口内播放反证：sleeping 置信度 ×0.5 压制 + record_active 反向校正生物钟）** |
 | **v9** | **2026-07-31** | **网易云音乐渠道增强：对话内容源 + 鲁棒性 —— TopicPicker 第 8 源 netease（netease_weight=0.12）+ 网易云策略层 chiguo_netease（健康探针/登录失效检测/降级链/共享日配额 2/随机选源/peek-consume 两阶段，netease_health.json；STATE_VERSION 不变，无状态迁移）** |
 | **v10** | **2026-08-02** | **人格基线回归 + personality_history（STATE_VERSION 9→10）**：`PersonalityTraits.regress_to_baseline()` 每步 `v += (baseline - v) * regress_rate` 向构造时初始值软回归（基线随状态持久化 `personality_baseline`，旧状态回退 toml `[personality]` 初始值；速率 `regress_rate` 默认 0.01，0=关闭）——修复热情回复甜妹化/持续沉默极端化两类人格漂移；`adapt_personality` 每次追加 `{ts, dims}` 到 `personality_history`（滚动 200 条持久化） |
+| **v1.8** | **2026-08-09** | **后端解耦：agent 与记忆模块可任意替换**：新增 `memory/` 包——base.py（MemoryBackend 抽象基类：available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）、lancedb.py（LanceDbBackend，原 memory_bridge.py 实现迁移）、json.py（JsonMemoryBackend 零依赖兜底）、factory.py（create_backend 工厂），chiguo_state.py 改经 `create_backend(mem_cfg, base_dir)` 接入；memory_bridge.py 降为兼容门面（MemoryBridge=LanceDbBackend 别名 + CLI 保留）；toml 新增 `[memory].backend`（auto/lancedb/json/module.path.ClassName，默认 auto）与 `[host].runner`（pi/command，默认 pi）+ `[host].agent_command`（数组）；pi-run.mjs 抽象 agent runner（runner=command 时按 `<cmd> --prompt <完整提示词> --mode <mode>` 统一契约调用任意 CLI agent，stdout JSON/NDJSON 兼容，导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand，readToml 支持数组解析）；bridge RPC 仅 runner=pi 且 WECHAT_BRIDGE_PI_RPC=1 启用；envcheck check_pi 支持 runner/agent_command、新增 check_json_memory、run_checks 按 backend 分流；monitor health 第 9 项按 backend 分流；测试计数 36 py + 10 script（新增 tests/test_memory_backends.py） |
 | **v1.7** | **2026-08-02** | **README 开源化重构 + 项目整洁化**：README 重写为面向开发者的开源项目文档（中文为主 + 每节英文精炼段 + 双语 TOC；定位边界/组件依赖表/迟菓由来（三色绘恋系列官方角色，合规声明：非官方二次演绎、版权归绘恋企划屋/山百合、异议即移除）/公开前清理警示（登录态与对话随 git 跟踪）/mermaid 双链路架构图/脱敏示例（赛博生命口径：纯消息域无现实互动）/快速开始（uv sync）/接入任意模型/配置/自定义人格/FAQ/贡献）；新增 `pyproject.toml`（核心零依赖 + optional extras：memory=lancedb、schedule=openpyxl）；spec/plan 归档迁移至项目外 `~/chiguo-meta/`（AGENTS.md 约定）；清理 `.superpowers/` 台账、`archive/` 归档、`.claude/` 移出 git；doc/README.md 收敛运维速查；SYSTEM.md 模块表修正 pandas 幽灵依赖；生产 venv 升级为 `uv sync --all-extras`（记忆启用） |
 | **v1.6** | **2026-08-02** | **后端 provider 去绑定（接入任意模型 API）**：表述全部改为「pi-agent 后端、provider 可配、opencode-go 为默认示例」；`chiguo_envcheck.py` check_pi_auth 随 toml [host].provider（新增 home 注入参数）；`install_pi.sh` 阶段 0/5/7 provider 化（key 环境变量通用名 `PI_API_KEY`，兼容回退 `OPENCODE_API_KEY`）；`chiguo-tick.sh`/`wechat-bridge.sh` 的 OPENCODE_API_KEY 注入优先 opencode-go 条目（memory 扩展端点固定）、无则回退 [host].provider 条目；`doc/PI_INTEGRATION.md` 新增「七、接入任意模型 API」（内置 provider 切换 + `~/.pi/agent/models.json` 自定义 OpenAI 兼容端点，完全依赖 pi 官方机制） |
 | **v1.5** | **2026-08-02** | **pi 假死检测与微信告警**：新增 `scripts/pi_health.py` 状态机（flock+原子写 `pi_health.json`，[health].fail_threshold=3，transition 去重，首次失败原因保留）；bridge 的 askPi 成败记账（transition 时 bot.send 告警/恢复，记账崩溃不阻塞回复流）；chiguo-tick.sh pi-run 成败记账（transition 时 curl /send 告警/恢复，原因取 pi-run error 字段）；零新增 pi 调用（复用真实流量记账）、pi-run.mjs/pi 二进制零改动；空闲期假死盲区接受（延迟到下次真实交互，设计文档 ~/chiguo-meta/specs/2026-08-02-pi-health-alert-design.md（项目外归档）） |

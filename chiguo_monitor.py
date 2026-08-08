@@ -56,6 +56,8 @@ class ChiguoMonitor:
             "memory_warn_mb": 500,
             "memory_critical_mb": 1000,
             "lancedb_path": "~/.pi-agent/memory/lancedb-pro",
+            "backend": "auto",          # v1.8: 记忆后端抽象（auto/lancedb/json/自定义）
+            "manual_path": "data/chiguo_memories.json",
         }
         candidates = [config_path]
         if not config_path.is_absolute():
@@ -70,6 +72,9 @@ class ChiguoMonitor:
                 if "lancedb_path" not in monitor:
                     defaults["lancedb_path"] = (cfg.get("memory", {}).get("lancedb_path")
                                                 or defaults["lancedb_path"])
+                # v1.8: 记忆后端与手动记忆路径单一事实来源 = [memory] 段
+                defaults["backend"] = cfg.get("memory", {}).get("backend") or defaults["backend"]
+                defaults["manual_path"] = cfg.get("memory", {}).get("manual_path") or defaults["manual_path"]
                 break
             except Exception:
                 continue
@@ -78,6 +83,18 @@ class ChiguoMonitor:
     def _lancedb_path(self) -> str:
         """LanceDB 数据库路径。优先级：[monitor] > [memory] > 硬编码默认。~ 展开为 $HOME。"""
         return os.path.expanduser(self._monitor_config.get("lancedb_path", "~/.pi-agent/memory/lancedb-pro"))
+
+    def _memory_backend(self) -> str:
+        """v1.8: 记忆后端类型（[memory].backend，缺省 auto）。"""
+        return self._monitor_config.get("backend", "auto")
+
+    def _json_memory_path(self) -> Path:
+        """v1.8: JSON 记忆后端文件路径（相对路径锚定模块目录，~ 展开）。"""
+        raw = self._monitor_config.get("manual_path", "data/chiguo_memories.json")
+        p = Path(os.path.expanduser(raw))
+        if p.is_absolute():
+            return p
+        return Path(__file__).resolve().parent / p
 
     # ═══════════════════════════════════════════════════════════
     # 内部：流式解析
@@ -761,9 +778,15 @@ class ChiguoMonitor:
         except Exception:
             pass
 
-        # 9. LanceDB 连通性直检
-        lancedb_direct = None  # None=未检测, True=正常, False=不可达
-        if _HAS_LANCEDB:
+        # 9. 记忆后端连通性直检（v1.8: 按 [memory].backend 分流；JSON 后端检查文件存在，
+        # 自定义类路径不直检（由后端自身降级），避免误报 LanceDB 状态）
+        lancedb_direct = None  # None=未检测(JSON/自定义后端/无 lancedb), True=正常, False=不可达
+        mem_backend = self._memory_backend()
+        if mem_backend == "json":
+            mem_path = self._json_memory_path()
+            if not mem_path.is_file():
+                issues.append(f"JSON memory missing: {mem_path}")
+        elif mem_backend in ("auto", "lancedb") and _HAS_LANCEDB:
             try:
                 db_path = self._lancedb_path()
                 db = _lancedb.connect(db_path)

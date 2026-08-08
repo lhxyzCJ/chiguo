@@ -242,6 +242,7 @@ def test_run_checks_never_crashes():
 
 
 def test_lancedb_default_path_migrated():
+    test_run_checks_custom_backend_skips_lancedb()
     """lancedb 记忆库路径：配置写 ~/.pi-agent/memory/lancedb-pro 时 _cfg_path 正确展开。"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
@@ -252,6 +253,21 @@ def test_lancedb_default_path_migrated():
                          "~/.pi-agent/memory/lancedb-pro", td)
         assert str(p) == str(Path.home() / ".pi-agent" / "memory" / "lancedb-pro")
     print("  OK test_lancedb_default_path_migrated")
+
+
+def test_run_checks_custom_backend_skips_lancedb():
+    """自定义记忆后端类路径（含 .）→ envcheck 不直检 LanceDB，改报 memory_backend 提示。"""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        _mk(td, {"chiguo_proactive.toml": '[memory]\nbackend = "mymodule.MyBackend"\n'})
+        report = ec.run_checks(base_dir=td, skip_pi=True)
+        names = [c["name"] for c in report["checks"]]
+        assert "lancedb" not in names, names
+        assert "memory_backend" in names, names
+        mb = next(c for c in report["checks"] if c["name"] == "memory_backend")
+        assert mb["ok"] and "mymodule.MyBackend" in mb["detail"], mb
+        assert len(report["checks"]) == 8
+    print("  OK test_run_checks_custom_backend_skips_lancedb")
 
 
 if __name__ == "__main__":
@@ -275,4 +291,5 @@ if __name__ == "__main__":
     test_exit_code_mapping()
     test_run_checks_never_crashes()
     test_lancedb_default_path_migrated()
-    print(f"test_envcheck.py: ALL {20} TESTS PASSED")
+    test_run_checks_custom_backend_skips_lancedb()
+    print(f"test_envcheck.py: ALL {21} TESTS PASSED")

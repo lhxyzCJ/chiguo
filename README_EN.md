@@ -57,7 +57,7 @@ A role-play AI that proactively messages her user — a zero-LLM math decision e
 The system serves one user only: 哥哥 (gēge, her in-character name for the user). To get it running you'll need:
 
 - **A Linux machine** (Debian + systemd is best — the WeChat bridge autostart needs it)
-- **A model API key** (message generation and mood analysis go through pi-agent; any OpenAI-compatible backend works)
+- **A model API key** (message generation and mood analysis go through the agent backend — pi-agent by default; any OpenAI-compatible backend works, or swap in any CLI agent via `[host].runner = command`)
 - **Optional**: a WeChat account (bot send/receive), ollama (memory embeddings), a schedule Excel, a NetEase account
 
 > WeChat delivery uses the official iLink Bot channel (upstream [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin), open source); QR login via the official API. Login state and conversation data stay on your machine — nothing goes into git.
@@ -86,11 +86,11 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 
 The system is two message pipelines, all running locally — the model API and the self-hosted NetEase API service are the only external calls.
 
-**Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/pi-run.mjs --send-mode` turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`).
+**Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/pi-run.mjs --send-mode` (agent abstraction, pi by default) turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`).
 
 **Passive replying**: a WeChat message enters the bridge → an **OWNER_ID gate** (non-owners only get a plain chat reply — no accounting, no command/recall paths) → `chiguo_daemon.py --user-msg` records it **deterministically** (real-time emotion response, recv_dedup against double-counting) → `command-detect.mjs` rules check first: **special commands** (anniversaries / holidays / break on-off) are executed and answered directly, **no LLM**; **schedule write-commands** (cancel / move / add / exam week / reminder / remove) go through `pi-run.mjs --schedule-extract` extraction → `--schedule-verify` verification (dual agents, separate sessions; if info is missing they return a question into the clarify loop, records valid 6h) → daemon `--schedule-change` atomic write (confirmation text carries weekday + date); ordinary messages first fetch a lightweight `--attention` injection (today's important days / active range facts / this week's schedule), then run `pi-run.mjs --analysis-mode`, producing "mood analysis JSON + reply text" in one call — if the analysis carries a recall signal (registered facts / past dates), the bridge queries the facts and answers via a second pi pass → the analysis is merged back into the daemon via `--analysis` (dedup upgrade) → the reply is sent back to WeChat. The reply side runs as a resident serial process (TurnQueue, session `chiguo-main`), zero session sharing with proactive sending.
 
-**Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (LanceDB) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` patrols independently. Both pipelines record pi-call outcomes into the `pi_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
+**Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (`[memory].backend`, LanceDB by default, switchable to json / custom class) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` patrols independently. Both pipelines record pi-call outcomes into the `pi_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 60, "curve": "basis", "fontSize": 18}}}%%
@@ -197,7 +197,7 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: 35 py + 10 script standalone runners)
+# Core tests (full suite: 36 py + 10 script standalone runners)
 bash scripts/ci-test.sh   # same entry point as GitHub Actions; any failure exits non-zero
 ```
 
@@ -219,9 +219,9 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ### pi-agent (model backend)
 
-**Role**: all LLM capabilities come from here — proactive message generation, and reply mood analysis + reply text. Supports any provider (OpenAI / DeepSeek / Anthropic / self-hosted gateways…), decided by the single source `[host].provider` in `chiguo_proactive.toml`.
+**Role**: the agent backend abstraction — all LLM capabilities come from here: proactive message generation, and reply mood analysis + reply text. By default they go through pi-agent, which supports any provider (OpenAI / DeepSeek / Anthropic / self-hosted gateways…), decided by the single source `[host].provider` in `chiguo_proactive.toml`; with `[host].runner = command` you can swap in any CLI agent instead (`[host].agent_command`, unified contract `--prompt <full prompt> --mode <mode>`, JSON or NDJSON on stdout).
 
-**Setup**: `export PI_API_KEY=... && bash scripts/install_pi.sh --yes`, or `pi` interactive `/login <provider>`. See [🧠 Bring Your Own Model](#-bring-your-own-model) and [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md).
+**Setup**: default pi mode: `export PI_API_KEY=... && bash scripts/install_pi.sh --yes`, or `pi` interactive `/login <provider>`; command mode just needs any executable agent. See [🧠 Bring Your Own Model](#-bring-your-own-model) and [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md).
 
 **Missing**: no messages can be generated — the decision engine still evaluates *whether* to send, but there is no LLM to produce the words.
 
@@ -235,13 +235,13 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 **Missing**: no WeChat delivery. The daemon still runs fine via CLI (`chiguo_daemon.py`) — decisions, emotions and accounting all work, messages just cannot be sent.
 
-### Memory system (LanceDB + ollama embedding)
+### Memory system (memory backend abstraction)
 
-**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Worth-keeping bits of conversation are auto-accumulated into the memory store by the pi-agent [memory-lancedb-pro](https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro) extension (memories, old stories, your preferences); the decision engine recalls them **read-only** through `memory_bridge.py` (BM25 full-text search, zero tokens, zero extra calls), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
+**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Since v1.8 this is a **memory backend abstraction**: the `memory/` package provides the `MemoryBackend` abstract base class + `LanceDbBackend` + `JsonMemoryBackend` + the `create_backend` factory (`memory_bridge.py` is now a compatibility facade), switched via `[memory].backend` in `chiguo_proactive.toml` — `auto` (default: LanceDB when available, JSON fallback otherwise) / `lancedb` / `json` / a custom class `module.path.ClassName`. In LanceDB mode, worth-keeping bits of conversation are auto-accumulated into the memory store by the pi-agent [memory-lancedb-pro](https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro) extension (memories, old stories, your preferences); the decision engine recalls them **read-only** (BM25 full-text search, zero tokens, zero extra calls), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
 
-**Setup**: `uv sync --all-extras` + `bash scripts/install_pi.sh --yes` (initializes the memory store). The store lives at `~/.pi-agent/memory/lancedb-pro` (read-only from Chiguo's side; writes are done by the pi extension); `data/chiguo_memories.json` is the manual memory file, **always active** as a supplement.
+**Setup**: LanceDB backend: `uv sync --all-extras` + `bash scripts/install_pi.sh --yes` (initializes the memory store); the store lives at `~/.pi-agent/memory/lancedb-pro` (read-only from Chiguo's side; writes are done by the pi extension). Zero-dependency JSON backend: `[memory].backend = "json"` (source `data/chiguo_memories.json`, **always active** as a supplement).
 
-**Missing**: graceful degradation when LanceDB is unavailable (`available=False`, queries return empty, no exceptions) — memory topic sources shrink and `chiguo_envcheck.py` reports a warn (non-fatal); manual JSON memories are unaffected. Differences in detail: [❓ FAQ](#-faq).
+**Missing**: graceful degradation when LanceDB is unavailable (`available=False`, queries return empty, no exceptions) — memory topic sources shrink and `chiguo_envcheck.py` reports a warn (non-fatal); `backend = "json"` keeps working with zero dependencies. Differences in detail: [❓ FAQ](#-faq).
 
 ### NetEase Music bridge
 
@@ -273,10 +273,11 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ## 🧠 Bring Your Own Model
 
-All message generation and mood analysis go through **pi-agent**; the provider is decided by a single source — `[host].provider` in `chiguo_proactive.toml` (default example: opencode-go; any provider supported by pi works):
+All message generation and mood analysis go through the **agent backend** (pi-agent by default); the provider is decided by a single source — `[host].provider` in `chiguo_proactive.toml` (default example: opencode-go; any provider supported by pi works). With `[host].runner = command` you can swap in any CLI agent (`[host].agent_command`, contract `--prompt` + `--mode`, JSON/NDJSON on stdout):
 
 - **Built-in providers**: run `pi` interactively and `/login <provider>` to store the key in auth.json, or `export PI_API_KEY=... && bash scripts/install_pi.sh --yes`
 - **Custom OpenAI-compatible endpoints**: write `~/.pi/agent/models.json` (pi's official mechanism — works with ollama / vLLM / self-hosted gateways)
+- **Any CLI agent**: `[host].runner = "command"` + `[host].agent_command = [...]` (RPC resident mode is pi-only)
 
 ```toml
 [host]
@@ -347,7 +348,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 Any contribution is welcome — especially ones that help *her* grow:
 
 - **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each `test_*.py` in `tests/` is a standalone runner, exit-code driven.
-- **Run the full suite before submitting**: see `AGENTS.md` (35 py + 10 script tests), all green before commit.
+- **Run the full suite before submitting**: see `AGENTS.md` (36 py + 10 script tests), all green before commit.
 - **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md` (repo rule).
 - **Commit style**: `feat:` / `fix:` / `docs:` / `chore:` prefix + Chinese description.
 - **Design docs**: for major changes, write a design doc under `~/chiguo-meta/specs/` (outside the repo) and get it reviewed first.
@@ -360,7 +361,7 @@ Any contribution is welcome — especially ones that help *her* grow:
 She originates from the official *Tricolour Lovestory* series (see [🎀 Who Is She](#-who-is-she)). This project is a fan re-imagining; the script is bundled for study reference only, copyrights belong to the original creators, and material will be removed on objection.
 
 **What's the difference between installing the memory system or not?**
-Without it (`uv sync`): memory topic sources are reduced, JSON fallback, `envcheck` reports a warning. With it (`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`): full LanceDB memory + music linkage.
+`[memory].backend` defaults to `auto`: LanceDB when available, JSON fallback otherwise. Without it (`uv sync`): memory topic sources are reduced, JSON fallback, `envcheck` reports a warning. With it (`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`): full LanceDB memory + music linkage.
 
 **How do I change the persona / personality?**
 Chiguo's persona is fixed (the system is designed around a single character) — it cannot be replaced. Want to adjust her behavior? Change the parameters in `chiguo_proactive.toml` — `SUN2.md` is the single authoritative definition and the speech manual shapes tone.
@@ -388,10 +389,11 @@ Just say it in WeChat: "明天停课" / "下周三开始考试周" / "8月20号�
 chiguo_proactive.toml    # main config (all parameters, hot-reloaded)
 chiguo_daemon.py         # decision engine (main entry, zero LLM)
 chiguo_state.py          # emotion engine + persona + Bayesian + schedule facade + circadian
+memory/                  # memory backend abstraction (base/lancedb/json/factory; memory_bridge.py facade)
 schedule/                # schedule center (holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan)
-scripts/                 # tick/replan crontab entries + pi wrappers (extract/verify/recall/replan/pi-auth)
-                         #   + env installer + liveness detection
+scripts/                 # tick/replan crontab entries + agent runner abstraction (pi-run.mjs, pi default)
+                         #   + env installer + liveness detection (pi_health.py)
 wechat-bridge/           # WeChat bridge (bridge.mjs + command-detect.mjs)
 personality/             # persona files (SUN2.md + speech manual + phrasing-material tomls)
 doc/                     # system docs (SYSTEM.md / PI_INTEGRATION.md / 日光雨 script)

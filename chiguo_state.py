@@ -35,7 +35,7 @@ from schedule.holiday import HolidayParser
 from schedule.anniversary import AnniversaryManager
 from schedule.override_store import OverrideStore
 from schedule.plan_store import PlanStore
-from memory_bridge import MemoryBridge
+from memory import create_backend
 from chiguo_circadian import CircadianTracker, bucket_for
 from datetime import date as date_type
 
@@ -258,16 +258,10 @@ class ChiguoState:
             data_path=str(self._anchored("holidays.json"))
         )
 
-        # 记忆桥接（只读 LanceDB 记忆库）
-        mem_cfg = config.get("memory", {})
-        self.memory_bridge = MemoryBridge(
-            db_path=mem_cfg.get("lancedb_path"),
-            table_name=mem_cfg.get("lancedb_table", "memories"),
-            strength=mem_cfg.get("ebbinghaus_strength"),
-            min_weight=mem_cfg.get("ebbinghaus_min_weight"),
-        )
-
+        # 记忆后端（v1.8 解耦：memory/ 包工厂；[memory].backend 可替换 lancedb/json/自定义）
         base_dir = str(self._anchored("."))
+        mem_cfg = config.get("memory", {})
+        self.memory_bridge = create_backend(mem_cfg, base_dir=base_dir)
         self.anniversary_mgr = AnniversaryManager(base_dir)
         self.override_store = OverrideStore(base_dir)
         self.plan_store = PlanStore(base_dir)

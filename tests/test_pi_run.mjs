@@ -167,7 +167,7 @@ t('runPiBin: 非零退出但 stdout 含完整回复 → 不丢 stdout（salvage�
   assert.match(stdout, /完整回复/, 'stdout 完整回复应保留')
 })
 t('runPiBin: 非零退出且无完整回复 → reject 含退出码', async () => {
-  await assert.rejects(runPiBin('node', ['-e', 'process.exit(3)'], {}), /pi exited 3/)
+  await assert.rejects(runPiBin('node', ['-e', 'process.exit(3)'], {}), /exited 3/)
 })
 t('run: runPiBin salvage 场景 → ok:true 且 text 保留', async () => {
   const code = `console.log(${JSON.stringify(NDJSON_FULL)});process.exit(3)`
@@ -272,6 +272,7 @@ writeFileSync(tomlPath, [
   'send_session_id = "chiguo-send"',
   'enabled = true',
   'retries = 2',
+  'agent_command = ["node", "/opt/my-agent.mjs"]',
   '',
 ].join('\n'))
 
@@ -285,8 +286,105 @@ t('readToml: 解析 [host] 段字符串/布尔/数字键（忽略注释与其他
   assert.strictEqual(out.host.enabled, true)
   assert.strictEqual(out.host.retries, 2)
 })
+t('readToml: 数组值（agent_command）→ 字符串数组', () => {
+  const out = readToml(tomlPath)
+  assert.deepStrictEqual(out.host.agent_command, ['node', '/opt/my-agent.mjs'])
+})
 t('readToml: 文件不存在 → {}（不抛错）', () => {
   assert.deepStrictEqual(readToml(join(tmp, 'nope.toml')), {})
+})
+
+// ── v1.8 runner=command（自定义 agent 后端，env 注入覆盖 toml）──
+const AGENT_OK = { ok: true, text: '自定义回复', analysis: { warmth: 0.5 }, usage: { total_tokens: 9 } }
+async function withCommandRunner(fn) {
+  const prev = [process.env.PIRUN_RUNNER, process.env.PIRUN_AGENT_COMMAND, process.env.PIRUN_TELEMETRY]
+  process.env.PIRUN_RUNNER = 'command'
+  process.env.PIRUN_AGENT_COMMAND = JSON.stringify(['node', '/tmp/fake-agent.mjs'])
+  process.env.PIRUN_TELEMETRY = '0'
+  try {
+    const mod = await import(`../scripts/pi-run.mjs?cmd=${Date.now()}-${Math.random()}`)
+    assert.strictEqual(mod.RUNNER, 'command')
+    assert.deepStrictEqual(mod.AGENT_COMMAND, ['node', '/tmp/fake-agent.mjs'])
+    await fn(mod)
+  } finally {
+    if (prev[0] === undefined) delete process.env.PIRUN_RUNNER; else process.env.PIRUN_RUNNER = prev[0]
+    if (prev[1] === undefined) delete process.env.PIRUN_AGENT_COMMAND; else process.env.PIRUN_AGENT_COMMAND = prev[1]
+    if (prev[2] === undefined) delete process.env.PIRUN_TELEMETRY; else process.env.PIRUN_TELEMETRY = prev[2]
+  }
+}
+t('run: command runner 契约 JSON → text/analysis（--prompt/--mode 参数透传）', async () => {
+  await withCommandRunner(async (mod) => {
+    let captured = null
+    const r = await mod.run(async (bin, args) => {
+      captured = { bin, args }
+      return { stdout: JSON.stringify(AGENT_OK) }
+    }, { prompt: '在吗', analysisMode: true })
+    assert.strictEqual(captured.bin, 'node')
+    assert.strictEqual(captured.args[0], '/tmp/fake-agent.mjs')
+    assert.strictEqual(captured.args[captured.args.length - 2], '--mode')
+    assert.strictEqual(captured.args[captured.args.length - 1], 'analysis')
+    assert.ok(captured.args.some((a) => a.includes('情绪分析')), 'analysis prompt 模板注入')
+    assert.deepStrictEqual(r, { ok: true, text: '自定义回复', analysis: { warmth: 0.5 } })
+  })
+})
+t('run: command runner send 模式 → mode=send + 决策指令', async () => {
+  await withCommandRunner(async (mod) => {
+    let captured = null
+    const decision = JSON.stringify({ action: 'send', msg_id: 'm1' })
+    await mod.run(async (_bin, args) => {
+      captured = args
+      return { stdout: JSON.stringify({ ok: true, text: '主动消息' }) }
+    }, { prompt: decision, sendMode: true })
+    const last = captured[captured.length - 1]
+    assert.strictEqual(last, 'send')
+    assert.ok(captured.some((a) => a.includes('主动消息决策结果')), 'send-mode 应含决策指令')
+  })
+})
+t('run: command runner ok=false → {ok:false, error}（透传 agent error）', async () => {
+  await withCommandRunner(async (mod) => {
+    const r = await mod.run(async () => ({ stdout: JSON.stringify({ ok: false, error: 'agent boom' }) }),
+      { prompt: 'x', analysisMode: false })
+    assert.deepStrictEqual(r, { ok: false, error: 'agent boom' })
+  })
+})
+t('run: command runner NDJSON 兼容（无 ok 字段 → parseNdjson 回退）', async () => {
+  await withCommandRunner(async (mod) => {
+    const r = await mod.run(async () => ({ stdout: NDJSON_OK }), { prompt: 'x', analysisMode: false })
+    assert.deepStrictEqual(r, { ok: true, text: '第一段\n第二段' })
+  })
+})
+t('run: command runner 空输出 → empty reply（不崩）', async () => {
+  await withCommandRunner(async (mod) => {
+    const r = await mod.run(async () => ({ stdout: '' }), { prompt: 'x', analysisMode: false })
+    assert.deepStrictEqual(r, { ok: false, error: 'empty reply' })
+  })
+})
+t('runSchedule: command runner parsed 契约直达（免块解析）', async () => {
+  await withCommandRunner(async (mod) => {
+    let captured = null
+    const r = await mod.runSchedule(async (_bin, args) => {
+      captured = args
+      return { stdout: JSON.stringify({ ok: true, parsed: { kind: 'reminder', label: '交材料' }, raw: 'r' }) }
+    }, { mode: 'extract', prompt: 'P', extra: { today: '2026-08-20', week_num: 3 } })
+    assert.strictEqual(captured[captured.length - 1], 'extract')
+    assert.ok(captured.some((a) => a.includes('安排提取器')), 'extract prompt 模板注入')
+    assert.deepStrictEqual(r, { ok: true, parsed: { kind: 'reminder', label: '交材料' }, raw: 'r' })
+  })
+})
+t('runSchedule: command runner NDJSON + <<EXTRACT>> 块兼容', async () => {
+  await withCommandRunner(async (mod) => {
+    const stdout = JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<EXTRACT>>{"kind":"reminder","when":{"date":"2026-08-20"}}<<END>>' }] } })
+    const r = await mod.runSchedule(async () => ({ stdout }), { mode: 'extract', prompt: 'P', extra: {} })
+    assert.strictEqual(r.ok, true)
+    assert.strictEqual(r.parsed.kind, 'reminder')
+  })
+})
+t('parseAgentOutput: 契约 JSON → 对象；非 JSON/无 ok 字段 → null', async () => {
+  const mod = await import('../scripts/pi-run.mjs')
+  assert.deepStrictEqual(mod.parseAgentOutput('{"ok":true,"text":"x"}'), { ok: true, text: 'x' })
+  assert.strictEqual(mod.parseAgentOutput('{"text":"no ok"}'), null)
+  assert.strictEqual(mod.parseAgentOutput('not json'), null)
+  assert.strictEqual(mod.parseAgentOutput(''), null)
 })
 
 // ── resolveRepo 仓库根推导（可移植性：消除 /root/chiguo 硬编码）──
