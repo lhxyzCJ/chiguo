@@ -8,8 +8,10 @@ Ebbinghaus 包装在基类对所有后端生效。
 
 import json
 import os
+import random
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -48,10 +50,16 @@ def _mem0_row(text="哥哥喜欢喝美式咖啡", category="preferences", import
 
 
 def _fake_backend(results, tmp: Path = None) -> Mem0Backend:
-    """Mem0Backend 注入 FakeMem0，跳过真实连接探测。"""
+    """Mem0Backend 注入 FakeMem0，跳过真实连接探测。
+
+    必须同时注入 _last_probe：available 是 60s 缓存重探语义，
+    只设 _available 会在窗口外触发真实探测（依赖 auth.json key / ollama /
+    qdrant），导致测试环境相关（CI 无 key → 探测失败 → 查询返回空）。
+    """
     b = Mem0Backend(qdrant_path=str(Path(tmp) / "qdrant") if tmp else "/tmp/qdrant-test",
                     history_db=str(Path(tmp) / "h.db") if tmp else "/tmp/h-test.db")
     b._available = True
+    b._last_probe = time.time() + 3600  # 未来时间戳：缓存恒命中，永不真实探测
     b._m = FakeMem0(results)
     return b
 
@@ -123,6 +131,7 @@ def test_search_unavailable():
 
 
 def test_random_memory_weighted():
+    random.seed(42)  # 与仓库测试惯例一致（AGENTS.md）：加权采样确定性
     with tempfile.TemporaryDirectory() as td:
         b = _fake_backend([_mem0_row(importance=0.9), _mem0_row(importance=0.1, mem_id="m2")], Path(td))
         # min_importance=0.05 保留两条；权重 0.81 vs 0.01（p≈0.988）→ 频率显著偏向 m1
