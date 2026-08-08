@@ -1,7 +1,7 @@
 # ============================================================
 # chiguo_topics.py — 迟菓话题选择器
 # 为孤独触发（lonely_low/mid）提供自然破冰话题。
-# 8 个来源(新增 netease)：课表/假期、LanceDB 记忆、季节感知、通用关心、
+# 8 个来源(新增 netease)：课表/假期、mem0 记忆、季节感知、通用关心、
 #           节气、纪念日/倒计时、偏好追问、网易云音乐。
 # 0 token 消耗，0 新依赖。
 # ============================================================
@@ -179,10 +179,10 @@ class TopicPicker:
             "tone": "caring",
         }
 
-    # ── 来源 2：LanceDB 记忆 ────────────────────────────────
+    # ── 来源 2：mem0 记忆 ────────────────────────────────
 
     def _memory_topic(self) -> dict | None:
-        """基于 LanceDB 随机记忆的话题。数据库不可用时静默跳过。
+        """基于 mem0 随机记忆的话题。数据库不可用时静默跳过。
         v4: 使用 Ebbinghaus 遗忘权重（新记忆更可能被选中）。
              50% 概率使用 search_with_forgetting 做相关性搜索。"""
         if not self.state.memory_bridge.available:
@@ -320,10 +320,10 @@ class TopicPicker:
 
         return None
 
-    # ── 来源 7：偏好追问（LanceDB preferences） ─────────────
+    # ── 来源 7：偏好追问（mem0 preferences） ─────────────
 
     def _preference_followup_topic(self, now: datetime) -> dict | None:
-        """查询 LanceDB 偏好记忆，生成追问话题。
+        """查询 mem0 偏好记忆，生成追问话题。
         v4: 使用 Ebbinghaus 遗忘权重。"""
         if not self.state.memory_bridge.available:
             return None

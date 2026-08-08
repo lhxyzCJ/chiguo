@@ -6,8 +6,8 @@
 # 通用逻辑全部在基类完成，后端只负责"存什么、怎么搜"。
 #
 # 现成实现：
-#   memory/lancedb.py  LanceDbBackend   — LanceDB FTS（pi 记忆扩展写入，只读）
-#   memory/json.py     JsonMemoryBackend — 手动记忆 JSON 文件（零依赖兜底）
+#   memory/mem0_backend.py  Mem0Backend — mem0 AI 记忆层（读写双向，
+#     LLM 事实提取写入 + 向量语义检索；见 doc/SYSTEM.md「记忆后端抽象」）
 # 自定义后端：实现本基类四个原语，toml [memory].backend 填
 #   "module.path.ClassName" 即可热接入（见 memory/factory.py）。
 # ============================================================

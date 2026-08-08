@@ -21,7 +21,7 @@ def make_state(td, cfg, now):
     import re as _re
     src = Path("chiguo_proactive.toml").read_text()
     tmp_toml = Path(td) / "toml.toml"
-    src = _re.sub(r"(?m)^lancedb_path\s*=.*$", f'lancedb_path = "{Path(td) / "no_lancedb"}"', src)
+    src = _re.sub(r"(?m)^mem0_qdrant_path\s*=.*$", f'mem0_qdrant_path = "{Path(td) / "no_qdrant"}"', src)
     tmp_toml.write_text(src)
     with open(tmp_toml, "rb") as f:
         c = tomllib.load(f)

@@ -13,13 +13,12 @@ echo "==> 1/5 会话 jsonl(chiguo-main/extract)"
 ssh "$HOST" "tar cf - -C ~/.pi/agent/sessions/--root-chiguo-wechat-bridge-- ." | tar xf - -C "$SESSION_DIR"
 echo "    ok: $(ls "$SESSION_DIR" | wc -l) 个文件"
 
-echo "==> 2/5 LanceDB 记忆库(排除锁)"
-ssh "$HOST" "tar cf - --exclude='*.lock' -C ~/.pi-agent/memory/lancedb-pro ." | tar xf - -C "$HOME/.pi-agent/memory/lancedb-pro"
-echo "    ok: $(du -sh "$HOME/.pi-agent/memory/lancedb-pro" | cut -f1)"
+echo "==> 2/5 mem0 记忆库 data/mem0(qdrant,排除锁)"
+ssh "$HOST" "tar cf - --exclude='*.lock' -C ~/chiguo/data/mem0 ." | tar xf - -C "$REPO/data/mem0"
+echo "    ok: $(du -sh "$REPO/data/mem0" | cut -f1)"
 
-echo "==> 3/5 chiguo_state.json + chiguo_memories.json"
+echo "==> 3/5 chiguo_state.json"
 scp -q "$HOST":~/chiguo/chiguo_state.json "$REPO/chiguo_state.json"
-scp -q "$HOST":~/chiguo/data/chiguo_memories.json "$REPO/data/chiguo_memories.json"
 echo "    ok"
 
 echo "==> 4/5 日志(cron + pi-run 遥测)"

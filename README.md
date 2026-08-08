@@ -90,7 +90,7 @@
 
 **被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假/开学）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `pi-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `pi-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
 
-**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 默认 LanceDB，可切 json/自定义类）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 pi 调用成败都记入 `pi_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
+**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 默认 mem0，可切自定义类）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 pi 调用成败都记入 `pi_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 60, "curve": "basis", "fontSize": 18}}}%%
@@ -124,7 +124,7 @@ flowchart LR
         direction LR
         DC <-->|读| ST[(chiguo_state.json 原子写)]
         DC -->|追加| DEC[(chiguo_decisions.jsonl)]
-        DC <-->|记忆话题| MEM[(LanceDB 记忆)]
+        DC <-->|记忆话题| MEM[(mem0 记忆)]
         DC <-->|音乐话题| NE[(网易云)]
         MON[monitor] -. 巡检 .-> ST
     end
@@ -192,7 +192,7 @@ flowchart LR
 ```bash
 git clone https://github.com/lhxyzCJ/chiguo.git && cd chiguo   # 仓库公开，https/ssh 均可（ssh: git@github.com:lhxyzCJ/chiguo.git）
 
-uv sync                              # 核心（零依赖）；完整功能: uv sync --all-extras
+uv sync                              # 核心（mem0 记忆层必需）；完整功能: uv sync --all-extras（+课表解析）
 uv run python chiguo_demo.py         # 交互式 Demo（纯模板，无 LLM）
 uv run python chiguo_daemon.py       # 单次决策 → 输出 JSON
 uv run python chiguo_daemon.py --status   # 查看当前状态
@@ -201,7 +201,7 @@ uv run python chiguo_daemon.py --status   # 查看当前状态
 bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败退出非零
 ```
 
-> 注意：`uv sync` 默认不安装 lancedb（记忆降级 JSON 模式运行）；`uv sync --all-extras` 启用完整记忆与课表解析。集成测试需要当前目录存在 `chiguo_proactive.toml`，请始终从项目根目录运行。
+> 注意：`uv sync` 即安装 mem0ai（记忆层为必需依赖）；`uv sync --all-extras` 再启用课表解析。集成测试需要当前目录存在 `chiguo_proactive.toml`，请始终从项目根目录运行。
 
 ---
 
@@ -237,11 +237,11 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 ### 记忆系统（记忆后端抽象）
 
-**作用**：迟菓的长期记忆——比情绪更持久的"记得"。v1.8 起为**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类 + `LanceDbBackend` + `JsonMemoryBackend` + `create_backend` 工厂（`memory_bridge.py` 降为兼容门面），由 `chiguo_proactive.toml` 的 `[memory].backend` 切换——`auto`（默认，LanceDB 可用则用、否则 JSON 兜底）/ `lancedb` / `json` / 自定义类 `module.path.ClassName`。LanceDB 模式下，对话中值得记的内容由 pi-agent 的 [memory-lancedb-pro](https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro) 扩展自动沉淀进记忆库（回忆、旧事、你的偏好），决策引擎**只读召回**（BM25 全文搜索，零 token、零额外调用），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
+**作用**：迟菓的长期记忆——比情绪更持久的"记得"。v1.8 起为**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类 + `create_backend` 工厂（`memory_bridge.py` 降为兼容门面），由 `chiguo_proactive.toml` 的 `[memory].backend` 切换——`mem0`（v1.9 默认，[mem0ai](https://github.com/mem0ai/mem0) 记忆层）/ 自定义类 `module.path.ClassName`。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
 
-**安装/配置**：LanceDB 后端：`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`（初始化记忆库），记忆库位于 `~/.pi-agent/memory/lancedb-pro`（迟菓侧只读，写入由 pi 扩展完成）；零依赖 JSON 后端：`[memory].backend = "json"`（数据源 `data/chiguo_memories.json`，**始终生效**作为补充）。
+**安装/配置**：`uv sync`（mem0ai + ollama 客户端为必需依赖），记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db；路径/LLM/embedding 由 `[memory]` 段 `mem0_*` 键配置，LLM key 缺省读 `~/.pi/agent/auth.json` 的 opencode-go 条目）。
 
-**缺失影响**：LanceDB 不可用时优雅降级（`available=False`，查询返回空、不抛异常）——记忆话题源减少，`chiguo_envcheck.py` 报 warn（不影响运行）；`backend = "json"` 零依赖照常工作。装与不装的差异见 [❓ FAQ](#-faq)。
+**缺失影响**：mem0 不可用时优雅降级（`available=False`，查询返回空、不抛异常）——记忆话题源减少，`chiguo_envcheck.py` 报 warn（不影响运行）。装与不装的差异见 [❓ FAQ](#-faq)。
 
 ### 网易云音乐桥
 
@@ -361,7 +361,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 源自《三色△绘恋》系列官方角色（见[🎀 她是谁](#-她是谁)）。本项目是二次演绎，剧本仅作学习参考，版权归原作者；权利方异议即移除。
 
 **记忆系统装不装有什么区别？**
-`[memory].backend` 默认 `auto`：LanceDB 可用则用、否则 JSON 兜底。不装（`uv sync`）：记忆话题源减少，JSON 兜底，`envcheck` 报 warn。装齐（`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`）：LanceDB 记忆 + 听歌联动全功能。
+`[memory].backend` 默认 `mem0`：`uv sync` 即装齐（mem0ai+ollama 为必需依赖）+ ollama 本地 qwen3-embedding + LLM key 时全功能；LLM key 缺失/ollama 未启动时记忆未启用（`available=False` 优雅降级），记忆话题源减少，`envcheck` 报 info。
 
 **怎么换人格/调性格？**
 迟菓的人格是固定的（系统围绕单一角色设计），不可替换角色。想调整行为？改 `chiguo_proactive.toml` 的参数即可——`SUN2.md` 是唯一权威设定，语感在《迟菓语言技巧指南》。
@@ -370,7 +370,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 不用。改 `chiguo_proactive.toml` 的 `[host].provider/model` + 配 key 即可；自定义 OpenAI 兼容端点见 [PI_INTEGRATION.md](doc/PI_INTEGRATION.md)。
 
 **数据存在哪里？**
-决策/对话 JSONL 与系统状态仅保存在本机（不进 git）+ LanceDB 记忆库（`~/.pi-agent/memory/lancedb-pro`）。全部本地计算。
+决策/对话 JSONL 与系统状态仅保存在本机（不进 git）+ mem0 记忆库（`data/mem0/`，qdrant 嵌入式 + history.db，均 gitignore）。全部本地计算。
 
 **为什么她不主动找我？**
 门控机制在工作：静默窗口（深夜）、每日上限、最小间隔、触发评估。`--status` / `--stats 30` 可以看到她被什么挡住了。
@@ -389,7 +389,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 chiguo_proactive.toml    # 主配置（所有参数，热重载）
 chiguo_daemon.py         # 决策引擎（主入口，零 LLM）
 chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian
-memory/                  # 记忆后端抽象（base/lancedb/json/factory；memory_bridge.py 兼容门面）
+memory/                  # 记忆后端抽象（base/mem0_backend/factory；memory_bridge.py 兼容门面）
 schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan）
 scripts/                 # tick/replan crontab 入口 + agent runner 抽象（pi-run.mjs，默认 pi）

@@ -12,21 +12,24 @@ wechat_recipient = "owner@im.wechat"   # 发送目标占位符：登录后自动
 #                                  # 也可在此手动配真实值（非占位符即生效）
 
 [memory]
-# ── 记忆后端抽象（v1.8 解耦：任意替换记忆模块）──
+# ── 记忆后端抽象（v1.8 解耦；v1.9 默认后端 = mem0 AI 记忆层）──
 # backend 取值：
-#   "auto"    （默认）LanceDB 可用则用，否则 JSON 手动记忆兜底
-#   "lancedb"           显式 LanceDB（库缺失/路径不可用 → available=False 优雅降级）
-#   "json"              显式 JSON 手动记忆文件（零依赖）
+#   "mem0"    （默认）mem0（mem0ai 库）：LLM 事实提取写入 + 向量语义检索。
+#             库缺失/无 LLM key/ollama 未启动 → available=False 优雅降级
 #   "module.path.ClassName"  自定义后端类（实现 memory/base.py MemoryBackend 四原语，
 #                             实例化 kwargs = 本段其余键；见 doc/SYSTEM.md「记忆后端抽象」）
-backend = "auto"
-# ── pi-agent memory-lancedb-pro 记忆系统（只读，不写）──
-# 记忆库位于 ~/.pi-agent/memory/lancedb-pro（只读）
-# 如果 LanceDB 不可用，自动降级到 JSON 模式
-lancedb_path = "~/.pi-agent/memory/lancedb-pro"
-lancedb_table = "memories"
-# 手动记忆文件（backend=json 时的数据源；backend=auto 时作为兜底）
-manual_path = "data/chiguo_memories.json"
+backend = "mem0"
+# ── mem0 配置（https://github.com/mem0ai/mem0）──
+mem0_user_id = "chiguo"                      # mem0 记忆命名空间（user_id）
+mem0_collection = "chiguo"                   # qdrant collection 名
+mem0_qdrant_path = "data/mem0/qdrant"        # 本地向量库（qdrant 嵌入式，无需 docker）
+mem0_history_db = "data/mem0/history.db"     # mem0 操作历史（SQLite）
+mem0_llm_model = "deepseek-v4-flash"         # 事实提取 LLM（OpenAI 兼容）
+mem0_llm_base_url = "https://opencode.ai/zen/go/v1"
+# mem0_llm_api_key = ""                      # 缺省读 ~/.pi/agent/auth.json 的 opencode-go key
+mem0_embedder_model = "qwen3-embedding:0.6b" # 本地 embedding（ollama）
+mem0_embedder_base_url = "http://localhost:11434"
+mem0_embedder_dims = 1024                    # qwen3-embedding:0.6b 输出维度
 # ── v4: Ebbinghaus 遗忘参数 ──
 ebbinghaus_strength = 168    # 记忆强度 S（小时），越大遗忘越慢，168h=7天
 ebbinghaus_min_weight = 0.1  # 最低权重（不会彻底遗忘）
@@ -152,7 +155,7 @@ lambda_anxiety_k = 0.06
 # ── 话题选择器：为孤独触发（lonely_low/mid）提供自然破冰话题 ──
 # 各来源权重。系统做加权随机，数值不需要归一化。
 schedule_weight = 0.30          # 基于课表/假期/周末
-memory_weight = 0.25            # 基于 LanceDB 记忆
+memory_weight = 0.25            # 基于 mem0 记忆
 weather_season_weight = 0.20    # 基于季节感知（零依赖）
 general_weight = 0.25           # 通用日常关心
 solar_terms_weight = 0.10       # 节气话题
@@ -284,7 +287,7 @@ disk_warn_mb = 500         # 磁盘剩余小于此值 → warn
 disk_critical_mb = 100     # 磁盘剩余小于此值 → critical
 memory_warn_mb = 500       # 进程 RSS 大于此值 → warn
 memory_critical_mb = 1000  # 进程 RSS 大于此值 → critical
-# LanceDB 路径由主配置 lancedb_path 读取，此处不重复定义
+# mem0 记忆库路径由主配置 [memory] 段读取（mem0_qdrant_path/mem0_history_db），此处不重复定义
 
 # ── 日志轮转 & 对话存档 (v5) ──
 [logging]
@@ -304,7 +307,7 @@ archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 # 备份：修改核心配置、执行破坏性操作前，必须先提示备份方案；备份优先
 # 时间：禁止在 22:00 ~ 次日 08:00 主动推送非紧急通知
 # 边界：不重复解释 Linux/正则/服务运维等基础概念；不擅自修改核心配置，修改前必须确认
-# 环境：Debian Linux, root 用户；记忆库在 ~/.pi-agent/memory/lancedb-pro；
+# 环境：Debian Linux, root 用户；记忆库在 data/mem0（qdrant 嵌入式 + ollama 本地 embedding）；
 #       常用工具 rsync/systemctl/nano/tar
 
 provider = "opencode-go"        # pi provider：= pi --provider 名与 auth.json 键名（缺省示例；支持 pi 全部内置 provider 与

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_ebbinghaus.py — Ebbinghaus 遗忘曲线测试（不依赖 LanceDB）"""
+"""test_ebbinghaus.py — Ebbinghaus 遗忘曲线测试（不依赖记忆后端）"""
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

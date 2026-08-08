@@ -19,13 +19,15 @@ from chiguo_trigger import evaluate_triggers
 
 
 def _make_state(tmp: str, now: datetime, **overrides) -> ChiguoState:
-    """真实 toml 配置 + 临时目录锚定；lancedb 指向不存在路径 → available=False（确定性）"""
+    """真实 toml 配置 + 临时目录锚定；mem0 指向不存在路径 + 显式禁用 → available=False（确定性）"""
     cfg_path = Path(tmp) / "chiguo_proactive.toml"
     cfg_path.write_text(Path("chiguo_proactive.toml").read_text())
     with open(cfg_path, "rb") as f:
         cfg = tomllib.load(f)
     cfg["_base_dir"] = str(tmp)
-    cfg["memory"]["lancedb_path"] = str(Path(tmp) / "no_lancedb")
+    cfg["memory"]["mem0_qdrant_path"] = str(Path(tmp) / "no_qdrant")
+    cfg["memory"]["mem0_history_db"] = str(Path(tmp) / "no_history.db")
+    os.environ["CHIGUO_MEM0_DISABLED"] = "1"
     s = ChiguoState(cfg)
     # 默认 10h 前的用户消息 → silent≈6h（睡眠窗口 0-8 抵消 4h），介于 (2,48)
     s.cooldown.last_user_message_at = (now - timedelta(hours=10)).isoformat()

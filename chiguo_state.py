@@ -258,7 +258,7 @@ class ChiguoState:
             data_path=str(self._anchored("holidays.json"))
         )
 
-        # 记忆后端（v1.8 解耦：memory/ 包工厂；[memory].backend 可替换 lancedb/json/自定义）
+        # 记忆后端（v1.8 解耦：memory/ 包工厂；v1.9 内置 mem0，可换自定义类路径）
         base_dir = str(self._anchored("."))
         mem_cfg = config.get("memory", {})
         self.memory_bridge = create_backend(mem_cfg, base_dir=base_dir)

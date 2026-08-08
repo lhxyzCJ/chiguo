@@ -1,8 +1,8 @@
 # pi-agent 集成指南（Phase 4，v1.8）
 
 > 寄主迁移后的当前架构：**消息生成与情绪分析全部走 agent 后端**（v1.8 起 runner 可替换：默认 runner=pi 走 pi-agent，provider 可配，opencode-go 为默认示例；
-> 定时触发走系统 crontab（chiguo-tick），微信收发走 wechat-bridge，记忆走 memory-lancedb-pro
-> （pi 版扩展 + ollama embedding，复用历史 LanceDB 库）。
+> 定时触发走系统 crontab（chiguo-tick），微信收发走 wechat-bridge，记忆走 mem0（data/mem0/，qdrant 嵌入式 + ollama 本地 embedding）
+> （pi 版 memory-lancedb-pro 扩展仅服务 pi 宿主侧，chiguo 不再读取其历史 LanceDB 库）。
 
 ## 架构总览
 
@@ -213,14 +213,12 @@ agent_command = ["node", "/path/to/agent.mjs"]  # 必填：可执行命令 + 固
 
 ## 九、记忆后端抽象（[memory].backend）
 
-v1.8 起记忆模块解耦为 `memory/` 包（`memory_bridge.py` 保留兼容门面：MemoryBridge=LanceDbBackend 别名 + CLI）。
-`[memory].backend` 四取值：
+v1.8 起记忆模块解耦为 `memory/` 包（`memory_bridge.py` 保留兼容门面：MemoryBridge=Mem0Backend 别名 + CLI）。
+v1.9 起唯一内置后端为 mem0（旧 LanceDB/JSON 后端已删除）。`[memory].backend` 取值：
 
 | 取值 | 行为 |
 |------|------|
-| `auto`（默认） | LanceDB 可导入 → LanceDbBackend；否则 JsonMemoryBackend 兜底 |
-| `lancedb` | 显式 LanceDB（pi memory-lancedb-pro 扩展写入的历史库，只读） |
-| `json` | 显式 JSON 手动记忆文件（`manual_path`） |
+| `mem0`（默认） | mem0ai 记忆层：LLM 事实提取写入 + ollama 本地向量检索 + qdrant 嵌入式存储（`data/mem0/`） |
 | `module.path.ClassName` | 自定义后端类（importlib 动态加载，须继承 `memory/base.py` 的 `MemoryBackend`） |
 
 **MemoryBackend 四原语**（子类实现；不可用 → 查询返回空，不抛）：
@@ -269,7 +267,7 @@ class MyBackend(MemoryBackend):
 
 （自定义类放仓库任意模块路径即可；实例化 kwargs = [memory] 段其余键，按构造签名过滤。）
 
-## 十、memory-lancedb-pro 配置（记忆）
+## 十、pi 宿主侧记忆扩展配置（pi 生态；chiguo 记忆已迁 mem0，见 §9）
 
 - 扩展：`~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`
   （settings.json `extensions` 注册；安装器修正 Windows 残留路径）
@@ -278,7 +276,7 @@ class MyBackend(MemoryBackend):
   llm=deepseek、autoCapture/autoRecall/smartExtraction 开、sessionMemory 关
 - CLI 冒烟：`~/.pi-agent/.../node_modules/.bin/memory-pro stats`
 - 降级：ollama 不可达 → 记忆 embedding 降级（自动捕获/召回不可用，不影响 daemon 主链路）；
-  daemon 侧记忆经 `memory/` 包只读（backend=auto 时默认 LanceDbBackend；缺 lancedb → available=False、JsonMemoryBackend 兜底）
+  daemon 侧记忆经 `memory/` 包（v1.9 默认 mem0：Mem0Backend，`data/mem0/`；不可用 → available=False 优雅降级）
 
 ## 十一、故障排查
 

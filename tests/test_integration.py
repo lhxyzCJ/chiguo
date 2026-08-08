@@ -33,9 +33,11 @@ def setup():
     global TMP_DIR, TMP_TOML
     TMP_DIR = Path(tempfile.mkdtemp(prefix="chiguo_test_integration_"))
     src = Path("chiguo_proactive.toml").read_text()
-    # 隔离:lancedb_path 改写为临时目录,防止新机器上连到生产记忆库
-    src = re.sub(r"(?m)^lancedb_path\s*=.*$",
-                 f'lancedb_path = "{TMP_DIR / "no_lancedb"}"', src)
+    # 隔离:mem0_qdrant_path 改写为临时目录,防止新机器上连到生产记忆库
+    src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                 f'mem0_qdrant_path = "{TMP_DIR / "no_qdrant"}"', src)
+    src = re.sub(r"(?m)^mem0_history_db\s*=.*$",
+                 f'mem0_history_db = "{TMP_DIR / "no_history.db"}"', src)
     TMP_TOML = TMP_DIR / "chiguo_proactive_test.toml"
     TMP_TOML.write_text(src)
     with open(TMP_TOML, "rb") as f:
@@ -99,7 +101,7 @@ def test_1_initial_no_trigger(cfg):
     #  - anxiety=40 → softmax 归一化 w≈0.171 < anxiety_min_weight(0.3) → 无 anxiety 候选
     #    （修复前无归一化时 anxiety 恒为候选 → 沉默期确定性触发，本测试即回归保护）
     #  - 14:00 不在 morning(8-10)/night(20-21)/meal(11,12,17,18,19) 窗口，
-    #    无记忆/特殊日期/长期沉默（LanceDB 8% 通道在 seed=42 下未命中）
+    #    无记忆/特殊日期/长期沉默（mem0 8% 通道在 seed=42 下未命中）
     assert trigger is None, f"initial state should not trigger, got {trigger.type if trigger else None}"
     print("  OK test_1_initial: no trigger (candidates empty at 14:00)")
 

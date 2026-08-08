@@ -231,10 +231,12 @@ def test_can_send_daily_limit_blocks_when_not_eligible():
 
 
 def _isolated_toml(cfg_path: Path, tmp: Path) -> None:
-    """真实 toml 副本隔离:lancedb_path 改写为临时目录,防止新机器上连到生产记忆库"""
+    """真实 toml 副本隔离:mem0_qdrant_path/history_db 改写为临时目录,防止新机器上连到生产记忆库"""
     txt = cfg_path.read_text()
-    txt = re.sub(r"(?m)^lancedb_path\s*=.*$",
-                 f'lancedb_path = "{tmp / "no_lancedb"}"', txt)
+    txt = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                 f'mem0_qdrant_path = "{tmp / "no_qdrant"}"', txt)
+    txt = re.sub(r"(?m)^mem0_history_db\s*=.*$",
+                 f'mem0_history_db = "{tmp / "no_history.db"}"', txt)
     cfg_path.write_text(txt)
 
 

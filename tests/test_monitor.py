@@ -325,8 +325,8 @@ def test_reply_rate_detection():
     print("  OK test_reply_rate_detection")
 
 
-def test_lancedb_detection():
-    """LanceDB 降级检测标记"""
+def test_mem0_detection():
+    """mem0 降级检测标记"""
     with tempfile.TemporaryDirectory() as td:
         log = Path(td) / "test.jsonl"
         t0 = datetime.now(CST) - timedelta(hours=5)
@@ -342,9 +342,9 @@ def test_lancedb_detection():
 
         mon = ChiguoMonitor(str(log), str(state))
         a = mon.alerts()
-        lancedb_alerts = [x for x in a if x["type"] == "lancedb_possible_degradation"]
-        assert len(lancedb_alerts) >= 1
-    print("  OK test_lancedb_detection")
+        mem0_alerts = [x for x in a if x["type"] == "mem0_possible_degradation"]
+        assert len(mem0_alerts) >= 1
+    print("  OK test_mem0_detection")
 
 
 def test_health_disk_ok():
@@ -407,8 +407,8 @@ memory_critical_mb = 1000
     print("  OK test_health_memory_check")
 
 
-def test_health_lancedb_direct():
-    """health() 应包含 lancedb_direct 字段（True/False/None）"""
+def test_health_mem0_direct():
+    """health() 应包含 mem0_direct 字段（True/False/None）"""
     with tempfile.TemporaryDirectory() as td:
         log = Path(td) / "decisions.jsonl"
         log.write_text("")
@@ -420,14 +420,14 @@ def test_health_lancedb_direct():
         try:
             mon = ChiguoMonitor("decisions.jsonl", "state.json")
             h = mon.health()
-            # lancedb_direct 可为 True/False/None，取决于环境
+            # mem0_direct 可为 True/False/None，取决于环境
             # 只验证字段存在 + 类型正确
-            assert "lancedb_direct" in h, f"health() missing 'lancedb_direct': {list(h.keys())}"
-            ldb = h["lancedb_direct"]
-            assert ldb in (True, False, None), f"lancedb_direct should be bool or None, got {type(ldb)}: {ldb}"
+            assert "mem0_direct" in h, f"health() missing 'mem0_direct': {list(h.keys())}"
+            ldb = h["mem0_direct"]
+            assert ldb in (True, False, None), f"mem0_direct should be bool or None, got {type(ldb)}: {ldb}"
         finally:
             os.chdir(cwd)
-    print("  OK test_health_lancedb_direct")
+    print("  OK test_health_mem0_direct")
 
 
 def test_health_netease_faulty():
@@ -1089,10 +1089,10 @@ if __name__ == "__main__":
         test_alerts_emotion_stuck,
         test_health_ok,
         test_reply_rate_detection,
-        test_lancedb_detection,
+        test_mem0_detection,
         test_health_disk_ok,
         test_health_memory_check,
-        test_health_lancedb_direct,
+        test_health_mem0_direct,
         test_health_netease_faulty,
         test_health_netease_healthy,
         test_health_netease_missing_file,

@@ -13,8 +13,8 @@ import chiguo_daemon as D
 def _tmp_cfg(td, sched_overrides=None):
     src = Path("chiguo_proactive.toml").read_text()
     cfg_p = Path(td) / "test.toml"
-    cfg_p.write_text(re.sub(r"(?m)^lancedb_path\s*=.*$",
-                            f'lancedb_path = "{Path(td) / "no_lancedb"}"', src))
+    cfg_p.write_text(re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                            f'mem0_qdrant_path = "{Path(td) / "tmp_qdrant"}"', src))
     return str(cfg_p)
 
 

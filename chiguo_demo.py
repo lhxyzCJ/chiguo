@@ -126,7 +126,7 @@ class Demo:
         print(f"{Color.B}{Color.MAG}║{Color.R} Poisson λ={lam:.4f}/h | 今日{c['messages_today']}条 | 沉默{c['silent_hours']:.1f}h | {'可发' if c['can_send'] else '禁发'}")
         # 记忆系统
         mem_stats = self.state.memory_bridge.stats()
-        print(f"{Color.B}{Color.MAG}║{Color.R} 🧠 LanceDB记忆: {mem_stats['total_memories']}总/{mem_stats['user_relevant_count']}相关")
+        print(f"{Color.B}{Color.MAG}║{Color.R} 🧠 mem0记忆: {mem_stats['total_memories']}总/{mem_stats['user_relevant_count']}相关")
         print(f"{Color.B}{Color.MAG}║{Color.R} 上次消息: {c['minutes_since_last']:.0f}min前 | {s['time']}")
 
         recent = self.sent[-3:]

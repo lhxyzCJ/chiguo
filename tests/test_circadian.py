@@ -172,13 +172,14 @@ def test_corrupt_state_does_not_crash():
 
 
 def _make_state(tmp: str) -> ChiguoState:
-    """真实 toml 配置 + 临时目录锚定;lancedb 指向不存在路径(确定性)"""
+    """真实 toml 配置 + 临时目录锚定;mem0 指向不存在路径(确定性)"""
     cfg_path = Path(tmp) / "chiguo_proactive.toml"
     cfg_path.write_text(Path("chiguo_proactive.toml").read_text())
     with open(cfg_path, "rb") as f:
         cfg = tomllib.load(f)
     cfg["_base_dir"] = str(tmp)
-    cfg["memory"]["lancedb_path"] = str(Path(tmp) / "no_lancedb")
+    cfg["memory"]["mem0_qdrant_path"] = str(Path(tmp) / "no_qdrant")
+    os.environ["CHIGUO_MEM0_DISABLED"] = "1"
     return ChiguoState(cfg)
 
 

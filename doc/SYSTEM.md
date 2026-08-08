@@ -17,7 +17,7 @@
 │  ├─ 时间（hour, weekday, week_num）                                │
 │  ├─ 节假日（schedule.holiday → 2026 国务院安排）                     │
 │  ├─ 课表（schedule/ 包 → xskb.xlsx）                              │
-│  ├─ 记忆（memory/ 包 → LanceDB 只读（历史记忆库）+ Ebbinghaus）       │
+│  ├─ 记忆（memory/ 包 → mem0 记忆层 + Ebbinghaus）                │
 │  ├─ 交互历史（silent_hours, messages_today）                       │
 │  ├─ 情绪状态（loneliness, anxiety, affection, energy, tsundere）   │
 │  ├─ 多维人格（Big Five + 角色特质，缓慢演变）                      │
@@ -53,7 +53,7 @@ chiguo_daemon.py (DecisionEngine)
   │     │                    存储 override_store.py / plan_store.py / api.py；检索与安排 sources.py /
   │     │                    day_plan.py / resolve_when.py / attention.py / recall.py；确认 confirm.py；
   │     │                    复盘 replan.py）
-  │     ├─ memory/ 包         → 记忆后端抽象（LanceDB 只读/JSON 兜底可替换）+ Ebbinghaus 遗忘
+  │     ├─ memory/ 包         → 记忆后端抽象（mem0 默认，可替换自定义类）+ Ebbinghaus 遗忘
   │     └─ chiguo_circadian.py → 生物钟学习（双作息双桶分桶学习：工作日/周末独立窗口 + 置信度，
   │                             听歌活跃合并计数）(v7 NEW, v8 双桶)
   ├─ netease/ 包 → 数据面 bridge.py（NeteaseBridge 实例）+ 策略层 service.py（NeteaseService DI）：
@@ -220,7 +220,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 | `night` | weight=2.0 × 12%随机 | 20:00-21:00 晚安窗口 |
 | `meal` | weight=0.8 × 5%随机 | 饭点（上课时跳过） |
 | `memory` (JSON) | weight=2.0 | 手动记忆/习惯提醒到期 |
-| `memory` (LanceDB) | weight=1.5 × 8%随机 | 沉默>6h时随机浮现 |
+| `memory` (mem0) | weight=1.5 × 8%随机 | 沉默>6h时随机浮现 |
 | `lonely_low` | sigmoid(lo, k=0.20, mid=38) × (1+0.3tsun) × rate_factor | 轻松试探 |
 | `lonely_mid` | sigmoid(lo, k=0.18, mid=55) × (1+0.5tsun) × rate_factor | 嘴硬联系 |
 | `lonely_high` | sigmoid(lo, k=0.15, mid=78) × (1-0.4tsun) × rate_factor × high_decay | 防线崩溃 |
@@ -372,7 +372,7 @@ _build_context()
 
 - 话题过期（>48h）顺带清理，状态不膨胀（pending_topics 上限 20 条，超出丢弃最旧）
 - 同话题重复出现 → 视为已接续重新计时
-- LanceDB 不可用 → 记忆兜底自动跳过，仅剩 analysis 话题
+- mem0 不可用 → 记忆兜底自动跳过，仅剩 analysis 话题
 - 坏时间戳条目（非法 ISO / 非 dict）→ prune 直接丢弃
 
 ### 2.11 听歌双向联动（netease，v8）
@@ -506,14 +506,15 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
      类型: reminder（定时）/ habit（习惯窗口）
      → daemon 直接读取
 
-  ② LanceDB 只读（pi-agent memory-lancedb-pro 记忆系统）
-     路径: ~/.pi-agent/memory/lancedb-pro/memories.lance（~ 展开为 $HOME，v10 起多机可移植）
-     访问: memory/ 包（默认 LanceDbBackend：FTS BM25 关键词搜索 + Ebbinghaus 加权；[memory].backend 可替换）
-     表结构: id, text, vector(1024d), category, scope, importance, timestamp, metadata
-     降级: LanceDB 不可用 → available=False → 自动跳过，JSON 兜底
-     - lancedb 在 `_ensure_table()` 内**惰性导入**：未安装时 daemon 照常启动（import 失败也被 available=False 捕获）
-     - 探测失败后按 60s 节流重试：`--loop` 长驻时 LanceDB 故障恢复可自愈，不永久禁用
-     - 结果行防御：importance 的 None/NaN 统一清洗为 0.0，行级异常整体降级为空列表
+  ② mem0 记忆（mem0ai 记忆层，v1.9 唯一内置后端）
+     路径: data/mem0/（qdrant 嵌入式向量库 + history.db，相对路径经 `_anchored` 解析，gitignore）
+     访问: memory/ 包（默认 Mem0Backend：LLM 事实提取写入 + 向量语义检索 + Ebbinghaus 加权；[memory].backend 可替换自定义类）
+     配置: [memory] 段 mem0_user_id/mem0_collection/mem0_qdrant_path/mem0_history_db/mem0_llm_*/mem0_embedder_*；LLM key 缺省读 ~/.pi/agent/auth.json 的 opencode-go 条目
+     写入: daemon 对话后自动写入（_mem0_autowrite，短消息跳过）
+     降级: mem0 不可用 → available=False → 自动跳过
+     - mem0 在 available 探测内**惰性导入**：未安装时 daemon 照常启动（import 失败也被 available=False 捕获）
+     - 探测失败后按 60s 节流重试：`--loop` 长驻时故障恢复可自愈，不永久禁用
+     - 结果行防御：importance 的 None/NaN 统一清洗为默认 0.5，行级异常整体降级为空列表
 
   ③ Ebbinghaus 遗忘曲线（v4）
      R = e^(-t / (S × importance))
@@ -533,12 +534,12 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 | 来源 | 权重 | 数据源 | 说明 |
 |------|:--:|------|------|
 | schedule | 0.30 | schedule/ 包（parser/query/holiday） | 课表/假期/周末/调休 |
-| memory | 0.25 | memory/ 包 (LanceDB + Ebbinghaus) | 随机高重要性记忆 |
+| memory | 0.25 | memory/ 包 (mem0 + Ebbinghaus) | 随机高重要性记忆 |
 | general | 0.25 | 当前小时数 | 按时段通用关心 |
 | weather_season | 0.20 | 当前月份 | 季节感知 |
 | anniversary | 0.15 | schedule/anniversary | 纪念日 |
 | solar_terms | 0.10 | solar_terms | 24节气 |
-| preference_followup | 0.10 | memory/ 包 (LanceDB) | 偏好追问 |
+| preference_followup | 0.10 | memory/ 包 (mem0) | 偏好追问 |
 | netease | 0.12 | NeteaseService (netease/service.py) | v9: 网易云音乐话题（策略层委托） |
 
 - `chiguo_topics.py`: TopicPicker 类，`pick(now)` → weighted_trigger_choice
@@ -678,7 +679,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态，在线学习）（v4） | 无 |
 | `schedule/` 包 | 课表/假期/纪念日/安排（15 模块）：`parser.py` 数据面（xlsx → JSON cache → 刷新）/ `parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `holiday.py` 节假日判断（2026 国务院安排 + 调休）/ `anniversary.py` 纪念日 CRUD / `override_store.py` 手动覆盖存储（0600）/ `plan_store.py` 日计划存储（0600）/ `api.py` 安排读写门面（校验 + 澄清接口）/ `sources.py` 课表检索源 / `day_plan.py` 日计划组装 / `resolve_when.py` 触发时机解析 / `attention.py` 注意力快照 / `recall.py` 安排回忆检索 / `confirm.py` 写后确认 / `replan.py` 复盘（--check 明日计划） | openpyxl（可选，惰性导入） |
 | `solar_terms.py` | 24 节气日期查询（零依赖） | 无 |
-| `memory/` 包 | **记忆后端抽象（v1.8 解耦，任意替换）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）/ `lancedb.py` LanceDbBackend（原 memory_bridge.py 实现迁移）/ `json.py` JsonMemoryBackend（零依赖兜底）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=LanceDbBackend 别名 + CLI） | lancedb（LanceDbBackend 惰性导入，可选；缺了降级 JSON） |
+| `memory/` 包 | **记忆后端抽象（v1.8 解耦，任意替换）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）/ `mem0_backend.py` Mem0Backend（mem0ai：LLM 事实提取 + ollama 向量 + qdrant 嵌入式）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=Mem0Backend 别名 + CLI） | mem0ai+ollama（必需依赖；无 key/ollama 未启动 → available=False 优雅降级） |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、LanceDB、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
@@ -748,7 +749,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_wechat_bridge.sh` | 微信桥管理脚本测试（假 bridge 桩） | wechat-bridge.sh |
 | `tests/test_netease_api.sh` | 网易云 API 服务脚本测试（假 systemd/curl 桩） | netease-api.sh |
 | `tests/test_service.sh` | 服务管理脚本测试（13 用例：dry-run 只读/unit 模板/autostart 调用链/幂等/杀 temp 残留/temp 互斥接管+pidfile/temp 幂等/ollama 降级 warn/status 三态/stop 双侧/uninstall 保登录态/缺 node→2/缺 .env→1/非 root→2） | service.sh |
-| `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、lancedb 缺失 warn、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
+| `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、mem0 缺失 info、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 | `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟用户消息/`s` 刷新状态 | 无 |
 | `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → pi 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
@@ -868,7 +869,7 @@ v1.8 起记忆模块解耦为 `memory/` 包，可任意替换（chiguo_state.py 
 - `memory/base.py` — `MemoryBackend` 抽象基类：四原语 `available`/`search()`/`random_memory()`/`stats()`（子类实现）；
   Ebbinghaus 遗忘包装（`ebbinghaus_weight`/`search_with_forgetting`/`user_relevant_with_forgetting`/`random_memory_with_forgetting`）
   与 `user_relevant` 多关键词召回等通用逻辑在基类共享，后端只负责「存什么、怎么搜」
-- `memory/lancedb.py` — `LanceDbBackend`（原 memory_bridge.py 实现迁移）：LanceDB FTS 只读（pi 记忆扩展写入）
+- `memory/mem0_backend.py` — `Mem0Backend`（v1.9 唯一内置后端）：mem0ai 记忆层（LLM 事实提取写入 + 向量语义检索 + qdrant 嵌入式存储）
 - `memory/json.py` — `JsonMemoryBackend`：手动记忆 JSON 文件（`manual_path`），零依赖兜底
 - `memory/factory.py` — `create_backend(config, base_dir)` 工厂，按 toml `[memory].backend` 选择后端
 
@@ -876,8 +877,8 @@ v1.8 起记忆模块解耦为 `memory/` 包，可任意替换（chiguo_state.py 
 
 | 取值 | 行为 |
 |------|------|
-| `auto` | LanceDB 可导入 → LanceDbBackend；否则 JsonMemoryBackend 兜底 |
-| `lancedb` | 显式 LanceDB（库缺失/路径不可用 → available=False 优雅降级） |
+| `mem0` | mem0ai 记忆层（默认；库缺失/无 key/ollama 未启动 → available=False 优雅降级） |
+| `module.path.ClassName` | 自定义后端类（importlib 动态加载，须继承 MemoryBackend；见 factory.py） |
 | `json` | 显式 JSON 手动记忆文件（`manual_path`） |
 | `module.path.ClassName` | 自定义后端类（importlib 动态加载，须为 MemoryBackend 子类；实例化 kwargs = [memory] 段其余键） |
 
@@ -895,7 +896,7 @@ python3 memory_bridge.py --random
 ```
 
 特性：
-- lancedb 惰性导入：未安装时 `available=False` 优雅降级，daemon 不受阻塞
+- mem0 惰性导入：未安装时 `available=False` 优雅降级，daemon 不受阻塞
 - `available=False` 后按 60s 节流重试，`--loop` 长驻下故障恢复可自愈
 - importance 的 None/NaN 统一清洗为 0.0（结果循环有行级异常兜底）
 
@@ -1018,9 +1019,12 @@ age = 16
 identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
 
 [memory]
-backend = "auto"                        # v1.8 记忆后端抽象：auto（默认）/ lancedb / json / module.path.ClassName（自定义）
-lancedb_path = "~/.pi-agent/memory/lancedb-pro"  # LanceDB 路径（~ 展开为 $HOME；backend=lancedb/auto 使用）
-lancedb_table = "memories"              # 表名
+backend = "mem0"                       # v1.9 记忆后端：mem0（默认）/ module.path.ClassName（自定义）
+mem0_user_id = "chiguo"                  # mem0 命名空间（user_id）
+mem0_qdrant_path = "data/mem0/qdrant"     # 本地向量库（qdrant 嵌入式，无需 docker）
+mem0_history_db = "data/mem0/history.db"  # mem0 操作历史（SQLite）
+mem0_llm_model = "deepseek-v4-flash"      # 事实提取 LLM（OpenAI 兼容）
+mem0_embedder_model = "qwen3-embedding:0.6b"  # 本地 embedding（ollama）
 manual_path = "data/chiguo_memories.json"  # 手动记忆文件（backend=json 数据源；auto 时兜底）
 ebbinghaus_strength = 168               # 记忆强度 S（小时），168h=7天（v4；Ebbinghaus 在 MemoryBackend 基类）
 ebbinghaus_min_weight = 0.1             # 最低权重，不彻底遗忘（v4）
@@ -1235,7 +1239,7 @@ memory_warn_mb = 500                   # 进程 RSS 大于此 → warn
 memory_critical_mb = 1000              # 进程 RSS 大于此 → critical
 
 [memory]        # 记忆后端抽象（v1.8；backend 四取值见「七、CLI 参考 → memory/ 包」）
-backend = "auto"                          # auto（默认）/ lancedb / json / module.path.ClassName
+backend = "mem0"                          # mem0（默认）/ module.path.ClassName
 manual_path = "data/chiguo_memories.json" # 手动记忆文件（backend=json 数据源；auto 时兜底）
 ```
 
@@ -1287,8 +1291,8 @@ python3 chiguo_monitor.py --health
 | health | config_ok | 配置文件存在 |
 | health | disk | 磁盘剩余/总量/已用 (MB) |
 | health | memory | 进程 RSS 内存 (MB) |
-| health | lancedb_direct | LanceDB 直连状态 (True/False/None) |
-| lancedb | likely_available | LanceDB 是否可能可用 |
+| health | mem0_direct | mem0 直连状态 (True/False/None) |
+| mem0 | likely_available | mem0 是否可能可用 |
 
 ### 10.3 异常检测
 
@@ -1303,7 +1307,7 @@ python3 chiguo_monitor.py --health
 | `emotion_stuck_low` | 元气 <15 持续 24h（≥6次评估中70%偏低） | info |
 | `rapid_escalation` | 24h 孤独涨 >40 | info |
 | `slow_tick` | 无 tick > 3h（可能 cron 频率过低） | info |
-| `lancedb_possible_degradation` | 10+次发送无 memory 触发 | info |
+| `mem0_possible_degradation` | 10+次发送无 memory 触发 | info |
 | `manual_break_active` | 手动假期模式长期开启 | info |
 
 ### 10.5 Fuzz 测试
@@ -1317,7 +1321,7 @@ python3 chiguo_monitor.py --health
 - **优雅降级** — 文件缺失 → 空统计，不抛异常
 - **防御式解析** — `state=None` / `emotion=None` / `cooldown=None` / 损坏行 → 自动规范化（`_normalize_entry`，stats() 与 alerts() 共用同一归一化，保证口径一致），不崩溃
 - **回复率口径** — 相邻 send 的 `messages_without_reply` 双方均为数值才比较，None/非数值视为未知不计为回复变化（stats 与 alerts B5 一致）
-- **配置回退** — `[monitor]` 配置相对路径在当前 cwd 找不到时回退模块目录，避免从其他 cwd 运行阈值静默回落默认值（与 health() 的 config 检测一致）；`lancedb_path` 优先 `[monitor]`，未定义时回退 `[memory]`（v10 统一，原代码只读 `[monitor]` 与 toml 注释约定不符）；路径值一律 `expanduser`（`~` 展开，v10）
+- **配置回退** — `[monitor]` 配置相对路径在当前 cwd 找不到时回退模块目录，避免从其他 cwd 运行阈值静默回落默认值（与 health() 的 config 检测一致）；`mem0_qdrant_path`/`mem0_history_db` 优先 `[monitor]`，未定义时回退 `[memory]`；路径值一律 `expanduser`（`~` 展开）
 - **独立可运行** — `python3 chiguo_monitor.py`
 
 ### 10.7 对话日志与归档 (v5)
@@ -1669,9 +1673,9 @@ rm <仓库根目录>/chiguo_state.json
 ## 十三、设计原则
 
 1. **零 LLM token 消耗** — 决策引擎纯 Python 数学，不调用任何 LLM
-2. **只读不写** — 对记忆库 LanceDB 只读，不获取文件锁
+2. **记忆读写** — mem0 记忆库（`data/mem0/` qdrant 嵌入式 + history.db）仅经 `memory/` 包访问
 3. **解耦记忆系统** — 所有强依赖通过 TOML 配置注入，路径/表名/通道均可改
-4. **优雅降级** — LanceDB 不可用（未安装/连接失败，`memory.lancedb.LanceDbBackend` 惰性导入 + 60s 节流重试；backend=auto 时工厂自动切 JsonMemoryBackend）→ 自动跳过，JSON 记忆兜底；课表不可用 → 默认开放
+4. **优雅降级** — mem0 不可用（未安装/无 key/ollama 未启动，`memory.mem0_backend.Mem0Backend` 惰性导入 + 60s 节流重试）→ 自动跳过，记忆话题源减少；课表不可用 → 默认开放
 5. **确定性优先** — 课表/节假日用确定性解析，不靠 LLM
 6. **平滑概率** — sigmoid 替代硬阈值，Hawkes 自激过程替代固定间隔，半衰期替代线性增减
 7. **决策/生成分离** — daemon 只输出结构化 JSON，消息生成由 pi-agent 完成（Phase 4）

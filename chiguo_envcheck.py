@@ -204,26 +204,35 @@ def _key_env_hint(provider: str) -> str:
     return "PI_API_KEY"
 
 
-def check_lancedb(db_path: Path) -> dict:
-    """lancedb 库可导入 + 数据库可只读连接。任一缺失 → info(JSON 降级可用)。
-    v1.8: 仅 [memory].backend ∈ {auto, lancedb} 时由 run_checks 调用。"""
+def _pi_api_key(provider: str = "opencode-go") -> str | None:
+    """~/.pi/agent/auth.json 读 pi provider key；失败返回 None。"""
     try:
-        import lancedb
+        import json as _json
+        with open(os.path.expanduser("~/.pi/agent/auth.json"), encoding="utf-8") as f:
+            return (_json.load(f).get(provider) or {}).get("key")
+    except Exception:
+        return None
+
+
+def check_mem0(qdrant_dir: Path, history_db: Path) -> dict:
+    """mem0 记忆层检查：mem0ai 可导入 + LLM key 存在 + 本地向量库目录就绪。
+    任一缺失 → info（记忆未启用可选；具体可用性由后端自身降级，不阻塞部署）。"""
+    try:
+        import mem0  # noqa: F401
     except ImportError:
-        return {"name": "lancedb", "ok": False, "severity": "info",
-                "detail": "lancedb 未安装 → 记忆未启用(可选,JSON 兜底)"}
-    if not db_path.is_dir():
-        return {"name": "lancedb", "ok": False, "severity": "info",
-                "detail": f"{db_path} 不存在 → 记忆未启用(可选,JSON 兜底)"}
-    try:
-        db = lancedb.connect(str(db_path))
-        table = db.open_table("memories")
-        _ = table.schema
-        return {"name": "lancedb", "ok": True, "severity": "ok",
-                "detail": f"LanceDB OK ({db_path}/memories)"}
-    except Exception as e:
-        return {"name": "lancedb", "ok": False, "severity": "info",
-                "detail": f"LanceDB 不可用: {e}(可选,JSON 兜底)"}
+        return {"name": "mem0", "ok": False, "severity": "info",
+                "detail": "mem0ai 未安装 → 记忆未启用(可选)"}
+    if not _pi_api_key():
+        return {"name": "mem0", "ok": False, "severity": "info",
+                "detail": "~/.pi/agent/auth.json 无 opencode-go key → 记忆写入不可用(可选)"}
+    if not qdrant_dir.is_dir():
+        return {"name": "mem0", "ok": False, "severity": "info",
+                "detail": f"{qdrant_dir} 不存在 → 记忆库未初始化(首次对话自动创建)"}
+    if not history_db.is_file():
+        return {"name": "mem0", "ok": True, "severity": "ok",
+                "detail": f"mem0 OK ({qdrant_dir}，历史库未创建)"}
+    return {"name": "mem0", "ok": True, "severity": "ok",
+            "detail": f"mem0 OK ({qdrant_dir})"}
 
 
 def check_json_memory(mem_path: Path) -> dict:
@@ -293,8 +302,8 @@ def run_checks(base_dir: Path = None, skip_pi: bool = False, home: Path = None) 
     home: 测试注入用（默认 Path.home()）。"""
     base = base_dir or _BASE_DIR
     cfg = _load_config(base)
-    lancedb_path = _cfg_path(cfg, "memory", "lancedb_path",
-                             "~/.pi-agent/memory/lancedb-pro", base)
+    mem0_qdrant = _cfg_path(cfg, "memory", "mem0_qdrant_path", "data/mem0/qdrant", base)
+    mem0_history = _cfg_path(cfg, "memory", "mem0_history_db", "data/mem0/history.db", base)
     xlsx = _cfg_path(cfg, "schedule", "xlsx_path", "data/xskb.xlsx", base)
     mem = _cfg_path(cfg, "memory", "manual_path", "data/chiguo_memories.json", base)
     api_base = os.environ.get("NETEASE_API_BASE", "http://localhost:3000")
@@ -304,23 +313,20 @@ def run_checks(base_dir: Path = None, skip_pi: bool = False, home: Path = None) 
     pi_auth = home / ".pi" / "agent" / "auth.json"
     ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
     provider = cfg.get("host", {}).get("provider") or "opencode-go"
-    # v1.8: agent 后端抽象（runner=pi 默认；command=自定义 CLI agent）+
-    # 记忆后端抽象（backend=auto/lancedb/json/自定义类路径）
+    # v1.8: agent 后端抽象（runner=pi 默认；command=自定义 CLI agent）
     runner = cfg.get("host", {}).get("runner") or "pi"
     agent_command = cfg.get("host", {}).get("agent_command") or None
-    memory_backend = cfg.get("memory", {}).get("backend") or "auto"
+    # 记忆后端检查（v1.9: mem0 为唯一内置后端；json/lancedb 已移除）：
+    # mem0/auto/缺省 → mem0 直检；自定义类路径（含 "."）→ 具体可用性由后端自身降级
+    memory_backend = cfg.get("memory", {}).get("backend") or "mem0"
     checks = [
         check_env(),
         check_pi(skip_pi=skip_pi, runner=runner, agent_command=agent_command),
     ]
     if runner == "pi":
         checks.append(check_pi_ext(pi_settings, pi_ext))
-    # 记忆后端检查：json 显式 → JSON 文件检查；auto/lancedb → LanceDB 直检；
-    # 自定义类路径（含 "."）→ 具体可用性由后端自身降级，envcheck 只提示不误检
-    if memory_backend == "json":
-        checks.append(check_json_memory(mem))
-    elif memory_backend in ("auto", "lancedb"):
-        checks.append(check_lancedb(lancedb_path))
+    if memory_backend in ("mem0", "auto"):
+        checks.append(check_mem0(mem0_qdrant, mem0_history))
     else:
         checks.append({"name": "memory_backend", "ok": True, "severity": "ok",
                        "detail": f"自定义记忆后端 {memory_backend}（envcheck 不直检，由后端自身降级）"})

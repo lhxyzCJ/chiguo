@@ -1,26 +1,26 @@
 # ============================================================
-# memory_bridge.py — 记忆桥接兼容门面（v1.8 已解耦到 memory/ 包）
+# memory_bridge.py — 记忆桥接门面（v1.8 已解耦到 memory/ 包；v1.9 后端 = mem0）
 #
-# 原实现迁移至 memory/ 包：LanceDbBackend（memory/lancedb.py）、
-# JsonMemoryBackend（memory/json.py）、工厂 create_backend（memory/factory.py）。
-# 本文件保留 MemoryBridge 名称与 CLI 供向后兼容；
+# 实现迁移至 memory/ 包：Mem0Backend（memory/mem0_backend.py）、
+# 工厂 create_backend（memory/factory.py）。
+# 本文件保留 MemoryBridge 名称与 CLI（经工厂创建，尊重 toml [memory].backend）。
 # 新代码请直接使用 memory.create_backend()（见 chiguo_state.py）。
 # ============================================================
 
 import json
 import sys
 
-from memory import LanceDbBackend, create_backend
+from memory import Mem0Backend, create_backend
 from memory.base import (
     DEFAULT_EBBINGHAUS_MIN_WEIGHT,
     DEFAULT_EBBINGHAUS_STRENGTH,
     USER_KEYWORDS,
 )
 
-# 兼容别名：MemoryBridge 即 LanceDB 后端（历史行为：LanceDB 只读记忆库）
-MemoryBridge = LanceDbBackend
+# 兼容别名：MemoryBridge 即 mem0 后端
+MemoryBridge = Mem0Backend
 
-__all__ = ["MemoryBridge", "LanceDbBackend", "create_backend",
+__all__ = ["MemoryBridge", "Mem0Backend", "create_backend",
            "DEFAULT_EBBINGHAUS_STRENGTH", "DEFAULT_EBBINGHAUS_MIN_WEIGHT", "USER_KEYWORDS"]
 
 
@@ -58,7 +58,15 @@ if __name__ == "__main__":
                 print("无相关记忆")
         elif cmd == "--stats":
             print(json.dumps(bridge.stats(), indent=2, ensure_ascii=False))
+        elif cmd == "--add":
+            text = sys.argv[2] if len(sys.argv) > 2 else ""
+            if not text:
+                print("用法: memory_bridge.py --add <文本>")
+                sys.exit(1)
+            ok = bridge.add_messages(text, metadata={"category": "manual"})
+            print(json.dumps({"ok": ok}, ensure_ascii=False))
+            sys.exit(0 if ok else 1)
         else:
-            print(f"用法: {sys.argv[0]} [--search|--random|--stats]")
+            print(f"用法: {sys.argv[0]} [--search|--random|--stats|--add <文本>]")
     else:
         print(json.dumps(bridge.stats(), indent=2, ensure_ascii=False))

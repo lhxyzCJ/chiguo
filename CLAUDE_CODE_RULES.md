@@ -58,7 +58,7 @@ python3 update_holidays.py 2027 --solar --force  # generate holiday data
 python3 chiguo_rotation.py --force
 ```
 
-**No build step. No pip install.** Python 3.14-only (PEP 758 bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`). Optional: `openpyxl` (schedule), `lancedb` (memory bridge). Note: `memory/lancedb.py` (`LanceDbBackend`) lazy-imports `lancedb` inside `_ensure_table()`; when absent it runs with `available=False` and memory queries degrade gracefully — the daemon never crashes on missing lancedb. With `[memory].backend=auto` (default), `memory/factory.py` `create_backend()` falls back to `JsonMemoryBackend` (zero-dependency).
+**No build step. No pip install.** Python 3.14-only (PEP 758 bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`). Optional: `openpyxl` (schedule), `mem0ai` + `ollama` (memory layer). Note: `memory/mem0_backend.py` (`Mem0Backend`) lazy-imports `mem0` inside `available` probing; when absent it runs with `available=False` and memory queries degrade gracefully — the daemon never crashes on missing mem0.
 
 ---
 
@@ -71,7 +71,7 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 │   ├── chiguo_personality.py  PersonalityTraits (8 dims) + PersonalityDelta + Deltas (231 lines)
 │   ├── chiguo_bayesian.py     UserStateEstimator (6 states) + BayesianLearner
 │   ├── schedule/ 包        schedule 数据面 parser.py (xskb.xlsx → schedule_cache.json → query) + parsing.py 纯解析 + query.py 策略 + holiday.py (节假日) + anniversary.py (纪念日) + override_store/plan_store/api (覆盖/计划/澄清存储) + sources/day_plan/resolve_when/attention/recall (检索与安排) + confirm + replan
-│   ├── memory/ 包            MemoryBackend abstraction (v1.8): base.py (available/search/random_memory/stats primitives + base-class Ebbinghaus) / lancedb.py LanceDbBackend (LanceDB read-only, lazy import, available=False degrade) / json.py JsonMemoryBackend (zero-dep fallback) / factory.py create_backend; memory_bridge.py kept as compat facade (MemoryBridge alias + CLI)
+│   ├── memory/ 包            MemoryBackend abstraction (v1.8): base.py (available/search/random_memory/stats primitives + base-class Ebbinghaus) / mem0_backend.py Mem0Backend (mem0ai: LLM fact extraction + ollama embedding + qdrant embedded, lazy import, available=False degrade, CHIGUO_MEM0_DISABLED=1 test hook) / factory.py create_backend; memory_bridge.py kept as compat facade (MemoryBridge alias + CLI)
 │   └── chiguo_circadian.py    dual-bucket sleep-window learning (weekday/weekend + active-time merging)
 ├── chiguo_trigger.py       evaluate_triggers() → 13 trigger types (incl. v7 follow_up), sigmoid-weighted
 ├── chiguo_topics.py        TopicPicker — 8 sources (incl. v9 netease), Ebbinghaus-weighted memory
@@ -83,7 +83,7 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 Supporting (not imported by daemon):
 ├── chiguo_demo.py          Interactive terminal demo (template-only, no LLM) (191 lines)
 ├── chiguo_watchdog.py      Standalone health checks (cron/systemd timer)
-├── chiguo_envcheck.py      Read-only env readiness check (Python/pi/ollama/auth/LanceDB/netease/data, exit 0/1/2)
+├── chiguo_envcheck.py      Read-only env readiness check (Python/pi/ollama/auth/mem0/netease/data, exit 0/1/2)
 ├── netease/                Netease package: bridge.py (NeteaseBridge 数据面, upstream: api-enhanced v4.39.0, localhost:3000) + service.py (NeteaseService 策略层 DI) + 运行时文件(锚定 <base_dir>/netease/)
 ├── solar_terms.py          24 solar terms lookup (±1 day window) (85 lines)
 └── update_holidays.py      Generate holidays.json + solar_terms.json for any year
@@ -161,7 +161,7 @@ evaluate(now)
 | morning | 2.5 × ritual_scale | 8-10am, 10% random gate, not sent today |
 | night | 2.0 × ritual_scale | 8-9pm, 12% probability, not sent today |
 | json_memory | 2.0 × ritual_scale | JSON memory with trigger_at in ±10min window |
-| lancedb_memory | 1.5 × ritual_scale | 8% random gate when silent>6h |
+| mem0_memory | 1.5 × ritual_scale | 8% random gate when silent>6h |
 | meal | 0.8 × ritual_scale | 11-12,17-19h, 5% probability |
 | lonely_low | softmax(loneliness) | sigmoid gate at midpoint 38 |
 | lonely_mid | softmax(loneliness) | sigmoid gate at midpoint 55 |
@@ -182,12 +182,12 @@ evaluate(now)
 | Source | Weight | Description |
 |--------|--------|-------------|
 | schedule | 0.30 | Class schedule, holiday, weekend status |
-| memory | 0.25 | LanceDB with Ebbinghaus forgetting re-ranking |
+| memory | 0.25 | mem0 with Ebbinghaus forgetting re-ranking |
 | general | 0.25 | Time-of-day generic topics |
 | weather_season | 0.20 | Month-based season hints |
 | anniversary | 0.15 | Today's anniversaries + upcoming within 7 days |
 | solar_terms | 0.10 | ±1 day window around 24 solar terms |
-| preference_followup | 0.10 | LanceDB user preference category memories |
+| preference_followup | 0.10 | mem0 user preference category memories |
 | netease | 0.12 | NeteaseService strategy layer (v9): music topic, peek/consume quota |
 
 **Ebbinghaus**: `R = e^(-t / (strength * importance))`, clamped to `[min_weight, 1.0]`. Default strength=168h (7-day half-life), min_weight=0.1.
@@ -243,7 +243,7 @@ Intent × Cue × Vibe three-layer system:
 
 ## 9. Ship of Theseus — Config Parameters (chiguo_proactive.toml)
 
-277 lines, 20 sections: 遗留 section（已废弃，Task 14；仅 wechat_recipient 仍读取）`[memory]`（v1.8 记忆后端抽象：backend/lancedb_path/lancedb_table/manual_path/ebbinghaus_*）`[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]` `[host]`（agent 调用配置：runner/agent_command/provider/model/…，见 §11）。Key tunables:
+277 lines, 20 sections: 遗留 section（已废弃，Task 14；仅 wechat_recipient 仍读取）`[memory]`（v1.9 记忆后端：backend=mem0 + mem0_user_id/mem0_collection/mem0_qdrant_path/mem0_history_db/mem0_llm_*/mem0_embedder_*/ebbinghaus_*）`[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]` `[host]`（agent 调用配置：runner/agent_command/provider/model/…，见 §11）。Key tunables:
 
 | Section | Key params | Effect |
 |---------|-----------|--------|
@@ -376,7 +376,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 1. **File already read**: Edit tool requires Read first. When Read hook blocks (claude-mem down), use Bash/python for edits.
 2. **Timezone**: Always use `CST = timezone(timedelta(hours=8))`. Naive datetimes get auto-completed via `_parse_tz()`.
 3. **TOML types**: `rate_energy_min = 5.0` must be float. Comments must match values.
-4. **LanceDB optional**: All memory queries gracefully degrade to `[]`. Tests mock or skip.
+4. **mem0 optional**: All memory queries gracefully degrade to `[]`. Tests mock or skip (`CHIGUO_MEM0_DISABLED=1` for deterministic unavailable).
 5. **xskb.xlsx missing**: Schedule fallback → availability=0.85 (treated as free time).
 6. **Test order**: Integration tests need `chiguo_proactive.toml` in CWD. Run from the repo root.
 7. **Ritual weight scale**: `evaluate_triggers()` multiplies all ritual weights by `ritual_weight_scale`. Set to 0.3 to balance with emotion weights.
@@ -402,7 +402,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | chiguo_rotation.py | 165 | Log rotation | rotate_if_needed(), force_rotate() |
 | chiguo_demo.py | 191 | Interactive demo | Demo class |
 | chiguo_version.py | 5 | Project version | VERSION |
-| memory/ 包 | — | Memory abstraction | base.py: MemoryBackend (available/search/random_memory/stats + base-class Ebbinghaus); lancedb.py: LanceDbBackend; json.py: JsonMemoryBackend; factory.py: create_backend; memory_bridge.py: compat facade (MemoryBridge=LanceDbBackend alias + CLI) |
+| memory/ 包 | — | Memory abstraction | base.py: MemoryBackend (available/search/random_memory/stats + base-class Ebbinghaus); mem0_backend.py: Mem0Backend; factory.py: create_backend; memory_bridge.py: compat facade (MemoryBridge=Mem0Backend alias + CLI) |
 | schedule/ 包 | — | Schedule/holiday/anniversary/arrangements | parser.py: refresh_schedule_cache; parsing.py; query.py(current_period/PERIOD_TIMES); holiday.py: HolidayParser; anniversary.py: AnniversaryManager; override_store.py; plan_store.py; api.py; sources.py; day_plan.py; resolve_when.py; attention.py; recall.py; confirm.py; replan.py |
 | solar_terms.py | 85 | Solar terms | SolarTerms |
 | netease/ | 939 | Netease package | bridge.py: NeteaseBridge (login/fetch_recent_play/fetch_daily_songs); service.py: NeteaseService (DI) |
@@ -414,7 +414,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 
 ## 16. Security Boundary
 
-**READ-ONLY**: `~/.pi-agent/memory/lancedb-pro` LanceDB — accessed only via `memory/lancedb.py` (`LanceDbBackend`, default `[memory].backend=auto`).
+**R/W**: `data/mem0/` mem0 store (embedded qdrant + history.db) — accessed via `memory/mem0_backend.py` (`Mem0Backend`, default `[memory].backend=mem0`). LLM key: `~/.pi/agent/auth.json` opencode-go (never committed).
 
 ---
 

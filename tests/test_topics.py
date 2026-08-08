@@ -28,13 +28,14 @@ def _picker_cfg() -> dict:
 
 
 def _real_state(tmp: str) -> ChiguoState:
-    """真实 toml + 临时目录锚定；lancedb 指向不存在路径 → 不可用（memory 源静默跳过）"""
+    """真实 toml + 临时目录锚定；mem0 显式禁用（CHIGUO_MEM0_DISABLED=1）→ memory 源静默跳过"""
     cfg_path = Path(tmp) / "chiguo_proactive.toml"
     cfg_path.write_text(Path("chiguo_proactive.toml").read_text())
     with open(cfg_path, "rb") as f:
         cfg = tomllib.load(f)
     cfg["_base_dir"] = str(tmp)
-    cfg["memory"]["lancedb_path"] = str(Path(tmp) / "no_lancedb")
+    cfg["memory"]["mem0_qdrant_path"] = str(Path(tmp) / "no_qdrant")
+    os.environ["CHIGUO_MEM0_DISABLED"] = "1"
     # 时间炸弹锚定：on_break 内部用 datetime.now()（真实时钟）与 semester_end 比较。
     # 固定 semester_end 为过去日期 → on_break 恒 True → schedule_status 走确定性的
     # 假期分支（class_load=free），不依赖真实运行日期。否则学期内（真实今天 ≤ toml
@@ -74,7 +75,7 @@ class MockState:
 
 
 class FakeBridge:
-    """假 MemoryBridge：available=True，返回固定记忆（不依赖 lancedb）"""
+    """假 MemoryBridge：available=True，返回固定记忆（不依赖 mem0）"""
 
     def __init__(self, memories):
         self._memories = memories
@@ -138,7 +139,7 @@ class FakeNeteaseService:
 # ═══════════════════════════════════════════════════════════
 
 def test_pick_always_returns_valid_topic():
-    """真实 state（lancedb 不可用）：300 种子 pick 恒返回合法结构（general 永远可用）"""
+    """真实 state（mem0 禁用）：300 种子 pick 恒返回合法结构（general 永远可用）"""
     with tempfile.TemporaryDirectory() as td:
         state = _real_state(td)
         picker = TopicPicker(state, _picker_cfg())
@@ -394,12 +395,12 @@ def test_anniversary_topic_today_and_upcoming():
 
 
 def test_memory_sources_unavailable_skipped():
-    """lancedb 不可用 → memory / preference_followup 静默跳过（不崩、返回 None）"""
+    """mem0 不可用 → memory / preference_followup 静默跳过（不崩、返回 None）"""
     with tempfile.TemporaryDirectory() as td:
         state = _real_state(td)
         picker = TopicPicker(state, _picker_cfg())
         now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
-        assert state.memory_bridge.available is False, "precondition: lancedb unavailable"
+        assert state.memory_bridge.available is False, "precondition: mem0 unavailable"
         assert picker._memory_topic() is None
         assert picker._preference_followup_topic(now) is None
     print("  OK test_memory_sources_unavailable_skipped")
