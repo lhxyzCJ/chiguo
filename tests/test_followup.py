@@ -24,7 +24,7 @@ def _make_state(tmp: str, now: datetime) -> ChiguoState:
     with open(cfg_path, "rb") as f:
         cfg = tomllib.load(f)
     cfg["_base_dir"] = str(tmp)
-    cfg["memory"]["lancedb_path"] = str(Path(tmp) / "no_lancedb")
+    cfg["memory"]["mem0_qdrant_path"] = str(Path(tmp) / "no_qdrant")
     s = ChiguoState(cfg)
     s.cooldown.last_user_message_at = (now - timedelta(hours=10)).isoformat()
     s.cooldown.current_date = now.strftime("%Y-%m-%d")

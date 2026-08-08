@@ -17,11 +17,11 @@ from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 
 try:
-    import lancedb as _lancedb
-    _HAS_LANCEDB = True
+    import mem0 as _mem0
+    _HAS_MEM0 = True
 except ImportError:
-    _lancedb = None
-    _HAS_LANCEDB = False
+    _mem0 = None
+    _HAS_MEM0 = False
 
 CST = timezone(timedelta(hours=8))
 
@@ -55,8 +55,9 @@ class ChiguoMonitor:
             "disk_critical_mb": 100,
             "memory_warn_mb": 500,
             "memory_critical_mb": 1000,
-            "lancedb_path": "~/.pi-agent/memory/lancedb-pro",
-            "backend": "auto",          # v1.8: 记忆后端抽象（auto/lancedb/json/自定义）
+            "mem0_qdrant_path": "data/mem0/qdrant",
+            "mem0_history_db": "data/mem0/history.db",
+            "backend": "mem0",         # v1.9: 记忆后端抽象（mem0/自定义类路径）
             "manual_path": "data/chiguo_memories.json",
         }
         candidates = [config_path]
@@ -68,10 +69,13 @@ class ChiguoMonitor:
                     cfg = tomllib.load(f)
                 monitor = cfg.get("monitor", {})
                 defaults.update(monitor)
-                # [monitor] 未定义 lancedb_path 时回退 [memory] 段（与 toml 注释约定一致）
-                if "lancedb_path" not in monitor:
-                    defaults["lancedb_path"] = (cfg.get("memory", {}).get("lancedb_path")
-                                                or defaults["lancedb_path"])
+                # [monitor] 未定义 mem0_qdrant_path 时回退 [memory] 段（与 toml 注释约定一致）
+                if "mem0_qdrant_path" not in monitor:
+                    defaults["mem0_qdrant_path"] = (cfg.get("memory", {}).get("mem0_qdrant_path")
+                                                    or defaults["mem0_qdrant_path"])
+                if "mem0_history_db" not in monitor:
+                    defaults["mem0_history_db"] = (cfg.get("memory", {}).get("mem0_history_db")
+                                                   or defaults["mem0_history_db"])
                 # v1.8: 记忆后端与手动记忆路径单一事实来源 = [memory] 段
                 defaults["backend"] = cfg.get("memory", {}).get("backend") or defaults["backend"]
                 defaults["manual_path"] = cfg.get("memory", {}).get("manual_path") or defaults["manual_path"]
@@ -80,9 +84,14 @@ class ChiguoMonitor:
                 continue
         return defaults
 
-    def _lancedb_path(self) -> str:
-        """LanceDB 数据库路径。优先级：[monitor] > [memory] > 硬编码默认。~ 展开为 $HOME。"""
-        return os.path.expanduser(self._monitor_config.get("lancedb_path", "~/.pi-agent/memory/lancedb-pro"))
+    def _mem0_qdrant_dir(self) -> Path:
+        """mem0 本地向量库目录。优先级：[monitor] > [memory] > 默认 data/mem0/qdrant。
+        相对路径锚定项目根；~ 展开为 $HOME。"""
+        raw = self._monitor_config.get("mem0_qdrant_path", "data/mem0/qdrant")
+        p = Path(os.path.expanduser(raw))
+        if p.is_absolute():
+            return p
+        return Path(__file__).resolve().parent / p
 
     def _memory_backend(self) -> str:
         """v1.8: 记忆后端类型（[memory].backend，缺省 auto）。"""
@@ -220,9 +229,9 @@ class ChiguoMonitor:
         first_time: datetime | None = None
         last_time: datetime | None = None
 
-        # LanceDB 降级检测
-        lancedb_ok_count = 0
-        lancedb_check_count = 0
+        # mem0 降级检测
+        mem0_ok_count = 0
+        mem0_check_count = 0
 
         # v6: 发送结果统计
         send_success = 0
@@ -280,16 +289,16 @@ class ChiguoMonitor:
                     "silent_hours": silent_h if isinstance(silent_h, (int, float)) else 0,
                 })
 
-                # LanceDB 可用性：有 memory 触发 → LanceDB 正常
+                # mem0 可用性：有 memory 触发 → mem0 正常
                 if trigger == "memory":
-                    # 检查是否有 lancedb_memory（vs JSON memory）
+                    # 检查是否有 mem0_memory（situation 含「突然想起」或 context 含 mem0）
                     ctx = entry.get("context")
                     if not isinstance(ctx, dict):
                         ctx = {}
                     sit = ctx.get("situation") or ""
-                    if "突然想起" in sit or "lancedb" in str(ctx).lower():
-                        lancedb_ok_count += 1
-                    lancedb_check_count += 1
+                    if "突然想起" in sit or "mem0" in str(ctx).lower():
+                        mem0_ok_count += 1
+                    mem0_check_count += 1
 
             elif action == "idle":
                 total_idles += 1
@@ -391,7 +400,7 @@ class ChiguoMonitor:
             for d, v in sorted(daily.items())
         ]
 
-        lancedb_likely = lancedb_ok_count > 0
+        mem0_likely = mem0_ok_count > 0
 
         return {
             "period": {
@@ -428,11 +437,11 @@ class ChiguoMonitor:
                 "trends": emotion_trends,
                 "stats": emotion_stats,
             },
-            "lancedb": {
-                "memory_trigger_count": lancedb_check_count,
-                "lancedb_ok_estimate": lancedb_ok_count,
-                "likely_available": lancedb_likely,
-            } if lancedb_check_count > 0 else None,
+            "mem0": {
+                "memory_trigger_count": mem0_check_count,
+                "mem0_ok_estimate": mem0_ok_count,
+                "likely_available": mem0_likely,
+            } if mem0_check_count > 0 else None,
             "send_result": {
                 "success": send_success,
                 "failed": send_failed,
@@ -639,13 +648,13 @@ class ChiguoMonitor:
                     "delta": round(delta, 1),
                 })
 
-        # ── C. LanceDB 降级检测 ──
+        # ── C. mem0 降级检测 ──
         memory_triggers = sum(1 for e in sends if e.get("trigger") == "memory")
         if len(sends) >= 10 and memory_triggers == 0:
             results.append({
                 "severity": "info",
-                "type": "lancedb_possible_degradation",
-                "message": f"过去14天 {len(sends)} 次发送中无 memory 触发，LanceDB 可能不可用",
+                "type": "mem0_possible_degradation",
+                "message": f"过去14天 {len(sends)} 次发送中无 memory 触发，mem0 可能不可用",
             })
 
         # ── D. 假期状态异常 ──
@@ -778,26 +787,21 @@ class ChiguoMonitor:
         except Exception:
             pass
 
-        # 9. 记忆后端连通性直检（v1.8: 按 [memory].backend 分流；JSON 后端检查文件存在，
-        # 自定义类路径不直检（由后端自身降级），避免误报 LanceDB 状态）
-        lancedb_direct = None  # None=未检测(JSON/自定义后端/无 lancedb), True=正常, False=不可达
+        # 9. 记忆后端连通性直检（v1.9: 按 [memory].backend 分流；mem0 检查本地向量库目录，
+        # 自定义类路径不直检（由后端自身降级），避免误报 mem0 状态）
+        mem0_direct = None  # None=未检测(自定义后端), True=正常, False=不可达
         mem_backend = self._memory_backend()
-        if mem_backend == "json":
-            mem_path = self._json_memory_path()
-            if not mem_path.is_file():
-                issues.append(f"JSON memory missing: {mem_path}")
-        elif mem_backend in ("auto", "lancedb") and _HAS_LANCEDB:
-            try:
-                db_path = self._lancedb_path()
-                db = _lancedb.connect(db_path)
-                table = db.open_table("memories")
-                # 检查表 schema 验证可访问（不取数据，避免 pyarrow segfault）
-                _ = table.schema
-                lancedb_direct = True
-            except Exception as e:
-                lancedb_direct = False
-                issues.append(f"LanceDB unreachable: {e}")
-        # _HAS_LANCEDB is False → lancedb_direct stays None (skipped)
+        if mem_backend in ("auto", "mem0", ""):
+            qdir = self._mem0_qdrant_dir()
+            if not qdir.is_dir():
+                mem0_direct = False
+                issues.append(f"mem0 qdrant dir missing: {qdir}")
+            elif _HAS_MEM0:
+                mem0_direct = True
+            else:
+                mem0_direct = False
+                issues.append("mem0ai 未安装 → 记忆未启用(可选)")
+        # 自定义类路径（含 .）→ mem0_direct stays None (skipped)
 
         return {
             "healthy": healthy,
@@ -808,7 +812,7 @@ class ChiguoMonitor:
             "config_ok": config_exists,
             "disk": disk_info,
             "memory": {"rss_mb": rss_mb},
-            "lancedb_direct": lancedb_direct,
+            "mem0_direct": mem0_direct,
             "issues": issues,
             "checked_at": now.isoformat(),
         }

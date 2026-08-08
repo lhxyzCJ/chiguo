@@ -90,7 +90,7 @@ The system is two message pipelines, all running locally — the model API and t
 
 **Passive replying**: a WeChat message enters the bridge → an **OWNER_ID gate** (non-owners only get a plain chat reply — no accounting, no command/recall paths) → `chiguo_daemon.py --user-msg` records it **deterministically** (real-time emotion response, recv_dedup against double-counting) → `command-detect.mjs` rules check first: **special commands** (anniversaries / holidays / break on-off) are executed and answered directly, **no LLM**; **schedule write-commands** (cancel / move / add / exam week / reminder / remove) go through `pi-run.mjs --schedule-extract` extraction → `--schedule-verify` verification (dual agents, separate sessions; if info is missing they return a question into the clarify loop, records valid 6h) → daemon `--schedule-change` atomic write (confirmation text carries weekday + date); ordinary messages first fetch a lightweight `--attention` injection (today's important days / active range facts / this week's schedule), then run `pi-run.mjs --analysis-mode`, producing "mood analysis JSON + reply text" in one call — if the analysis carries a recall signal (registered facts / past dates), the bridge queries the facts and answers via a second pi pass → the analysis is merged back into the daemon via `--analysis` (dedup upgrade) → the reply is sent back to WeChat. The reply side runs as a resident serial process (TurnQueue, session `chiguo-main`), zero session sharing with proactive sending.
 
-**Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (`[memory].backend`, LanceDB by default, switchable to json / custom class) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` patrols independently. Both pipelines record pi-call outcomes into the `pi_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
+**Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (`[memory].backend`, mem0 by default, switchable to a custom class) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` patrols independently. Both pipelines record pi-call outcomes into the `pi_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 60, "curve": "basis", "fontSize": 18}}}%%
@@ -124,7 +124,7 @@ flowchart LR
         direction LR
         DC <-->|读| ST[(chiguo_state.json 原子写)]
         DC -->|追加| DEC[(chiguo_decisions.jsonl)]
-        DC <-->|记忆话题| MEM[(LanceDB 记忆)]
+        DC <-->|记忆话题| MEM[(mem0 记忆)]
         DC <-->|音乐话题| NE[(网易云)]
         MON[monitor] -. 巡检 .-> ST
     end
@@ -192,7 +192,7 @@ Lower tiers can be upgraded later: `bash scripts/install_pi.sh --yes` (model), `
 ```bash
 git clone https://github.com/lhxyzCJ/chiguo.git && cd chiguo   # public repo: https or ssh (git@github.com:lhxyzCJ/chiguo.git)
 
-uv sync                              # core (zero deps); full features: uv sync --all-extras
+uv sync                              # core (mem0 memory layer required); full features: uv sync --all-extras (+schedule parsing)
 uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
@@ -201,7 +201,7 @@ uv run python chiguo_daemon.py --status   # current state
 bash scripts/ci-test.sh   # same entry point as GitHub Actions; any failure exits non-zero
 ```
 
-> Note: `uv sync` does not install lancedb by default (memory runs in JSON-fallback mode); `uv sync --all-extras` enables full memory and schedule parsing. Integration tests require `chiguo_proactive.toml` in the current directory — always run from the project root.
+> Note: `uv sync` installs mem0ai (the memory layer is a required dependency); `uv sync --all-extras` additionally enables schedule parsing. Integration tests require `chiguo_proactive.toml` in the current directory — always run from the project root.
 
 ---
 
@@ -237,11 +237,11 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ### Memory system (memory backend abstraction)
 
-**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Since v1.8 this is a **memory backend abstraction**: the `memory/` package provides the `MemoryBackend` abstract base class + `LanceDbBackend` + `JsonMemoryBackend` + the `create_backend` factory (`memory_bridge.py` is now a compatibility facade), switched via `[memory].backend` in `chiguo_proactive.toml` — `auto` (default: LanceDB when available, JSON fallback otherwise) / `lancedb` / `json` / a custom class `module.path.ClassName`. In LanceDB mode, worth-keeping bits of conversation are auto-accumulated into the memory store by the pi-agent [memory-lancedb-pro](https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro) extension (memories, old stories, your preferences); the decision engine recalls them **read-only** (BM25 full-text search, zero tokens, zero extra calls), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
+**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Since v1.8 this is a **memory backend abstraction**: the `memory/` package provides the `MemoryBackend` abstract base class + the `create_backend` factory (`memory_bridge.py` is now a compatibility facade), switched via `[memory].backend` in `chiguo_proactive.toml` — `mem0` (default since v1.9, the [mem0ai](https://github.com/mem0ai/mem0) memory layer) / a custom class `module.path.ClassName`. In mem0 mode, the daemon **auto-writes** after conversations (`_mem0_autowrite`, LLM fact extraction via deepseek-v4-flash through the opencode gateway); retrieval uses **vector semantic search** (local ollama `qwen3-embedding:0.6b`, zero API cost) over an embedded qdrant store (`data/mem0/`, no docker) plus a SQLite operation history. The decision engine recalls **read-only** (semantic search + Ebbinghaus weighting), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
 
-**Setup**: LanceDB backend: `uv sync --all-extras` + `bash scripts/install_pi.sh --yes` (initializes the memory store); the store lives at `~/.pi-agent/memory/lancedb-pro` (read-only from Chiguo's side; writes are done by the pi extension). Zero-dependency JSON backend: `[memory].backend = "json"` (source `data/chiguo_memories.json`, **always active** as a supplement).
+**Setup**: `uv sync` (mem0ai + ollama client are required dependencies); the store lives at `data/mem0/` (embedded qdrant + history.db; paths/LLM/embedder are configured by the `[memory]` `mem0_*` keys; the LLM key defaults to the opencode-go entry of `~/.pi/agent/auth.json`).
 
-**Missing**: graceful degradation when LanceDB is unavailable (`available=False`, queries return empty, no exceptions) — memory topic sources shrink and `chiguo_envcheck.py` reports a warn (non-fatal); `backend = "json"` keeps working with zero dependencies. Differences in detail: [❓ FAQ](#-faq).
+**Missing**: graceful degradation when mem0 is unavailable (`available=False`, queries return empty, no exceptions) — memory topic sources shrink and `chiguo_envcheck.py` reports a warn (non-fatal). Differences in detail: [❓ FAQ](#-faq).
 
 ### NetEase Music bridge
 
@@ -361,7 +361,7 @@ Any contribution is welcome — especially ones that help *her* grow:
 She originates from the official *Tricolour Lovestory* series (see [🎀 Who Is She](#-who-is-she)). This project is a fan re-imagining; the script is bundled for study reference only, copyrights belong to the original creators, and material will be removed on objection.
 
 **What's the difference between installing the memory system or not?**
-`[memory].backend` defaults to `auto`: LanceDB when available, JSON fallback otherwise. Without it (`uv sync`): memory topic sources are reduced, JSON fallback, `envcheck` reports a warning. With it (`uv sync --all-extras` + `bash scripts/install_pi.sh --yes`): full LanceDB memory + music linkage.
+`[memory].backend` defaults to `mem0`: `uv sync` installs everything required (mem0ai+ollama are required dependencies) plus local ollama qwen3-embedding and an LLM key for full functionality; with no LLM key or no ollama, memory stays disabled (`available=False` graceful degradation), memory topic sources shrink and `envcheck` reports an info.
 
 **How do I change the persona / personality?**
 Chiguo's persona is fixed (the system is designed around a single character) — it cannot be replaced. Want to adjust her behavior? Change the parameters in `chiguo_proactive.toml` — `SUN2.md` is the single authoritative definition and the speech manual shapes tone.
@@ -370,7 +370,7 @@ Chiguo's persona is fixed (the system is designed around a single character) —
 No. Change `[host].provider` / `[host].model` in `chiguo_proactive.toml` and configure the key; custom OpenAI-compatible endpoints see [PI_INTEGRATION.md](doc/PI_INTEGRATION.md).
 
 **Where is the data stored?**
-Decision/conversation JSONL and system state stay on this machine only (never committed) + the LanceDB memory store at `~/.pi-agent/memory/lancedb-pro`. All computation is local.
+Decision/conversation JSONL and system state stay on this machine only (never committed) + the mem0 memory store at `data/mem0/` (embedded qdrant + history.db, both gitignored). All computation is local.
 
 **Why isn't she messaging me?**
 Send gating is working: quiet window (late night), daily cap, min interval, trigger evaluation. `--status` / `--stats 30` shows what's blocking her.
@@ -389,7 +389,7 @@ Just say it in WeChat: "明天停课" / "下周三开始考试周" / "8月20号�
 chiguo_proactive.toml    # main config (all parameters, hot-reloaded)
 chiguo_daemon.py         # decision engine (main entry, zero LLM)
 chiguo_state.py          # emotion engine + persona + Bayesian + schedule facade + circadian
-memory/                  # memory backend abstraction (base/lancedb/json/factory; memory_bridge.py facade)
+memory/                  # memory backend abstraction (base/mem0_backend/factory; memory_bridge.py facade)
 schedule/                # schedule center (holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan)
 scripts/                 # tick/replan crontab entries + agent runner abstraction (pi-run.mjs, pi default)

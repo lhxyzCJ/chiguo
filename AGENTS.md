@@ -1,6 +1,6 @@
 # AGENTS.md
 
-迟菓主动消息系统 (Chiguo proactive message system) — a zero-LLM math engine (`chiguo_daemon.py`) that decides when/what to send as JSON; the agent backend (Phase 4 起；默认 pi-agent，v1.8 起 `[host].runner = command` 可换任意 CLI agent) reads that JSON, generates the WeChat message, and sends it via wechat-bridge. Project root: the repo checkout directory (this repo is on GitHub; clone it anywhere, e.g. `/root/chiguo` on the dev machine). Always run commands from the repo root. Machine-specific paths (`~/.pi-agent/memory/lancedb-pro` 记忆库、`~/.pi/...`) live in `chiguo_proactive.toml`；`deploy.sh` bootstraps a fresh machine.
+迟菓主动消息系统 (Chiguo proactive message system) — a zero-LLM math engine (`chiguo_daemon.py`) that decides when/what to send as JSON; the agent backend (Phase 4 起；默认 pi-agent，v1.8 起 `[host].runner = command` 可换任意 CLI agent) reads that JSON, generates the WeChat message, and sends it via wechat-bridge. Project root: the repo checkout directory (this repo is on GitHub; clone it anywhere, e.g. `/root/chiguo` on the dev machine). Always run commands from the repo root. Machine-specific paths (`data/mem0/` 记忆库、`~/.pi/...`) live in `chiguo_proactive.toml`；`deploy.sh` bootstraps a fresh machine.
 
 Existing instruction sources to read before editing: `CLAUDE.md` (setup + architecture), `CLAUDE_CODE_RULES.md` (detailed module map, decision schema, known design decisions), `doc/SYSTEM.md`.
 
@@ -11,7 +11,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 ## Iron rules
 
 - **Decision/generation separation**: the daemon outputs structured JSON, never messages. Do not merge LLM logic into the daemon.
-- **Security boundary**: LanceDB 记忆库位于 `~/.pi-agent/memory/lancedb-pro`，只读访问经 `memory/` 包（默认 `LanceDbBackend`；`memory_bridge.py` 为兼容门面）。
+- **Security boundary**: mem0 记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db，gitignore），访问经 `memory/` 包（默认 `Mem0Backend`；`memory_bridge.py` 为兼容门面）；LLM key 读 `~/.pi/agent/auth.json` 的 opencode-go 条目，不进 git。
 - Before fixing: make a plan/todolist, dispatch parallel subagents, and self-audit with subagents after finishing. Subagents inherit the main model (do not override via `model` param); never use opus without explicit user authorization.
 
 ## 工程原则
@@ -43,11 +43,11 @@ bash scripts/ci-test.sh   # full suite (36 py + 10 script) — 本地与 GitHub 
 - Everything tunable in `chiguo_proactive.toml` (314 lines); hot-reloads via mtime check in `--loop` mode only (cron spawns fresh processes).
 - Output: `chiguo_decisions.jsonl` (append-only). State: `chiguo_state.json` (atomic `.tmp` → `os.replace`, `.bak` backup, SHA256 checksum, monotonic `tick_seq`). Privacy runtime files (state/decisions/messages/login state) are `.gitignore`d (local only, history rewritten); monitoring/health JSONL stays tracked for analysis.
 - CLI convention: JSON to stdout, diagnostics to stderr. Always use `CST = timezone(timedelta(hours=8))` — never naive datetimes.
-- **pi-agent integration (Phase 4, v1.4；v1.8 agent 抽象：`[host].runner` = pi（默认，pi-agent 二进制）| command（任意 CLI agent，`[host].agent_command` 指定，统一契约 `--prompt <完整提示词> --mode <mode>`，stdout JSON/NDJSON；RPC 常驻仅 pi 模式））**: 发送侧 `scripts/chiguo-tick.sh`（系统 crontab 每 15 分钟；`chiguo_daemon.py --compact` 零模型门控，send 才调 pi）+ 回复侧 bridge `askPi`（`scripts/pi-run.mjs --prompt <原文> --analysis-mode`，一次完成情绪分析 JSON + 回复，daemon recv_dedup 升级语义）+ 特殊命令（纪念日/假期）由 bridge 规则化确定性接管（`wechat-bridge/command-detect.mjs`，不经 pi）；`scripts/install_pi.sh` 引导 pi 环境（provider key 随 toml [host].provider，缺省 opencode-go/memory-lancedb-pro/crontab）；详见 `doc/PI_INTEGRATION.md`。微信发送走 wechat-bridge (`wechat-bridge/bridge.mjs` 随仓库部署, HTTP POST 127.0.0.1:18790/send, 必须 --noproxy '*'; 管理脚本 `scripts/wechat-bridge.sh` install/start/stop/status/login, deploy.sh 第 5 步接入); 回复侧 bridge 确定性 `--user-msg` + pi 补分析 (daemon recv_dedup 升级语义, 见 CooldownState.recv_dedup). 登录态存 `wechat-bridge/credentials/`（gitignore 本地保留；新设备需 `bash scripts/wechat-bridge.sh login` 重新扫码，失效自动重登）. 会话并发模型：回复=chiguo-main（bridge 内 TurnQueue 串行）、主动发送=chiguo-send（tick 经 PIRUN_SESSION 注入）——两进程零共享会话。
+- **pi-agent integration (Phase 4, v1.4；v1.8 agent 抽象：`[host].runner` = pi（默认，pi-agent 二进制）| command（任意 CLI agent，`[host].agent_command` 指定，统一契约 `--prompt <完整提示词> --mode <mode>`，stdout JSON/NDJSON；RPC 常驻仅 pi 模式））**: 发送侧 `scripts/chiguo-tick.sh`（系统 crontab 每 15 分钟；`chiguo_daemon.py --compact` 零模型门控，send 才调 pi）+ 回复侧 bridge `askPi`（`scripts/pi-run.mjs --prompt <原文> --analysis-mode`，一次完成情绪分析 JSON + 回复，daemon recv_dedup 升级语义）+ 特殊命令（纪念日/假期）由 bridge 规则化确定性接管（`wechat-bridge/command-detect.mjs`，不经 pi）；`scripts/install_pi.sh` 引导 pi 环境（provider key 随 toml [host].provider，缺省 opencode-go/crontab）；记忆层 mem0 由 `uv sync` 安装（必需依赖；qdrant 嵌入式 data/mem0/ + ollama qwen3-embedding）；详见 `doc/PI_INTEGRATION.md`。微信发送走 wechat-bridge (`wechat-bridge/bridge.mjs` 随仓库部署, HTTP POST 127.0.0.1:18790/send, 必须 --noproxy '*'; 管理脚本 `scripts/wechat-bridge.sh` install/start/stop/status/login, deploy.sh 第 5 步接入); 回复侧 bridge 确定性 `--user-msg` + pi 补分析 (daemon recv_dedup 升级语义, 见 CooldownState.recv_dedup). 登录态存 `wechat-bridge/credentials/`（gitignore 本地保留；新设备需 `bash scripts/wechat-bridge.sh login` 重新扫码，失效自动重登）. 会话并发模型：回复=chiguo-main（bridge 内 TurnQueue 串行）、主动发送=chiguo-send（tick 经 PIRUN_SESSION 注入）——两进程零共享会话。
 
 ## Known gotchas
 
-- `memory/lancedb.py` (`LanceDbBackend`) lazy-imports `lancedb` inside `_ensure_table()` (CLAUDE_CODE_RULES.md §1 claims a hard top-level import — stale; CLAUDE.md is correct; `memory_bridge.py` 是 v1.8 兼容门面，`MemoryBridge = LanceDbBackend`): daemon runs with `available=False` when lancedb is absent.
+- `memory/mem0_backend.py` (`Mem0Backend`) lazy-imports `mem0` inside `available` probing: daemon runs with `available=False` when mem0 is absent (60s throttle retry self-heals; tests set `CHIGUO_MEM0_DISABLED=1` for deterministic unavailable).
 - `schedule/parser.py` requires `xskb.xlsx`; if missing, falls back to availability=0.85 (free time). `_parse()` returns bool and never overwrites a valid cache with a failed parse.
 - `tests/test_topics.py` anchors `_real_state` with `semester_end` in the past — don't "fix" it to real dates (time-bomb test).
 

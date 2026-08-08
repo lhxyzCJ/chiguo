@@ -23,9 +23,9 @@ def _make_engine(temp_dir: str) -> DecisionEngine:
     # 复制 toml 到临时目录（_base_dir 锚定到此）
     import re
     src = Path("chiguo_proactive.toml").read_text()
-    # 隔离:lancedb_path 改写为临时目录,防止新机器上连到生产记忆库
-    src = re.sub(r"(?m)^lancedb_path\s*=.*$",
-                 f'lancedb_path = "{td / "no_lancedb"}"', src)
+    # 隔离:mem0_qdrant_path 改写为临时目录,防止新机器上连到生产记忆库
+    src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                 f'mem0_qdrant_path = "{td / "no_qdrant"}"', src)
     cfg_path = td / "chiguo_proactive.toml"
     cfg_path.write_text(src)
     log_path = td / "chiguo_decisions.jsonl"

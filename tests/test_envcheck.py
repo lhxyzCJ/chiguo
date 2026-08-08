@@ -182,12 +182,12 @@ def test_check_ollama_proxy_bypassed():
     print("  OK test_check_ollama_proxy_bypassed")
 
 
-def test_check_lancedb_missing_db_warn():
+def test_check_mem0_missing_dir_info():
     with tempfile.TemporaryDirectory() as td:
-        r = ec.check_lancedb(db_path=Path(td) / "no_such_lancedb")
-        # lancedb 未装或路径不存在 → 均为 info,不崩
+        r = ec.check_mem0(Path(td) / "no_such_qdrant", Path(td) / "no_history.db")
+        # mem0ai 未装 / key 缺失 / 目录不存在 → 均为 info,不崩
         assert r["severity"] == "info" and not r["ok"]
-    print("  OK test_check_lancedb_missing_db_info")
+    print("  OK test_check_mem0_missing_dir_info")
 
 
 def test_check_netease_no_cookie_info():
@@ -228,8 +228,8 @@ def test_run_checks_never_crashes():
         cfg = td / "chiguo_proactive.toml"
         cfg.write_text(Path("chiguo_proactive.toml").read_text())
         import re
-        cfg.write_text(re.sub(r"(?m)^lancedb_path\s*=.*$",
-                              f'lancedb_path = "{td / "no_lancedb"}"',
+        cfg.write_text(re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                              f'mem0_qdrant_path = "{td / "no_qdrant"}"',
                               cfg.read_text()))
         report = ec.run_checks(base_dir=td)
         assert len(report["checks"]) == 8
@@ -241,33 +241,32 @@ def test_run_checks_never_crashes():
     print("  OK test_run_checks_never_crashes")
 
 
-def test_lancedb_default_path_migrated():
-    test_run_checks_custom_backend_skips_lancedb()
-    """lancedb 记忆库路径：配置写 ~/.pi-agent/memory/lancedb-pro 时 _cfg_path 正确展开。"""
+def test_mem0_default_path_anchored():
+    test_run_checks_custom_backend_skips_mem0()
+    """mem0 记忆库路径：相对路径锚定 config 所在目录（_cfg_path 不展开错位）。"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         cfg = td / "chiguo_proactive.toml"
         cfg.write_text(Path("chiguo_proactive.toml").read_text())
         cfg2 = ec._load_config(td)
-        p = ec._cfg_path(cfg2, "memory", "lancedb_path",
-                         "~/.pi-agent/memory/lancedb-pro", td)
-        assert str(p) == str(Path.home() / ".pi-agent" / "memory" / "lancedb-pro")
-    print("  OK test_lancedb_default_path_migrated")
+        p = ec._cfg_path(cfg2, "memory", "mem0_qdrant_path", "data/mem0/qdrant", td)
+        assert str(p) == str(td / "data" / "mem0" / "qdrant")
+    print("  OK test_mem0_default_path_anchored")
 
 
-def test_run_checks_custom_backend_skips_lancedb():
-    """自定义记忆后端类路径（含 .）→ envcheck 不直检 LanceDB，改报 memory_backend 提示。"""
+def test_run_checks_custom_backend_skips_mem0():
+    """自定义记忆后端类路径（含 .）→ envcheck 不直检 mem0，改报 memory_backend 提示。"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         _mk(td, {"chiguo_proactive.toml": '[memory]\nbackend = "mymodule.MyBackend"\n'})
         report = ec.run_checks(base_dir=td, skip_pi=True)
         names = [c["name"] for c in report["checks"]]
-        assert "lancedb" not in names, names
+        assert "mem0" not in names, names
         assert "memory_backend" in names, names
         mb = next(c for c in report["checks"] if c["name"] == "memory_backend")
         assert mb["ok"] and "mymodule.MyBackend" in mb["detail"], mb
         assert len(report["checks"]) == 8
-    print("  OK test_run_checks_custom_backend_skips_lancedb")
+    print("  OK test_run_checks_custom_backend_skips_mem0")
 
 
 if __name__ == "__main__":
@@ -284,12 +283,12 @@ if __name__ == "__main__":
     test_run_checks_pi_auth_provider_from_toml()
     test_check_ollama_unreachable_info()
     test_check_ollama_proxy_bypassed()
-    test_check_lancedb_missing_db_warn()
+    test_check_mem0_missing_dir_info()
     test_check_netease_no_cookie_info()
     test_check_data_missing_info()
     test_check_data_ok()
     test_exit_code_mapping()
     test_run_checks_never_crashes()
-    test_lancedb_default_path_migrated()
-    test_run_checks_custom_backend_skips_lancedb()
+    test_mem0_default_path_anchored()
+    test_run_checks_custom_backend_skips_mem0()
     print(f"test_envcheck.py: ALL {21} TESTS PASSED")

@@ -933,6 +933,26 @@ class DecisionEngine:
             user_emotion_analysis=analysis_dict,
         )
 
+        # ── v10: 对话后自动写入 mem0（事实提取）──
+        # mem0 从用户话语提取长期记忆；短消息（寒暄/无信息量）跳过。
+        # 失败静默（LLM 超时/ollama 未启动等不影响 --user-msg 主链路）。
+        self._mem0_autowrite(text)
+
+    def _mem0_autowrite(self, text: str):
+        """daemon 对话后自动写入 mem0（LLM 提取事实；见 memory/mem0_backend.py）。"""
+        if len(text.strip()) < 8:
+            return  # 短消息（寒暄/无信息量）不写，也避免无谓的可用性探测
+        try:
+            mem = self.state.memory_bridge
+            if not getattr(mem, "available", False) or not getattr(mem, "add_messages", None):
+                return
+            mem.add_messages(
+                [{"role": "user", "content": text}],
+                metadata={"category": "conversation", "scope": "global", "source": "daemon"},
+            )
+        except Exception:
+            pass  # 记忆写入失败不影响主流程
+
     def _log_message(self, msg_id: str, direction: str, text: str,
                      trigger: str = None, intensity: str = None,
                      user_emotion_analysis: dict = None):

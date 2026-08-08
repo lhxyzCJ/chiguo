@@ -1,11 +1,15 @@
 [project]
 name = "chiguo"
-version = "1.8"
+version = "1.9"
 description = "迟菓主动消息系统 — 数学驱动的角色主动消息引擎（零 LLM 决策 + LLM 消息生成）"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "mem0ai>=2.0.17",
+    "ollama>=0.6.2",
+]  # mem0 AI 记忆层（v1.9 起唯一内置后端；mem0 的 OllamaEmbedding 依赖 ollama 库）
 
 [project.optional-dependencies]
-memory = ["lancedb"]      # LanceDB 记忆只读访问；不装 → 记忆降级 JSON（memory_bridge 惰性导入）
-schedule = ["openpyxl"]   # 课表 xlsx 解析；不装 → 降级 availability=0.85（schedule_parser 函数内导入）
+schedule = [
+    "openpyxl",
+]   # 课表 xlsx 解析；不装 → 降级 availability=0.85（schedule_parser 函数内导入）

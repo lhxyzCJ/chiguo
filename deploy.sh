@@ -21,16 +21,16 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 uv python install 3.14 >/dev/null 2>&1 || true
 if [ ! -x .venv/bin/python ]; then
-    say "首次建 venv + 同步依赖（uv sync --all-extras：lancedb 记忆 / openpyxl 课表）..."
+    say "首次建 venv + 同步依赖（uv sync --all-extras：mem0 记忆 / openpyxl 课表）..."
     uv sync --all-extras || fail "uv sync --all-extras 失败,请检查网络后重试（可先手动: uv sync --all-extras）"
 fi
 say "Python: $(uv run python --version)($(uv run python -c 'import sys;print(sys.executable)'))"
 
-# ── 2. 可选依赖 lancedb(记忆库,缺省优雅降级 JSON) ────
-if uv run python -c "import lancedb" >/dev/null 2>&1; then
-    say "lancedb OK → 将读取 \$HOME/.pi-agent/memory/lancedb-pro"
+# ── 2. 可选依赖 mem0(记忆层,缺省优雅降级 available=False) ────
+if uv run python -c "import mem0" >/dev/null 2>&1; then
+    say "mem0 OK → 记忆库 data/mem0(qdrant 本地 + ollama qwen3-embedding)"
 else
-    warn "lancedb 未安装 → 记忆降级为 JSON 模式(可运行: uv pip install lancedb)"
+    warn "mem0 未安装 → 记忆未启用(可运行: uv sync --all-extras)"
 fi
 
 # ── 3. 全量自检(ci-test.sh 单一入口: 36 py + 10 script + stub 自举) ──

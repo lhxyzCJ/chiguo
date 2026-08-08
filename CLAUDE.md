@@ -32,7 +32,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions ci.yml 同一入口
 ```bash
 # One-time: create venv + install deps
 uv venv
-uv pip install openpyxl lancedb
+uv pip install openpyxl
 
 # Run tests or scripts
 uv run python tests/test_chiguo_math.py
@@ -45,18 +45,18 @@ Key 3.14 features used:
 - `X | None` union syntax instead of `Optional[X]` (3.10+)
 - `random.choices()` instead of manual weighted random loops
 
-No build step. No dependencies beyond Python stdlib (plus `tomllib` for Python ≥3.11). LanceDB integration is optional — the `memory/` backend package degrades gracefully (`available=False`, queries return empty; `[memory].backend = "auto"` falls back to JSON).
+No build step. Minimal dependencies beyond Python stdlib (plus `tomllib` for Python ≥3.11). mem0 (mem0ai) is a required dependency — the `memory/` backend degrades gracefully when the LLM key / ollama are unavailable (`available=False`, queries return empty).
 
 ## Architecture
 
 **Decision/generation separation** — the core design principle. `chiguo_daemon.py` is a zero-LLM math engine that evaluates state and outputs structured JSON. Message generation happens externally via the **agent backend** (Phase 4 host; v1.8 抽象：默认 pi-agent，`[host].runner = command` 可替换为任意 CLI agent，见下), which reads that JSON, generates text per `personality/SUN2.md`, and sends via wechat-bridge.
 
 **pi-agent integration** (see `doc/PI_INTEGRATION.md`, Phase 4):
-- **v1.8 agent 抽象**：`[host].runner` — `pi`（默认，pi-agent 二进制）| `command`（任意 CLI agent，`[host].agent_command` 指定；统一契约 `--prompt <完整提示词> --mode <mode>`，stdout JSON 或 NDJSON；RPC 常驻仅 pi 模式）。**记忆后端抽象**：`[memory].backend` — `auto`（默认，LanceDB 可用则用、否则 JSON 兜底）/ `lancedb` / `json` / `module.path.ClassName` 自定义类（`memory/` 包：MemoryBackend 基类 + LanceDbBackend + JsonMemoryBackend + create_backend 工厂；`memory_bridge.py` 兼容门面）
+- **v1.8 agent 抽象；v1.9 记忆后端**：`[host].runner` — `pi`（默认，pi-agent 二进制）| `command`（任意 CLI agent，`[host].agent_command` 指定；统一契约 `--prompt <完整提示词> --mode <mode>`，stdout JSON 或 NDJSON；RPC 常驻仅 pi 模式）。**记忆后端抽象**：`[memory].backend` — `mem0`（默认，mem0ai 记忆层：LLM 事实提取写入 + ollama 本地向量检索 + qdrant 嵌入式存储）/ `module.path.ClassName` 自定义类（`memory/` 包：MemoryBackend 基类 + Mem0Backend + create_backend 工厂；`memory_bridge.py` 兼容门面）
 - Send side: system crontab `*/15 * * * * scripts/chiguo-tick.sh` — runs `chiguo_daemon.py --compact` with zero model calls; idle → silent exit, send → `scripts/pi-run.mjs` (session `chiguo-send`) generates message per SUN2.md → curl `[host].wechat_bridge_url` → `--record-send` writes back
 - Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break/schedule rules, no pi; schedule-center CLI 子命令 `--attention`/`--schedule-recall`/`--schedule-change` + `python -m schedule.replan --check`/`schedule.holiday`) → otherwise `askPi` (pi-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
 - Sessions: reply=`chiguo-main`, proactive send=`chiguo-send` — separate sessions eliminate cross-process concurrent turns
-- Environment: `scripts/install_pi.sh` bootstraps pi (memory-lancedb-pro extension, settings/json5, ollama embedding, provider auth via toml [host].provider (default opencode-go), crontab)
+- Environment: `scripts/install_pi.sh` bootstraps pi (settings/json5, provider auth via toml [host].provider (default opencode-go), crontab)；记忆层 mem0 由 `uv sync` 安装（必需依赖；qdrant 嵌入式 data/mem0/ + ollama qwen3-embedding）
 - Service management: `scripts/service.sh`（统一管理 ollama + wechat-bridge：`autostart`=systemd 开机自启（`/etc/systemd/system/chiguo-bridge.service` + enable --now）/ `temp`=临时启动不注册自启（nohup + pidfile）/ `status`/`stop`/`uninstall`；两模式互斥接管防 18790 端口冲突；`--dry-run` 支持；deploy.sh 第 5 步接 autostart）
 
 **v4 (2026-06-27)** adds: Bayesian user state inference, multi-dimensional personality (Big Five + character-specific), Ebbinghaus forgetting curves, message composition system (Intent × Cue × Vibe), probability accumulation with anxiety blocking, personality adaptation, and dynamic sleep scheduling.
@@ -132,6 +132,6 @@ All auto-generated at first run, all in `.gitignore`:
 
 ## 安全边界
 
-**安全边界**：LanceDB 记忆库位于 `~/.pi-agent/memory/lancedb-pro`，本项目只读访问经 `memory/` 包（默认 `LanceDbBackend`；`memory_bridge.py` 为兼容门面）。
+**安全边界**：mem0 记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db，gitignore），访问经 `memory/` 包（默认 `Mem0Backend`；`memory_bridge.py` 为兼容门面）；LLM key 读 `~/.pi/agent/auth.json` 的 opencode-go 条目，不进 git。
 
 

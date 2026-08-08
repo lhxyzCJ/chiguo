@@ -86,15 +86,15 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
                 "weight": 2.0 * ritual_scale,
             })
 
-    # LanceDB 随机浮现（低概率，仅在主人沉默时）
-    # 如果 LanceDB 不可用（路径变化），自动跳过
+    # mem0 随机浮现（低概率，仅在主人沉默时）
+    # 如果 mem0 不可用，自动跳过
     silent_h = state.cooldown.silent_hours(now)
     if silent_h > 6 and random.random() < 0.08 and state.memory_bridge.available:
-        lancedb_mem = state.memory_bridge.random_memory(min_importance=0.4)
-        if lancedb_mem:
+        mem0_mem = state.memory_bridge.random_memory(min_importance=0.4)
+        if mem0_mem:
             weighted_candidates.append({
                 "trigger": Trigger(type="memory", intensity="soft",
-                                   data={"lancedb_memory": lancedb_mem}),
+                                   data={"mem0_memory": mem0_mem}),
                 "weight": 1.5 * ritual_scale,
             })
 
