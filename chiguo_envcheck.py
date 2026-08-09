@@ -37,6 +37,40 @@ def _load_config(base_dir: Path = None) -> dict:
         return {"_error": str(e)}
 
 
+def _sanitize_path(p) -> str:
+    """detail 输出脱敏：绝对路径 → basename（防泄漏部署路径）；相对路径原样保留。"""
+    s = str(p)
+    try:
+        if Path(s).is_absolute():
+            return Path(s).name or s
+    except (OSError, ValueError):
+        pass
+    return s
+
+
+def _sanitize_url(url: str) -> str:
+    """URL 脱敏：剥离 userinfo（user:pass@），防凭据泄漏到输出。"""
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return str(url)
+    if not (parts.username or parts.password):
+        return url
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urllib.parse.urlunsplit((parts.scheme, host, parts.path,
+                                    parts.query, parts.fragment))
+
+
+def _truncate(text, limit: int = 120) -> str:
+    """异常/命令输出截断：防路径、凭据或超长文本泄漏到 detail。"""
+    s = str(text).strip()
+    if len(s) <= limit:
+        return s
+    return s[:limit] + f"…(截断 {len(s) - limit} 字符)"
+
+
 def _cfg_path(config: dict, section: str, key: str, default: str, base_dir: Path) -> Path:
     """从 toml 读路径:绝对路径原样保留;相对路径锚定 base_dir;~ 展开为 $HOME。"""
     raw = config.get(section, {}).get(key, default)
@@ -98,10 +132,14 @@ def check_pi(pi_bin: str = "pi", skip_pi: bool = False,
         try:
             out = subprocess.run([resolved, "--version"], capture_output=True,
                                  text=True, timeout=15)
+            if out.returncode != 0:
+                return {"name": name, "ok": False, "severity": "critical",
+                        "detail": f"{cmd} --version 退出码 {out.returncode}: "
+                                  f"{_truncate(out.stderr.strip() or out.stdout.strip() or '无输出')}"}
             ver = out.stdout.strip().splitlines()[0] if out.stdout.strip() else "?"
         except Exception as e:
             return {"name": name, "ok": False, "severity": "critical",
-                    "detail": f"{cmd} --version 失败: {e}"}
+                    "detail": f"{cmd} --version 失败: {_truncate(e)}"}
         return {"name": name, "ok": True, "severity": "ok",
                 "detail": f"agent OK ({cmd} {ver})"}
     resolved = shutil.which(pi_bin)
@@ -115,10 +153,15 @@ def check_pi(pi_bin: str = "pi", skip_pi: bool = False,
     try:
         out = subprocess.run([resolved, "--version"], capture_output=True,
                              text=True, timeout=15)
+        if out.returncode != 0:
+            return {"name": "pi", "ok": False, "severity": "critical",
+                    "detail": f"pi --version 退出码 {out.returncode}: "
+                              f"{_truncate(out.stderr.strip() or out.stdout.strip() or '无输出')}"
+                              f" → 消息生成端异常(重装 pi-agent 后重跑 deploy.sh)"}
         ver = out.stdout.strip().splitlines()[0] if out.stdout.strip() else "?"
     except Exception as e:
         return {"name": "pi", "ok": False, "severity": "critical",
-                "detail": f"pi --version 失败: {e}"}
+                "detail": f"pi --version 失败: {_truncate(e)}"}
     return {"name": "pi", "ok": True, "severity": "ok", "detail": f"pi OK ({ver})"}
 
 
@@ -132,7 +175,7 @@ def check_pi_ext(settings_path: Path, expected_path: Path) -> dict:
     """pi settings.json extensions 指向 Linux 扩展路径。缺失/指向 Windows 残留 → warn。"""
     if not settings_path.is_file():
         return {"name": "pi_ext", "ok": False, "severity": "warn",
-                "detail": f"{settings_path} 不存在 → pi 记忆扩展未注册(bash scripts/install_pi.sh --yes)"}
+                "detail": f"{_sanitize_path(settings_path)} 不存在 → pi 记忆扩展未注册(bash scripts/install_pi.sh --yes)"}
     try:
         cfg = json.loads(settings_path.read_text(encoding="utf-8"))
         exts = cfg.get("extensions") or []
@@ -140,18 +183,20 @@ def check_pi_ext(settings_path: Path, expected_path: Path) -> dict:
             exts = []
     except Exception as e:
         return {"name": "pi_ext", "ok": False, "severity": "warn",
-                "detail": f"{settings_path} 解析失败: {e}(bash scripts/install_pi.sh --yes 修复)"}
+                "detail": f"{_sanitize_path(settings_path)} 解析失败: {_truncate(e)}"
+                          f"(bash scripts/install_pi.sh --yes 修复)"}
     want = str(expected_path)
     bad = [e for e in exts if _is_windows_ext(e)]
     if want in exts and not bad:
         return {"name": "pi_ext", "ok": True, "severity": "ok",
-                "detail": f"pi 扩展 OK ({want})"}
+                "detail": f"pi 扩展 OK ({_sanitize_path(want)})"}
     if bad:
         return {"name": "pi_ext", "ok": False, "severity": "warn",
-                "detail": f"settings.json 扩展指向 Windows 残留 {bad} → 记忆扩展不会加载"
+                "detail": f"settings.json 扩展指向 Windows 残留 {[_sanitize_path(x) for x in bad]}"
+                          f" → 记忆扩展不会加载"
                           f"(bash scripts/install_pi.sh --yes 修正)"}
     return {"name": "pi_ext", "ok": False, "severity": "warn",
-            "detail": f"settings.json 缺扩展路径 {want} → 记忆扩展不会加载"
+            "detail": f"settings.json 缺扩展路径 {_sanitize_path(want)} → 记忆扩展不会加载"
                       f"(bash scripts/install_pi.sh --yes)"}
 
 
@@ -165,13 +210,13 @@ def check_ollama(base_url: str = "http://localhost:11434") -> dict:
         names = [m.get("name", "") for m in data.get("models", [])]
         if any(n.startswith("qwen3-embedding") for n in names):
             return {"name": "ollama", "ok": True, "severity": "ok",
-                    "detail": f"ollama embedding OK ({base_url} 有 qwen3-embedding)"}
+                    "detail": f"ollama embedding OK ({_sanitize_url(base_url)} 有 qwen3-embedding)"}
         return {"name": "ollama", "ok": False, "severity": "info",
-                "detail": f"ollama({base_url}) 无 qwen3-embedding 模型 → 记忆 embedding 未启用(可选)"
+                "detail": f"ollama({_sanitize_url(base_url)}) 无 qwen3-embedding 模型 → 记忆 embedding 未启用(可选)"
                           f"(ollama pull qwen3-embedding:0.6b)"}
     except Exception as e:
         return {"name": "ollama", "ok": False, "severity": "info",
-                "detail": f"ollama 不可达({base_url}): {e} → 记忆 embedding 未启用(可选)"
+                "detail": f"ollama 不可达({_sanitize_url(base_url)}): {_truncate(e)} → 记忆 embedding 未启用(可选)"
                           f"(启动 ollama 后 bash scripts/install_pi.sh --yes)"}
 
 
@@ -180,13 +225,13 @@ def check_pi_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
     provider = toml [host].provider（auth.json 键名与 pi --provider 名一致）。"""
     if not auth_path.is_file():
         return {"name": "pi_auth", "ok": False, "severity": "warn",
-                "detail": f"{auth_path} 不存在 → {provider} key 缺失"
+                "detail": f"{_sanitize_path(auth_path)} 不存在 → {provider} key 缺失"
                           f"(export {_key_env_hint(provider)}=... 后 bash scripts/install_pi.sh --yes)"}
     try:
         cfg = json.loads(auth_path.read_text(encoding="utf-8"))
     except Exception as e:
         return {"name": "pi_auth", "ok": False, "severity": "warn",
-                "detail": f"{auth_path} 解析失败: {e}"}
+                "detail": f"{_sanitize_path(auth_path)} 解析失败: {_truncate(e)}"}
     entry = cfg.get(provider)
     if isinstance(entry, dict) and entry.get("key"):
         return {"name": "pi_auth", "ok": True, "severity": "ok",
@@ -227,12 +272,12 @@ def check_mem0(qdrant_dir: Path, history_db: Path) -> dict:
                 "detail": "~/.pi/agent/auth.json 无 opencode-go key → 记忆写入不可用(可选)"}
     if not qdrant_dir.is_dir():
         return {"name": "mem0", "ok": False, "severity": "info",
-                "detail": f"{qdrant_dir} 不存在 → 记忆库未初始化(首次对话自动创建)"}
+                "detail": f"{_sanitize_path(qdrant_dir)} 不存在 → 记忆库未初始化(首次对话自动创建)"}
     if not history_db.is_file():
         return {"name": "mem0", "ok": True, "severity": "ok",
-                "detail": f"mem0 OK ({qdrant_dir}，历史库未创建)"}
+                "detail": f"mem0 OK ({_sanitize_path(qdrant_dir)}，历史库未创建)"}
     return {"name": "mem0", "ok": True, "severity": "ok",
-            "detail": f"mem0 OK ({qdrant_dir})"}
+            "detail": f"mem0 OK ({_sanitize_path(qdrant_dir)})"}
 
 
 def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
@@ -250,7 +295,7 @@ def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
         else:
             issues.append(f"API HTTP {status}")
     except Exception as e:
-        issues.append(f"API 不可达: {e}")
+        issues.append(f"API 不可达: {_truncate(e)}")
     if cookie_path.is_file():
         issues.append("已登录(netease_cookie.txt)")
     else:
