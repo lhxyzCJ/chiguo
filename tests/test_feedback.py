@@ -294,14 +294,21 @@ def test_analysis_string_values_sanitized():
         now = datetime.now(CST)
         st.cooldown.current_date = now.strftime("%Y-%m-%d")
 
-        engine.record_user_message("哥哥在吗", '{"warmth": "1.0", "effort": "1.0", "attention": "1.0", "suppress_hours": "3"}')
-        e1 = st.emotion.energy
-        # 字符串数值被强转应用：基础 +10，warmth=1.0→+4、attention=1.0→+4 → 明显正向
-        assert e1 > 10, f"字符串数值应被强转应用, energy={e1}"
-        engine.record_user_message("哥哥在吗", '{"warmth": "bad", "effort": null}')
-        # 坏值回退默认 → 不崩溃（warmth=0 → 无分析加成，仅基础效果）
-        engine.record_user_message("哥哥在吗", '{"suppress_hours": "2"}')
-        assert st.cooldown.busy_suppress_until, "suppress_hours 字符串应生效"
+        # 不同文本 → 每次都走完整处理路径（recv_dedup 只对同文本副本去重，避免短路假阳性）
+        st.emotion.energy = 40.0  # 留出上限空间：第一条带分析 warmth=1.0 会显著提升 energy
+        engine.record_user_message("哥哥在吗", '{"warmth": "1.0", "effort": "1.0", "attention": "1.0"}')
+        e0 = st.emotion.energy
+        engine.record_user_message("哥哥在忙吗", '{"warmth": "bad", "effort": null}')
+        # 坏值回退默认 0 → 分析维度加成为 0；变化仅来自基础回复效果（A10 阻尼 ×0.5 → +5）
+        assert abs((st.emotion.energy - e0) - 5.0) < 1e-6, \
+            f"坏值应回退默认, energy 变化 {st.emotion.energy - e0}"
+        # suppress_hours 字符串 → 强转 2 小时（断言具体值 ≈ now+2h，而非 truthy）
+        engine.record_user_message("哥哥睡了吗", '{"suppress_hours": "2"}')
+        until = st.cooldown.busy_suppress_until
+        assert until, "suppress_hours 字符串应生效"
+        delta = datetime.fromisoformat(until) - now
+        assert timedelta(hours=1.9) < delta <= timedelta(hours=2.1), \
+            f"suppress 应≈2h, got {delta}"
     print("  OK test_analysis_string_values_sanitized")
 
 

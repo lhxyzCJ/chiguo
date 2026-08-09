@@ -10,7 +10,10 @@
 """
 
 import sys, os
+import random
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+random.seed(42)  # 固定种子 → 概率断言确定性（同 test_topics.py 做法）
 
 import pathlib
 import tomllib

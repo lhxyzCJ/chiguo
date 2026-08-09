@@ -8,7 +8,7 @@ import { mkdtempSync, writeFileSync, readFileSync, cpSync, rmSync, existsSync } 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { detectScheduleIntent } from '../wechat-bridge/command-detect.mjs'
-import { extractBlock } from '../scripts/pi-run.mjs'
+import { extractBlock, resolveRepo } from '../scripts/pi-run.mjs'
 
 // 隔离: handleMessage 成功路径会记 pi 假死账 — 复制真 pi_health.py 到 temp,绝不碰真实 pi_health.json。
 // 注意: env 必须在动态 import bridge.mjs 之前设置(模块级 const 读取),故 bridge 符号全部走动态导入。
@@ -19,8 +19,8 @@ process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
 const { scheduleClarifyPath, readClarify, writeClarify, clearClarify, exitWordMatch, handleMessage } =
   await import('../wechat-bridge/bridge.mjs')
 
-// R2.2: ⑭ 用 REPO 锚定仓库根(测试从仓库根运行)
-const REPO = process.cwd()
+// R2.2: ⑭ 用 REPO 锚定仓库根（从 import.meta.url 推导，不依赖 cwd）
+const REPO = resolveRepo(new URL('.', import.meta.url).href, {})
 
 let passed = 0
 const tests = []
@@ -66,20 +66,30 @@ function fakeBot(replies) {
 const queue = { run: async (fn) => fn() }
 
 const execFileP = promisify(execFile)
-const DAEMON_PY = 'uv'
+// daemon 解释器：.venv python 替代 uv run（不依赖 uv）；CHIGUO_PYTHON 可覆盖
+const PYTHON = process.env.CHIGUO_PYTHON ?? '/root/chiguo/.venv/bin/python'
 
 t('⑨ recall 无匹配反问(6b 锚;daemon --schedule-recall 无匹配形状)', async () => {
-  const { stdout } = await execFileP(DAEMON_PY,
-    ['run', 'python', join(REPO, 'chiguo_daemon.py'), '--schedule-recall', '不存在的关键词xyz'],
-    { timeout: 30_000 })
-  const r = JSON.parse(stdout)
-  assert.ok(r.action === 'schedule_recall' && r.ok === true && r.query === '不存在的关键词xyz')
-  assert.ok(Array.isArray(r.matches) && r.matches.length === 0, '无匹配 → 空数组 + ok:true(反问引导由 prompt 契约承担)')
+  // 隔离:daemon 从临时目录运行 — 复制 chiguo_daemon.py + 最小 toml 到 tmp，
+  // PYTHONPATH 指向仓库根（顶层模块 import），schedule 数据全部锚定 tmp（不碰真实仓库数据）。
+  const iso = mkdtempSync(join(tmpdir(), 'recall-'))
+  cpSync(join(REPO, 'chiguo_daemon.py'), join(iso, 'chiguo_daemon.py'))
+  writeFileSync(join(iso, 'chiguo_proactive.toml'), '# 隔离用最小配置：无数据文件 → recall 零匹配\n')
+  try {
+    const { stdout } = await execFileP(PYTHON,
+      [join(iso, 'chiguo_daemon.py'), '--schedule-recall', '不存在的关键词xyz'],
+      { timeout: 30_000, env: { ...process.env, PYTHONPATH: REPO } })
+    const r = JSON.parse(stdout)
+    assert.ok(r.action === 'schedule_recall' && r.ok === true && r.query === '不存在的关键词xyz')
+    assert.ok(Array.isArray(r.matches) && r.matches.length === 0, '无匹配 → 空数组 + ok:true(反问引导由 prompt 契约承担)')
+  } finally {
+    rmSync(iso, { recursive: true, force: true })
+  }
 })
 
 t('⑭ clarify 路径锚定仓库根(A3)', () => {
   const p = scheduleClarifyPath(REPO)
-  assert.strictEqual(p, join(process.cwd(), 'schedule_clarify.json'), `got ${p}`)
+  assert.strictEqual(p, join(REPO, 'schedule_clarify.json'), `got ${p}`)
 })
 
 t('detectScheduleIntent 词表 + start-anchored 豁免 MAX_LEN', () => {
