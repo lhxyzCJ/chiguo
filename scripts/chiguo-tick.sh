@@ -12,7 +12,7 @@ if ! flock -n 9; then
 fi
 REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
 PY="$REPO/.venv/bin/python"
-# memory-lancedb-pro 扩展的 smart extraction 需要 key（cron 环境无该变量）;来源单一 = scripts/agent-auth.sh
+# pi 生成需要 LLM key（cron 环境无该变量）;来源单一 = scripts/agent-auth.sh
 source "$(dirname "$(readlink -f "$0")")/agent-auth.sh"
 OUT="$("$PY" "$REPO/chiguo_daemon.py" --compact 2>/dev/null || true)"
 ACTION="$(printf '%s' "$OUT" | python3 -c 'import json,sys

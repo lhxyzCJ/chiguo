@@ -31,12 +31,11 @@
 `--skip-pi`→`--skip-agent`（deploy.sh/envcheck 用户可见参数）、`[host].runner="pi"`→`"agent"`（默认值 = pi-agent 二进制，行为不变）。
 
 ### 豁免清单（产品名，grep 允许残留）
-`~/.pi/`、`~/.pi-agent/`、pi-agent 二进制名 `pi`（`AGENT_BIN` 默认值 `'pi'`、`check_agent(agent_bin="pi")`）、`memory-lancedb-pro`（独立仓库 lhxyzCJ/TestForPi-memory-lancedb-pro）、`pi --provider/--model/--session-id` 子命令、`pi_health` 相关历史文档引用。
+`~/.pi/`、`~/.pi-agent/`、pi-agent 二进制名 `pi`（`AGENT_BIN` 默认值 `'pi'`、`check_agent(agent_bin="pi")`）、`pi --provider/--model/--session-id` 子命令、`pi_health` 相关历史文档引用。
 **误匹配排除**：`topics`/`api`/`_pi` 等普通子串（chiguo_topics.py、schedule/api.py、tests/test_topics.py 等）。
 
 > 寄主迁移后的当前架构：**消息生成与情绪分析全部走 agent 后端**（v1.8 起 runner 可替换：默认 runner=agent 走 pi-agent 二进制，provider 可配，opencode-go 为默认示例；
 > 定时触发走系统 crontab（chiguo-tick），微信收发走 wechat-bridge，记忆走 mem0（data/mem0/，qdrant 嵌入式 + ollama 本地 embedding）
-> （pi 版 memory-lancedb-pro 扩展仅服务 pi 宿主侧，chiguo 不再读取其历史 LanceDB 库）。
 
 ## 架构总览
 
@@ -79,13 +78,10 @@ bash deploy.sh                         # 或随部署一起（传 --skip-agent �
 | 阶段 | 内容 |
 |------|------|
 | 0 探测 | `pi --version`（缺失 → 严重）；`OPENCODE_API_KEY` 可用性提示 |
-| 1 memory-lancedb-pro | clone `github.com/lhxyzCJ/TestForPi-memory-lancedb-pro` → `~/.pi-agent/`，缺 dist 才 `npm install && npm run build` |
-| 2 settings.json | `extensions` 写 `~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`（修正 Windows 残留路径） |
-| 3 json5 配置 | 写 `~/.pi/agent/memory-lancedb-pro.json5`（dbPath=~/.pi-agent/memory/lancedb-pro + ollama embedding + deepseek llm + autoCapture/autoRecall/smartExtraction） |
 | 4 ollama | `curl localhost:11434/api/tags` 有 `qwen3-embedding:0.6b`（缺 → 提示/`ollama pull`） |
 | 5 auth.json | `[host].provider` 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文，chmod 600） |
 | 6 crontab | 注册 `*/15 * * * * scripts/chiguo-tick.sh >> logs/cron-tick.log 2>&1`（幂等，旧条目整行替换） |
-| 7 冒烟 | `memory-pro stats` + `pi -p --provider <[host].provider> ...`（仅 --yes/ask） |
+| 7 冒烟 | `pi -p --provider <[host].provider> ...`（仅 --yes/ask） |
 
 ## 二、agent-run 契约（scripts/agent-run.mjs）
 
@@ -299,17 +295,6 @@ class MyBackend(MemoryBackend):
 
 （自定义类放仓库任意模块路径即可；实例化 kwargs = [memory] 段其余键，按构造签名过滤。）
 
-## 十、pi 宿主侧记忆扩展配置（pi 生态；chiguo 记忆已迁 mem0，见 §9）
-
-- 扩展：`~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`
-  （settings.json `extensions` 注册；安装器修正 Windows 残留路径）
-- 配置：`~/.pi/agent/memory-lancedb-pro.json5` —— `dbPath=~/.pi-agent/memory/lancedb-pro`
-  （**历史 LanceDB 库**，位于 `~/.pi-agent/memory/lancedb-pro`；只读语义不变）、embedding=ollama `qwen3-embedding:0.6b`（1024 维，localhost:11434）、
-  llm=deepseek、autoCapture/autoRecall/smartExtraction 开、sessionMemory 关
-- CLI 冒烟：`~/.pi-agent/.../node_modules/.bin/memory-pro stats`
-- 降级：ollama 不可达 → 记忆 embedding 降级（自动捕获/召回不可用，不影响 daemon 主链路）；
-  daemon 侧记忆经 `memory/` 包（v1.9 默认 mem0：Mem0Backend，`data/mem0/`；不可用 → available=False 优雅降级）
-
 ## 十一、故障排查
 
 | 现象 | 原因 | 处理 |
@@ -321,7 +306,6 @@ class MyBackend(MemoryBackend):
 | `[chiguo-tick] agent-run 未生成消息` | agent-run 失败（多数是 key/网络） | 看 logs/cron-tick.log；先手动跑一次 agent-run 复现 |
 | bridge 回复「⚠️ 处理失败」 | askAgent 抛错（agent-run 非 JSON/失败） | bridge 日志（logs/wechat-bridge.log）看具体 error |
 | 特殊命令回「处理失败」 | daemon CLI 报错（如日期格式错） | 命令 JSON 输出含 error；对照 §五 命令表手跑验证 |
-| memory-pro stats 失败 | 扩展未 build/ollama 停 | install_agent.sh 阶段 1/4；`ollama serve` 后重跑 |
 | command runner 下 askAgent 失败/回「⚠️ 处理失败」 | agent 脚本自身报错（非 JSON/非零退出/脚本缺失） | 手跑 `<agent_command> --prompt '测试' --mode send` 看 agent stdout/日志；核对 `AGENTRUN_RUNNER`/`AGENTRUN_AGENT_COMMAND` 生效配置与 `[host].agent_command` |
 
 ## 十二、维护速查
