@@ -7,10 +7,10 @@
 # 输出:JSON → stdout,汇总退出码 0=就绪 1=warn 2=critical(与 watchdog 一致)。
 # 只读:不建目录、不写缓存、不启动服务;网易云/ollama 检查仅发轻量健康请求
 #       (localhost 目标绕过系统代理,等价 curl --noproxy '*')。
-# 参数:--skip-pi → 用户显式跳过 pi 安装(deploy.sh --skip-pi 传入)时,
-#       pi 缺失降为 warn,不阻塞部署(如实报告降级)。
+# 参数:--skip-agent → 用户显式跳过 agent 安装(deploy.sh --skip-agent 传入)时,
+#       agent 缺失降为 warn,不阻塞部署(如实报告降级)。
 # 路径单一事实来源:chiguo_proactive.toml(与 daemon 相同读取点);
-#       pi 侧路径(settings.json/auth.json/扩展)为 ~/.pi 约定(与 install_pi.sh 一致)。
+#       agent 侧路径(settings.json/auth.json/扩展)为 ~/.pi 约定(与 install_agent.sh 一致)。
 # ============================================================
 
 import json
@@ -97,7 +97,7 @@ def check_env() -> dict:
 
 
 def _urlopen(req, timeout: float = 5):
-    """本地回环目标禁用系统代理(等价 install_pi.sh 的 curl --noproxy '*'),
+    """本地回环目标禁用系统代理(等价 install_agent.sh 的 curl --noproxy '*'),
     远程目标保留默认代理。本机有 http_proxy 时 localhost 直连不被劫持。"""
     host = urllib.parse.urlsplit(req.full_url).hostname or ""
     if host in ("localhost", "127.0.0.1", "::1"):
@@ -106,13 +106,13 @@ def _urlopen(req, timeout: float = 5):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def check_pi(pi_bin: str = "pi", skip_pi: bool = False,
-             runner: str = "pi", agent_command: list[str] = None) -> dict:
+def check_agent(agent_bin: str = "pi", skip_agent: bool = False,
+                runner: str = "agent", agent_command: list[str] = None) -> dict:
     """消息生成后端可执行且可报告版本。缺失/不可运行 → critical(消息生成端缺失);
-    --skip-pi 下缺失降为 warn(用户显式跳过,不阻塞部署但如实报告降级)。
+    --skip-agent 下缺失降为 warn(用户显式跳过,不阻塞部署但如实报告降级)。
     v1.8: runner=command 时检查自定义 agent 命令(任意 CLI 后端,
-    经 scripts/pi-run.mjs 契约调用,见 doc/PI_INTEGRATION.md)。"""
-    if runner != "pi":
+    经 scripts/agent-run.mjs 契约调用,见 doc/AGENT_INTEGRATION.md)。"""
+    if runner != "agent":
         # 自定义 agent 后端:检查 agent_command[0] 可执行(绝对路径或 PATH)
         cmd = (agent_command or ["agent"])[0]
         name = "agent"
@@ -122,9 +122,9 @@ def check_pi(pi_bin: str = "pi", skip_pi: bool = False,
         else:
             resolved = shutil.which(cmd)
         if not resolved:
-            if skip_pi:
+            if skip_agent:
                 return {"name": name, "ok": False, "severity": "warn",
-                        "detail": f"agent 命令 {cmd} 不可用(--skip-pi) → 消息生成端缺失"
+                        "detail": f"agent 命令 {cmd} 不可用(--skip-agent) → 消息生成端缺失"
                                   f"(需先安装/配置 [host].agent_command)"}
             return {"name": name, "ok": False, "severity": "critical",
                     "detail": f"agent 命令 {cmd} 不可用 → 消息生成端缺失"
@@ -142,27 +142,27 @@ def check_pi(pi_bin: str = "pi", skip_pi: bool = False,
                     "detail": f"{cmd} --version 失败: {_truncate(e)}"}
         return {"name": name, "ok": True, "severity": "ok",
                 "detail": f"agent OK ({cmd} {ver})"}
-    resolved = shutil.which(pi_bin)
+    resolved = shutil.which(agent_bin)
     if not resolved:
-        if skip_pi:
-            return {"name": "pi", "ok": False, "severity": "warn",
-                    "detail": "pi 未安装(--skip-pi) → 消息生成端缺失,消息将无法生成"
-                              "(需要时安装 pi-agent 后重跑 deploy.sh)"}
-        return {"name": "pi", "ok": False, "severity": "critical",
-                "detail": "pi 未安装 → 消息生成端缺失(Phase 4 寄主;请安装 pi-agent 后重跑 deploy.sh)"}
+        if skip_agent:
+            return {"name": "agent", "ok": False, "severity": "warn",
+                    "detail": "agent 未安装(--skip-agent) → 消息生成端缺失,消息将无法生成"
+                              "(需要时安装 agent 后端后重跑 deploy.sh)"}
+        return {"name": "agent", "ok": False, "severity": "critical",
+                "detail": "agent 未安装 → 消息生成端缺失(Phase 4 寄主;请安装 agent 后端后重跑 deploy.sh)"}
     try:
         out = subprocess.run([resolved, "--version"], capture_output=True,
                              text=True, timeout=15)
         if out.returncode != 0:
-            return {"name": "pi", "ok": False, "severity": "critical",
+            return {"name": "agent", "ok": False, "severity": "critical",
                     "detail": f"pi --version 退出码 {out.returncode}: "
                               f"{_truncate(out.stderr.strip() or out.stdout.strip() or '无输出')}"
-                              f" → 消息生成端异常(重装 pi-agent 后重跑 deploy.sh)"}
+                              f" → 消息生成端异常(重装 agent 后端后重跑 deploy.sh)"}
         ver = out.stdout.strip().splitlines()[0] if out.stdout.strip() else "?"
     except Exception as e:
-        return {"name": "pi", "ok": False, "severity": "critical",
+        return {"name": "agent", "ok": False, "severity": "critical",
                 "detail": f"pi --version 失败: {_truncate(e)}"}
-    return {"name": "pi", "ok": True, "severity": "ok", "detail": f"pi OK ({ver})"}
+    return {"name": "agent", "ok": True, "severity": "ok", "detail": f"agent OK ({ver})"}
 
 
 def _is_windows_ext(e) -> bool:
@@ -175,7 +175,7 @@ def check_pi_ext(settings_path: Path, expected_path: Path) -> dict:
     """pi settings.json extensions 指向 Linux 扩展路径。缺失/指向 Windows 残留 → warn。"""
     if not settings_path.is_file():
         return {"name": "pi_ext", "ok": False, "severity": "warn",
-                "detail": f"{_sanitize_path(settings_path)} 不存在 → pi 记忆扩展未注册(bash scripts/install_pi.sh --yes)"}
+                "detail": f"{_sanitize_path(settings_path)} 不存在 → pi 记忆扩展未注册(bash scripts/install_agent.sh --yes)"}
     try:
         cfg = json.loads(settings_path.read_text(encoding="utf-8"))
         exts = cfg.get("extensions") or []
@@ -184,7 +184,7 @@ def check_pi_ext(settings_path: Path, expected_path: Path) -> dict:
     except Exception as e:
         return {"name": "pi_ext", "ok": False, "severity": "warn",
                 "detail": f"{_sanitize_path(settings_path)} 解析失败: {_truncate(e)}"
-                          f"(bash scripts/install_pi.sh --yes 修复)"}
+                          f"(bash scripts/install_agent.sh --yes 修复)"}
     want = str(expected_path)
     bad = [e for e in exts if _is_windows_ext(e)]
     if want in exts and not bad:
@@ -194,10 +194,10 @@ def check_pi_ext(settings_path: Path, expected_path: Path) -> dict:
         return {"name": "pi_ext", "ok": False, "severity": "warn",
                 "detail": f"settings.json 扩展指向 Windows 残留 {[_sanitize_path(x) for x in bad]}"
                           f" → 记忆扩展不会加载"
-                          f"(bash scripts/install_pi.sh --yes 修正)"}
+                          f"(bash scripts/install_agent.sh --yes 修正)"}
     return {"name": "pi_ext", "ok": False, "severity": "warn",
             "detail": f"settings.json 缺扩展路径 {_sanitize_path(want)} → 记忆扩展不会加载"
-                      f"(bash scripts/install_pi.sh --yes)"}
+                      f"(bash scripts/install_agent.sh --yes)"}
 
 
 def check_ollama(base_url: str = "http://localhost:11434") -> dict:
@@ -217,7 +217,7 @@ def check_ollama(base_url: str = "http://localhost:11434") -> dict:
     except Exception as e:
         return {"name": "ollama", "ok": False, "severity": "info",
                 "detail": f"ollama 不可达({_sanitize_url(base_url)}): {_truncate(e)} → 记忆 embedding 未启用(可选)"
-                          f"(启动 ollama 后 bash scripts/install_pi.sh --yes)"}
+                          f"(启动 ollama 后 bash scripts/install_agent.sh --yes)"}
 
 
 def check_pi_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
@@ -226,7 +226,7 @@ def check_pi_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
     if not auth_path.is_file():
         return {"name": "pi_auth", "ok": False, "severity": "warn",
                 "detail": f"{_sanitize_path(auth_path)} 不存在 → {provider} key 缺失"
-                          f"(export {_key_env_hint(provider)}=... 后 bash scripts/install_pi.sh --yes)"}
+                          f"(export {_key_env_hint(provider)}=... 后 bash scripts/install_agent.sh --yes)"}
     try:
         cfg = json.loads(auth_path.read_text(encoding="utf-8"))
     except Exception as e:
@@ -238,15 +238,15 @@ def check_pi_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
                 "detail": f"auth.json 含 {provider} key(已配置)"}
     return {"name": "pi_auth", "ok": False, "severity": "warn",
             "detail": f"auth.json 无 {provider} 条目 → 消息生成将失败"
-                      f"(export {_key_env_hint(provider)}=... 后 bash scripts/install_pi.sh --yes"
-                      f"，或配置其他 provider 见 doc/PI_INTEGRATION.md)"}
+                      f"(export {_key_env_hint(provider)}=... 后 bash scripts/install_agent.sh --yes"
+                      f"，或配置其他 provider 见 doc/AGENT_INTEGRATION.md)"}
 
 
 def _key_env_hint(provider: str) -> str:
-    """key 环境变量名（chiguo 工具链统一入口）。install_pi.sh 阶段 5 只读
-    PI_API_KEY（通用名）/OPENCODE_API_KEY（兼容回退）写 auth.json——
+    """key 环境变量名（chiguo 工具链统一入口）。install_agent.sh 阶段 5 只读
+    AGENT_API_KEY（通用名）/OPENCODE_API_KEY（兼容回退）写 auth.json——
     提示必须与之一致，否则按提示操作写不进去。"""
-    return "PI_API_KEY"
+    return "AGENT_API_KEY"
 
 
 def _pi_api_key(provider: str = "opencode-go") -> str | None:
@@ -323,9 +323,9 @@ def check_data(xlsx_path: Path, memories_path: Path) -> dict:
             "detail": f"课表/手动记忆 OK ({xlsx_path.name}, {memories_path.name})"}
 
 
-def run_checks(base_dir: Path = None, skip_pi: bool = False, home: Path = None) -> dict:
+def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = None) -> dict:
     """按序执行 8 组检查。返回完整报告 dict。单项失败不中断。
-    skip_pi: deploy.sh --skip-pi 传入 → pi 缺失降为 warn,不阻塞部署。
+    skip_agent: deploy.sh --skip-agent 传入 → agent 缺失降为 warn,不阻塞部署。
     home: 测试注入用（默认 Path.home()）。"""
     base = base_dir or _BASE_DIR
     cfg = _load_config(base)
@@ -340,24 +340,24 @@ def run_checks(base_dir: Path = None, skip_pi: bool = False, home: Path = None) 
     pi_auth = home / ".pi" / "agent" / "auth.json"
     ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
     provider = cfg.get("host", {}).get("provider") or "opencode-go"
-    # v1.8: agent 后端抽象（runner=pi 默认；command=自定义 CLI agent）
-    runner = cfg.get("host", {}).get("runner") or "pi"
+    # v1.8: agent 后端抽象（runner=agent 默认；command=自定义 CLI agent）
+    runner = cfg.get("host", {}).get("runner") or "agent"
     agent_command = cfg.get("host", {}).get("agent_command") or None
     # 记忆后端检查（v1.9: mem0 为唯一内置后端；json/lancedb 已移除）：
     # mem0/auto/缺省 → mem0 直检；自定义类路径（含 "."）→ 具体可用性由后端自身降级
     memory_backend = cfg.get("memory", {}).get("backend") or "mem0"
     checks = [
         check_env(),
-        check_pi(skip_pi=skip_pi, runner=runner, agent_command=agent_command),
+        check_agent(skip_agent=skip_agent, runner=runner, agent_command=agent_command),
     ]
-    if runner == "pi":
+    if runner == "agent":
         checks.append(check_pi_ext(pi_settings, pi_ext))
     if memory_backend in ("mem0", "auto"):
         checks.append(check_mem0(mem0_qdrant, mem0_history))
     else:
         checks.append({"name": "memory_backend", "ok": True, "severity": "ok",
                        "detail": f"自定义记忆后端 {memory_backend}（envcheck 不直检，由后端自身降级）"})
-    if runner == "pi":
+    if runner == "agent":
         checks.append(check_ollama(ollama_url))
         checks.append(check_pi_auth(pi_auth, provider=provider))
     checks.append(
@@ -383,8 +383,8 @@ def exit_code(report: dict) -> int:
 
 
 def main() -> int:
-    skip_pi = "--skip-pi" in sys.argv[1:]
-    report = run_checks(skip_pi=skip_pi)
+    skip_agent = "--skip-agent" in sys.argv[1:]
+    report = run_checks(skip_agent=skip_agent)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return exit_code(report)
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""pi_health.py — pi-agent 假死状态机（跨进程共享状态 + transition 告警文案）。
+"""agent_health.py — agent 假死状态机（跨进程共享状态 + transition 告警文案）。
 
 用法:
-  pi_health.py record --outcome fail|success [--reason <r>] [--config <path>] [--state <path>]
+  agent_health.py record --outcome fail|success [--reason <r>] [--config <path>] [--state <path>]
 
 stdout JSON: {"state": up|down, "transition": none|down|up, "message": 告警/恢复文案, "fail_streak": N}
 transition 只在 up→down 与 down→up 各输出一次（天然防重复告警）。
@@ -110,7 +110,7 @@ def record(outcome, reason, state_path, config_path):
     lock_path = str(state_path) + ".lock"
     acquired = _acquire(lock_path)
     if not acquired:
-        print(f"[pi_health] 锁获取失败，本次记账跳过: {state_path}", file=sys.stderr)
+        print(f"[agent_health] 锁获取失败，本次记账跳过: {state_path}", file=sys.stderr)
         return {"state": "up", "transition": "none", "message": "", "fail_streak": 0}
     try:
         st = _read_state(state_path)
@@ -157,13 +157,13 @@ def record(outcome, reason, state_path, config_path):
 
 
 def cli():
-    p = argparse.ArgumentParser(description="pi-agent 假死状态机")
+    p = argparse.ArgumentParser(description="agent 假死状态机")
     sub = p.add_subparsers(dest="cmd", required=True)
     rec = sub.add_parser("record")
     rec.add_argument("--outcome", choices=("fail", "success"), required=True)
     rec.add_argument("--reason", default=None)
     rec.add_argument("--config", default=str(_anchor() / "chiguo_proactive.toml"))
-    rec.add_argument("--state", default=str(_anchor() / "pi_health.json"))
+    rec.add_argument("--state", default=str(_anchor() / "agent_health.json"))
     args = p.parse_args()
     result = record(args.outcome, args.reason, Path(args.state), Path(args.config))
     print(json.dumps(result, ensure_ascii=False))
