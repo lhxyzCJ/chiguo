@@ -216,9 +216,9 @@ export function runnerCommand(mode, sysPrompt) {
 }
 
 /** 共享 agent 参数构造(print 模式与 RPC 常驻复用):不含 -p/--mode/prompt。 */
-export function buildBaseAgentArgs({ analysisMode } = {}) {
+export function buildBaseAgentArgs({ analysisMode = false, sessionId = SESSION_ID, noSkills = true } = {}) {
   return ['--provider', PROVIDER, '--model', MODEL,
-    '--session-id', SESSION_ID, '--no-context-files', '--no-skills',
+    '--session-id', sessionId, '--no-context-files', ...(noSkills ? ['--no-skills'] : []),
     '--append-system-prompt', PERSONALITY,
     '--append-system-prompt', GUIDE,
     '--append-system-prompt', TOOLS,
@@ -319,11 +319,9 @@ period?, to_period?, to_date?, course?, label?, match?}。
   const custom = runnerCommand(mode, sysPrompt)
   const bin = custom ? custom.bin : AGENT_BIN
   const args = custom ? custom.args
-    : ['-p', '--provider', PROVIDER, '--model', MODEL,
-      '--session-id', SESSIONS[mode] || SESSION_ID, '--no-context-files',
-      '--append-system-prompt', PERSONALITY, '--append-system-prompt', GUIDE,
-      '--append-system-prompt', TOOLS,
-      '--thinking', THINKING, '--mode', 'json', sysPrompt]
+    : ['-p', ...buildBaseAgentArgs({
+        sessionId: SESSIONS[mode] || SESSION_ID, noSkills: false }),
+      '--mode', 'json', sysPrompt]
   try {
     const { stdout } = await exec(bin, args, { timeout: AGENT_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
     let text = ''
