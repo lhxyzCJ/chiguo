@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# test_tick_health.sh — chiguo-tick.sh 的 pi 假死记账 + 告警/恢复链路测试（独立 runner）
+# test_tick_health.sh — chiguo-tick.sh 的 agent 假死记账 + 告警/恢复链路测试（独立 runner）
 # 用法: bash test_tick_health.sh（退出码 0=全过，1=有失败）
-# 隔离: temp repo（fake daemon 输出 send + fake pi-run 可切换成败 + 真 pi_health.py 拷贝
+# 隔离: temp repo（fake daemon 输出 send + fake agent-run 可切换成败 + 真 agent_health.py 拷贝
 # + node http 记录服务当 bridge /send）；绝不碰真实仓库状态。
 set -euo pipefail
 TMP="$(mktemp -d /tmp/chiguo-tick-health.XXXXXX)"
@@ -16,14 +16,14 @@ REPO="$TMP/repo"
 mkdir -p "$REPO/scripts" "$REPO/.venv/bin"
 ln -s "$REPO_ROOT/.venv/bin/python" "$REPO/.venv/bin/python"
 
-# ── pi-auth.sh 共同 sourcing(opencode-go 优先 → toml provider 回退)──
-pass "pi-auth: sourcing sets OPENCODE_API_KEY from auth.json"
-test_pi_auth() {
-  local AUTH_DIR="$TMP/pi-auth"
+# ── agent-auth.sh 共同 sourcing(opencode-go 优先 → toml provider 回退)──
+pass "agent-auth: sourcing sets OPENCODE_API_KEY from auth.json"
+test_agent_auth() {
+  local AUTH_DIR="$TMP/agent-auth"
   mkdir -p "$AUTH_DIR"
   mkdir -p "$REPO/scripts"
-  ln -sf "$REPO_ROOT/scripts/pi-auth.sh" "$REPO/scripts/pi-auth.sh" 2>/dev/null || \
-    cp "$REPO_ROOT/scripts/pi-auth.sh" "$REPO/scripts/pi-auth.sh"
+  ln -sf "$REPO_ROOT/scripts/agent-auth.sh" "$REPO/scripts/agent-auth.sh" 2>/dev/null || \
+    cp "$REPO_ROOT/scripts/agent-auth.sh" "$REPO/scripts/agent-auth.sh"
   # 用例 1:opencode-go 优先
   mkdir -p "$AUTH_DIR/.pi/agent"
   cat > "$AUTH_DIR/.pi/agent/auth.json" <<'JSON'
@@ -34,21 +34,21 @@ JSON
 provider = "local"
 TOML
   local KEY
-  KEY="$(HOME="$AUTH_DIR" CHIGUO_REPO="$REPO" bash -c 'source "$CHIGUO_REPO/scripts/pi-auth.sh"; printf "%s" "${OPENCODE_API_KEY:-}"' 2>/dev/null || true)"
-  [ "$KEY" = "KEY_OG" ] || fail "pi-auth: 期望 opencode-go 优先, got '$KEY'"
+  KEY="$(HOME="$AUTH_DIR" CHIGUO_REPO="$REPO" bash -c 'source "$CHIGUO_REPO/scripts/agent-auth.sh"; printf "%s" "${OPENCODE_API_KEY:-}"' 2>/dev/null || true)"
+  [ "$KEY" = "KEY_OG" ] || fail "agent-auth: 期望 opencode-go 优先, got '$KEY'"
   # 用例 2:无 opencode-go → toml provider 回退
   cat > "$AUTH_DIR/.pi/agent/auth.json" <<'JSON'
 {"local": {"key": "KEY_LOCAL"}}
 JSON
-  KEY="$(HOME="$AUTH_DIR" CHIGUO_REPO="$REPO" bash -c 'source "$CHIGUO_REPO/scripts/pi-auth.sh"; printf "%s" "${OPENCODE_API_KEY:-}"' 2>/dev/null || true)"
-  [ "$KEY" = "KEY_LOCAL" ] || fail "pi-auth: 期望 toml provider 回退, got '$KEY'"
+  KEY="$(HOME="$AUTH_DIR" CHIGUO_REPO="$REPO" bash -c 'source "$CHIGUO_REPO/scripts/agent-auth.sh"; printf "%s" "${OPENCODE_API_KEY:-}"' 2>/dev/null || true)"
+  [ "$KEY" = "KEY_LOCAL" ] || fail "agent-auth: 期望 toml provider 回退, got '$KEY'"
   # 用例 3:无 auth.json → 空串不报错
   rm -rf "$AUTH_DIR/.pi"
-  KEY="$(HOME="$AUTH_DIR" CHIGUO_REPO="$REPO" bash -c 'source "$CHIGUO_REPO/scripts/pi-auth.sh"; printf "%s" "${OPENCODE_API_KEY:-}"' 2>/dev/null || true)"
-  [ -z "$KEY" ] || fail "pi-auth: 期望空 key, got '$KEY'"
-  pass "pi-auth: sourcing sets OPENCODE_API_KEY from auth.json"
+  KEY="$(HOME="$AUTH_DIR" CHIGUO_REPO="$REPO" bash -c 'source "$CHIGUO_REPO/scripts/agent-auth.sh"; printf "%s" "${OPENCODE_API_KEY:-}"' 2>/dev/null || true)"
+  [ -z "$KEY" ] || fail "agent-auth: 期望空 key, got '$KEY'"
+  pass "agent-auth: sourcing sets OPENCODE_API_KEY from auth.json"
 }
-test_pi_auth
+test_agent_auth
 
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
 POST_LOG="$TMP/post.log"
@@ -87,9 +87,9 @@ else:
     sys.exit(0)
 PY
 
-cat > "$REPO/scripts/pi-run.mjs" <<'JS'
+cat > "$REPO/scripts/agent-run.mjs" <<'JS'
 import { readFileSync } from 'node:fs'
-const mode = readFileSync(process.env.FAKE_PI_MODE_FILE, 'utf8').trim()
+const mode = readFileSync(process.env.FAKE_AGENT_MODE_FILE, 'utf8').trim()
 if (mode === 'success') {
   process.stdout.write(JSON.stringify({ ok: true, text: '测试主动消息' }))
 } else {
@@ -97,11 +97,11 @@ if (mode === 'success') {
 }
 JS
 
-cp "$REPO_ROOT/scripts/pi_health.py" "$REPO/scripts/pi_health.py"
-export FAKE_PI_MODE_FILE="$TMP/pi_mode"
-echo fail > "$FAKE_PI_MODE_FILE"
+cp "$REPO_ROOT/scripts/agent_health.py" "$REPO/scripts/agent_health.py"
+export FAKE_AGENT_MODE_FILE="$TMP/pi_mode"
+echo fail > "$FAKE_AGENT_MODE_FILE"
 
-STATE="$REPO/pi_health.json"
+STATE="$REPO/pi_health.json"  # agent_health.py record 默认状态文件（内容重命名前仍为 pi_health.json，跟随默认）
 post_count() { [ -f "$POST_LOG" ] && wc -l < "$POST_LOG" || echo 0; }
 state_field() { python3 -c "import json; print(json.load(open('$STATE')).get('$1',''))" 2>/dev/null || echo ''; }
 post_texts() { python3 -c "
@@ -115,8 +115,8 @@ set +e
 CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1
 RC=$?
 set -e
-[ "$RC" = 1 ] && pass "pi 失败时 tick 退出 1（既有语义保留）" || fail "退出码期望 1 实得 $RC"
-[ -f "$STATE" ] || fail "pi_health.json 未创建（未记账）"
+[ "$RC" = 1 ] && pass "agent 失败时 tick 退出 1（既有语义保留）" || fail "退出码期望 1 实得 $RC"
+[ -f "$STATE" ] || fail "health 状态文件未创建（未记账）"
 [ "$(state_field state)" = up ] || fail "state 期望 up 实得 $(state_field state)"
 [ "$(state_field fail_streak)" = 1 ] || fail "fail_streak 期望 1 实得 $(state_field fail_streak)"
 [ "$(post_count)" = 0 ] && pass "未达阈值 → 零告警 POST" || fail "期望 0 POST 实得 $(post_count)"
@@ -137,18 +137,18 @@ set +e; CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; set -e
 [ "$(post_count)" = 1 ] && pass "已 down 再失败 → 不重复告警" || fail "期望仍 1 POST 实得 $(post_count)"
 
 # ── 用例 4: 恢复 → 真实消息 + 恢复通知都发出 ──
-echo success > "$FAKE_PI_MODE_FILE"
+echo success > "$FAKE_AGENT_MODE_FILE"
 CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1 || fail "成功路径 tick 应退出 0"
 [ "$(state_field state)" = up ] || fail "state 期望 up 实得 $(state_field state)"
 [ "$(post_count)" = 3 ] && pass "恢复后收到 真实消息 + 恢复通知" || fail "期望 3 POST（告警1+消息1+恢复1）实得 $(post_count)"
 post_texts | grep -q "测试主动消息" || fail "应发出真实主动消息"
 post_texts | grep -q "恢复" || fail "应发出恢复通知"
 
-# ── 用例 4.5: A8 composer 兜底——pi 失败但 composer 模板池兜底成功 → 照常发送 + success ──
+# ── 用例 4.5: A8 composer 兜底——agent 失败但 composer 模板池兜底成功 → 照常发送 + success ──
 # fake repo 放入真实 chiguo_composer.py（无 personality 目录 → 无台词模板 → intent 文本兜底，
 # 仍产出非空文本）→ tick 应退出 0、发出消息、health 记 success（fail_streak 归零）。
 cp "$REPO_ROOT/chiguo_composer.py" "$REPO/chiguo_composer.py"
-echo fail > "$FAKE_PI_MODE_FILE"
+echo fail > "$FAKE_AGENT_MODE_FILE"
 POST_BEFORE="$(post_count)"
 set +e; CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "composer 兜底成功时 tick 应退出 0, 实得 $RC"
@@ -175,10 +175,10 @@ wechat_recipient = "owner_test@im.wechat"
 [health]
 fail_threshold = 3
 TOML
-cat > "$REPO/scripts/pi-run.mjs" <<'JS'
+cat > "$REPO/scripts/agent-run.mjs" <<'JS'
 import { readFileSync, appendFileSync } from 'node:fs'
 appendFileSync(process.env.KEY_LOG, 'KEY=' + (process.env.OPENCODE_API_KEY || '') + '\n')
-const mode = readFileSync(process.env.FAKE_PI_MODE_FILE, 'utf8').trim()
+const mode = readFileSync(process.env.FAKE_AGENT_MODE_FILE, 'utf8').trim()
 if (mode === 'success') {
   process.stdout.write(JSON.stringify({ ok: true, text: '测试主动消息' }))
 } else {
@@ -187,7 +187,7 @@ if (mode === 'success') {
 JS
 export KEY_LOG="$TMP/key.log"
 : > "$KEY_LOG"
-echo success > "$FAKE_PI_MODE_FILE"
+echo success > "$FAKE_AGENT_MODE_FILE"
 HOME="$TMP/home" CHIGUO_REPO="$REPO" env -u OPENCODE_API_KEY bash "$REAL_TICK" >/dev/null 2>&1 \
   || fail "provider 用例 tick 应退出 0"
 grep -q "KEY=sk-og" "$KEY_LOG" || fail "应优先注入 opencode-go 条目: $(cat "$KEY_LOG")"
@@ -216,7 +216,7 @@ TOML
 mkdir -p "$TMP/home/.chiguo/auth/wechat"
 printf '{"token":"t","userId":"real_openid@im.wechat","accountId":"a"}' > "$TMP/home/.chiguo/auth/wechat/credentials.json"
 : > "$POST_LOG"
-echo success > "$FAKE_PI_MODE_FILE"
+echo success > "$FAKE_AGENT_MODE_FILE"
 HOME="$TMP/home" CHIGUO_REPO="$REPO" env -u OPENCODE_API_KEY bash "$REAL_TICK" >/dev/null 2>&1 \
   || fail "收件人注入用例 tick 应退出 0"
 grep -q "real_openid@im.wechat" "$POST_LOG" || fail "主动消息应发往真实 userId: $(cat "$POST_LOG")"
