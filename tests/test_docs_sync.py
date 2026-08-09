@@ -32,7 +32,7 @@ for f in ["AGENTS.md", "CLAUDE.md", "README.md", "README_EN.md"]:
     check(f"{f} 计数为 38 py + 10 script", any((int(a), int(b)) == (38, 10) for a, b in nums), f"实际 {nums}")
 
 # b) --skip-* flags：deploy.sh 与 DEPLOYMENT.md 一致
-flags = ["--skip-pi", "--skip-bridge", "--skip-netease"]
+flags = ["--skip-agent", "--skip-bridge", "--skip-netease"]
 check("deploy.sh 支持全部 --skip-*", all(f in deploy for f in flags))
 dep_file = ROOT / "doc" / "DEPLOYMENT.md"
 dep = dep_file.read_text() if dep_file.exists() else ""
@@ -43,7 +43,7 @@ check("DEPLOYMENT.md 引用全部 --skip-*", all(f in dep for f in flags))
 anchors = [
     ("wechatbot", "scripts/wechat-bridge.sh"),
     ("/opt/netease-api", "scripts/netease-api.sh"),
-    (".pi-agent/memory/lancedb-pro", "scripts/install_pi.sh"),
+    (".pi-agent/memory/lancedb-pro", "scripts/install_agent.sh"),
     (".chiguo/auth", "scripts/wechat-bridge.sh"),
 ]
 for anchor, script in anchors:
