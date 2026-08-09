@@ -38,11 +38,11 @@ say "运行全量自检(bash scripts/ci-test.sh,任一失败即中止) ..."
 bash "$PROJECT_DIR/scripts/ci-test.sh" || fail "全量测试失败,中止部署"
 say "全部测试通过 ✓"
 
-# ── 4. 环境就绪检查(pi/依赖/数据文件,chiguo_envcheck.py) ──
+# ── 4. 环境就绪检查(agent 后端/依赖/数据文件,chiguo_envcheck.py) ──
 say "运行环境检查 ..."
 set +e
-if [[ "$*" == *--skip-pi* ]]; then
-    uv run python chiguo_envcheck.py --skip-pi
+if [[ "$*" == *--skip-agent* ]]; then
+    uv run python chiguo_envcheck.py --skip-agent
 else
     uv run python chiguo_envcheck.py
 fi
@@ -51,7 +51,7 @@ set -e
 case $EC in
     0) say "环境就绪 ✓" ;;
     1) warn "环境存在警告(见上方 JSON,系统可运行但部分降级)" ;;
-    2) fail "环境存在严重问题(见上方 JSON),请先修复再继续(若为 pi 缺失: 请先安装 pi-agent,或 --skip-pi 跳过 pi 环境)" ;;
+    2) fail "环境存在严重问题(见上方 JSON),请先修复再继续(若为 agent 后端缺失: 请先安装 agent 后端（pi-agent）,或 --skip-agent 跳过 agent 后端)" ;;
 esac
 
 # ── 5 微信桥 wechat-bridge 安装+自启（可跳过: bash deploy.sh --skip-bridge）──
@@ -79,19 +79,19 @@ if [[ "$*" != *--skip-bridge* ]]; then
     esac
 fi
 
-# ── 5.5 pi 环境安装（可跳过: bash deploy.sh --skip-pi）──────────
-PI_OK=0
-if [[ "$*" != *--skip-pi* ]]; then
-    say "安装 pi 环境（memory-lancedb-pro 扩展 + settings/json5/auth + crontab）..."
+# ── 5.5 agent 后端安装（可跳过: bash deploy.sh --skip-agent）──────────
+AGENT_OK=0
+if [[ "$*" != *--skip-agent* ]]; then
+    say "安装 agent 后端（memory-lancedb-pro 扩展 + settings/json5/auth + crontab）..."
     set +e
-    bash "$PROJECT_DIR/scripts/install_pi.sh" "$@"
+    bash "$PROJECT_DIR/scripts/install_agent.sh" "$@"
     PC=$?
     set -e
-    [ "$PC" = 0 ] && PI_OK=1
+    [ "$PC" = 0 ] && AGENT_OK=1
     case $PC in
-        0) say "pi 环境安装完成 ✓" ;;
-        1) warn "pi 环境有警告/残留未处理（见上方输出），消息生成可能受影响" ;;
-        2) fail "pi 环境严重问题（pi-agent 未安装?），请先修复后重试（或 --skip-pi 跳过）" ;;
+        0) say "agent 后端安装完成 ✓" ;;
+        1) warn "agent 后端有警告/残留未处理（见上方输出），消息生成可能受影响" ;;
+        2) fail "agent 后端严重问题（pi-agent 未安装?），请先修复后重试（或 --skip-agent 跳过）" ;;
     esac
 fi
 
@@ -116,7 +116,7 @@ fi
 if [ -d "$HOME/.chiguo/auth" ]; then
     say "检测到集中认证目录 ~/.chiguo/auth/ → 微信登录态/网易云 cookie/pi key 自动接入"
 else
-    warn "未检测到 ~/.chiguo/auth/ 集中认证目录 → 登录需手动（bash scripts/wechat-bridge.sh login / uv run python -m netease.bridge --login / install_pi.sh 阶段 5；网易云 API 服务: bash scripts/netease-api.sh install）"
+    warn "未检测到 ~/.chiguo/auth/ 集中认证目录 → 登录需手动（bash scripts/wechat-bridge.sh login / uv run python -m netease.bridge --login / install_agent.sh 阶段 5；网易云 API 服务: bash scripts/netease-api.sh install）"
 fi
 if [ ! -f chiguo_state.json ]; then
     warn "chiguo_state.json 不存在 → 若从旧运行机迁移,请手动拷贝 state/decisions 等运行时文件(不进 git)"
@@ -127,9 +127,9 @@ cat <<EOF
 
 ────────────────── 部署完成 ──────────────────
  微信桥:        $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态本地保留不进 git; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && start 排查）")
- pi 环境:       $( [ "$PI_OK" = 1 ] && echo "已由本脚本自动完成（memory-lancedb-pro 扩展 + crontab + provider key，随 toml [host].provider）" || echo "未安装或未完全安装（bash scripts/install_pi.sh --dry-run 排查）")
+ agent 后端:       $( [ "$AGENT_OK" = 1 ] && echo "已由本脚本自动完成（memory-lancedb-pro 扩展 + crontab + provider key，随 toml [host].provider）" || echo "未安装或未完全安装（bash scripts/install_agent.sh --dry-run 排查）")
  网易云 API:    $( [ "$NETEASE_OK" = 1 ] && echo "已安装并常驻（api-enhanced v4.39.0，systemd: netease-api.service；bash scripts/netease-api.sh status）" || echo "未安装/未就绪（bash scripts/netease-api.sh install 排查；--skip-netease 跳过）")
-  手动重跑/排查: bash scripts/install_pi.sh --dry-run（扫描）| --yes（自动修复）
+  手动重跑/排查: bash scripts/install_agent.sh --dry-run（扫描）| --yes（自动修复）
   端到端冒烟:   bash scripts/chiguo-tick.sh（tick 手动触发 → 微信收到）
 
 手动验证:

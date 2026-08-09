@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# pi-auth — 解析 pi API key 到 OPENCODE_API_KEY（供 source 使用;opencode-go 优先 → toml provider 回退）
+# agent-auth — 解析 pi API key 到 OPENCODE_API_KEY（供 source 使用;opencode-go 优先 → toml provider 回退）
 # 抽取自 chiguo-tick.sh（cron 环境无 key,memory-lancedb-pro 扩展需要）
-# 用法: source scripts/pi-auth.sh  （本脚本按约定假定 REPO 已定义;否则从自身路径推导）
+# 用法: source scripts/agent-auth.sh  （本脚本按约定假定 REPO 已定义;否则从自身路径推导）
 REPO="${CHIGUO_REPO:-${REPO:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}}"
 if [ -z "${OPENCODE_API_KEY:-}" ] && [ -f "$HOME/.pi/agent/auth.json" ]; then
   TICK_FALLBACK_PROVIDER="$(sed -n 's/^[[:space:]]*provider *= *"\([^"]*\)".*/\1/p' "$REPO/chiguo_proactive.toml" | head -1 || true)"
