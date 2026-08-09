@@ -109,12 +109,13 @@ class MemoryBackend:
                     results.append(mem)
             if len(results) >= limit:
                 break
-        if prefer_categories:
-            def _sort_key(m):
-                cat = m.get("memory_category", "?")
-                return 0 if cat in prefer_categories else 1
-            results.sort(key=_sort_key)
-        results.sort(key=lambda m: m.get("timestamp", 0), reverse=True)
+        # 单一 sort：偏好类别在前，同类别内按时间降序
+        # （原先两次 sort 相互覆盖，prefer_categories 不生效）
+        def _cat_rank(m):
+            if prefer_categories and m.get("memory_category") in prefer_categories:
+                return 0
+            return 1
+        results.sort(key=lambda m: (_cat_rank(m), -(m.get("timestamp") or 0)))
         return results[:limit]
 
     # ── Ebbinghaus 遗忘曲线（v4；纯逻辑，后端无关）─────────
@@ -151,7 +152,12 @@ class MemoryBackend:
             age_seconds = (now.timestamp() - ts)
         age_hours = max(0, age_seconds / 3600)
 
-        importance = max(0.1, min(1.0, memory.get("importance", 0.5)))
+        # importance 统一经 clean_importance 清洗（None/NaN/非数值 → 0.0），
+        # 防御脏数据进入权重计算；清洗后为 0 则回退中位权重 0.5
+        importance = self.clean_importance(memory)
+        if importance <= 0:
+            importance = 0.5
+        importance = max(0.1, min(1.0, importance))
         effective_strength = strength * importance
 
         if effective_strength <= 0:

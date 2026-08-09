@@ -60,7 +60,7 @@ class Mem0Backend(MemoryBackend):
                  embedder_model: str = None, embedder_base_url: str = None,
                  embedder_dims: int = None,
                  strength: float = None, min_weight: float = None,
-                 **kwargs):
+                 max_rows: int = None, **kwargs):
         self.user_id = str(user_id or "chiguo")
         self.collection_name = str(collection_name or "chiguo")
         self.qdrant_path = qdrant_path or _DEFAULT_QDRANT_PATH
@@ -73,9 +73,11 @@ class Mem0Backend(MemoryBackend):
         self.embedder_dims = int(embedder_dims or _DEFAULT_EMBEDDER_DIMS)
         self._strength = strength or 168.0
         self._min_weight = min_weight or 0.1
+        self.max_rows = int(max_rows or 1000)  # _all_rows get_all 的 top_k 上限
         self._m = None  # mem0 Memory 实例（惰性初始化）
         self._available: bool | None = None
         self._last_probe: float = 0.0
+        self._last_error: tuple | None = None  # (ts, op, error_str)，暴露到 stats()
 
     # ── mem0 初始化 ───────────────────────────────────────
 
@@ -135,10 +137,14 @@ class Mem0Backend(MemoryBackend):
             if not self._mem0_config():
                 raise RuntimeError("mem0: 无 LLM API key（~/.pi/agent/auth.json opencode-go 或配置 mem0_llm_api_key）")
             self._ensure_mem0()
-            # 轻量连通性探测：get_all 一次（qdrant/ollama 均参与）
-            self._m.get_all(filters={"user_id": self.user_id}, top_k=1)
+            # 连通性探测：search 一次（走 embedder，覆盖 ollama 依赖；
+            # get_all 只走 qdrant scroll 不触 embedder，ollama 故障探测不到）
+            self._m.search("probe", filters={"user_id": self.user_id}, top_k=1)
             self._available = True
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.warning("mem0 %s failed: %r", "available", e)
+            self._last_error = (_time_module.time(), "available", str(e))
             self._available = False
         self._last_probe = _time_module.time()
         return self._available
@@ -189,7 +195,13 @@ class Mem0Backend(MemoryBackend):
             results = self._m.search(
                 query, filters=filters, top_k=max(limit, 20)
             ).get("results", [])
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.warning("mem0 %s failed: %r", "search", e)
+            self._last_error = (_time_module.time(), "search", str(e))
+            # 故障驱动自愈：置不可用并刷新探测节流，60s 后重探
+            self._available = False
+            self._last_probe = _time_module.time()
             return []
         out = []
         for r in results:
@@ -228,6 +240,7 @@ class Mem0Backend(MemoryBackend):
                 "user_relevant_count": 0,
                 "db_path": self.qdrant_path,
                 "backend": "mem0",
+                "last_error": self._last_error,
             }
         try:
             total = len(self._all_rows(min_importance=0.0))
@@ -239,6 +252,7 @@ class Mem0Backend(MemoryBackend):
             "user_relevant_count": len(self.user_relevant(limit=100)),
             "db_path": self.qdrant_path,
             "backend": "mem0",
+            "last_error": self._last_error,
         }
 
     # ── 写入 ──────────────────────────────────────────────
@@ -255,21 +269,34 @@ class Mem0Backend(MemoryBackend):
         try:
             self._m.add(messages, user_id=self.user_id, metadata=metadata)
             return True
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.warning("mem0 %s failed: %r", "add", e)
+            self._last_error = (_time_module.time(), "add", str(e))
+            # 故障驱动自愈：置不可用并刷新探测节流，60s 后重探
+            self._available = False
+            self._last_probe = _time_module.time()
             return False
 
     # ── 内部 ──────────────────────────────────────────────
 
     def _all_rows(self, min_importance: float = 0.0,
-                  top_k: int = 1000) -> list[dict]:
+                  top_k: int = None) -> list[dict]:
         """全量记忆（get_all）→ 行 dict 列表（importance 过滤）。"""
         if not self.available:
             return []
         try:
             results = self._m.get_all(
-                filters={"user_id": self.user_id}, top_k=top_k
+                filters={"user_id": self.user_id},
+                top_k=self.max_rows if top_k is None else top_k,
             ).get("results", [])
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.warning("mem0 %s failed: %r", "get_all", e)
+            self._last_error = (_time_module.time(), "get_all", str(e))
+            # 故障驱动自愈：置不可用并刷新探测节流，60s 后重探
+            self._available = False
+            self._last_probe = _time_module.time()
             return []
         out = []
         for r in results:
