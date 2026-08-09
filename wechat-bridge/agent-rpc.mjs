@@ -19,7 +19,7 @@ import { writeFileSync, readFileSync, existsSync, unlinkSync, readdirSync } from
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import {
-  buildBasePiArgs, buildAnalysisPrompt, parseNdjson, extractAnalysis, parseUsage, appendTelemetry, AGENT_TIMEOUT,
+  buildBaseAgentArgs, buildAnalysisPrompt, parseNdjson, extractAnalysis, parseUsage, appendTelemetry, AGENT_TIMEOUT,
 } from '../scripts/agent-run.mjs'
 
 const PID_FILE = join(homedir(), '.pi', 'agent', 'agent-rpc.pid')
@@ -54,7 +54,7 @@ export class AgentRpc {
     if (this.proc && !this.dead) return
     this.dead = false
     this.buffer = []
-    const args = ['--mode', 'rpc', ...buildBasePiArgs({ analysisMode: true })]
+    const args = ['--mode', 'rpc', ...buildBaseAgentArgs({ analysisMode: true })]
     const proc = spawn(this.bin, args, { stdio: ['pipe', 'pipe', 'pipe'] })
     this.proc = proc
     writeFileSync(PID_FILE, String(proc.pid))

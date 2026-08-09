@@ -1,5 +1,5 @@
 # ============================================================
-# schedule/replan.py — 重分析链路(§7):读来源 → pi 分析 → 校验 → 原子写 plan
+# schedule/replan.py — 重分析链路(§7):读来源 → agent 分析 → 校验 → 原子写 plan
 # 唯一写 plan 的模块;引擎永不写 plan;replan 永不写来源。
 # ============================================================
 
@@ -134,7 +134,7 @@ def replan_env(base: dict | None = None) -> dict:
 
 
 def replan_timeout(env: dict | None = None) -> int:
-    """pi 调用超时(秒):默认 240(旧 120 在 thinking>high 时不够),CHIGUO_REPLAN_TIMEOUT 可覆盖,
+    """agent 调用超时(秒):默认 240(旧 120 在 thinking>high 时不够),CHIGUO_REPLAN_TIMEOUT 可覆盖,
     非法值/过小值兜底。"""
     env = os.environ if env is None else env
     try:
@@ -144,7 +144,7 @@ def replan_timeout(env: dict | None = None) -> int:
 
 
 def _run_replan(base_dir: str, config: dict, sources) -> dict | None:
-    """pi 分析(facts + 类型清单 + clamp 边界),超时默认 240s;失败 → None(保留旧 plan + stale)。"""
+    """agent 分析(facts + 类型清单 + clamp 边界),超时默认 240s;失败 → None(保留旧 plan + stale)。"""
     facts = [{"ref": f"fact:{it['id']}", "start": it["date"], "end": it.get("end_date") or it["date"],
               "label": it.get("label", "")} for it in sources.overrides.intervals()]
     for name, (s, e) in sources.holiday.all_ranges().items():
@@ -172,7 +172,7 @@ def _run_replan(base_dir: str, config: dict, sources) -> dict | None:
     except (json.JSONDecodeError, ValueError):
         return None
     if not out.get("ok"):
-        print(f"[schedule.replan] pi 失败: {out.get('error', '')[:200]}", file=sys.stderr)
+        print(f"[schedule.replan] agent 失败: {out.get('error', '')[:200]}", file=sys.stderr)
         return None
     # agent-run.mjs replan 分支返回 {ok, parsed, raw}:parsed = <<REPLAN>> 块内容(plan dict)
     return out.get("parsed")
@@ -208,7 +208,7 @@ def main(argv=None):
             return 0
         plan = _run_replan(base_dir, config, sources)
         if plan is None:
-            print("[schedule.replan] pi 失败 → 保留旧 plan + stale,下轮重试", file=sys.stderr)
+            print("[schedule.replan] agent 失败 → 保留旧 plan + stale,下轮重试", file=sys.stderr)
             return 1
         errs = validate_plan(plan, sources)
         if errs:

@@ -53,87 +53,87 @@ def test_check_agent_ok():
     print("  OK test_check_agent_ok")
 
 
-def test_check_pi_ext_missing_warn():
+def test_check_agent_ext_missing_warn():
     with tempfile.TemporaryDirectory() as td:
-        r = ec.check_pi_ext(Path(td) / "settings.json", Path(td) / "ext" / "index.js")
+        r = ec.check_agent_ext(Path(td) / "settings.json", Path(td) / "ext" / "index.js")
         assert r["severity"] == "warn" and not r["ok"]
         assert "install_agent.sh" in r["detail"]
-    print("  OK test_check_pi_ext_missing_warn")
+    print("  OK test_check_agent_ext_missing_warn")
 
 
-def test_check_pi_ext_windows_warn():
+def test_check_agent_ext_windows_warn():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         want = str(td / ".pi-agent" / "TestForPi-memory-lancedb-pro" / "dist" / "pi-adapter" / "index.js")
         _mk(td, {".pi/agent/settings.json":
                  json.dumps({"extensions": ["/mnt/c/Users/USER/projects/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js", want]})})
-        r = ec.check_pi_ext(td / ".pi/agent/settings.json", Path(want))
+        r = ec.check_agent_ext(td / ".pi/agent/settings.json", Path(want))
         assert r["severity"] == "warn" and not r["ok"]
         assert "Windows" in r["detail"]
-    print("  OK test_check_pi_ext_windows_warn")
+    print("  OK test_check_agent_ext_windows_warn")
 
 
-def test_check_pi_ext_ok():
+def test_check_agent_ext_ok():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         want = str(td / ".pi-agent" / "TestForPi-memory-lancedb-pro" / "dist" / "pi-adapter" / "index.js")
         _mk(td, {".pi/agent/settings.json": json.dumps({"extensions": [want]})})
-        r = ec.check_pi_ext(td / ".pi/agent/settings.json", Path(want))
+        r = ec.check_agent_ext(td / ".pi/agent/settings.json", Path(want))
         assert r["severity"] == "ok" and r["ok"]
-    print("  OK test_check_pi_ext_ok")
+    print("  OK test_check_agent_ext_ok")
 
 
-def test_check_pi_auth_missing_warn():
+def test_check_agent_auth_missing_warn():
     with tempfile.TemporaryDirectory() as td:
-        r = ec.check_pi_auth(Path(td) / "auth.json")
+        r = ec.check_agent_auth(Path(td) / "auth.json")
         assert r["severity"] == "warn" and not r["ok"]
         assert "AGENT_API_KEY" in r["detail"]
-    print("  OK test_check_pi_auth_missing_warn")
+    print("  OK test_check_agent_auth_missing_warn")
 
 
-def test_check_pi_auth_ok():
+def test_check_agent_auth_ok():
     with tempfile.TemporaryDirectory() as td:
         _mk(Path(td), {"auth.json": json.dumps({"opencode-go": {"type": "api_key", "key": "sk-test"}})})
-        r = ec.check_pi_auth(Path(td) / "auth.json")
+        r = ec.check_agent_auth(Path(td) / "auth.json")
         assert r["severity"] == "ok" and r["ok"]
         assert "opencode-go" in r["detail"]
-    print("  OK test_check_pi_auth_ok")
+    print("  OK test_check_agent_auth_ok")
 
 
-def test_check_pi_auth_custom_provider():
-    """check_pi_auth 按指定 provider 查 auth.json 条目（键名 = provider 名）。"""
+def test_check_agent_auth_custom_provider():
+    """check_agent_auth 按指定 provider 查 auth.json 条目（键名 = provider 名）。"""
     with tempfile.TemporaryDirectory() as td:
         _mk(Path(td), {"auth.json": json.dumps({"deepseek": {"type": "api_key", "key": "sk-ds"}})})
-        r = ec.check_pi_auth(Path(td) / "auth.json", provider="deepseek")
+        r = ec.check_agent_auth(Path(td) / "auth.json", provider="deepseek")
         assert r["severity"] == "ok" and r["ok"]
         assert "deepseek" in r["detail"]
-        r2 = ec.check_pi_auth(Path(td) / "auth.json", provider="openai")
+        r2 = ec.check_agent_auth(Path(td) / "auth.json", provider="openai")
         assert not r2["ok"]
         assert "openai" in r2["detail"]
-    print("  OK test_check_pi_auth_custom_provider")
+    print("  OK test_check_agent_auth_custom_provider")
 
 
-def test_run_checks_pi_auth_provider_from_toml():
-    """run_checks 的 pi_auth 检查随 toml [host].provider 走（缺省回退 opencode-go）。"""
+def test_run_checks_agent_auth_provider_from_toml():
+    """run_checks 的 agent_auth 检查随 toml [host].provider 走（缺省回退 opencode-go）。"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         home = td / "home"
         _mk(home, {".pi/agent/auth.json": json.dumps({"deepseek": {"type": "api_key", "key": "sk-ds"}})})
         _mk(td, {"chiguo_proactive.toml": '[host]\nprovider = "deepseek"\n'})
         report = ec.run_checks(base_dir=td, home=home)
-        auth = next(c for c in report["checks"] if c["name"] == "pi_auth")
+        auth = next(c for c in report["checks"] if c["name"] == "agent_auth")
         assert auth["ok"] and "deepseek" in auth["detail"], auth
         # auth 只有 opencode-go 条目 → warn 指向实际 provider deepseek
         _mk(home, {".pi/agent/auth.json": json.dumps({"opencode-go": {"type": "api_key", "key": "sk-og"}})})
         report2 = ec.run_checks(base_dir=td, home=home)
-        auth2 = next(c for c in report2["checks"] if c["name"] == "pi_auth")
+        auth2 = next(c for c in report2["checks"] if c["name"] == "agent_auth")
         assert not auth2["ok"] and "deepseek" in auth2["detail"], auth2
         # 无 toml provider → 回退 opencode-go（auth 含 opencode-go 条目 → ok 且指向 opencode-go）
         _mk(td, {"chiguo_proactive.toml": "[host]\nmodel = \"x\"\n"})
         report3 = ec.run_checks(base_dir=td, home=home)
-        auth3 = next(c for c in report3["checks"] if c["name"] == "pi_auth")
+        auth3 = next(c for c in report3["checks"] if c["name"] == "agent_auth")
         assert auth3["ok"] and "opencode-go" in auth3["detail"], auth3
-    print("  OK test_run_checks_pi_auth_provider_from_toml")
+    print("  OK test_run_checks_agent_auth_provider_from_toml")
 
 
 def test_check_ollama_unreachable_info():
@@ -296,13 +296,13 @@ if __name__ == "__main__":
     test_check_agent_missing_critical()
     test_check_agent_skip_warn()
     test_check_agent_ok()
-    test_check_pi_ext_missing_warn()
-    test_check_pi_ext_windows_warn()
-    test_check_pi_ext_ok()
-    test_check_pi_auth_missing_warn()
-    test_check_pi_auth_ok()
-    test_check_pi_auth_custom_provider()
-    test_run_checks_pi_auth_provider_from_toml()
+    test_check_agent_ext_missing_warn()
+    test_check_agent_ext_windows_warn()
+    test_check_agent_ext_ok()
+    test_check_agent_auth_missing_warn()
+    test_check_agent_auth_ok()
+    test_check_agent_auth_custom_provider()
+    test_run_checks_agent_auth_provider_from_toml()
     test_check_ollama_unreachable_info()
     test_check_ollama_proxy_bypassed()
     test_check_mem0_missing_dir_info()

@@ -41,7 +41,7 @@ t('detect: 哥哥/主人 前缀兼容（哥哥记住X月X日是XX）', () => {
   assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 05-11 迟菓生日'])
   assert.strictEqual(detectSpecialCommand('主人记住3月1日开学日').action, 'anniversary_added')
 })
-t('detect: 尾缀「了」不算名称（记住5月11日了 → 不拦截交 pi）', () => {
+t('detect: 尾缀「了」不算名称（记住5月11日了 → 不拦截交 agent）', () => {
   assert.strictEqual(detectSpecialCommand('记住5月11日了'), null)
 })
 t('detect: 尾缀「了」剥离（记住5月11日是生日了 → 名称 生日）', () => {
@@ -133,7 +133,7 @@ t('detect: 非字符串/空 → null', () => {
   assert.strictEqual(detectSpecialCommand(null), null)
   assert.strictEqual(detectSpecialCommand(undefined), null)
 })
-t('detect: "今天放假了"（一天性陈述）不拦截 → 交 pi 自然回复', () => {
+t('detect: "今天放假了"（一天性陈述）不拦截 → 交 agent 自然回复', () => {
   assert.strictEqual(detectSpecialCommand('今天放假了'), null)
 })
 
@@ -318,7 +318,7 @@ t('slash: 白名单命中/未知拒绝/普通消息放行', () => {
   assert.strictEqual(detectSlashCommand('你好呀'), null)
   assert.strictEqual(detectSlashCommand('记住5月11日是生日'), null)
 })
-t('slash: encodeSessionDir 与 pi 同编码(路径斜杠→横线,双横线包裹)', () => {
+t('slash: encodeSessionDir 与 agent 同编码(路径斜杠→横线,双横线包裹)', () => {
   assert.strictEqual(encodeSessionDir('/a/b/c'), '--a-b-c--')
 })
 t('slash: unknown_slash 迟菓风拒绝(不进 LLM)', async () => {
@@ -356,7 +356,7 @@ t('slash: /new 移走最近 chiguo-main 会话文件到备份目录（HOME 注�
     fs.rmSync(home, { recursive: true, force: true })
   }
 })
-t('slash: /记忆 → memory_bridge.py --stats（经 memory 抽象 CLI，不硬编码 pi 扩展）', async () => {
+t('slash: /记忆 → memory_bridge.py --stats（经 memory 抽象 CLI，不硬编码 agent 扩展）', async () => {
   const fs = await import('node:fs')
   const os = await import('node:os')
   const path = await import('node:path')

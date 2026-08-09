@@ -484,7 +484,7 @@ class MessageComposer:
 
 # ═══════════════════════════════════════════════════════════
 # A8: 生成失败确定性回退 CLI（零 LLM）
-# pi 生成失败时由 scripts/chiguo-tick.sh 调用本 CLI 兜底：
+# agent 生成失败时由 scripts/chiguo-tick.sh 调用本 CLI 兜底：
 # 接收 daemon decision JSON（或 --trigger），用现有
 # select_combo + 模板池直接拼出 1-3 句可发送文本，输出到 stdout。
 # 不追求文采（兜底场景），模板直出即可。

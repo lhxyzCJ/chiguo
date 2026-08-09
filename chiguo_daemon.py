@@ -14,7 +14,7 @@
 #
 # cron 集成：
 #   系统 crontab 每 15 分钟经 scripts/chiguo-tick.sh 执行本脚本。
-#   若 stdout 输出含 "action":"send"，chiguo-tick.sh 调 pi 读取 context
+#   若 stdout 输出含 "action":"send"，chiguo-tick.sh 调 agent 读取 context
 #   字段生成消息，经 wechat-bridge 发出。
 #   若输出 "action":"idle"，什么都不做。
 # ============================================================
@@ -1019,7 +1019,7 @@ class DecisionEngine:
         if direction == "send":
             record["trigger"] = trigger
             record["intensity"] = intensity
-            # A8: pi 生成失败 → composer 确定性兜底 → 打标记（health 仍记 success）
+            # A8: agent 生成失败 → composer 确定性兜底 → 打标记（health 仍记 success）
             if fallback:
                 record["fallback"] = True
             record["emotion_snapshot"] = {
@@ -1044,7 +1044,7 @@ class DecisionEngine:
         """记录已发送消息文本（发送侧回调）。
         仅写 chiguo_messages.jsonl —— decisions.jsonl 已有 send 决策条目。
         trigger/intensity 从 send 决策中提取，使 messages.jsonl 自包含。
-        fallback（A8）: composer 确定性兜底生成的标记（pi 生成失败时 True）。
+        fallback（A8）: composer 确定性兜底生成的标记（agent 生成失败时 True）。
         """
         self._log_message(
             msg_id=msg_id,

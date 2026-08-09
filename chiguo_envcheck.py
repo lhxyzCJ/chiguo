@@ -171,10 +171,10 @@ def _is_windows_ext(e) -> bool:
                  or (len(e) > 1 and e[1] == ":" and e[0].isalpha())))
 
 
-def check_pi_ext(settings_path: Path, expected_path: Path) -> dict:
+def check_agent_ext(settings_path: Path, expected_path: Path) -> dict:
     """pi settings.json extensions 指向 Linux 扩展路径。缺失/指向 Windows 残留 → warn。"""
     if not settings_path.is_file():
-        return {"name": "pi_ext", "ok": False, "severity": "warn",
+        return {"name": "agent_ext", "ok": False, "severity": "warn",
                 "detail": f"{_sanitize_path(settings_path)} 不存在 → pi 记忆扩展未注册(bash scripts/install_agent.sh --yes)"}
     try:
         cfg = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -182,20 +182,20 @@ def check_pi_ext(settings_path: Path, expected_path: Path) -> dict:
         if not isinstance(exts, list):
             exts = []
     except Exception as e:
-        return {"name": "pi_ext", "ok": False, "severity": "warn",
+        return {"name": "agent_ext", "ok": False, "severity": "warn",
                 "detail": f"{_sanitize_path(settings_path)} 解析失败: {_truncate(e)}"
                           f"(bash scripts/install_agent.sh --yes 修复)"}
     want = str(expected_path)
     bad = [e for e in exts if _is_windows_ext(e)]
     if want in exts and not bad:
-        return {"name": "pi_ext", "ok": True, "severity": "ok",
+        return {"name": "agent_ext", "ok": True, "severity": "ok",
                 "detail": f"pi 扩展 OK ({_sanitize_path(want)})"}
     if bad:
-        return {"name": "pi_ext", "ok": False, "severity": "warn",
+        return {"name": "agent_ext", "ok": False, "severity": "warn",
                 "detail": f"settings.json 扩展指向 Windows 残留 {[_sanitize_path(x) for x in bad]}"
                           f" → 记忆扩展不会加载"
                           f"(bash scripts/install_agent.sh --yes 修正)"}
-    return {"name": "pi_ext", "ok": False, "severity": "warn",
+    return {"name": "agent_ext", "ok": False, "severity": "warn",
             "detail": f"settings.json 缺扩展路径 {_sanitize_path(want)} → 记忆扩展不会加载"
                       f"(bash scripts/install_agent.sh --yes)"}
 
@@ -220,23 +220,23 @@ def check_ollama(base_url: str = "http://localhost:11434") -> dict:
                           f"(启动 ollama 后 bash scripts/install_agent.sh --yes)"}
 
 
-def check_pi_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
+def check_agent_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
     """auth.json 含 provider 条目(key 存在)。缺失 → warn(消息生成将失败)。
     provider = toml [host].provider（auth.json 键名与 pi --provider 名一致）。"""
     if not auth_path.is_file():
-        return {"name": "pi_auth", "ok": False, "severity": "warn",
+        return {"name": "agent_auth", "ok": False, "severity": "warn",
                 "detail": f"{_sanitize_path(auth_path)} 不存在 → {provider} key 缺失"
                           f"(export {_key_env_hint(provider)}=... 后 bash scripts/install_agent.sh --yes)"}
     try:
         cfg = json.loads(auth_path.read_text(encoding="utf-8"))
     except Exception as e:
-        return {"name": "pi_auth", "ok": False, "severity": "warn",
+        return {"name": "agent_auth", "ok": False, "severity": "warn",
                 "detail": f"{_sanitize_path(auth_path)} 解析失败: {_truncate(e)}"}
     entry = cfg.get(provider)
     if isinstance(entry, dict) and entry.get("key"):
-        return {"name": "pi_auth", "ok": True, "severity": "ok",
+        return {"name": "agent_auth", "ok": True, "severity": "ok",
                 "detail": f"auth.json 含 {provider} key(已配置)"}
-    return {"name": "pi_auth", "ok": False, "severity": "warn",
+    return {"name": "agent_auth", "ok": False, "severity": "warn",
             "detail": f"auth.json 无 {provider} 条目 → 消息生成将失败"
                       f"(export {_key_env_hint(provider)}=... 后 bash scripts/install_agent.sh --yes"
                       f"，或配置其他 provider 见 doc/AGENT_INTEGRATION.md)"}
@@ -336,8 +336,8 @@ def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = Non
     api_base = os.environ.get("NETEASE_API_BASE", "http://localhost:3000")
     home = home or Path.home()
     pi_settings = home / ".pi" / "agent" / "settings.json"
-    pi_ext = home / ".pi-agent" / "TestForPi-memory-lancedb-pro" / "dist" / "pi-adapter" / "index.js"
-    pi_auth = home / ".pi" / "agent" / "auth.json"
+    agent_ext = home / ".pi-agent" / "TestForPi-memory-lancedb-pro" / "dist" / "pi-adapter" / "index.js"
+    agent_auth = home / ".pi" / "agent" / "auth.json"
     ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
     provider = cfg.get("host", {}).get("provider") or "opencode-go"
     # v1.8: agent 后端抽象（runner=agent 默认；command=自定义 CLI agent）
@@ -351,7 +351,7 @@ def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = Non
         check_agent(skip_agent=skip_agent, runner=runner, agent_command=agent_command),
     ]
     if runner == "agent":
-        checks.append(check_pi_ext(pi_settings, pi_ext))
+        checks.append(check_agent_ext(pi_settings, agent_ext))
     if memory_backend in ("mem0", "auto"):
         checks.append(check_mem0(mem0_qdrant, mem0_history))
     else:
@@ -359,7 +359,7 @@ def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = Non
                        "detail": f"自定义记忆后端 {memory_backend}（envcheck 不直检，由后端自身降级）"})
     if runner == "agent":
         checks.append(check_ollama(ollama_url))
-        checks.append(check_pi_auth(pi_auth, provider=provider))
+        checks.append(check_agent_auth(agent_auth, provider=provider))
     checks.append(
         check_netease(api_base, base / "netease" / "netease_cookie.txt", base / "netease" / "netease_health.json"),
     )
