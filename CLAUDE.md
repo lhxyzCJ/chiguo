@@ -52,7 +52,7 @@ No build step. Minimal dependencies beyond Python stdlib (plus `tomllib` for Pyt
 
 **pi-agent integration** (see `doc/PI_INTEGRATION.md`, Phase 4):
 - **v1.8 agent 抽象；v1.9 记忆后端**：`[host].runner` — `pi`（默认，pi-agent 二进制）| `command`（任意 CLI agent，`[host].agent_command` 指定；统一契约 `--prompt <完整提示词> --mode <mode>`，stdout JSON 或 NDJSON；RPC 常驻仅 pi 模式）。**记忆后端抽象**：`[memory].backend` — `mem0`（默认，mem0ai 记忆层：LLM 事实提取写入 + ollama 本地向量检索 + qdrant 嵌入式存储）/ `module.path.ClassName` 自定义类（`memory/` 包：MemoryBackend 基类 + Mem0Backend + create_backend 工厂；`memory_bridge.py` 兼容门面）
-- Send side: system crontab `*/15 * * * * scripts/chiguo-tick.sh` — runs `chiguo_daemon.py --compact` with zero model calls; idle → silent exit, send → `scripts/pi-run.mjs` (session `chiguo-send`) generates message per SUN2.md → curl `[host].wechat_bridge_url` → `--record-send` writes back；pi 生成失败 → `chiguo_composer.py` 模板池兜底直出文本（v2.0 A8：成功发送 + fallback 标记，composer 也失败才 fail）
+- Send side: system crontab `*/15 * * * * scripts/chiguo-tick.sh` — runs `chiguo_daemon.py --compact` with zero model calls; idle → silent exit, send → `scripts/pi-run.mjs` (session `chiguo-send`) generates message per SUN2.md → curl `[host].wechat_bridge_url` → `--record-send` writes back；pi 生成失败 → `chiguo_composer.py` 模板池兜底直出文本（v1.10 A8：成功发送 + fallback 标记，composer 也失败才 fail）
 - Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break/schedule rules, no pi; schedule-center CLI 子命令 `--attention`/`--schedule-recall`/`--schedule-change` + `python -m schedule.replan --check`/`schedule.holiday`) → otherwise `askPi` (pi-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
 - Sessions: reply=`chiguo-main`, proactive send=`chiguo-send` — separate sessions eliminate cross-process concurrent turns
 - Environment: `scripts/install_pi.sh` bootstraps pi (settings/json5, provider auth via toml [host].provider (default opencode-go), crontab)；记忆层 mem0 由 `uv sync` 安装（必需依赖；qdrant 嵌入式 data/mem0/ + ollama qwen3-embedding）
@@ -64,7 +64,7 @@ No build step. Minimal dependencies beyond Python stdlib (plus `tomllib` for Pyt
 
 **v8 (2026-07-31)** adds: dual-schedule circadian learning (双作息 — weekday/weekend buckets with separate learned windows, `bucket_for()` handles 调休上班日→weekday / 节假日→weekend / Fri 20:00+ & Sat & Sun before 20:00→weekend; v7 state auto-migrates by backfilling buckets) and NetEase play proof (听歌双向联动 — `netease.bridge` 的 `NeteaseBridge.fetch_recent_play()` fetches recent plays only inside the active quiet window, play within the 2h proof window suppresses Bayesian sleeping confidence ×0.5 and records active times back into the circadian tracker). STATE_VERSION 7→8.
 
-**v2.0 (2026-08-09)** adds: 外部对比优化 9 项（STATE_VERSION 不变仍为 10）— A1 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+|gap|/baseline)，偏离越远回弹越快，`[emotion].elastic_baseline`）+ A2 情绪交互矩阵（tick 后跨维度联动，`[emotion].interaction_*` 默认 1.0=关闭）+ A3 日程乘数×抖动（情绪类，仪式类豁免）+ A4 三段激活（<min_activation 沉默 / ≥must_send_activation 必选 must_send）+ A5 未回复退场状态机（backing_off 禁情绪类 / silent 全禁发）+ A6 repeat 阻尼泛化（全类型 ×0.6^min(n,3)）+ A8 生成失败确定性回退（composer 兜底 CLI）+ A9 内容级防复读（3-gram Jaccard 弃用候选）+ A10 回复饱和阻尼（30 分钟窗口 ×0.5^min(n,3)）。
+**v1.10 (2026-08-09)** adds: 外部对比优化 9 项（STATE_VERSION 不变仍为 10）— A1 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+|gap|/baseline)，偏离越远回弹越快，`[emotion].elastic_baseline`）+ A2 情绪交互矩阵（tick 后跨维度联动，`[emotion].interaction_*` 默认 1.0=关闭）+ A3 日程乘数×抖动（情绪类，仪式类豁免）+ A4 三段激活（<min_activation 沉默 / ≥must_send_activation 必选 must_send）+ A5 未回复退场状态机（backing_off 禁情绪类 / silent 全禁发）+ A6 repeat 阻尼泛化（全类型 ×0.6^min(n,3)）+ A8 生成失败确定性回退（composer 兜底 CLI）+ A9 内容级防复读（3-gram Jaccard 弃用候选）+ A10 回复饱和阻尼（30 分钟窗口 ×0.5^min(n,3)）。
 
 ```
 chiguo_daemon.py (DecisionEngine)
@@ -84,7 +84,7 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_watchdog.py  → daemon health checks (disk, memory, tick freshness)
   ├─ chiguo_rotation.py  → monthly log rotation → archive/
   ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
-  ├─ chiguo_version.py   → project version single source (VERSION="2.0", +0.1 per round)
+  ├─ chiguo_version.py   → project version single source (VERSION="1.10", +0.1 per round)
   └─ chiguo_monitor.py   → streaming JSONL analytics (stats/alerts/health)
 
   Output: chiguo_decisions.jsonl (append-only structured log)
@@ -93,11 +93,11 @@ chiguo_daemon.py (DecisionEngine)
 
 **Config**: `chiguo_proactive.toml` — all parameters (368 lines). Legacy host section from Task 14 (superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
-**Version**: `chiguo_version.py` is the single source (`VERSION="2.0"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
+**Version**: `chiguo_version.py` is the single source (`VERSION="1.10"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
 
-**5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h). v2.0: 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+|target-current|/baseline)，偏离越远回弹越快；loneliness/anxiety/affection/energy 四处推进改调）+ 情绪交互矩阵（tick 后 `apply_interaction_matrix` 一次：affection>60→anxiety 恢复加速 / energy<30→loneliness 恢复加速 / anxiety>70→energy 恢复减速，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ 回复饱和阻尼（30 分钟窗口同向回复计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）。
+**5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h). v1.10: 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+|target-current|/baseline)，偏离越远回弹越快；loneliness/anxiety/affection/energy 四处推进改调）+ 情绪交互矩阵（tick 后 `apply_interaction_matrix` 一次：affection>60→anxiety 恢复加速 / energy<30→loneliness 恢复加速 / anxiety>70→energy 恢复减速，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ 回复饱和阻尼（30 分钟窗口同向回复计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）。
 
-**Trigger selection**: sigmoid-weighted, not hard-threshold. `chiguo_trigger.py` computes weights for 13 trigger types (incl. v7 follow_up), then weighted random choice. No priority-based cascading — every eligible trigger has non-zero probability. v2.0 三段：A3 日程乘数×抖动（上课 0.3/空闲 free_multiplier 1.2/半忙 0.6 × uniform(0.8,1.2)，仪式类豁免）→ A6 repeat 阻尼（全类型 ×0.6^min(n,3)）→ A4 三段激活（情绪类权重和 < min_activation 0.08 沉默 / ≥ must_send_activation 0.5 必选 must_send）；A5 未回复退场状态机（backoff_start=3 backing_off 禁情绪类、backoff_silent=5 silent 全禁发，escape_valve 豁免）。
+**Trigger selection**: sigmoid-weighted, not hard-threshold. `chiguo_trigger.py` computes weights for 13 trigger types (incl. v7 follow_up), then weighted random choice. No priority-based cascading — every eligible trigger has non-zero probability. v1.10 三段：A3 日程乘数×抖动（上课 0.3/空闲 free_multiplier 1.2/半忙 0.6 × uniform(0.8,1.2)，仪式类豁免）→ A6 repeat 阻尼（全类型 ×0.6^min(n,3)）→ A4 三段激活（情绪类权重和 < min_activation 0.08 沉默 / ≥ must_send_activation 0.5 必选 must_send）；A5 未回复退场状态机（backoff_start=3 backing_off 禁情绪类、backoff_silent=5 silent 全禁发，escape_valve 豁免）。
 
 **Topic injection**: When `lonely_low` or `lonely_mid` triggers fire, 70% chance to inject a conversation topic from 8 weighted sources (schedule, memory, weather, anniversary, solar terms, preference followup, general, netease). 3 consecutive lonely triggers → forced topic injection.
 

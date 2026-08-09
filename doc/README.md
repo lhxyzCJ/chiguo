@@ -16,7 +16,7 @@ tail -f logs/cron-tick.log                                  # 主动发送日志
 
 ---
 
-**v2.0 变更点速查**（外部对比优化 9 项，详见 [doc/SYSTEM.md](SYSTEM.md)）：
+**v1.10 变更点速查**（外部对比优化 9 项，详见 [doc/SYSTEM.md](SYSTEM.md)）：
 
 | 变更 | 章节 |
 |------|------|
@@ -26,4 +26,4 @@ tail -f logs/cron-tick.log                                  # 主动发送日志
 | A9 内容级防复读（3-gram Jaccard 弃用候选） | §4.1 |
 | A8 生成失败确定性回退（chiguo_composer 兜底 CLI + tick 接入） | §5.7、七、CLI 参考 |
 
-版本历史见 §十六（v2.0，2026-08-09）。
+版本历史见 §十六（v1.10，2026-08-09）。
