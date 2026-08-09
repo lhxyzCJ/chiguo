@@ -235,109 +235,117 @@ class DecisionEngine:
         if data_warning:
             print(f"[warn] {data_warning}", file=sys.stderr)
 
-        # 1. 时间推进
-        self._tick(now)
+        # ── v11 (#75): RMW 临界区全程持跨进程锁。锁内先从磁盘重载最新
+        # 状态（_load），再完成读-改-写（tick/触发评估/状态更新/save），
+        # 多实例并发时后到者基于最新落盘状态决策，防止互相覆盖丢更新。
+        with self.state.state_lock():
+            self.state._load()
 
-        # ── v4: Bayesian 用户状态推断 ──
-        user_state = None
-        try:
-            user_state = self.state.infer_user_state(now)
-        except Exception:
-            pass
+            # 1. 时间推进
+            self._tick(now)
 
-        # ── v8: 每次评估同步当前生效桶窗口(loop 模式跨桶翻转/听歌校正即时生效)──
-        self.state._sync_quiet_window(now)
+            # ── v4: Bayesian 用户状态推断 ──
+            user_state = None
+            try:
+                user_state = self.state.infer_user_state(now)
+            except Exception:
+                pass
 
-        # 2. 能否发送（v4: 增加 Bayesian 用户状态门控）
-        can_send = self.state.can_send(now)
+            # ── v8: 每次评估同步当前生效桶窗口(loop 模式跨桶翻转/听歌校正即时生效)──
+            self.state._sync_quiet_window(now)
 
-        # ── v8: 听歌反证(夜间活跃)——睡眠窗口内最近有播放 → 用户醒着 ──
-        # 仅睡眠窗口内拉取(白天无意义);API/解析/状态损坏全链路降级,不阻塞。
-        play_proof = self._check_play_proof(now)
+            # 2. 能否发送（v4: 增加 Bayesian 用户状态门控）
+            can_send = self.state.can_send(now)
 
-        # Bayesian 阻塞：用户很可能在睡觉 → idle（v6: 逃生阀激活时豁免——
-        # 72h+ 沉默的高焦虑破防是仅有的救命通道，不能被"可能在睡觉"拦死）
-        # v7 约束：
-        #   ① 从未交互（last_user_message_at is None）→ 不豁免（逃生阀语义需要既有关系）
-        #   ② 豁免时若置信度 ≥ escape_valve_sleep_block（默认 0.9）→ 降级 idle(sleeping_guard)
-        # v8 约束：有播放证据(play_proof)时 sleeping 置信度 × sleeping_confidence_factor
-        #   （默认 0.5）再比较——夜间听歌反证用户醒着,压低"可能在睡觉"的可信度。
-        bayesian_block_conf = self._bayesian_block_confidence()
-        escape_valve_sleep_block = self.config.get("bayesian", {}).get("escape_valve_sleep_block", 0.9)
-        sleeping_guard = False
-        never_interacted = self.state.cooldown.last_user_message_at is None
-        raw_conf = user_state.get("confidence", 0) if user_state else 0.0
-        effective_conf = raw_conf
-        if play_proof:
-            effective_conf = raw_conf * self.config.get("netease", {}).get(
-                "sleeping_confidence_factor", 0.5)
-        if (user_state and user_state.get("most_likely") == "sleeping"
-                and effective_conf > bayesian_block_conf):
-            escape_valve_active = self.state.longing_break_eligible(now) and not never_interacted
-            if can_send and not escape_valve_active:
-                can_send = False  # override: Bayesian says sleeping
-            elif can_send and effective_conf >= escape_valve_sleep_block:
-                can_send = False  # 逃生阀被极高置信度睡觉门控二次确认拦下
-                sleeping_guard = True
+            # ── v8: 听歌反证(夜间活跃)——睡眠窗口内最近有播放 → 用户醒着 ──
+            # 仅睡眠窗口内拉取(白天无意义);API/解析/状态损坏全链路降级,不阻塞。
+            play_proof = self._check_play_proof(now)
 
-        if not can_send:
-            reason = "sleeping_guard" if sleeping_guard else self._idle_reason(now, user_state)
-            return self._emit_idle(reason, now, user_state, data_warning)
+            # Bayesian 阻塞：用户很可能在睡觉 → idle（v6: 逃生阀激活时豁免——
+            # 72h+ 沉默的高焦虑破防是仅有的救命通道，不能被"可能在睡觉"拦死）
+            # v7 约束：
+            #   ① 从未交互（last_user_message_at is None）→ 不豁免（逃生阀语义需要既有关系）
+            #   ② 豁免时若置信度 ≥ escape_valve_sleep_block（默认 0.9）→ 降级 idle(sleeping_guard)
+            # v8 约束：有播放证据(play_proof)时 sleeping 置信度 × sleeping_confidence_factor
+            #   （默认 0.5）再比较——夜间听歌反证用户醒着,压低"可能在睡觉"的可信度。
+            bayesian_block_conf = self._bayesian_block_confidence()
+            escape_valve_sleep_block = self.config.get("bayesian", {}).get("escape_valve_sleep_block", 0.9)
+            sleeping_guard = False
+            never_interacted = self.state.cooldown.last_user_message_at is None
+            raw_conf = user_state.get("confidence", 0) if user_state else 0.0
+            effective_conf = raw_conf
+            if play_proof:
+                effective_conf = raw_conf * self.config.get("netease", {}).get(
+                    "sleeping_confidence_factor", 0.5)
+            if (user_state and user_state.get("most_likely") == "sleeping"
+                    and effective_conf > bayesian_block_conf):
+                escape_valve_active = self.state.longing_break_eligible(now) and not never_interacted
+                if can_send and not escape_valve_active:
+                    can_send = False  # override: Bayesian says sleeping
+                elif can_send and effective_conf >= escape_valve_sleep_block:
+                    can_send = False  # 逃生阀被极高置信度睡觉门控二次确认拦下
+                    sleeping_guard = True
 
-        # 3. 评估触发
-        trigger = evaluate_triggers(self.state, now, trigger_scale=self.state.trigger_scale_now(now))
-        # ── v7: 从未交互用户（last_user_message_at is None）无逃生阀豁免 ──
-        # 逃生阀语义需要既有关系；chiguo_trigger.py 直接查 longing_break_eligible
-        # （state 侧暂无 never-interacted 检查），这里在 daemon 决策点兜底降级。
-        if trigger is not None and trigger.data.get("escape_valve") and never_interacted:
-            trigger = None  # 从未交互 → 按普通无触发处理（不破防）
-        if trigger is None:
-            return self._emit_idle("no_trigger", now, user_state, data_warning)
+            if not can_send:
+                reason = "sleeping_guard" if sleeping_guard else self._idle_reason(now, user_state)
+                return self._emit_idle(reason, now, user_state, data_warning)
 
-        # 3.5 记录触发历史（用于话题多样性检查）
-        cfg_topic = self.config.get("topic_picker", {})
-        history_max = cfg_topic.get("trigger_history_max", 6)
-        self.state.cooldown.trigger_history.append(trigger.type)
-        if len(self.state.cooldown.trigger_history) > history_max:
-            self.state.cooldown.trigger_history = \
-                self.state.cooldown.trigger_history[-history_max:]
+            # 3. 评估触发
+            trigger = evaluate_triggers(self.state, now, trigger_scale=self.state.trigger_scale_now(now))
+            # ── v7: 从未交互用户（last_user_message_at is None）无逃生阀豁免 ──
+            # 逃生阀语义需要既有关系；chiguo_trigger.py 直接查 longing_break_eligible
+            # （state 侧暂无 never-interacted 检查），这里在 daemon 决策点兜底降级。
+            if trigger is not None and trigger.data.get("escape_valve") and never_interacted:
+                trigger = None  # 从未交互 → 按普通无触发处理（不破防）
+            if trigger is None:
+                return self._emit_idle("no_trigger", now, user_state, data_warning)
 
-        # 4. 构建上下文（给 pi-agent 生成消息用）
-        context = self._build_context(trigger, now)
-        # v10 (#73 A4): trigger 层高段激活的 must_send 标记写入 context（情绪类必发）
-        if trigger.data.get("must_send"):
-            context["must_send"] = True
+            # 3.5 记录触发历史（用于话题多样性检查）
+            cfg_topic = self.config.get("topic_picker", {})
+            history_max = cfg_topic.get("trigger_history_max", 6)
+            self.state.cooldown.trigger_history.append(trigger.type)
+            if len(self.state.cooldown.trigger_history) > history_max:
+                self.state.cooldown.trigger_history = \
+                    self.state.cooldown.trigger_history[-history_max:]
 
-        # 4.5 保存 prev_send_was_replied（必须在 on_character_message 递增 messages_without_reply 之前）
-        # NOTE: prev_send_was_replied means "was the PREVIOUS character message replied to"
-        prev_send_was_replied = self.state.cooldown.messages_without_reply == 0
+            # 4. 构建上下文（给 pi-agent 生成消息用）
+            context = self._build_context(trigger, now)
+            # v10 (#73 A4): trigger 层高段激活的 must_send 标记写入 context（情绪类必发）
+            if trigger.data.get("must_send"):
+                context["must_send"] = True
 
-        # 4.6 v6 修复: 决策时生成 msg_id，写入 Hawkes 事件 + decision JSON，
-        # 供 --send-result 回传后按 msg_id 精确退款（乱序回传不再删错事件）
-        msg_id = self._make_msg_id()
+            # 4.5 保存 prev_send_was_replied（必须在 on_character_message 递增 messages_without_reply 之前）
+            # NOTE: prev_send_was_replied means "was the PREVIOUS character message replied to"
+            prev_send_was_replied = self.state.cooldown.messages_without_reply == 0
 
-        # 5. 更新状态（标记已触发）
-        self.state.on_character_message(now, trigger.type, msg_id=msg_id)
-        # ── v6: 逃生阀破防 → 记录冷却时间 ──
-        if trigger.data.get("escape_valve"):
-            self.state.on_longing_break(now)
-        if trigger.type == "morning":
-            self.state.cooldown.morning_sent = True
-        elif trigger.type == "night":
-            self.state.cooldown.night_sent = True
+            # 4.6 v6 修复: 决策时生成 msg_id，写入 Hawkes 事件 + decision JSON，
+            # 供 --send-result 回传后按 msg_id 精确退款（乱序回传不再删错事件）
+            msg_id = self._make_msg_id()
 
-        # ── v4: 人格自适应（发消息后）──
-        try:
-            self.state.adapt_personality({
-                "type": "character_send",
-                "was_replied": prev_send_was_replied,
-                "trigger": trigger.type,
-            })
-        except Exception:
-            pass
+            # 5. 更新状态（标记已触发）
+            self.state.on_character_message(now, trigger.type, msg_id=msg_id)
+            # ── v6: 逃生阀破防 → 记录冷却时间 ──
+            if trigger.data.get("escape_valve"):
+                self.state.on_longing_break(now)
+            if trigger.type == "morning":
+                self.state.cooldown.morning_sent = True
+            elif trigger.type == "night":
+                self.state.cooldown.night_sent = True
 
-        self.state.save()
-        self._monotonic_at_save = time.monotonic()  # v5
+            # ── v4: 人格自适应（发消息后）──
+            try:
+                self.state.adapt_personality({
+                    "type": "character_send",
+                    "was_replied": prev_send_was_replied,
+                    "trigger": trigger.type,
+                })
+            except Exception:
+                pass
+
+            # v11 (#75): save 返回 bool，失败输出 state_save_failed 告警
+            if not self.state.save():
+                print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
+            self._monotonic_at_save = time.monotonic()  # v5
 
         decision = {
             "action": "send",
@@ -497,7 +505,9 @@ class DecisionEngine:
             )
             self.state.cooldown.accumulated_lambda = new_lam
 
-        self.state.save()
+        # v11 (#75): save 返回 bool，失败输出 state_save_failed 告警
+        if not self.state.save():
+            print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
         self._monotonic_at_save = time.monotonic()
 
         decision = {
@@ -858,66 +868,72 @@ class DecisionEngine:
                 print(f"[warn] 分析JSON解析失败: {e}，降级为纯长度模式", file=sys.stderr)
                 analysis_dict = None
 
-        # ── v9: recv 去重（升级语义）──────────────────────
-        # 同一条消息会被记录两次：bridge 先确定性 --user-msg（无分析），
-        # standing order 随后补 --user-msg --analysis。基础回复效果
-        # （延迟/情绪骤降/好感/元气）只应应用一次；第二次只补分析微调。
-        # 去重仅对"带分析"副本生效：无分析真实重发 → 完整处理；
-        # 带分析重复上报（窗口内第二次）→ 升级分支内兜底静默跳过，防双重应用。
-        text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        dedup = self.state.cooldown.recv_dedup
-        is_dup = bool(dedup and dedup.get("text_sha") == text_sha and dedup.get("at"))
-        if is_dup:
-            try:
-                prev_at = datetime.fromisoformat(dedup["at"])
-                is_dup = (now - prev_at).total_seconds() < self.RECV_DEDUP_WINDOW_S
-            except (ValueError, TypeError):
-                is_dup = False
-        is_dup = is_dup and analysis_dict is not None
+        # ── v11 (#75): RMW 临界区全程持跨进程锁，防并发丢更新。
+        # 本方法为单次 CLI 进程（启动时已加载最新状态），不重载 _load，
+        # 避免覆盖调用方在构造后的内存修改。──
+        with self.state.state_lock():
+            # ── v9: recv 去重（升级语义）──────────────────────
+            # 同一条消息会被记录两次：bridge 先确定性 --user-msg（无分析），
+            # standing order 随后补 --user-msg --analysis。基础回复效果
+            # （延迟/情绪骤降/好感/元气）只应应用一次；第二次只补分析微调。
+            # 去重仅对"带分析"副本生效：无分析真实重发 → 完整处理；
+            # 带分析重复上报（窗口内第二次）→ 升级分支内兜底静默跳过，防双重应用。
+            text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            dedup = self.state.cooldown.recv_dedup
+            is_dup = bool(dedup and dedup.get("text_sha") == text_sha and dedup.get("at"))
+            if is_dup:
+                try:
+                    prev_at = datetime.fromisoformat(dedup["at"])
+                    is_dup = (now - prev_at).total_seconds() < self.RECV_DEDUP_WINDOW_S
+                except (ValueError, TypeError):
+                    is_dup = False
+            is_dup = is_dup and analysis_dict is not None
 
-        if is_dup:
-            if analysis_dict and not dedup.get("analysis"):
-                self.state._apply_analysis_impact(analysis_dict, now)
-                self.state.cooldown.recv_dedup = {
-                    "text_sha": text_sha,
-                    "at": now.isoformat(),
-                    "analysis": True,
-                }
-                self.state.save()
-                self._monotonic_at_save = time.monotonic()  # v5
-                self._log({
-                    "action": "recv_upgrade",
-                    "msg_id": msg_id,
-                    "message_text": text,
-                    "user_emotion_analysis": analysis_dict,
-                    "state": self.state.snapshot(now),
-                })
-            return
+            if is_dup:
+                if analysis_dict and not dedup.get("analysis"):
+                    self.state._apply_analysis_impact(analysis_dict, now)
+                    self.state.cooldown.recv_dedup = {
+                        "text_sha": text_sha,
+                        "at": now.isoformat(),
+                        "analysis": True,
+                    }
+                    if not self.state.save():
+                        print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
+                    self._monotonic_at_save = time.monotonic()  # v5
+                    self._log({
+                        "action": "recv_upgrade",
+                        "msg_id": msg_id,
+                        "message_text": text,
+                        "user_emotion_analysis": analysis_dict,
+                        "state": self.state.snapshot(now),
+                    })
+                return
 
-        # ── v4: 保存发送前状态用于追踪 ──
-        prev_send_was_replied = self.state.cooldown.messages_without_reply > 0
-        self.state.on_user_message(now, len(text), analysis=analysis_dict)
+            # ── v4: 保存发送前状态用于追踪 ──
+            prev_send_was_replied = self.state.cooldown.messages_without_reply > 0
+            self.state.on_user_message(now, len(text), analysis=analysis_dict)
 
-        # ── v9: 更新去重标记（记录是否已含分析）──
-        self.state.cooldown.recv_dedup = {
-            "text_sha": text_sha,
-            "at": now.isoformat(),
-            "analysis": analysis_dict is not None,
-        }
+            # ── v9: 更新去重标记（记录是否已含分析）──
+            self.state.cooldown.recv_dedup = {
+                "text_sha": text_sha,
+                "at": now.isoformat(),
+                "analysis": analysis_dict is not None,
+            }
 
-        # ── v4: 人格自适应（收到回复后）──
-        if prev_send_was_replied:
-            try:
-                self.state.adapt_personality({
-                    "type": "character_send",
-                    "was_replied": True,
-                    "trigger": "user_reply",
-                })
-            except Exception:
-                pass
+            # ── v4: 人格自适应（收到回复后）──
+            if prev_send_was_replied:
+                try:
+                    self.state.adapt_personality({
+                        "type": "character_send",
+                        "was_replied": True,
+                        "trigger": "user_reply",
+                    })
+                except Exception:
+                    pass
 
-        self.state.save()
-        self._monotonic_at_save = time.monotonic()  # v5
+            if not self.state.save():
+                print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
+            self._monotonic_at_save = time.monotonic()  # v5
 
         # ── v5: 记录 recv 到决策日志 ──
         recv_entry = {
@@ -1056,24 +1072,28 @@ class DecisionEngine:
         now = datetime.now(CST)
         already_reported = self._has_send_result(msg_id)
         refunded = False
-        if status == "failed" and not already_reported:
-            # ── v6 修复: 仅当 msg_id 能在在途 Hawkes 事件中定位时退款 ──
-            # 未知 msg_id → 只审计跳过，不执行退款副作用（防止凭空刷新逃生阀冷却/
-            # 误删最后一条事件——旧实现恒走 pop()，乱序回传会删错事件）。
-            # 兼容: 在途事件全部无 msg_id（旧 daemon 产生）→ 沿用旧语义退款。
-            events = self.state.cooldown.event_timestamps
-            matched = any(ev.get("msg_id") == msg_id for ev in events)
-            legacy_events = bool(events) and all("msg_id" not in ev for ev in events)
-            if matched or legacy_events:
-                self.state.refund_send(now, msg_id=msg_id)
-                self.state.save()
-                refunded = True
-            else:
-                print(
-                    f"[chiguo_daemon] refund skipped: msg_id={msg_id!r} "
-                    f"not found in {len(events)} in-flight events",
-                    file=sys.stderr,
-                )
+        # ── v11 (#75): RMW 临界区全程持跨进程锁，防并发重复退款或丢更新。
+        # 本方法为单次 CLI 进程（启动时已加载最新状态），不重载 _load。──
+        with self.state.state_lock():
+            if status == "failed" and not already_reported:
+                # ── v6 修复: 仅当 msg_id 能在在途 Hawkes 事件中定位时退款 ──
+                # 未知 msg_id → 只审计跳过，不执行退款副作用（防止凭空刷新逃生阀冷却/
+                # 误删最后一条事件——旧实现恒走 pop()，乱序回传会删错事件）。
+                # 兼容: 在途事件全部无 msg_id（旧 daemon 产生）→ 沿用旧语义退款。
+                events = self.state.cooldown.event_timestamps
+                matched = any(ev.get("msg_id") == msg_id for ev in events)
+                legacy_events = bool(events) and all("msg_id" not in ev for ev in events)
+                if matched or legacy_events:
+                    self.state.refund_send(now, msg_id=msg_id)
+                    if not self.state.save():
+                        print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
+                    refunded = True
+                else:
+                    print(
+                        f"[chiguo_daemon] refund skipped: msg_id={msg_id!r} "
+                        f"not found in {len(events)} in-flight events",
+                        file=sys.stderr,
+                    )
         result = {
             "action": "send_result",
             "msg_id": msg_id,
@@ -1573,7 +1593,8 @@ def main():
                 decision = run()
         except KeyboardInterrupt:
             print("\n💤 已停止", file=sys.stderr)
-            engine.state.save()
+            if not engine.state.save():
+                print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
         finally:
             # ── v5: 清理 PID 锁（v6: 复用创建时的锚定路径，勿按 cwd 重建）──
             try:
