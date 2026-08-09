@@ -1079,6 +1079,83 @@ class DecisionEngine:
             fallback=fallback,
         )
 
+    def _loop_send(self, decision: dict, loop_cfg: dict) -> dict:
+        """v1.11 C: --loop 常驻的发送侧内聚（替代 cron tick.sh 的 send 动作）。
+        流程：①经 bridge /agent/prompt 生成消息（RPC 优先，mode=send）→ 失败回退
+        spawn agent-run --send-mode → 再失败返回 generated=false（下轮重试）；
+        ②POST /send 发送；③record_send_text 记账（发送失败 → record_send_result
+        failed 回滚）。异常全部捕获返回结果 dict，不抛出（loop 循环不中断）。"""
+        import json as _json
+        import urllib.request
+
+        out: dict = {"generated": False, "sent": False}
+        bridge_url = str(loop_cfg.get("bridge_url", "http://127.0.0.1:18790")).rstrip("/")
+        token = str(loop_cfg.get("bridge_token", "") or "")
+        try:
+            timeout = max(10.0, float(loop_cfg.get("agent_timeout_ms", 125000)) / 1000.0)
+        except (TypeError, ValueError):
+            timeout = 125.0
+        msg_id = decision.get("msg_id", "")
+        trigger = decision.get("trigger")
+        intensity = decision.get("intensity")
+
+        def _post(path: str, body: dict, t: float) -> dict:
+            data = _json.dumps(body).encode("utf-8")
+            req = urllib.request.Request(
+                f"{bridge_url}{path}", data=data,
+                headers={"Content-Type": "application/json"})
+            if token:
+                req.add_header("X-Bridge-Token", token)
+            with urllib.request.urlopen(req, timeout=t) as resp:
+                return _json.loads(resp.read().decode("utf-8"))
+
+        # ① 生成（RPC 优先 → spawn 回退，与 chiguo-tick.sh 同构）
+        text = None
+        gen_err = ""
+        try:
+            r = _post("/agent/prompt",
+                      {"text": _json.dumps(decision, ensure_ascii=False), "mode": "send"},
+                      timeout)
+            if r.get("ok") and r.get("text"):
+                text = r["text"]
+            else:
+                gen_err = str(r.get("error") or "RPC 空回复")
+        except Exception as e:  # noqa: BLE001 - 回退路径
+            gen_err = str(e)
+        if not text:
+            import subprocess
+            runner = os.environ.get("AGENT_RUN_SCRIPT") \
+                or str(self._base_dir / "scripts" / "agent-run.mjs")
+            node_bin = os.environ.get("AGENT_BIN") or "node"
+            try:
+                p = subprocess.run(
+                    [node_bin, runner, "--prompt",
+                     _json.dumps(decision, ensure_ascii=False), "--send-mode"],
+                    capture_output=True, text=True, timeout=timeout)
+                parsed = _json.loads(p.stdout)
+                if parsed.get("ok") and parsed.get("text"):
+                    text = parsed["text"]
+                else:
+                    gen_err = f"{gen_err}; spawn: {parsed.get('error') or '空回复'}"
+            except Exception as e:  # noqa: BLE001
+                gen_err = f"{gen_err}; spawn: {e}"
+        if not text:
+            out["error"] = gen_err
+            return out
+        out["generated"] = True
+        # ② 发送 + ③ 记账
+        to = (self.config.get("wechat", {}) or {}).get("wechat_recipient", "")
+        try:
+            if to:
+                _post("/send", {"to": to, "text": text}, 10.0)
+                out["sent"] = True
+            self.record_send_text(msg_id, text, trigger, intensity)
+        except Exception as e:  # noqa: BLE001
+            out["send_error"] = str(e)
+            if msg_id:
+                self.record_send_result(msg_id, "failed", str(e))
+        return out
+
     def recent_sent_texts(self, n: int = 5) -> list[str]:
         """A9 查重数据源：最近 n 条已发送消息文本（chiguo_messages.jsonl 倒序取）。
         记录由 --record-send --text 写入（含 direction=send + text 字段），
@@ -1639,6 +1716,12 @@ def main():
         def run():
             decision = engine.evaluate()
             if decision["action"] == "send":
+                # v1.11 C: --loop 发送侧内聚（生成→发送→记账），不再只打印 JSON 等外部消费
+                loop_cfg = engine.config.get("loop", {}) or {}
+                try:
+                    decision["_loop"] = engine._loop_send(decision, loop_cfg)
+                except Exception as e:  # noqa: BLE001 - 兜底：打印决策不中断循环
+                    decision["_loop_error"] = str(e)
                 print(json.dumps(decision, ensure_ascii=False))
             elif not args.compact:
                 print(json.dumps(decision, ensure_ascii=False))
