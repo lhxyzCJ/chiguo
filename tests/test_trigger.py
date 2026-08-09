@@ -51,6 +51,17 @@ def _run_seeds(s: ChiguoState, now: datetime, n: int = 200, seed0: int = 1000) -
     return counts
 
 
+def _count_must_send(s: ChiguoState, now: datetime, n: int = 200, seed0: int = 1000) -> int:
+    """固定种子序列统计 must_send 标记次数（A4 高段边界断言用）"""
+    ms = 0
+    for i in range(n):
+        random.seed(seed0 + i)
+        t = evaluate_triggers(s, now)
+        if t and t.data.get("must_send"):
+            ms += 1
+    return ms
+
+
 # ═══════════════════════════════════════════════════════════
 # 孤独三级 softmax 归一化竞争
 # ═══════════════════════════════════════════════════════════
@@ -297,6 +308,28 @@ def test_memory_reminder_garbage_at_does_not_crash():
     print("  OK test_memory_reminder_garbage_at_does_not_crash")
 
 
+def test_memory_reminder_dedup_after_trigger():
+    """reminder 去重（#79）：① mem 已标记 last_triggered_at（daemon 发送后写入）
+    → 同进程不再触发；② trigger_at 在未来 → 窗口收紧（now >= t）不提前触发
+    （旧 abs<600 逻辑会误触发未来 5 分钟的提醒）"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        # ① 已触发过 → 去重
+        s = _make_state(td, now, energy=40)
+        s.memories = [{"type": "reminder", "trigger_at": "2026-06-15T13:55",
+                       "content": "喝水", "last_triggered_at": "2026-06-15T14:00:00+08:00"}]
+        counts = _run_seeds(s, now, n=50)
+        assert counts.get("memory", 0) == 0, \
+            f"已标记 last_triggered_at 不得重复触发, got {counts}"
+        # ② 提前触发（trigger_at 在未来 5 分钟）→ 不触发
+        s2 = _make_state(td, now, energy=40)
+        s2.memories = [{"type": "reminder", "trigger_at": "2026-06-15T14:05", "content": "喝水"}]
+        counts2 = _run_seeds(s2, now, n=30)
+        assert counts2.get("memory", 0) == 0, \
+            f"提前触发应被窗口收紧拦截（0 <= now-t < 600）, got {counts2}"
+    print("  OK test_memory_reminder_dedup_after_trigger")
+
+
 def test_memory_habit_window_probability():
     """habit 记忆：窗口小时命中 → 6% 概率触发（实测 300 种子 15 次）"""
     with tempfile.TemporaryDirectory() as td:
@@ -382,7 +415,7 @@ def test_a4_low_activation_silences_emotion_ritual_fires():
 
 
 def test_a4_must_send_high_activation():
-    """A4 高段：孤独 75 + 特殊日 → activation ≥ must_send_activation(0.5)
+    """A4 高段：孤独 75 + 特殊日 → activation ≥ must_send_activation(0.75)
     → 情绪类必选（special 退让 0 次），选中结果标记 must_send: true；
     中段（孤独 30）→ 加权竞争 special 占优且不标记"""
     with tempfile.TemporaryDirectory() as td:
@@ -413,6 +446,27 @@ def test_a4_must_send_high_activation():
         assert t2 is not None and not t2.data.get("must_send"), \
             f"中段不得标记 must_send, got {t2.type} {t2.data}"
     print("  OK test_a4_must_send_high_activation")
+
+
+def test_a4_mid_band_no_must_send():
+    """A4 边界（#79）：must_send_activation=0.75 下，孤独 31-45 与焦虑 45-58
+    区间不触发 must_send（200 种子 × 全区间 0 次）。
+    用半忙环境（03:00 静默窗口，日程乘数 ×0.6）保证 activation 严格 < 0.75：
+    空闲(×1.2)+jitter 上限时孤独 36+ 的 activation 上限可触及 0.75，
+    而 0.5 阈值下孤独 45 半忙即有约半数种子触发 → 本用例对阈值提升有区分度。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 3, 0, tzinfo=CST)  # 静默窗口 0-8 → 半忙 ×0.6
+        # 孤独 31-45（焦虑 40 默认；energy=40 关闭 playful 噪声）
+        for lo in range(31, 46):
+            s = _make_state(td, now, loneliness=lo, anxiety=40, energy=40)
+            ms = _count_must_send(s, now)
+            assert ms == 0, f"loneliness={lo}: 中段不得触发 must_send, got {ms}/200"
+        # 焦虑 45-58（孤独 15 默认；45-52 归一化 <0.3 不成候选 → 低段 None）
+        for anx in range(45, 59):
+            s = _make_state(td, now, anxiety=anx, energy=40)
+            ms = _count_must_send(s, now)
+            assert ms == 0, f"anxiety={anx}: 中段不得触发 must_send, got {ms}/200"
+    print("  OK test_a4_mid_band_no_must_send")
 
 
 def test_a4_must_send_preserved_across_safety_downgrade():
@@ -556,11 +610,13 @@ if __name__ == "__main__":
         test_special_date_ritual,
         test_memory_reminder_naive_tz_guard,
         test_memory_reminder_garbage_at_does_not_crash,
+        test_memory_reminder_dedup_after_trigger,
         test_memory_habit_window_probability,
         test_a3_schedule_multiplier_tiers,
         test_a3_in_class_suppresses_emotion_only,
         test_a4_low_activation_silences_emotion_ritual_fires,
         test_a4_must_send_high_activation,
+        test_a4_mid_band_no_must_send,
         test_a4_must_send_preserved_across_safety_downgrade,
         test_a6_repeat_damping_same_type_only,
         # A5 退场状态机

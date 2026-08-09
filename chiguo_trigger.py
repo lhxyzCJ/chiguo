@@ -27,6 +27,15 @@ EMOTION_TRIGGERS = frozenset({
 })
 
 
+def _clamp01(value, default: float) -> float:
+    """#79: 配置阈值解析——非数值回退默认，数值钳制到 [0,1]。"""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, v))
+
+
 def backoff_level(state: ChiguoState, now: datetime) -> int:
     """
     A5 未回复退场状态机（三态，不新增持久化字段——用现有 messages_without_reply 推导）：
@@ -320,8 +329,13 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # 低段（< min_activation）→ 情绪类退出竞争（等效低能量沉默，仪式类照发）；
     # 中段 → 现状加权随机；高段（>= must_send_activation）→ 情绪类加权随机必选
     # （仪式类本轮退让），选中结果标记 must_send: true。
-    min_activation = trg_cfg.get("min_activation", 0.08)
-    must_send_activation = trg_cfg.get("must_send_activation", 0.5)
+    # #79: 阈值解析钳制到 [0,1]（配置越界/非数值不破坏三段语义），并校验 min < must
+    min_activation = _clamp01(trg_cfg.get("min_activation", 0.08), 0.08)
+    must_send_activation = _clamp01(trg_cfg.get("must_send_activation", 0.75), 0.75)
+    if min_activation >= must_send_activation:
+        print(f"[trigger] WARNING: min_activation({min_activation:.2f}) >= "
+              f"must_send_activation({must_send_activation:.2f}), A4 高段必发失效"
+              f"（需 min < must，请检查 chiguo_proactive.toml [trigger]）")
     emo_cands = [c for c in weighted_candidates if c["trigger"].type in EMOTION_TRIGGERS]
     ritual_cands = [c for c in weighted_candidates if c["trigger"].type not in EMOTION_TRIGGERS]
     activation = sum(c["weight"] for c in emo_cands)
@@ -373,7 +387,11 @@ def _schedule_multiplier(state: ChiguoState, now: datetime, free_mult: float) ->
 
 
 def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
-    """follow_up 候选组装（主块与记忆兜底块共用）。权重 = weight × 年龄钟形。"""
+    """follow_up 候选组装（主块与记忆兜底块共用）。权重 = weight × 年龄钟形。
+    #79: entry 缺 topic 键/非字符串/空白 → 跳过（防 KeyError 与空话题）。"""
+    topic = entry.get("topic")
+    if not isinstance(topic, str) or not topic.strip():
+        return None
     peak = trg_cfg.get("follow_up_peak_hours", 4.0)
     sigma = trg_cfg.get("follow_up_sigma_hours", 3.0)
     bell = math.exp(-((age - peak) / sigma) ** 2)
@@ -382,8 +400,8 @@ def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
         return None
     return {
         "trigger": Trigger(type="follow_up", intensity="soft",
-                           data={"topic": entry["topic"],
-                                 "source": entry["source"],
+                           data={"topic": topic,
+                                 "source": entry.get("source", ""),
                                  "age_hours": round(age, 1)}),
         "weight": w,
         "topic_ref": entry,
@@ -445,13 +463,18 @@ def _is_free_time(state: ChiguoState, now: datetime) -> bool:
 def _memory_should_trigger(mem: dict, now: datetime) -> bool:
     mtype = mem.get("type", "")
     if mtype == "reminder":
+        # #79 去重：daemon 发送后在该 mem 上标记 last_triggered_at → 同进程不再重复触发
+        if mem.get("last_triggered_at"):
+            return False
         trigger_at = mem.get("trigger_at")
         if trigger_at:
             try:
                 t = datetime.fromisoformat(trigger_at)
                 if t.tzinfo is None:
                     t = t.replace(tzinfo=CST)
-                return abs((now - t).total_seconds()) < 600
+                # #79: 窗口收紧为触发时刻之后 10 分钟内（不允许提前触发）
+                delta = (now - t).total_seconds()
+                return 0 <= delta < 600
             except (ValueError, TypeError):
                 return False
     elif mtype == "habit":

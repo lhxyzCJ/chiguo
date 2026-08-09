@@ -162,48 +162,52 @@ class TopicPicker:
     # ── 来源 1：课表/假期/周末 ──────────────────────────────
 
     def _schedule_topic(self, now: datetime) -> dict | None:
-        """基于课表状态的话题。上课中返回 None（不该打扰）。"""
-        sch = self.state.schedule_status(now)
-        if not sch:
-            return None
+        """基于课表状态的话题。上课中返回 None（不该打扰）。
+        #79: schedule_status 异常/课表损坏 → 静默返回 None（不阻塞话题选择）。"""
+        try:
+            sch = self.state.schedule_status(now)
+            if not sch:
+                return None
 
-        if sch.get("holiday"):
+            if sch.get("holiday"):
+                return {
+                    "type": "schedule",
+                    "hint": f"现在是{sch['holiday']}假期，关心哥哥假期过得怎么样",
+                    "tone": "casual",
+                }
+            if sch.get("weekend"):
+                return {
+                    "type": "schedule",
+                    "hint": "今天是周末，关心哥哥周末安排和放松",
+                    "tone": "casual",
+                }
+            if sch.get("makeup_day"):
+                return {
+                    "type": "schedule",
+                    "hint": "虽然是周末但要调休上课，关心哥哥累不累",
+                    "tone": "caring",
+                }
+            if sch.get("in_class"):
+                return None
+            if sch.get("class_load") == "free":
+                return {
+                    "type": "schedule",
+                    "hint": "哥哥今天没课，问问哥哥今天有什么安排",
+                    "tone": "casual",
+                }
+            if sch.get("remaining_classes", 0) == 0:
+                return {
+                    "type": "schedule",
+                    "hint": "哥哥今天的课上完了，关心上课累不累",
+                    "tone": "caring",
+                }
             return {
                 "type": "schedule",
-                "hint": f"现在是{sch['holiday']}假期，关心哥哥假期过得怎么样",
-                "tone": "casual",
-            }
-        if sch.get("weekend"):
-            return {
-                "type": "schedule",
-                "hint": "今天是周末，关心哥哥周末安排和放松",
-                "tone": "casual",
-            }
-        if sch.get("makeup_day"):
-            return {
-                "type": "schedule",
-                "hint": "虽然是周末但要调休上课，关心哥哥累不累",
+                "hint": "关心哥哥今天课多不多、累不累",
                 "tone": "caring",
             }
-        if sch.get("in_class"):
-            return None
-        if sch.get("class_load") == "free":
-            return {
-                "type": "schedule",
-                "hint": "哥哥今天没课，问问哥哥今天有什么安排",
-                "tone": "casual",
-            }
-        if sch.get("remaining_classes", 0) == 0:
-            return {
-                "type": "schedule",
-                "hint": "哥哥今天的课上完了，关心上课累不累",
-                "tone": "caring",
-            }
-        return {
-            "type": "schedule",
-            "hint": "关心哥哥今天课多不多、累不累",
-            "tone": "caring",
-        }
+        except Exception:
+            return None  # #79: 课表数据异常 → 本来源静默跳过
 
     # ── 来源 2：mem0 记忆 ────────────────────────────────
 
@@ -323,28 +327,32 @@ class TopicPicker:
     # ── 来源 6：纪念日/倒计时 ───────────────────────────────
 
     def _anniversary_topic(self, now: datetime) -> dict | None:
-        """检查当天纪念日或临近倒计时。今天 > 7天内 > 无。"""
-        today_events = self.state.anniversary_mgr.get_today(now.date())
-        if today_events:
-            names = "、".join(a.name for a in today_events)
-            return {
-                "type": "anniversary",
-                "hint": f"今天是{names}！提醒哥哥这个特殊日子，表达关心",
-                "tone": "caring",
-                "data": {"anniversaries": [a.__dict__ for a in today_events]},
-            }
+        """检查当天纪念日或临近倒计时。今天 > 7天内 > 无。
+        #79: 纪念日数据异常 → 静默返回 None；name 为 None 时兜底文案"纪念日"。"""
+        try:
+            today_events = self.state.anniversary_mgr.get_today(now.date())
+            if today_events:
+                names = "、".join(a.name or "纪念日" for a in today_events)
+                return {
+                    "type": "anniversary",
+                    "hint": f"今天是{names}！提醒哥哥这个特殊日子，表达关心",
+                    "tone": "caring",
+                    "data": {"anniversaries": [a.__dict__ for a in today_events]},
+                }
 
-        upcoming = self.state.anniversary_mgr.get_upcoming(now.date(), days=7)
-        if upcoming:
-            a, days = upcoming[0]
-            return {
-                "type": "anniversary",
-                "hint": f"还有{days}天就是{a.name}了，问问哥哥有什么打算",
-                "tone": "casual" if days > 3 else "caring",
-                "data": {"anniversary": a.__dict__, "days_until": days},
-            }
+            upcoming = self.state.anniversary_mgr.get_upcoming(now.date(), days=7)
+            if upcoming:
+                a, days = upcoming[0]
+                return {
+                    "type": "anniversary",
+                    "hint": f"还有{days}天就是{a.name or '纪念日'}了，问问哥哥有什么打算",
+                    "tone": "casual" if days > 3 else "caring",
+                    "data": {"anniversary": a.__dict__, "days_until": days},
+                }
 
-        return None
+            return None
+        except Exception:
+            return None  # #79: 纪念日数据异常 → 本来源静默跳过
 
     # ── 来源 7：偏好追问（mem0 preferences） ─────────────
 
