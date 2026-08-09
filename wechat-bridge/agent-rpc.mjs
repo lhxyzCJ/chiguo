@@ -25,8 +25,9 @@ import {
 const PID_FILE = join(homedir(), '.pi', 'agent', 'agent-rpc.pid')
 
 export class AgentRpc {
-  constructor({ bin = process.env.AGENT_BIN ?? 'pi' } = {}) {
+  constructor({ bin = process.env.AGENT_BIN ?? 'pi', args = [] } = {}) {
     this.bin = bin
+    this.args = args
     this.proc = null
     this.buffer = []
     this.pending = null
@@ -54,7 +55,7 @@ export class AgentRpc {
     if (this.proc && !this.dead) return
     this.dead = false
     this.buffer = []
-    const args = ['--mode', 'rpc', ...buildBaseAgentArgs({ analysisMode: true })]
+    const args = [...this.args, '--mode', 'rpc', ...buildBaseAgentArgs({ analysisMode: true })]
     const proc = spawn(this.bin, args, { stdio: ['pipe', 'pipe', 'pipe'] })
     this.proc = proc
     writeFileSync(PID_FILE, String(proc.pid))
