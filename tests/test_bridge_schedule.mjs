@@ -66,8 +66,9 @@ function fakeBot(replies) {
 const queue = { run: async (fn) => fn() }
 
 const execFileP = promisify(execFile)
-// daemon 解释器：.venv python 替代 uv run（不依赖 uv）；CHIGUO_PYTHON 可覆盖
-const PYTHON = process.env.CHIGUO_PYTHON ?? '/root/chiguo/.venv/bin/python'
+// daemon 解释器：CHIGUO_PYTHON 可覆盖（CI/本地），缺省走 uv run（与 scripts/ci-test.sh 一致）
+const PYTHON = process.env.CHIGUO_PYTHON ?? 'uv'
+const PYTHON_ARGS = process.env.CHIGUO_PYTHON ? [] : ['run', 'python']
 
 t('⑨ recall 无匹配反问(6b 锚;daemon --schedule-recall 无匹配形状)', async () => {
   // 隔离:daemon 从临时目录运行 — 复制 chiguo_daemon.py + 最小 toml 到 tmp，
@@ -77,7 +78,7 @@ t('⑨ recall 无匹配反问(6b 锚;daemon --schedule-recall 无匹配形状)',
   writeFileSync(join(iso, 'chiguo_proactive.toml'), '# 隔离用最小配置：无数据文件 → recall 零匹配\n')
   try {
     const { stdout } = await execFileP(PYTHON,
-      [join(iso, 'chiguo_daemon.py'), '--schedule-recall', '不存在的关键词xyz'],
+      [...PYTHON_ARGS, join(iso, 'chiguo_daemon.py'), '--schedule-recall', '不存在的关键词xyz'],
       { timeout: 30_000, env: { ...process.env, PYTHONPATH: REPO } })
     const r = JSON.parse(stdout)
     assert.ok(r.action === 'schedule_recall' && r.ok === true && r.query === '不存在的关键词xyz')
