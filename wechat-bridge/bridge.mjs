@@ -43,6 +43,8 @@ const PI_RUN_SCRIPT = process.env.WECHAT_BRIDGE_PI_RUN
 // v1.8: RPC 是 pi 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
 const PI_RPC_ENABLED = RUNNER === 'pi' && process.env.WECHAT_BRIDGE_PI_RPC === '1'
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
+// #84 /send 共享 token:未设置时跳过 token 校验(向后兼容 tick.sh 等既有调用);设置后必须匹配
+const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 // 仓库根 = 本文件位置推导（可移植，随仓库克隆到任何路径）
 const REPO = resolveRepo(import.meta.url)
@@ -103,7 +105,7 @@ export async function askPi(text) {
 }
 
 // ── 6b:recall 信号 + 回复侧 --attention 注入(导出供测试注入 fake run)──
-const RECALL_GUIDE = `只依据事实回答,禁止编造;检索无结果时反问用户('哥哥,那是什么时候呀?我帮你记上')`
+// #84 单通道:事实只走 --facts 参数(pi-run recall 模板自行拼装并含反问引导),prompt 不放事实。
 
 /** --attention 轻量读(§5.4):失败/畸形 → null(跳过注入继续 askPi,不阻塞回复流)。 */
 async function getAttention() {
@@ -157,11 +159,11 @@ async function firstAnalysis(text, runOverride) {
   return { text: reply, analysis }
 }
 
-/** 第二趟 pi(recall 模式):prompt = 事实 + 用户问题 + 反问引导(joined args 含 '反问',prompt 契约)。
+/** 第二趟 pi(recall 模式):事实经 --facts 参数传给 pi-run(其 recall 模板拼装事实+反问引导),
+ * prompt 只放用户问题(#84 单通道,防 facts='[]' 覆盖真实事实)。
  * 返回 { text } 或 null(失败/漏检 → 调用方按普通回复,零额外调用)。 */
 async function runPiRun({ mode, prompt, facts }, runOverride = null) {
-  const composed = `${prompt}\n\n检索事实：${facts}\n\n${RECALL_GUIDE}`
-  const args = ['--prompt', composed, '--schedule-recall']
+  const args = ['--prompt', prompt, '--schedule-recall', '--facts', facts]
   if (runOverride && typeof runOverride.exec === 'function') {
     const { stdout } = await runOverride.exec('node', [PI_RUN_SCRIPT, ...args],
       { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
@@ -288,35 +290,61 @@ export function writeClarify(repoRoot, rec) {
 export function clearClarify(repoRoot = REPO_ROOT) { rmSync(scheduleClarifyPath(repoRoot), { force: true }) }
 export function exitWordMatch(text) { return /^(?:算了|不要了|没事)/.test(text.trim()) }
 
-/** 主动发送端点：POST /send {"to","text"} → bot.send()。仅 127.0.0.1。 */
+/** /send 来源校验:Host/Origin 必须本地回环(127.0.0.1/localhost/::1),容忍端口后缀。 */
+function isLocalHost(host) {
+  if (!host) return false
+  const h = String(host).toLowerCase().replace(/:\d+$/, '')
+  return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]'
+}
+function isLocalOrigin(origin) {
+  if (!origin) return true  // curl 等无 Origin 客户端:靠 Host + token 把关
+  try {
+    const u = new URL(origin)
+    return u.protocol === 'http:' && isLocalHost(u.host)
+  } catch { return false }
+}
+
+/** 主动发送端点：POST /send {"to","text"} → bot.send()。仅本地回环来源(#84 鉴权)+ 可选 token。 */
 function startSendServer(bot) {
   const server = createServer((req, res) => {
+    const deny = (status, error) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: false, error }))
+    }
     if (req.method !== 'POST' || req.url !== '/send') {
-      res.writeHead(405, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ ok: false, error: 'only POST /send' }))
+      deny(405, 'only POST /send')
+      return
+    }
+    // #84 鉴权:Content-Type JSON → 本地来源(Host/Origin) → 共享 token(未配置跳过)
+    if (!String(req.headers['content-type'] ?? '').toLowerCase().includes('application/json')) {
+      deny(415, 'Content-Type must be application/json')
+      return
+    }
+    if (!isLocalOrigin(req.headers.origin)) { deny(403, 'forbidden origin'); return }
+    if (!isLocalHost(req.headers.host)) { deny(403, 'forbidden host'); return }
+    if (BRIDGE_TOKEN && req.headers['x-bridge-token'] !== BRIDGE_TOKEN) {
+      deny(403, 'forbidden token')
       return
     }
     let body = ''
     req.on('data', (c) => {
       body += c
       if (body.length > 1_000_000) {
-        res.writeHead(413, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ ok: false, error: 'payload too large' }))
+        deny(413, 'payload too large')
         req.destroy()
       }
     })
     req.on('error', () => {})  // destroy 后连接重置，避免未处理错误事件
     req.on('end', async () => {
+      // #84 参数校验:非法 JSON / to / text 缺失 → 400(而非 500)
+      let payload
+      try { payload = JSON.parse(body || '{}') } catch { deny(400, 'invalid JSON'); return }
+      const { to, text } = payload
+      if (typeof to !== 'string' || !to.trim()) { deny(400, 'to 必填'); return }
+      if (typeof text !== 'string' || !text.trim()) { deny(400, 'text 必填'); return }
+      if (to !== OWNER_ID) { deny(403, 'forbidden recipient'); return }
       try {
-        const { to, text } = JSON.parse(body || '{}')
-        if (typeof to !== 'string' || !to.trim()) throw new Error('to 必填')
-        if (typeof text !== 'string' || !text.trim()) throw new Error('text 必填')
-        if (to !== OWNER_ID) {
-          res.writeHead(403, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: 'forbidden recipient' }))
-          return
-        }
-        await bot.send(to, text)
+        await withTimeout(bot.send(to, text), 30_000)   // #84 send 超时兜底,不挂死请求
         console.log(`[send] ${to}: ${text.slice(0, 80)}`)
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: true }))
@@ -327,6 +355,11 @@ function startSendServer(bot) {
         res.end(JSON.stringify({ ok: false, error: reason }))
       }
     })
+  })
+  // #84: listen 失败(端口占用等)→ 打印并退出,不留僵尸服务
+  server.on('error', (err) => {
+    console.error('[send server error]', err instanceof Error ? err.message : String(err))
+    process.exit(1)
   })
   server.listen(SEND_PORT, '127.0.0.1', () => {
     console.log(`send server: http://127.0.0.1:${SEND_PORT}/send`)

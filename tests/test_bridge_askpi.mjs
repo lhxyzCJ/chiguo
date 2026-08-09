@@ -174,9 +174,13 @@ t('recall 信号路由:信号 → 第二趟 pi → 回答(mock analysis JSON)', 
   } }
   const r = await runWithRecall('哥哥我生日是什么时候', fakeRun)
   assert.ok(r.includes('5月11日'), `第二趟按事实回答: ${r}`)
-  assert.ok(calls.some((c) => c.includes('--schedule-recall')), '第二趟调用')
+  const second = calls.find((c) => c.includes('--schedule-recall'))
+  assert.ok(second, '第二趟调用')
+  assert.ok(second.includes('--facts'), `事实走 --facts 通道: ${second}`)
+  assert.ok(second.includes('哥哥的生日'), `--facts 含真实匹配: ${second}`)
+  assert.ok(!second.includes('检索事实：'), 'prompt 不放事实')
 })
-t('recall 无匹配 → 反问引导文案注入(prompt 契约)', async () => {
+t('recall 无匹配 → --facts 空数组、prompt 保留原文(事实只走 --facts 单通道)', async () => {
   const calls = []
   const fakeRun = { exec: async (bin, args, opts) => {
     calls.push(args.join(' '))
@@ -187,7 +191,10 @@ t('recall 无匹配 → 反问引导文案注入(prompt 契约)', async () => {
   } }
   await runWithRecall('查无此事', fakeRun)
   const second = calls.find((c) => c.includes('--schedule-recall'))
-  assert.ok(second && second.includes('反问'), `prompt 须注入反问引导: ${second}`)
+  assert.ok(second, '第二趟调用')
+  const parts = second.split(' ')
+  assert.strictEqual(parts[parts.indexOf('--prompt') + 1], '查无此事', 'prompt 不放事实')
+  assert.strictEqual(parts[parts.indexOf('--facts') + 1], '[]', '无匹配 → --facts 空数组')
 })
 t('--attention 回复侧注入:取数失败跳过注入继续 askPi(降级)', async () => {
   // daemon --attention 返回 ok:false → askPi 仍执行(无 attention 块)
