@@ -1,6 +1,6 @@
 # 迟菓主动消息系统 — 系统文档
 
-> 版本: v1（`chiguo_version.py` VERSION=1,每轮修改 +0.1;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
+> 版本: v2.0（`chiguo_version.py` VERSION=2.0,每轮修改 +0.1;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
 
 ## 一、架构总览
 
@@ -139,12 +139,33 @@ new_value = target - (target - current) × 2^(-hours / half_life)
 
 > 健壮性：`last_user_message_at` 缺失或不可解析（如手改损坏）时，两个函数均返回 `999.0`（与"从未交互"语义一致），不抛异常——daemon 不会因脏时间戳硬崩溃。
 
+**A1 弹性衰减（v2.0）**：`recover` 升级为 `elastic_recover`（`chiguo_math.py`）——有效半衰期随偏离度自适应，偏离 target 越远回弹越快：
+
+```
+effective_hl = half_life / (1 + |target - current| / baseline)
+new_value = target - (target - current) × 2^(-hours / effective_hl)
+```
+
+- loneliness/anxiety/affection/energy 四处推进全部改调 `elastic_recover`；tsundere 人格回归（向 `tsundere_intensity` 基线软回归）不变
+- `baseline` 读 `[emotion].elastic_baseline`（默认 100 = 情绪值域）；`baseline <= 0` 退化为普通 `recover`（防除零）
+- 效果示例：孤独 15→100 时偏离 85 → 有效半衰期 ≈ 40/(1+0.85) ≈ 21.6h，冷启动回弹更快；接近 target 时 ≈ 原半衰期
+
+**A2 情绪交互矩阵（v2.0）**：tick() 情绪推进后调用 `apply_interaction_matrix()` 一次，跨维度联动（`chiguo_math.py`；乘数 `[emotion].interaction_*` 默认 1.0 = 关闭恒等，>1.0 增强幅度，可安全灰度）：
+
+| 规则 | 触发条件 | 效果 |
+|------|---------|------|
+| 好感回馈 | affection > 60 | anxiety × (1 - 0.02·k·affection/100)（被喜欢 → 不安恢复加速） |
+| 元气联动 | energy < 30 | loneliness × (1 + 0.02·k·(30-energy)/30)（没力气 → 孤独恢复加速） |
+| 焦虑拖累 | anxiety > 70 | energy × (1 - 0.01·k)（不安 → 元气恢复减速） |
+
 ### 2.4 事件响应（半衰期衰减）
 
 | 事件 | 孤独 | 不安 | 好感 | 元气 |
 |------|------|------|------|------|
 | 收到用户消息 | 0.35h 减半 | 0.5h 减半 | +0.8~1.2 | +10 |
 | 发送主动消息 | 2h 减半 | +2 | — | -20 |
+
+**A10 回复饱和阻尼（v2.0）**：`on_user_message` 中同向回复事件的加成受 30 分钟窗口计数抑制——`CooldownState.drop_events` 记录 `[{time, direction}]`（滚动窗口，过期清理），窗口内同向事件数 n → 加成 × `0.5^min(n, 3)`（第 1 次 ×1.0、第 2 次 ×0.5、第 3 次 ×0.25、≥4 次 ×0.125 封顶）。参数 `[cooldown].drop_damp_window_minutes=30 / drop_damp_factor=0.5 / drop_damp_max=3`（窗口 ≤0 关闭阻尼）。dataclass 默认字段，无 STATE_VERSION 升级。
 
 ### 2.5 Hawkes 自激事件率
 
@@ -223,7 +244,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 | `memory` (mem0) | weight=1.5 × 8%随机 | 沉默>6h时随机浮现 |
 | `lonely_low` | sigmoid(lo, k=0.20, mid=38) × (1+0.3tsun) × rate_factor | 轻松试探 |
 | `lonely_mid` | sigmoid(lo, k=0.18, mid=55) × (1+0.5tsun) × rate_factor | 嘴硬联系 |
-| `lonely_high` | sigmoid(lo, k=0.15, mid=78) × (1-0.4tsun) × rate_factor × high_decay | 防线崩溃 |
+| `lonely_high` | sigmoid(lo, k=0.15, mid=78) × (1-0.4tsun) × rate_factor × repeat 阻尼（A6） | 防线崩溃 |
 | `anxiety` | sigmoid(anx, k=0.12, mid=58) | 确认被需要 |
 | `playful` | 0.15 × energy/100 × aff_factor × pers_extra_factor | 元气过剩，调皮分享 |
 | `reflect` (v4) | 0.08 × affection/100 × (1-neuroticism/100) × energy/100 | 角色内省（高好感+低沉默+高元气+低神经质） |
@@ -236,7 +257,33 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 
 变化率因子（v4）：孤独/不安暴涨 → `rate_factor` 放大权重，制造急迫感。
 
-安全阀（v4）：`lonely_high` 触发后 24h 内再次触发 → 权重指数衰减（`high_decay = 0.3^recent_count`）。48h 内 ≥2 次崩溃 → 强制温和模式。
+安全阀（v4）：`lonely_high` 触发后 24h 内再次触发 → 权重指数衰减（v2.0 前 `high_decay = 0.3^recent_count`，已删除，重复抑制并入 A6 统一 repeat 阻尼）。48h 内 ≥2 次崩溃 → 强制温和模式。
+
+**v2.0 触发层优化（外部对比，三段）**，按顺序作用于候选权重：
+
+**A3 日程乘数 + 抖动**：情绪类候选权重 × 日程乘数（`_schedule_multiplier`：上课中 0.3 / 空闲 `[trigger].free_multiplier` 默认 1.2 / 半忙 0.6；课表异常按空闲处理）× `uniform(0.8, 1.2)` 抖动一次采样全局乘（保持类型间相对权重稳定，activation 不受逐候选随机扰动）；仪式类（special/morning/night/meal/memory/follow_up）豁免；逃生阀已在函数首 return → 天然豁免。
+
+**A6 repeat 阻尼泛化**：`trigger_history` 按 type 计数 n → **全类型**候选 weight × `repeat_decay^min(n, repeat_cap)`（`[trigger] repeat_decay=0.6 / repeat_cap=3`，n≥3 封顶）；取代原 lonely_high 专属 `0.3^n`（daemon 发送时 append history，本层只读不写）。
+
+**A4 三段激活**：`activation` = 情绪类候选权重之和——
+
+| 段 | 条件 | 行为 |
+|----|------|------|
+| 低段 | activation < `min_activation`（0.08） | 情绪类退出竞争（等效低能量沉默，仪式类照发） |
+| 中段 | 其余 | 现状加权随机（全部候选） |
+| 高段 | activation ≥ `must_send_activation`（0.5） | 情绪类加权随机**必选**（仪式类本轮退让），选中标记 `must_send: true` 进 decision JSON（context.must_send） |
+
+escape_valve 豁免（v6 逃生阀不走本层）。
+
+**A5 未回复退场状态机**：`backoff_level()` 按 `messages_without_reply` 分级（参数 `[cooldown].backoff_start=3 / backoff_silent=5`）：
+
+| 级别 | 未回复数 | 行为 |
+|------|---------|------|
+| normal | < 3 | 正常竞争 |
+| backing_off | 3-4 | 情绪类候选整体跳过，仪式类照发 |
+| silent | ≥ 5 | 全禁发；escape_valve longing 破防豁免（防死锁语义） |
+
+现有无回复 λ 衰减保留（`no_reply_lambda_decay=0.7`，λ × 0.7^n）。
 
 ### 2.7 发送门控（硬限制）
 
@@ -266,10 +313,10 @@ can_send(now):
 ```
 evaluate():
   ① tick(hours, now)
-     ├─ recover 所有情绪（半衰期）
+     ├─ recover 所有情绪（A1 弹性衰减）→ A2 交互矩阵
      ├─ 节假日/周末/课表 修正焦虑半衰期
      ├─ _check_daily_reset（跨天清零）
-     └─ 清理 CooldownState.event_timestamps 窗口外旧事件
+     └─ 清理 CooldownState.event_timestamps / drop_events 窗口外旧事件
 
   ② Bayesian 用户状态推断（v4）
      ├─ 从可观测信号计算 P(state|obs)
@@ -284,6 +331,9 @@ evaluate():
      ├─ 收集所有合法候选触发（13 种）
      ├─ 每个触发计算 sigmoid 权重
      ├─ 傲娇/好感/变化率 调制权重
+     ├─ A3 日程乘数 × 抖动（情绪类）→ A6 repeat 阻尼（全类型）
+     ├─ A4 三段激活（低段沉默 / 中段加权随机 / 高段必选 must_send）
+     ├─ A5 退场状态机（backing_off 禁情绪类 / silent 全禁发；escape_valve 豁免）
      ├─ 安全阀检查（崩溃冷却/强制温和）
      ├─ weighted_trigger_choice() 加权随机选一个
 │    （v6: 逃生阀激活时跳过加权随机，直接触发 longing）
@@ -301,6 +351,7 @@ evaluate():
       ├─ bayesian（用户状态推断结果）（v4）
       ├─ composer（Intent × Cue × Vibe 三层组合）（v4）
       └─ follow_up（接话茬素材 topic/source/age_hours + 【接话茬】提示）（v7）
+      ├─ must_send（A4 高段激活标记，v2.0）
 
   ⑦ on_character_message() → adapt_personality()（v4）→ save()
      → {"action": "send", "trigger": "...", "context": {...}}
@@ -547,6 +598,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 - 连续 3 次孤独触发 → 强制注入话题
 - `topic_probability=0.70` 控制注入概率
 - v4: 人格调制话题多样性。高开放性（openness）→ 更多 memory/anniversary 话题；低开放性 → 更多 schedule/general 话题
+- **A9 内容级防复读（v2.0）**：候选 hint 与最近已发消息做 3-gram Jaccard 相似度去重——`jaccard_3gram(hint, text) ≥ repeat_jaccard_threshold`（`[topic_picker]` 默认 0.6）→ 弃用该候选；最近已发消息取自 `chiguo_messages.jsonl` 倒序 `repeat_history_n`（默认 5）条（daemon `recent_sent_texts()` 注入 TopicPicker，热重载同步）；候选全被弃用 → 空注入（不硬凑话题）。
 
 ### 4.2 节气
 
@@ -660,6 +712,8 @@ pi 分析 prompt（pi-run.mjs --analysis-mode）建议判断标准：
 
 Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 层（Intent × Cue × Vibe）30%。
 
+**A8 生成失败确定性回退（v2.0）**：`chiguo_composer.py` 新增 `__main__` CLI——传入 daemon decision JSON 文件路径（或 `--trigger` 触发类型），从模板池直出可发送文本（cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败时固定文案池 `_FALLBACK_LINES` 兜底），退出码 0=成功（文本已输出）/非零=失败；`scripts/chiguo-tick.sh` 在 pi 生成失败时调用它兜底（成功 → 照常发送 + health 记 success + `--record-send` 打 fallback 标记；composer 也失败才记 fail + exit 1）。见「七、CLI 参考 → chiguo_composer.py」。
+
 ---
 
 ## 六、文件清单
@@ -671,10 +725,10 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_circadian.py` | 生物钟学习：双作息双桶分桶（weekday_*/weekend_* 独立估计 + 听歌活跃合并计数）（v7 新增，v8 双桶，纯函数） | 无 |
 | `netease/bridge.py` | 网易云 API 桥接 数据面（NeteaseBridge 实例化）：`fetch_recent_play` 最近播放记录（睡眠窗口内夜间活跃反证 + netease/recent_play_cache.json 缓存）（v8）；`fetch_daily_songs` 每日推荐 + `_api_get` 有限重试（瞬时/5xx 重试 retry_count 次 + 退避）与每日推荐 schema 过滤 + QR 登录（v9） | 无（requests） |
 | `netease/service.py` | 网易云策略层（v9，DI）：`NeteaseService` 健康探针/登录失效检测/故障降级链（netease_fault 话题）/音乐+故障双日配额（netease/netease_health.json 原子写）/加权随机选源+换源兜底/peek-consume 两阶段（未选中不消费配额）/话题素材组装（不含链接，零 LLM）+ 播放反证单入口 `fetch_play_proof`；测试 `tests/test_netease_service.py` | netease.bridge |
-| `chiguo_trigger.py` | 触发评估（13 种，含 v7 follow_up 接话茬）+ 加权随机选择 | state, math |
-| `chiguo_topics.py` | 话题选择器（8 来源 + 人格调制 + v9 netease 委托） | math, solar_terms, schedule.anniversary, netease.service |
-| `chiguo_composer.py` | Intent × Cue × Vibe 三层消息组合（v4） | 无 |
-| `chiguo_math.py` | 纯数学库：sigmoid/decay/recover/Hawkes/longing/Ebbinghaus | 无 |
+| `chiguo_trigger.py` | 触发评估（13 种，含 v7 follow_up 接话茬；v2.0 日程乘数/三段激活/repeat 阻尼/退场状态机）+ 加权随机选择 | state, math |
+| `chiguo_topics.py` | 话题选择器（8 来源 + 人格调制 + v9 netease 委托 + v2.0 内容级防复读） | math, solar_terms, schedule.anniversary, netease.service |
+| `chiguo_composer.py` | Intent × Cue × Vibe 三层消息组合（v4）+ v2.0 兜底 CLI（__main__：模板池直出 + _FALLBACK_LINES） | 无 |
+| `chiguo_math.py` | 纯数学库：sigmoid/decay/recover/elastic_recover/Hawkes/longing/Ebbinghaus + 交互矩阵/饱和阻尼（v2.0） | 无 |
 | `chiguo_personality.py` | Big Five + 角色特质（8 维人格）（v4） | 无 |
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态，在线学习）（v4） | 无 |
 | `schedule/` 包 | 课表/假期/纪念日/安排（15 模块）：`parser.py` 数据面（xlsx → JSON cache → 刷新）/ `parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `holiday.py` 节假日判断（2026 国务院安排 + 调休）/ `anniversary.py` 纪念日 CRUD / `override_store.py` 手动覆盖存储（0600）/ `plan_store.py` 日计划存储（0600）/ `api.py` 安排读写门面（校验 + 澄清接口）/ `sources.py` 课表检索源 / `day_plan.py` 日计划组装 / `resolve_when.py` 触发时机解析 / `attention.py` 注意力快照 / `recall.py` 安排回忆检索 / `confirm.py` 写后确认 / `replan.py` 复盘（--check 明日计划） | openpyxl（可选，惰性导入） |
@@ -683,7 +737,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
-| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.9"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
+| `chiguo_version.py` | 项目版本号单一来源（`VERSION="2.0"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
 | `chiguo_state.json` | 运行时状态（STATE_VERSION=10，首次运行后生成；v10 含 `personality_baseline`/`personality_history`） | 无 |
@@ -733,7 +787,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_schedule_plan.py` | 复盘计划测试（2 用例：dirty 矩阵/skip 与校验） | schedule.replan, schedule.plan_store |
 | `tests/test_schedule_cli.py` | 安排 CLI 测试（3 用例：--schedule-change 成功与形状/--schedule-recall 形状） | chiguo_daemon, schedule.api |
 | `scripts/pi-run.mjs` | **agent 调用统一封装**（Phase 4，v1.8 runner 抽象）：runner=pi（默认，pi-agent 二进制）/ runner=command（任意 CLI agent，`<agent_command> --prompt <完整提示词> --mode <mode>` 统一契约，stdout JSON/NDJSON 兼容）；生成/分析/安排多模式，`[host]` 配置 + PIRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage；导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand | node |
-| `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → pi-run（PIRUN_SESSION=chiguo-send）→ bridge /send → --record-send | bash, node, curl |
+| `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → pi-run（PIRUN_SESSION=chiguo-send）→ bridge /send → --record-send；pi 失败 → chiguo_composer.py 模板池兜底（v2.0 A8，成功发送 + fallback 标记，composer 也失败才 exit 1） | bash, node, curl |
 | `scripts/install_pi.sh` | **pi 环境安装器**（Phase 4）：memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟（三模式幂等） | bash |
 | `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askPi 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
 | `wechat-bridge/command-detect.mjs` | **特殊命令检测/执行**（Phase 4）：纪念日/假期规则化（方案 A），daemon JSON → 迟菓风确认 | node |
@@ -757,7 +811,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `scripts/service.sh` | 服务统一管理（ollama + wechat-bridge）：`autostart`（systemd 开机自启，写 `/etc/systemd/system/chiguo-bridge.service` + `enable --now`）/ `temp`（临时启动，nohup 后台 + pidfile `~/.chiguo/run/bridge-temp.pid`，不注册自启）/ `status` / `stop` / `uninstall`；两模式互斥接管（启动前停对方实例，避免 18790 端口冲突）；全子命令支持 `--dry-run`；测试注入 `CHIGUO_REPO_OVERRIDE/CHIGUO_SYSTEMD_DIR/CHIGUO_SYSTEMCTL/CHIGUO_PID_DIR/CHIGUO_NODE` | bash, systemd |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
 
-共计 **600+** 个测试用例（36 个 py 测试文件 + 10 个脚本测试；另含 node 侧 test_pi_run.mjs 31 用例 + test_bridge_askpi.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_pi.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
+共计 **600+** 个测试用例（38 个 py 测试文件 + 10 个脚本测试；另含 node 侧 test_pi_run.mjs 31 用例 + test_bridge_askpi.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_pi.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `tests/test_holiday_parser.py` 9/9 用例通过。
@@ -896,6 +950,18 @@ python3 memory_bridge.py --random
 - mem0 惰性导入：未安装时 `available=False` 优雅降级，daemon 不受阻塞
 - `available=False` 后按 60s 节流重试，`--loop` 长驻下故障恢复可自愈
 - importance 的 None/NaN 统一清洗为 0.0（结果循环有行级异常兜底）
+
+### chiguo_composer.py（v2.0 兜底 CLI）
+
+```bash
+# 从 daemon decision JSON 直出可发送文本（零 LLM；退出码 0=成功）
+python3 chiguo_composer.py /tmp/decision.json
+
+# 或直接用触发类型
+python3 chiguo_composer.py --trigger lonely_low
+```
+
+决策文件不可读/缺 trigger 字段/无可用模板 → stderr 提示 + 非零退出；cue 台词模板（`personality/*.toml` trigger_templates）优先，无则固定文案池 `_FALLBACK_LINES` 随机一条；剥离行号注释（如 （L1069 报单风早安））。
 
 ### chiguo_monitor.py
 
@@ -1038,6 +1104,12 @@ anxiety_gain_half_life = 30.0
 affection_loss_half_life = 500.0
 energy_regen_half_life = 8.0
 
+# v2.0: 弹性衰减（A1）与情绪交互矩阵（A2）
+elastic_baseline = 100.0               # 弹性基准（情绪值域）；effective_hl = half_life / (1 + |gap|/baseline)
+interaction_affection_anxiety = 1.0    # affection>60 → anxiety 恢复加速（anxiety *= 1 - 0.02*k*affection/100）
+interaction_energy_loneliness = 1.0    # energy<30 → loneliness 恢复加速（loneliness *= 1 + 0.02*k*(30-energy)/30）
+interaction_anxiety_energy = 1.0       # anxiety>70 → energy 恢复减速（energy *= 1 - 0.01*k）
+
 # 事件半衰期（小时）
 loneliness_decay_on_reply = 0.35       # 收到回复：21分钟减半
 anxiety_decay_on_reply = 0.5           # 收到回复：30分钟减半
@@ -1108,6 +1180,13 @@ follow_up_peak_hours = 4.0      # 钟形权重峰值年龄(小时)
 follow_up_sigma_hours = 3.0     # 钟形宽度(小时)
 follow_up_min_weight = 0.03     # 低于此权重不成为候选
 
+# v2.0: A3 日程乘数 / A4 三段激活 / A6 repeat 阻尼
+free_multiplier = 1.2            # 空闲（节假日/周末/课间）时情绪类候选乘数（建议 1.0~1.4）
+min_activation = 0.08            # 情绪类候选权重和 < 此值 → 情绪类退出竞争（低能量沉默，仪式类照发）
+must_send_activation = 0.5       # 情绪类权重和 ≥ 此值 → 情绪类加权随机必选（must_send 进 decision JSON）
+repeat_decay = 0.6               # 同类型触发历史计数 n → 候选 weight ×= repeat_decay^n
+repeat_cap = 3                   # repeat 计数封顶（超过不再继续衰减）
+
 [poisson]
 base_lambda = 0.25                     # 基础事件率（μ 的一部分）
 lambda_loneliness_mid = 50
@@ -1138,6 +1217,10 @@ netease_fault_daily_quota = 1           # v9: 故障提及日配额
 topic_probability = 0.70               # 孤独触发时注入话题的概率
 force_topic_threshold = 3              # 连续 N 次孤独触发 → 强制注入
 trigger_history_max = 6                # 触发历史记录最大长度
+
+# v2.0 A9: 内容级防复读（3-gram Jaccard 相似度弃用候选）
+repeat_jaccard_threshold = 0.6         # 相似度阈值（0~1），≥ 此值视为复读弃用
+repeat_history_n = 5                   # 对比最近 N 条已发送消息（chiguo_messages.jsonl 倒序）
 
 [schedule]
 quiet_start = 0
@@ -1176,6 +1259,13 @@ max_daily_active = 4                   # 用户活跃时日上限
 max_daily_silent = 2                   # 用户沉默时日上限
 min_interval_minutes = 30              # 最小发送间隔
 no_reply_lambda_decay = 0.7            # 无回复 λ 衰减因子
+# v2.0 A5: 未回复退场状态机（backoff_level）
+backoff_start = 3                      # messages_without_reply ≥ 此值 → backing_off（情绪类禁发、仪式类照发）
+backoff_silent = 5                     # ≥ 此值 → silent（全禁发，escape_valve longing 破防豁免）
+# v2.0 A10: 回复饱和阻尼（30 分钟窗口内同向回复事件计数抑制加成）
+drop_damp_window_minutes = 30          # 同向计数窗口；<=0 关闭阻尼
+drop_damp_factor = 0.5                 # 第 n 次同向回复 → 加成 × factor^n
+drop_damp_max = 3                      # 计数上限（min(n, max) 饱和）
 # v4: 概率累积参数
 longing_growth_factor = 0.08           # 每次 held λ 增长量
 anxiety_block_threshold = 70.0         # 焦虑大于此 → 不累积
@@ -1725,6 +1815,7 @@ rm <仓库根目录>/chiguo_state.json
 
 | 版本 | 日期 | 变更 |
 |:----:|:----:|------|
+| **v2.0** | **2026-08-09** | **外部对比优化 9 项（v1.9→v2.0，simplify/72-74 行为层；STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移）**：A1 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+\|gap\|/baseline)，loneliness/anxiety/affection/energy 四处推进改调，`[emotion].elastic_baseline=100`）+ A2 情绪交互矩阵（tick 后 `apply_interaction_matrix`，3 条跨维度规则，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ A3 日程乘数×抖动（情绪类 × 上课 0.3/空闲 free_multiplier 1.2/半忙 0.6 × uniform(0.8,1.2) 一次采样，仪式类豁免）+ A4 三段激活（activation=情绪类权重和：<min_activation 0.08 沉默 / ≥must_send_activation 0.5 必选，must_send 进 decision JSON，escape_valve 豁免）+ A5 未回复退场状态机（backoff_level：<backoff_start 3 正常 / 3-4 backing_off 情绪类禁发 / ≥backoff_silent 5 silent 全禁发，escape_valve longing 破防豁免；λ×0.7^n 保留）+ A6 repeat 阻尼泛化（全类型 × repeat_decay 0.6^min(n,3)，删 lonely_high 专属 0.3^n）+ A8 生成失败确定性回退（chiguo_composer `__main__` CLI：decision JSON 或 --trigger 模板池直出 + `_FALLBACK_LINES` 兜底；chiguo-tick.sh pi 失败时调用，成功发送+fallback 标记）+ A9 内容级防复读（TopicPicker 候选与最近已发 5 条 3-gram Jaccard ≥0.6 弃用，全弃用空注入，`[topic_picker] repeat_jaccard_threshold/repeat_history_n`）+ A10 回复饱和阻尼（`CooldownState.drop_events` 30 分钟窗口同向计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）；测试 38 py + 10 script（新增 test_emotion_dynamics / test_composer_fallback） |
 | v1 | 2025-12 | 初始版本。线性情绪 + 硬阈值触发 |
 | v2 | 2026-01 | sigmoid 概率替代硬阈值，Poisson 过程，半衰期情绪模型 |
 | v3 | 2026-03 | Hawkes 自激过程，话题注入，LLM 分析接口，忙碌抑制 |
@@ -1828,6 +1919,7 @@ cron tick / bridge 停止时 daemon 不执行。恢复后：
 2. **日期计数重置**：`_check_daily_reset()` 按 `current_date != today` 比较，跨多天自动归零
 3. **状态恢复**：`_load()` 优先读主文件→.tmp 恢复→.bak 恢复→删除损坏文件→默认值
 4. **崩溃循环防护**：safety_level 2 时所有触发降级为温和模式
+5. **生成失败确定性回退**：pi 生成失败 → `chiguo_composer.py` 模板池兜底直出文本（成功发送 + fallback 标记），composer 也失败才 fail（v2.0 A8）
 
 ### 状态持久化保证
 
