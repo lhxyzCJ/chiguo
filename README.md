@@ -85,15 +85,15 @@
 
 ### v1.10 变更点（外部对比优化 9 项，2026-08）
 
-1. **弹性衰减**：情绪恢复半衰期随偏离度自适应（`effective_hl = half_life / (1 + |gap| / baseline)`，`[emotion].elastic_baseline`）→ [SYSTEM.md §2.3](doc/SYSTEM.md)
-2. **情绪交互矩阵**：tick 推进后跨维度联动（好感→不安、元气→孤独、不安→元气，`[emotion].interaction_*` 默认关闭）→ §2.3
-3. **回复饱和阻尼**：30 分钟窗口内同向回复越多、情绪加成越弱（×0.5^min(n,3)）→ §2.4
-4. **日程乘数 + 抖动**：情绪类触发权重按上课 0.3 / 空闲 1.2 / 半忙 0.6 × uniform(0.8,1.2) 缩放，仪式类豁免 → §2.6
-5. **三段激活**：情绪类权重和 < 0.08 沉默、≥ 0.5 必发（must_send 进决策 JSON）→ §2.6
-6. **repeat 阻尼泛化**：全类型触发按历史计数衰减（×0.6^min(n,3)）→ §2.6
-7. **未回复退场状态机**：连续未回复分级禁发（3-4 条禁情绪类 / ≥5 条全禁发，escape_valve 破防豁免）→ §2.6
-8. **生成失败确定性回退**：pi 失败 → composer 模板池兜底直出消息（`_FALLBACK_LINES` 兜底）→ §5.7、七、CLI 参考
-9. **内容级防复读**：话题候选与最近已发消息 3-gram Jaccard ≥0.6 弃用 → §4.1
+1. **A1 弹性衰减**：情绪恢复半衰期随偏离度自适应（`effective_hl = half_life / (1 + |gap| / baseline)`，`[emotion].elastic_baseline`）→ [SYSTEM.md §2.3](doc/SYSTEM.md)
+2. **A2 情绪交互矩阵**：tick 推进后跨维度联动（好感→不安、元气→孤独、不安→元气，`[emotion].interaction_*` 默认关闭）→ §2.3
+3. **A10 回复饱和阻尼**：30 分钟窗口内同向回复越多、情绪加成越弱（×0.5^min(n,3)）→ §2.4
+4. **A3 日程乘数 + 抖动**：情绪类触发权重按上课 0.3 / 空闲 1.2 / 半忙 0.6 × uniform(0.8,1.2) 缩放，仪式类豁免 → §2.6
+5. **A4 三段激活**：情绪类权重和 < 0.08 沉默、≥ 0.5 必发（must_send 进决策 JSON）→ §2.6
+6. **A6 repeat 阻尼泛化**：全类型触发按历史计数衰减（×0.6^min(n,3)）→ §2.6
+7. **A5 未回复退场状态机**：连续未回复分级禁发（3-4 条禁情绪类 / ≥5 条全禁发，escape_valve 破防豁免）→ §2.6
+8. **A8 生成失败确定性回退**：pi 失败 → composer 模板池兜底直出消息（`_FALLBACK_LINES` 兜底）→ §5.7、七、CLI 参考
+9. **A9 内容级防复读**：话题候选与最近已发消息 3-gram Jaccard ≥0.6 弃用 → §4.1
 
 ---
 
@@ -152,8 +152,8 @@ flowchart LR
 决策引擎内部（`chiguo_daemon.py`，零 LLM）：
 
 ```
-情绪推进（半衰期） → 发送门控（静默/上限/间隔/元气/Bayesian 睡觉推断）
-  → 触发评估（13 种 sigmoid + 加权随机） → 话题注入（8 来源破冰）
+情绪推进（弹性衰减 + 交互矩阵） → 发送门控（静默/上限/间隔/元气/Bayesian 睡觉推断）
+  → 触发评估（13 种 sigmoid + 三段激活/日程乘数/repeat 阻尼/退场） → 话题注入（8 来源破冰）
   → 生物钟学习（双作息分桶 → 动态静默窗口） → 接话茬（pending 续聊）
   → 听歌联动（睡眠窗口内播放反证） → 输出 JSON
 ```
@@ -252,7 +252,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 ### 记忆系统（记忆后端抽象）
 
-**作用**：迟菓的长期记忆——比情绪更持久的"记得"。v1.8 起为**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类 + `create_backend` 工厂（`memory_bridge.py` 降为兼容门面），由 `chiguo_proactive.toml` 的 `[memory].backend` 切换——`mem0`（v1.9 默认，[mem0ai](https://github.com/mem0ai/mem0) 记忆层）/ 自定义类 `module.path.ClassName`。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
+**作用**：迟菓的长期记忆——比情绪更持久的"记得"。v1.8 起为**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类 + `create_backend` 工厂（`memory_bridge.py` 降为兼容门面），由 `chiguo_proactive.toml` 的 `[memory].backend` 切换——`mem0`（默认，[mem0ai](https://github.com/mem0ai/mem0) 记忆层）/ 自定义类 `module.path.ClassName`。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
 
 **安装/配置**：`uv sync`（mem0ai + ollama 客户端为必需依赖），记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db；路径/LLM/embedding 由 `[memory]` 段 `mem0_*` 键配置，LLM key 缺省读 `~/.pi/agent/auth.json` 的 opencode-go 条目）。
 
@@ -316,7 +316,7 @@ personality/
 └── deredere.toml           # 娇羞措辞素材（与 tsundere 组合使用，非切换开关）
 ```
 
-想调整她的行为？所有参数集中在 `chiguo_proactive.toml`（314 行，`--loop` 模式热重载），无需改代码。
+想调整她的行为？所有参数集中在 `chiguo_proactive.toml`（368 行，`--loop` 模式热重载），无需改代码。
 
 ---
 
@@ -404,6 +404,8 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 chiguo_proactive.toml    # 主配置（所有参数，热重载）
 chiguo_daemon.py         # 决策引擎（主入口，零 LLM）
 chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian
+chiguo_math.py           # 纯数学库（sigmoid/弹性衰减/交互矩阵/饱和阻尼/Hawkes/Jaccard）
+chiguo_composer.py       # Intent×Cue×Vibe 消息组合 + 兜底 CLI（A8 生成失败回退）
 memory/                  # 记忆后端抽象（base/mem0_backend/factory；memory_bridge.py 兼容门面）
 schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan）
