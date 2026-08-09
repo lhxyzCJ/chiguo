@@ -91,7 +91,7 @@ chiguo_daemon.py (DecisionEngine)
   State:  chiguo_state.json (atomic write: .tmp → os.replace)
 ```
 
-**Config**: `chiguo_proactive.toml` — all parameters (309 lines). Legacy host section from Task 14 (superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
+**Config**: `chiguo_proactive.toml` — all parameters (368 lines). Legacy host section from Task 14 (superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
 **Version**: `chiguo_version.py` is the single source (`VERSION="2.0"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
 
