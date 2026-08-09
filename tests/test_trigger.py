@@ -96,13 +96,17 @@ def test_lonely_softmax_competition_at_high_loneliness():
 
 
 def test_rate_factor_boosts_lonely_at_low_loneliness():
-    """暴涨变化率：孤独=15 但 rate=10 → rate_factor=3.55 → lonely_low 进入候选（实测 200/200）"""
+    """暴涨变化率：孤独=15 但 rate=10 → rate_factor=3.55 → lonely_low 进入候选（高概率触发）
+    v10 (#73 A4): 孤独 15 基础权重小 → activation 在 min_activation(0.08) 边缘，
+    ×1.2 抖动下限偶尔跌入低段沉默 → 断言放宽为 ≥150/200 lonely_low，其余 None"""
     with tempfile.TemporaryDirectory() as td:
         now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
         s = _make_state(td, now, energy=40)
         s.emotion.loneliness_rate = 10.0
         counts = _run_seeds(s, now, n=200)
-        assert counts.get("lonely_low", 0) == 200, f"expected all lonely_low, got {counts}"
+        low = counts.get("lonely_low", 0)
+        assert low >= 150, f"rate 暴涨应高概率触发 lonely_low, got {counts}"
+        assert low + counts.get("None", 0) == 200, f"仅 lonely_low/None 允许, got {counts}"
     print("  OK test_rate_factor_boosts_lonely_at_low_loneliness")
 
 
@@ -190,17 +194,20 @@ def test_playful_requires_high_energy_and_silence():
 
 
 def test_reflect_requires_high_affection_low_neuroticism():
-    """reflect 条件：affection>70 & silent<2 & energy>60 & neuroticism<70 & 8% 概率门（实测 300 种子 26 次）"""
+    """reflect 条件：affection>70 & silent<2 & energy>60 & neuroticism<70 & 8% 概率门。
+    v10 (#73 A4): 孤独 15 时 reflect 为唯一情绪候选且权重 ~0.02 < min_activation(0.08)
+    → 低段沉默；改为孤独 25 提供 lonely_low 陪伴候选（activation 进入中段），
+    reflect 候选 ~8% 门 × 竞争权重 ~12.5% → 实测 ~3/300，断言 1-15"""
     with tempfile.TemporaryDirectory() as td:
         now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
-        s = _make_state(td, now, affection=80, energy=85)
+        s = _make_state(td, now, affection=80, energy=85, loneliness=25)
         s.cooldown.last_user_message_at = (now - timedelta(minutes=30)).isoformat()
         counts = _run_seeds(s, now, n=300)
         reflect = counts.get("reflect", 0)
-        assert 8 <= reflect <= 45, f"reflect ~24/300 expected, got {counts}"
-        assert set(counts) <= {"reflect", "None"}, f"only reflect/None allowed, got {counts}"
-        # neuroticism=80 → 门槛不满足 → 永不触发
-        s2 = _make_state(td, now, affection=80, energy=85)
+        assert 1 <= reflect <= 15, f"reflect ~3/300 expected, got {counts}"
+        assert set(counts) <= {"reflect", "lonely_low"}, f"only reflect/lonely_low allowed, got {counts}"
+        # neuroticism=80 → 门槛不满足 → 永不触发（全 lonely_low）
+        s2 = _make_state(td, now, affection=80, energy=85, loneliness=25)
         s2.cooldown.last_user_message_at = (now - timedelta(minutes=30)).isoformat()
         s2.personality.neuroticism = 80.0
         counts2 = _run_seeds(s2, now, n=100)
@@ -303,6 +310,166 @@ def test_memory_habit_window_probability():
 
 
 # ═══════════════════════════════════════════════════════════
+# v10 (#73): A3 日程乘数+抖动 / A4 三段激活 / A6 repeat 阻尼
+# ═══════════════════════════════════════════════════════════
+
+def _inject_xlsx(tmp: str) -> None:
+    """复制仓库真实课表到临时目录（与 test_integration.test_7 同手法）→ schedule 可用"""
+    import shutil
+    src = Path("data/xskb.xlsx")
+    dst = Path(tmp) / "data" / "xskb.xlsx"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+
+
+def test_a3_schedule_multiplier_tiers():
+    """A3 日程乘数三态（单元级确定性）：空闲 free_multiplier / 上课 0.3 / 半忙 0.6"""
+    from chiguo_trigger import _schedule_multiplier
+    with tempfile.TemporaryDirectory() as td:
+        # 空闲：无课表 → schedule_status None → _is_free_time True → free_multiplier
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, energy=40)
+        assert _schedule_multiplier(s, now, 1.2) == 1.2, "空闲 → free_multiplier"
+        # 半忙：静默窗口内（非空闲、非上课）→ 0.6
+        now3 = datetime(2026, 6, 15, 3, 0, tzinfo=CST)
+        s3 = _make_state(td, now3, energy=40)
+        assert _schedule_multiplier(s3, now3, 1.2) == 0.6, "静默时段 → 半忙 0.6"
+        # 上课：注入课表 + 周一 08:30 第 1 节 → in_class → 0.3
+        _inject_xlsx(td)
+        now1 = datetime(2026, 6, 15, 8, 30, tzinfo=CST)
+        s1 = _make_state(td, now1, energy=40)
+        sch = s1.schedule_status(now1)
+        assert sch and sch.get("in_class"), f"前置条件:周一 08:30 应上课中, got {sch}"
+        assert _schedule_multiplier(s1, now1, 1.2) == 0.3, "上课中 → 0.3"
+    print("  OK test_a3_schedule_multiplier_tiers")
+
+
+def test_a3_in_class_suppresses_emotion_only():
+    """A3 黑盒：上课时情绪类权重 ×0.3 压缩 → 仪式类 memory 反超（仪式类豁免）；
+    空闲同配置 → activation ≥ must_send → 情绪类必发压制 memory"""
+    with tempfile.TemporaryDirectory() as td:
+        _inject_xlsx(td)
+        # 上课 08:30（周一第 1 节）+ reminder 记忆（±10min 窗口）
+        now = datetime(2026, 6, 15, 8, 30, tzinfo=CST)
+        s = _make_state(td, now, loneliness=75, energy=40)
+        s.cooldown.morning_sent = True  # 关闭 morning 概率门，防仪式类噪声
+        s.memories = [{"type": "reminder", "trigger_at": "2026-06-15T08:25", "content": "喝水"}]
+        counts_in = _run_seeds(s, now, n=200)
+        lonely_in = sum(v for k, v in counts_in.items() if k.startswith("lonely_"))
+        assert counts_in.get("memory", 0) > lonely_in, \
+            f"上课时仪式类应反超情绪类, got {counts_in}"
+        # 空闲 14:00 同配置（无课表）→ activation≥0.5 → must_send 情绪类必发
+        now2 = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s2 = _make_state(td, now2, loneliness=75, energy=40)
+        s2.memories = [{"type": "reminder", "trigger_at": "2026-06-15T13:55", "content": "喝水"}]
+        counts_free = _run_seeds(s2, now2, n=200)
+        assert counts_free.get("memory", 0) == 0, f"空闲 must_send 应压制 memory, got {counts_free}"
+        lonely_free = sum(v for k, v in counts_free.items() if k.startswith("lonely_"))
+        assert lonely_free == 200, f"空闲应全发情绪类, got {counts_free}"
+    print("  OK test_a3_in_class_suppresses_emotion_only")
+
+
+def test_a4_low_activation_silences_emotion_ritual_fires():
+    """A4 低段：孤独 15 → 情绪候选截断 → activation=0 < min_activation(0.08)
+    → 情绪类不参与竞争；仪式类 memory 照发（100/100）"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, energy=40)
+        s.memories = [{"type": "reminder", "trigger_at": "2026-06-15T13:55", "content": "喝水"}]
+        counts = _run_seeds(s, now, n=100)
+        assert counts.get("memory", 0) == 100, f"低段仪式类应照发, got {counts}"
+    print("  OK test_a4_low_activation_silences_emotion_ritual_fires")
+
+
+def test_a4_must_send_high_activation():
+    """A4 高段：孤独 75 + 特殊日 → activation ≥ must_send_activation(0.5)
+    → 情绪类必选（special 退让 0 次），选中结果标记 must_send: true；
+    中段（孤独 30）→ 加权竞争 special 占优且不标记"""
+    with tempfile.TemporaryDirectory() as td:
+        from pathlib import Path as _P
+        import json as _json
+        _P(td, "anniversaries.json").write_text(_json.dumps({"anniversaries": [
+            {"id": "a1", "type": "anniversary", "name": "认识纪念日", "date": "11-03",
+             "note": "", "created_at": "2026-01-01"}]}))
+        now = datetime(2026, 11, 3, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, loneliness=75, energy=40)
+        counts = _run_seeds(s, now, n=100)
+        assert counts.get("special", 0) == 0, f"must_send 应压制 special, got {counts}"
+        lonely = sum(v for k, v in counts.items() if k.startswith("lonely_"))
+        assert lonely == 100, f"高段应必发情绪类, got {counts}"
+        # 标记验证：单次调用情绪类 → must_send=True
+        random.seed(4242)
+        t = evaluate_triggers(s, now)
+        assert t is not None and t.type.startswith("lonely_"), t
+        assert t.data.get("must_send") is True, f"must_send 标记缺失, got {t.data}"
+        # 中段对照：孤独 30 → activation<0.5 → 加权竞争，special 占优且无 must_send
+        s2 = _make_state(td, now, loneliness=30, energy=40)
+        counts2 = _run_seeds(s2, now, n=100)
+        assert counts2.get("special", 0) > 50, f"中段 special 应占优, got {counts2}"
+        assert sum(v for k, v in counts2.items() if k.startswith("lonely_")) > 0, \
+            f"中段情绪类应仍有概率, got {counts2}"
+        random.seed(4242)
+        t2 = evaluate_triggers(s2, now)
+        assert t2 is not None and not t2.data.get("must_send"), \
+            f"中段不得标记 must_send, got {t2.type} {t2.data}"
+    print("  OK test_a4_must_send_high_activation")
+
+
+def test_a4_must_send_preserved_across_safety_downgrade():
+    """A4×安全阀组合：高孤独 must_send 选中 lonely_high 后被 safety≥1 降级为
+    lonely_mid/soft 时，data 必须继承（must_send 标记不得丢失）"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, loneliness=75, energy=40)
+        # safety=1：24h 内有崩溃记录
+        s.cooldown.last_crash_at = now.isoformat()
+        s.cooldown.crash_timestamps = [now.isoformat()]
+        seen_downgrade = 0
+        for i in range(120):
+            random.seed(5000 + i)
+            t = evaluate_triggers(s, now)
+            assert t is not None, f"seed {i}: 高孤独+must_send 不得空"
+            if t.type == "lonely_mid" and t.intensity == "soft":
+                seen_downgrade += 1
+                assert t.data.get("must_send") is True, \
+                    f"seed {i}: 降级路径 must_send 丢失: {t.data}"
+        assert seen_downgrade > 0, "安全阀降级应至少发生一次"
+    print("  OK test_a4_must_send_preserved_across_safety_downgrade")
+
+
+def test_a6_repeat_damping_same_type_only():
+    """A6 统一 repeat 阻尼：同类型在 trigger_history 重复 n 次 → 权重 ×0.6^min(n,3)；
+    异类型历史（morning）不影响；cap=3 封顶（6 次 == 3 次）"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+
+        def run(history, n=300):
+            s = _make_state(td, now, loneliness=75, energy=40)
+            s.cooldown.trigger_history = list(history)
+            return _run_seeds(s, now, n=n)
+
+        base = run([])
+        base_low = base.get("lonely_low", 0)
+        assert base_low > 80, f"基线 lonely_low 应占优, got {base}"
+        # 同类型重复 3 次 → lonely_low ×0.6^3=0.216 → 选中率显著下降
+        damped = run(["lonely_low"] * 3)
+        damped_low = damped.get("lonely_low", 0)
+        assert damped_low < base_low * 0.5, \
+            f"lonely_low 应显著衰减: {base_low} → {damped_low}, got {damped}"
+        # 异类型历史（morning）→ 与空历史计数一致（互不影响，±15% 容差防 RNG 消费漂移）
+        other = run(["morning"] * 3)
+        other_low = other.get("lonely_low", 0)
+        assert abs(other_low - base_low) <= base_low * 0.15, \
+            f"异类型历史不得影响: {base_low} vs {other_low}"
+        # cap=3：6 次重复 == 3 次重复（min(n,3) 封顶，±15% 容差）
+        capped = run(["lonely_low"] * 6)
+        capped_low = capped.get("lonely_low", 0)
+        assert abs(capped_low - damped_low) <= damped_low * 0.15, \
+            f"cap 应封顶: {damped_low} vs {capped_low}"
+    print("  OK test_a6_repeat_damping_same_type_only")
+
+
+# ═══════════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════════
 
@@ -324,6 +491,12 @@ if __name__ == "__main__":
         test_memory_reminder_naive_tz_guard,
         test_memory_reminder_garbage_at_does_not_crash,
         test_memory_habit_window_probability,
+        test_a3_schedule_multiplier_tiers,
+        test_a3_in_class_suppresses_emotion_only,
+        test_a4_low_activation_silences_emotion_ritual_fires,
+        test_a4_must_send_high_activation,
+        test_a4_must_send_preserved_across_safety_downgrade,
+        test_a6_repeat_damping_same_type_only,
     ]
     failed = 0
     for t in tests:
