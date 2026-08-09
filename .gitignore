@@ -77,3 +77,6 @@ netease/netease_cache.json.bak
 # Reasonix 工具私有目录（本地会话/任务台账，不进 git）
 .reasonix/
 .worktrees/
+
+# Reasonix 工具私有配置（本地权限台账，不进 git）
+reasonix.toml

@@ -117,6 +117,43 @@ interaction_affection_anxiety = 1.0   # affection>60 → anxiety 恢复加速（
 interaction_energy_loneliness = 1.0   # energy<30 → loneliness 恢复加速（loneliness *= 1 + 0.02*k*(30-energy)/30）
 interaction_anxiety_energy = 1.0      # anxiety>70 → energy 恢复减速（energy *= 1 - 0.01*k）
 
+# ── ③ 回复影响惯性阻尼（默认 0 = 关闭恒等，可灰度；>0 压缩单条 analysis delta）──
+# 对标 lacuna_core InertiaFilter：单条回复不跳变；负向独立键可设更高（负向更重）。
+impact_inertia_positive = 0.0        # 正向 delta 阻尼比例（建议开启值 0.15）
+impact_inertia_negative = 0.0        # 负向 delta 阻尼比例（建议开启值 0.35，负向更重）
+impact_inertia_affection_mod = 0.0   # 亲密度调制：好感偏离 50 时对 inertia 的缩放（建议 0.5）
+
+# ── ② 情绪自然波动（OU 噪声；enabled=0 关闭 → 行为恒等，可安全灰度）──
+# 对标 lacuna_core FluctuationEngine：小幅带均值回归的噪声消除"机械感"。
+# 仅作用于 loneliness/anxiety；独立 RNG（noise_seed）不污染全局随机序列。
+noise_enabled = 0              # 0=关闭（灰度默认）；1=开启
+noise_loneliness_sigma = 0.3   # loneliness 噪声幅度（/√h）
+noise_anxiety_sigma = 0.3      # anxiety 噪声幅度（/√h）
+noise_theta = 0.5              # OU 回归强度（/h），越大越贴 target
+noise_seed = 42                # 独立 RNG 种子（不污染全局 random 序列）
+
+# ── ④ 情绪基线长期漂移（关系动力学；drift_rate=0 关闭 → 行为恒等，可灰度）──
+# 对标 astrbot_plugin_emotion_state_machine：长期互动缓慢移动情绪收敛目标（基线），
+# 与人格层 regress_to_baseline（防人格漂移）分层——"人格稳定、情绪基线可漂移"。
+# 只漂移 loneliness/anxiety/affection 三个关系感受维度；tsundere 全归人格层。
+baseline_drift_rate = 0.0              # 0=关闭（灰度默认）；>0 时每次事件漂移 = rate × shift
+baseline_shift_loneliness = 0.15       # 单事件漂移量（冷落/冷淡/未回复 → +）
+baseline_shift_anxiety = 0.15          # 单事件漂移量（冷淡/未回复 → +；温柔 → −）
+baseline_shift_affection = 0.15        # 单事件漂移量（冷落/冷淡/未回复 → −；温柔 → +）
+baseline_max_drift = 20.0              # 有界钳位：基线不得超过 [全局默认 ± max_drift]
+baseline_forget_half_life = 720.0      # 淡忘半衰期（h；30 天回全局默认，0=不淡忘）
+
+# ── ① 用户情绪感知（user_mood；系数默认 0 = 关闭恒等，可灰度）──
+# 对标 ESConv：感知主人情绪（LLM 报 mood/intensity），幅度由系数表决定（决策零 LLM）。
+user_mood_low_anxiety_factor = 0.0          # low：anxiety +2.0 × intensity × 系数（心疼 → 不安略升）
+user_mood_low_affection_factor = 0.0        # low：affection +0.5 × intensity × 系数（想靠近）
+user_mood_distressed_anxiety_factor = 0.0   # distressed：anxiety +3.0 × intensity × 系数
+user_mood_distressed_affection_factor = 0.0 # distressed：affection +1.0 × intensity × 系数
+user_mood_happy_energy_factor = 0.0         # happy：energy +2.0 × intensity × 系数（被感染）
+user_mood_happy_affection_factor = 0.0      # happy：affection +1.0 × intensity × 系数
+user_mood_angry_anxiety_factor = 0.0        # angry：anxiety +2.0 × intensity × 系数
+user_mood_angry_affection_factor = 0.0      # angry：affection -1.0 × intensity × 系数（克制）
+
 [sigmoid]
 # ── 触发概率的 sigmoid 参数 ──
 # P(触发) = 1 / (1 + e^(-k * (loneliness - midpoint)))
@@ -164,6 +201,16 @@ must_send_activation = 0.75     # 情绪类必发阈值
 # 对所有 trigger 类型统一生效（替代旧 lonely_high 专属 0.3^n）。
 repeat_decay = 0.6              # 每重复一次同类型触发，权重衰减系数
 repeat_cap = 3                  # 计数封顶（超过不再继续衰减）
+
+# ── v1.11 ①: 用户情绪感知 → comfort 安慰触发（默认关闭，可灰度）──
+# 对标 ESConv：感知到低落/崩溃（user_mood=fresh）→ 更主动安慰。
+# comfort 入 EMOTION_TRIGGERS → 自动继承 A3 日程乘数 / A4 三段激活 / A5 退场 / A6 repeat 阻尼。
+user_mood_ttl_minutes = 360.0   # user_mood 感知有效窗口（6h，过期不再触发/注解）
+user_mood_anxiety_bonus = 0.0   # 低落(low/distressed)时 anxiety 触发权重加成（× (1 + bonus × intensity)，0=关闭）
+user_mood_note_enabled = 0      # 语气注解开关（mood_note 注入 _build_context；0=关闭恒等）
+comfort_weight_base = 0.0       # comfort 基础权重（0=关闭；>0 时低落在窗口内可触发安慰）
+comfort_baseline = 0.5          # comfort 归一化"不触发"基线（raw/(raw+baseline)，同 anxiety 模式）（同 anxiety 模式）
+comfort_min_weight = 0.03       # 低于此权重不成为候选
 
 [poisson]
 # ── Poisson 过程参数 ──

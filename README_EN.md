@@ -21,7 +21,7 @@ Zero-LLM math decision engine · LLM message generation · WeChat delivery
 
 - **Decision/generation separation**: `chiguo_daemon.py` never calls an LLM and never writes message text — only structured JSON
 - **Zero-dependency core**: emotion decay, send gating, trigger evaluation, and topic selection all run locally on pure Python stdlib
-- **Interpretable**: 13 trigger types, 5 emotion dimensions, 8 topic sources — every parameter tunable in `chiguo_proactive.toml`, no code changes
+- **Interpretable**: 14 trigger types, 5 emotion dimensions, 8 topic sources — every parameter tunable in `chiguo_proactive.toml`, no code changes
 
 ## Table of Contents
 
@@ -70,7 +70,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 |---------|-------------|
 | 🧭 5-dimension emotion engine | Loneliness / affection / anxiety / energy / tsundere, half-life decay, real-time response to replies |
 | 🌙 Circadian learning | Dual-schedule dual-bucket learning, dynamic quiet window (no late-night pings) |
-| 🎯 13 trigger types | Sigmoid weights + weighted randomness instead of hard thresholds |
+| 🎯 14 trigger types | Sigmoid weights + weighted randomness instead of hard thresholds |
 | 💡 8 topic sources | Schedule/holidays, memory recall, solar terms, anniversaries, weather, NetEase Music… |
 | 🎵 Music bidirectional linkage | Playback inside the sleep window disproves "asleep" + reverse-calibrates the circadian model |
 | 🧠 Bayesian user state | 6 states inferred online: chatting / browsing / busy / sleeping / away / needs care |
@@ -79,9 +79,19 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 | 🗓 Schedule center | Unified management of schedule / holidays / breaks / exceptions / exam weeks / anniversaries / reminders; exam weeks auto-lower send rate; register an arrangement with one WeChat message |
 | 📊 Structured monitoring | stats / alerts / health |
 | 💗 Backend liveness detection | Real-traffic accounting + WeChat alert/recovery notices (zero extra calls) |
-| ⚖️ Elastic emotion engine | Elastic decay (rebounds faster the farther from equilibrium) + emotion interaction matrix + reply saturation damping |
-| 🚦 Smart trigger layer | Three-stage activation + schedule multiplier + repeat damping + unreplied backoff state machine |
+| ⚖️ Elastic emotion engine | Elastic decay (rebounds faster the farther from equilibrium) + emotion interaction matrix + reply saturation damping + reply impact inertia |
+| 🚦 Smart trigger layer | Three-stage activation + schedule multiplier + repeat damping + unreplied backoff state machine + comfort trigger |
+| 🫂 User mood sensing | LLM senses the user's mood (low/distressed/happy/angry) → comfort trigger + gentler tone note (off by default, grayscale) |
+| 🌊 Emotional fluctuation | OU noise simulates unexplained mood swings (off by default, grayscale) |
+| 🌱 Relationship dynamics | Long-term interactions slowly shift the emotional equilibrium (baseline drift, off by default, grayscale) |
 | 🛡 Deterministic fallback | pi failure → composer template fallback (zero LLM) + content-level anti-repetition |
+
+### v1.11 Changelog (4 emotion-engine improvements, 2026-08)
+
+1. **A11 Reply impact inertia**: single-reply emotion deltas are damped (heavier for negative, affection-modulated; `[emotion].impact_inertia_*` default 0 = off) → [SYSTEM.md §2.3](doc/SYSTEM.md)
+2. **A12 User mood sensing**: analysis gains `user_mood`/`user_mood_intensity`; sensed mood → emotion deltas + `comfort` trigger + gentler tone note (`[emotion].user_mood_*`/`[trigger].comfort_*` off by default) → §2.3, §5.1
+3. **A13 Emotional fluctuation**: OU noise inside tick() mimics natural mood swings (σ√Δt + dynamic cap, dedicated RNG; `[emotion].noise_*` off by default) → §2.3
+4. **A14 Emotion baseline drift**: long-term interactions slowly move the convergence targets (bounded ±20 + 30-day forgetting; `[emotion].baseline_*` off by default) → §2.3
 
 ### v1.10 Changelog (9 external-comparison optimizations, 2026-08)
 
@@ -89,7 +99,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 2. **A2 Emotion interaction matrix**: cross-dimension coupling after each tick (affection→anxiety, energy→loneliness, anxiety→energy; `[emotion].interaction_*` off by default) → §2.3
 3. **A10 Reply saturation damping**: more same-direction replies in a 30-minute window → weaker mood boost (×0.5^min(n,3)) → §2.4
 4. **A3 Schedule multiplier + jitter**: emotional trigger weights scaled by in-class 0.3 / free 1.2 / half-busy 0.6 × uniform(0.8,1.2); ritual triggers exempt → §2.6
-5. **A4 Three-stage activation**: emotional weight sum < 0.08 → silent, ≥ 0.5 → must-send (must_send lands in the decision JSON) → §2.6
+5. **A4 Three-stage activation**: emotional weight sum < 0.08 → silent, ≥ 0.75 → must-send (must_send lands in the decision JSON) → §2.6
 6. **A6 Generalized repeat damping**: all trigger types decay by history count (×0.6^min(n,3)) → §2.6
 7. **A5 Unreplied backoff state machine**: graded suppression after consecutive unreplied messages (3-4 → emotional blocked, ≥5 → all blocked; escape valve exempt) → §2.6
 8. **A8 Deterministic generation fallback**: pi failure → composer template fallback outputs the message (`_FALLBACK_LINES` last resort) → §5.7 & CLI reference
@@ -153,7 +163,7 @@ Inside the decision engine (`chiguo_daemon.py`, zero LLM):
 
 ```
 emotion decay (elastic + interaction matrix) → send gating (quiet window / caps / interval / energy / Bayesian sleep inference)
-  → trigger evaluation (13 sigmoid + 3-stage activation / schedule multiplier / repeat damping / backoff) → topic injection (8 sources for ice-breaking)
+  → trigger evaluation (14 sigmoid + 3-stage activation / schedule multiplier / repeat damping / backoff) → topic injection (8 sources for ice-breaking)
   → circadian learning (dual-schedule buckets → dynamic quiet window) → follow-up (pending topics)
   → music linkage (playback in sleep window disproves sleeping) → JSON output
 ```
@@ -212,7 +222,7 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: 38 py + 10 script standalone runners)
+# Core tests (full suite: 42 py + 10 script standalone runners)
 bash scripts/ci-test.sh   # same entry point as GitHub Actions; any failure exits non-zero
 ```
 
@@ -363,7 +373,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 Any contribution is welcome — especially ones that help *her* grow:
 
 - **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each `test_*.py` in `tests/` is a standalone runner, exit-code driven.
-- **Run the full suite before submitting**: see `AGENTS.md` (38 py + 10 script tests), all green before commit.
+- **Run the full suite before submitting**: see `AGENTS.md` (42 py + 10 script tests), all green before commit.
 - **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md` (repo rule).
 - **Commit style**: `feat:` / `fix:` / `docs:` / `chore:` prefix + Chinese description.
 - **Design docs**: for major changes, write a design doc under `~/chiguo-meta/specs/` (outside the repo) and get it reviewed first.

@@ -98,6 +98,164 @@ def apply_interaction_matrix(emotion: dict, cfg: dict) -> dict:
     return out
 
 
+# ── ④ 情绪基线长期漂移（关系动力学） ──────────────────────
+# 对标 astrbot_plugin_emotion_state_machine 的 GROUP/RELATION_BASELINE 概念：
+# 长期互动缓慢移动情绪收敛目标（基线），与人格层 regress_to_baseline（防人格
+# 漂移）分层——"人格稳定、情绪基线可漂移"。
+
+def baseline_shift_of(interaction: dict) -> dict:
+    """
+    事件 → 基线漂移方向表 {dim: ±1}。纯函数，可精确断言。
+    - user_reply + latency very_slow/slow → 冷落：loneliness↑、affection↓
+    - user_reply + warmth<−0.2 → 冷淡：loneliness/anxiety↑、affection↓
+    - user_reply + warmth>0.3 → 温柔：anxiety↓、affection↑
+    - character_send + was_replied=False → 未回复：loneliness/anxiety↑、affection↓
+    其余（快回/中性/被回复）→ 零漂移。
+    """
+    shift = {"loneliness": 0, "anxiety": 0, "affection": 0}
+    itype = interaction.get("type", "")
+    try:
+        warmth = float(interaction.get("warmth", 0.0))
+    except (TypeError, ValueError):
+        warmth = 0.0
+    lat_cat = interaction.get("latency_category", "normal")
+
+    if itype == "user_reply":
+        if lat_cat in ("slow", "very_slow"):
+            shift["loneliness"] += 1
+            shift["affection"] -= 1
+        if warmth < -0.2:
+            shift["loneliness"] += 1
+            shift["anxiety"] += 1
+            shift["affection"] -= 1
+        elif warmth > 0.3:
+            shift["anxiety"] -= 1
+            shift["affection"] += 1
+    elif itype == "character_send":
+        if not interaction.get("was_replied", False):
+            shift["loneliness"] += 1
+            shift["anxiety"] += 1
+            shift["affection"] -= 1
+    return shift
+
+
+# ── ② 情绪自然波动（OU 过程 + 动态上限） ──────────────────
+# 对标 lacuna_core FluctuationEngine：小幅带均值回归的噪声模拟情绪自然起伏。
+# OU 连续化公式对不规则 Δt（60s~24h+）数学一致，优于 1/f 粉红噪声（滤波器状态
+# 难在 daemon 每次新建进程时重建）；独立 random.Random 实例防全局序列污染。
+
+def ou_step(value: float, target: float, theta: float, sigma: float,
+            dt_hours: float, rng: random.Random) -> float:
+    """一步 OU：x += θ(μ−x)Δt + σ·√Δt·ε。dt<=0 或 sigma<=0 → 恒等。"""
+    if dt_hours <= 0 or sigma <= 0:
+        return value
+    pull = theta * (target - value) * dt_hours
+    shock = sigma * math.sqrt(dt_hours) * rng.gauss(0.0, 1.0)
+    return value + pull + shock
+
+
+def noise_cap(step_magnitude: float, raw_noise: float) -> float:
+    """动态上限：噪声绝对值 ≤ 0.5 × 本次弹性步进量（防 噪声>信号 反噬）。
+    step_magnitude<=0（gap≈0 的稳态）→ 噪声压到 0。"""
+    cap = 0.5 * abs(step_magnitude)
+    return max(-cap, min(cap, raw_noise))
+
+
+# ── ① 用户情绪感知（user_mood） ────────────────────────────
+# 对标 thu-coai/Emotional-Support-Conversation（ACL 2021）：共情先感知
+# 求助者情绪类型+强度。LLM 只报 mood/intensity，幅度由系数表决定（决策零 LLM）。
+
+# 基础方向表（× intensity × cfg 系数；系数默认 0 = 关闭灰度）
+MOOD_DELTA = {
+    "low":        {"anxiety": +2.0, "affection": +0.5},   # 心疼 → 不安略升、想靠近
+    "distressed": {"anxiety": +3.0, "affection": +1.0},   # 更强烈
+    "happy":      {"energy": +2.0,  "affection": +1.0},   # 被感染 → 元气回升
+    "angry":      {"anxiety": +2.0, "affection": -1.0},   # 不安升、好感微降（克制）
+}
+
+MOOD_NOTE = {
+    "low":        "（哥哥似乎心情低落（强度 {i:.1f}），语气比平时更温柔克制，少一点嘴硬，主动关心一句就好，不过度怜悯、不质问）",
+    "distressed": "（哥哥情绪很低落（强度 {i:.1f}），放下嘴硬，认真陪他说话，语气温柔坚定，给安全感，不卖惨不质问）",
+    "happy":      "（哥哥今天心情很好（强度 {i:.1f}），气氛轻松，可以更活泼一点接梗）",
+    "angry":      "（哥哥在生气（强度 {i:.1f}），语气放软、不顶嘴、给台阶下，先顺毛再说话）",
+}
+
+
+def user_mood_impact(mood: str, intensity: float, cfg: dict) -> dict:
+    """
+    user_mood → 情绪 delta。纯函数，可精确断言。
+    delta = MOOD_DELTA[mood][dim] × intensity × cfg["user_mood_<mood>_<dim>_factor"]
+    - calm / intensity<=0 / 系数 0 → {}（零效果）
+    - 未知 mood（调用方已归一化，防御性返回 {}）
+    """
+    if mood not in MOOD_DELTA or intensity <= 0:
+        return {}
+    out = {}
+    for dim, base in MOOD_DELTA[mood].items():
+        try:
+            k = float(cfg.get(f"user_mood_{mood}_{dim}_factor", 0.0))
+        except (TypeError, ValueError):
+            k = 0.0
+        if k != 0.0:
+            out[dim] = base * intensity * k
+    return out
+
+
+def user_mood_note(kind: str, intensity: float) -> str:
+    """user_mood → 语气注解（注入 _build_context guidance）。calm/未知 → 空串。"""
+    tpl = MOOD_NOTE.get(kind)
+    if not tpl or intensity <= 0:
+        return ""
+    return tpl.format(i=intensity)
+
+
+def mood_fresh(mood: dict | None, now, ttl_minutes: float = 360.0) -> bool:
+    """
+    user_mood 感知是否仍在有效窗口内（TTL 默认 6h）。
+    mood 为 None / 缺 at / 坏时间戳 → False（不感知）。
+    """
+    if not isinstance(mood, dict) or not mood.get("at"):
+        return False
+    try:
+        at = _dt.fromisoformat(mood["at"])
+    except (ValueError, TypeError):
+        return False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=_CST)
+    age_minutes = (now - at).total_seconds() / 60.0
+    return 0 <= age_minutes <= ttl_minutes
+
+
+# ── ③ 回复影响惯性阻尼 ──────────────────────────────────
+# 单条 analysis delta 幅度压缩（默认 inertia=0 → 恒等，可灰度）。
+# 对标 lacuna_core InertiaFilter：负向权重更高（inertia_neg 独立键）。
+
+def impact_inertia(
+    delta: float,
+    inertia: float,
+    inertia_neg: float,
+    affection_mod: float = 0.0,
+    affection: float = 50.0,
+) -> float:
+    """
+    单条回复影响阻尼：effective_delta = delta × (1 - inertia_eff)。
+
+    - delta < 0（负向，如冷淡回复的不安回升）→ 用 inertia_neg（可设更高，
+      参考 lacuna_core 负向权重 1.5 vs 1.0 先例）
+    - affection_mod > 0 → 亲密度调制：好感偏离 50 越远，阻尼缩放越大
+      （好感高 → 阻尼小，更易被哄好/更快被伤）
+    - inertia_eff 钳制 [0, 0.9]（永不反向、永不归零）
+    - inertia 与 inertia_neg 均 ≤ 0 → 恒等返回（默认关闭灰度）
+    """
+    sign = -1.0 if delta < 0 else 1.0
+    base = inertia_neg if sign < 0 else inertia
+    if base <= 0:
+        return delta
+    eff = base * (1.0 - affection_mod * (affection - 50.0) / 100.0)
+    eff = max(0.0, min(eff, 0.9))
+    return delta * (1.0 - eff)
+
+
 # ── A10: 回复饱和阻尼 ────────────────────────────────────
 # 30 分钟窗口内同向回复事件越多，情绪加成越小（防刷）。
 

@@ -227,7 +227,7 @@ export function buildBaseAgentArgs({ analysisMode } = {}) {
 
 /** analysis-mode 用户消息模板(print 与 RPC 共用)。 */
 export function buildAnalysisPrompt(message) {
-  return `你是迟菓。以下是当前收到的一条微信消息。先输出 JSON 情绪分析：{"warmth":-1~1,"effort":0~1,"attention":0~1,"topic":"可选","suppress_hours":"可选","recall":"可选(涉及登记事实/过去日期时给检索词,否则省略)"}，用 <<ANALYSIS>>{...}<<END>> 包裹。然后以迟菓人格自然回复哥哥。\n\n消息：${message}`
+  return `你是迟菓。以下是当前收到的一条微信消息。先输出 JSON 情绪分析：{"warmth":-1~1,"effort":0~1,"attention":0~1,"topic":"可选","suppress_hours":"可选","recall":"可选(涉及登记事实/过去日期时给检索词,否则省略)","user_mood":"可选(calm|low|distressed|happy|angry)","user_mood_intensity":"可选(0~1)"}，用 <<ANALYSIS>>{...}<<END>> 包裹。然后以迟菓人格自然回复哥哥。\n\n消息：${message}`
 }
 
 export async function run(exec, { prompt, analysisMode, sendMode }) {
