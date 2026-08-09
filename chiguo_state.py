@@ -1418,7 +1418,7 @@ class ChiguoState:
 
     def _apply_emotion_impact(self, analysis: dict, now: datetime | None = None):
         """
-        根据 pi 情绪分析结果微调情绪状态。
+        根据 agent 情绪分析结果微调情绪状态。
         三个维度：warmth（温暖度）、effort（用心度）、attention（关注度）。
         所有系数从配置文件注入，可调参。
         """

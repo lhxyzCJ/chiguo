@@ -163,7 +163,7 @@ export function extractBlock(text, marker) {
   return null  // 括号不平衡 → 畸形
 }
 
-/** 用 spawn 收集 stdout（execFile 在 pi 下会挂起：pi 等 stdin EOF，execFile 管道不关） */
+/** 用 spawn 收集 stdout（execFile 在 agent 二进制下会挂起：其等 stdin EOF，execFile 管道不关） */
 export function runAgentBin(bin, args, opts) {
   return new Promise((resolve, reject) => {
     const c = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts })
@@ -215,8 +215,8 @@ export function runnerCommand(mode, sysPrompt) {
   }
 }
 
-/** 共享 pi 参数构造(print 模式与 RPC 常驻复用):不含 -p/--mode/prompt。 */
-export function buildBasePiArgs({ analysisMode } = {}) {
+/** 共享 agent 参数构造(print 模式与 RPC 常驻复用):不含 -p/--mode/prompt。 */
+export function buildBaseAgentArgs({ analysisMode } = {}) {
   return ['--provider', PROVIDER, '--model', MODEL,
     '--session-id', SESSION_ID, '--no-context-files', '--no-skills',
     '--append-system-prompt', PERSONALITY,
@@ -241,7 +241,7 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
   const custom = runnerCommand(mode, sysPrompt)
   const bin = custom ? custom.bin : AGENT_BIN
   const args = custom ? custom.args
-    : ['-p', ...buildBasePiArgs({ analysisMode }), '--mode', 'json', sysPrompt]
+    : ['-p', ...buildBaseAgentArgs({ analysisMode }), '--mode', 'json', sysPrompt]
   const t0 = Date.now()
   const tele = (ok, text, usage, error) => appendTelemetry({
     ts: new Date().toISOString(), mode, runner: RUNNER,

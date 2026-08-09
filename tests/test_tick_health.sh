@@ -98,7 +98,7 @@ if (mode === 'success') {
 JS
 
 cp "$REPO_ROOT/scripts/agent_health.py" "$REPO/scripts/agent_health.py"
-export FAKE_AGENT_MODE_FILE="$TMP/pi_mode"
+export FAKE_AGENT_MODE_FILE="$TMP/agent_mode"
 echo fail > "$FAKE_AGENT_MODE_FILE"
 
 STATE="$REPO/agent_health.json"  # agent_health.py record 默认状态文件（#99：agent_health.json）

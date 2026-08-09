@@ -5,7 +5,7 @@
  * 背景：pi 为纯文本调用无工具权限，纪念日/假期（--anniversary/--break）指令链路
  * 由 bridge 确定性接管。方案 A：bridge 规则化接管——
  * 收到消息先正则检测命令意图，命中则直接执行 daemon CLI 并回复确认，不经过 pi。
- * 确定性优先：检测保守（短消息 + 非问句），歧义消息放行给 pi 自然回复。
+ * 确定性优先：检测保守（短消息 + 非问句），歧义消息放行给 agent 自然回复。
  *
  * 用法（供 bridge.mjs import）：
  *   detectSpecialCommand(text) → null | { action, daemon: [...argv], hint }

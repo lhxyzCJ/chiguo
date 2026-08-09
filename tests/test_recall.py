@@ -65,7 +65,7 @@ def test_recall_by_keyword_full_scan():
         r = recall("生日", src, TODAY)
         assert any("生日" in m.get("label", "") for m in r["matches"]), f"全量子串扫描(1月事实也命中), got {r['matches']}"
         assert r["no_match"] is False
-        # 无匹配 → 显式信号(pi 反问引导)
+        # 无匹配 → 显式信号(agent 反问引导)
         r = recall("不存在的关键词xyz", src, TODAY)
         assert r["matches"] == [] and r["no_match"] is True, f"got {r}"
         # 截断 ≤ 20
