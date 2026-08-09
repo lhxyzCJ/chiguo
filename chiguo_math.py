@@ -98,6 +98,28 @@ def apply_interaction_matrix(emotion: dict, cfg: dict) -> dict:
     return out
 
 
+# ── ② 情绪自然波动（OU 过程 + 动态上限） ──────────────────
+# 对标 lacuna_core FluctuationEngine：小幅带均值回归的噪声模拟情绪自然起伏。
+# OU 连续化公式对不规则 Δt（60s~24h+）数学一致，优于 1/f 粉红噪声（滤波器状态
+# 难在 daemon 每次新建进程时重建）；独立 random.Random 实例防全局序列污染。
+
+def ou_step(value: float, target: float, theta: float, sigma: float,
+            dt_hours: float, rng: random.Random) -> float:
+    """一步 OU：x += θ(μ−x)Δt + σ·√Δt·ε。dt<=0 或 sigma<=0 → 恒等。"""
+    if dt_hours <= 0 or sigma <= 0:
+        return value
+    pull = theta * (target - value) * dt_hours
+    shock = sigma * math.sqrt(dt_hours) * rng.gauss(0.0, 1.0)
+    return value + pull + shock
+
+
+def noise_cap(step_magnitude: float, raw_noise: float) -> float:
+    """动态上限：噪声绝对值 ≤ 0.5 × 本次弹性步进量（防 噪声>信号 反噬）。
+    step_magnitude<=0（gap≈0 的稳态）→ 噪声压到 0。"""
+    cap = 0.5 * abs(step_magnitude)
+    return max(-cap, min(cap, raw_noise))
+
+
 # ── ① 用户情绪感知（user_mood） ────────────────────────────
 # 对标 thu-coai/Emotional-Support-Conversation（ACL 2021）：共情先感知
 # 求助者情绪类型+强度。LLM 只报 mood/intensity，幅度由系数表决定（决策零 LLM）。

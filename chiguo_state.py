@@ -12,6 +12,7 @@
 
 import json
 import os
+import random
 import hashlib
 import shutil
 import sys
@@ -26,7 +27,7 @@ from chiguo_math import (
     dynamic_lambda, hawkes_intensity, longing_decay,
     in_quiet_window,
     apply_interaction_matrix, drop_damp, impact_inertia,
-    user_mood_impact, MOOD_DELTA,
+    user_mood_impact, MOOD_DELTA, ou_step, noise_cap,
 )
 from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
@@ -1139,7 +1140,40 @@ class ChiguoState:
         for k, v in new_vals.items():
             setattr(self.emotion, k, v)
 
+        # ── ② 情绪自然波动（OU 噪声；noise_enabled=0 关闭 → 行为恒等，可灰度）──
+        # 对标 lacuna_core FluctuationEngine：小幅带均值回归的噪声消除"机械感"。
+        # 仅作用于 loneliness/anxiety（当下感受维度）；affection（长期存量）/tsundere
+        # （角色维度）/energy（资源+安全阀）不碰。独立 RNG 不污染全局 random 序列；
+        # 噪声为瞬态不落盘；动态上限 min(σ√Δt, 0.5×弹性步进) 保证 噪声<信号。
+        if cfg.get("noise_enabled", 0) != 0:
+            try:
+                noise_theta = float(cfg.get("noise_theta", 0.5))
+                lo_sigma = float(cfg.get("noise_loneliness_sigma", 0.3))
+                anx_sigma = float(cfg.get("noise_anxiety_sigma", 0.3))
+            except (TypeError, ValueError):
+                noise_theta, lo_sigma, anx_sigma = 0.5, 0.3, 0.3
+            rng = self._noise_rng()
+            lo_step = abs(self.emotion.loneliness - old_lo)
+            anx_step = abs(self.emotion.anxiety - old_anx)
+            self.emotion.loneliness += noise_cap(
+                lo_step, ou_step(0.0, 0.0, noise_theta, lo_sigma, hours, rng))
+            self.emotion.anxiety += noise_cap(
+                anx_step, ou_step(0.0, 0.0, noise_theta, anx_sigma, hours, rng))
+
         self._finalize(now)
+
+    def _noise_rng(self):
+        """②: 惰性创建独立 random.Random 实例（非 dataclass 字段，不序列化）。
+        种子来自 [emotion].noise_seed——与全局 random.seed(42) 序列完全隔离。"""
+        rng = getattr(self, "_noise_rng_instance", None)
+        if rng is None:
+            try:
+                seed = int(self.config.get("emotion", {}).get("noise_seed", 42))
+            except (TypeError, ValueError):
+                seed = 42
+            rng = random.Random(seed)
+            self._noise_rng_instance = rng
+        return rng
 
     # ── v7: 接话茬 — 待接续话题管理 ────────────────────
 
