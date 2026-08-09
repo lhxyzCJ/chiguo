@@ -221,9 +221,14 @@ class MessageComposer:
             except (tomllib.TOMLDecodeError, OSError):
                 continue
             meta = data.get("meta", {})
+            if not isinstance(meta, dict):
+                continue  # [meta] 配成非表结构 → 跳过该文件，避免 meta.get 崩溃
+            trigger_templates = data.get("trigger_templates", {})
+            if not isinstance(trigger_templates, dict):
+                trigger_templates = {}  # 非表结构视为无参考台词
             entry = {
                 "meta": meta,
-                "trigger_templates": data.get("trigger_templates", {}),
+                "trigger_templates": trigger_templates,
             }
             for cue_id in cue_ids:
                 templates[cue_id] = entry
@@ -470,7 +475,9 @@ class MessageComposer:
 
         # Topic 注入（如果有）
         if topic_data:
-            parts.append(f"\n[话题提示：{topic_data['hint']}]")
+            hint = topic_data.get("hint", "")
+            if hint:
+                parts.append(f"\n[话题提示：{hint}]")
 
         return "\n".join(parts)
 
@@ -498,15 +505,22 @@ def _fallback_text(combo: dict) -> str:
     cue = combo.get("cue")
     if cue:
         lines = list(cue.get("templates") or [])
-    if not lines:
-        lines = [random.choice(_FALLBACK_LINES)]
     cleaned: list[str] = []
     for line in lines[:3]:
+        # 含 {content} 等占位符的模板行（零 LLM 直发会原样泄漏给用户）→ 跳过
+        if "{" in line:
+            continue
         # 剥结尾注释：中文全角（…）或半角 (…) 括号组（原著行号/风格标注）
         line = re.sub(r"\s*[（(][^（）()]*[）)]\s*$", "", line).strip()
         if line:
             cleaned.append(line)
-    return "\n".join(cleaned)
+    if not cleaned:
+        # 模板全被过滤（占位符/空行）→ 回退固定可发送文案池
+        cleaned = [random.choice(_FALLBACK_LINES)]
+    text = "\n".join(cleaned)
+    if len(text) > 500:
+        text = text[:500]  # 兜底文本长度上限，防超长直发
+    return text
 
 
 def _cli_main(argv=None) -> int:
@@ -523,7 +537,7 @@ def _cli_main(argv=None) -> int:
 
     if args.decision_file:
         try:
-            with open(args.decision_file, "r", encoding="utf-8") as f:
+            with open(args.decision_file, "r", encoding="utf-8-sig") as f:
                 decision = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             print(f"composer fallback: 决策文件不可读: {e}", file=sys.stderr)

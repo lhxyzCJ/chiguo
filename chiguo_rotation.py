@@ -9,6 +9,7 @@
 # ============================================================
 
 import os
+import sys
 import tomllib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -79,8 +80,11 @@ def force_rotate(log_paths: list[str],
         # 防止重复调用覆盖已有归档
         if archive_name.exists():
             archive_name = archive_path / f"{current_month}-{p.stem}-{int(datetime.now(CST).timestamp())}{p.suffix}"
-        os.rename(str(p), str(archive_name))
-        p.touch()
+        try:
+            os.rename(str(p), str(archive_name))
+            p.touch()
+        except OSError as e:
+            print(f"rotation: 强制轮转 {p} 失败: {e}", file=sys.stderr)
 
 
 def _rotate_one(file_path: Path, archive_dir: str, mtime: datetime):
@@ -88,12 +92,18 @@ def _rotate_one(file_path: Path, archive_dir: str, mtime: datetime):
     archive_path = _anchor_archive_dir(archive_dir)
     archive_path.mkdir(parents=True, exist_ok=True)
     archive_name = archive_path / f"{mtime.strftime('%Y-%m')}-{file_path.name}"
+    # 目标已存在 → 追加时间戳后缀，避免静默覆盖旧归档
+    if archive_name.exists():
+        stamp = int(datetime.now(CST).timestamp())
+        archive_name = archive_path / (
+            f"{mtime.strftime('%Y-%m')}-{file_path.stem}-{stamp}{file_path.suffix}"
+        )
 
     try:
         os.rename(str(file_path), str(archive_name))
         file_path.touch()
-    except OSError:
-        pass  # 轮转失败不阻塞
+    except OSError as e:
+        print(f"rotation: 轮转 {file_path} 失败: {e}", file=sys.stderr)
 
 
 def _load_config(config_path: str) -> dict:
