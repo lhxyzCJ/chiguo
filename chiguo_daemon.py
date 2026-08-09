@@ -102,8 +102,14 @@ class DecisionEngine:
         except OSError:
             return
         if mtime > self._config_mtime:
-            with open(self.config_path, "rb") as f:
-                self.config = tomllib.load(f)
+            try:
+                with open(self.config_path, "rb") as f:
+                    new_config = tomllib.load(f)
+            except (OSError, ValueError) as e:
+                # TOML 语法错误/读取失败 → 保留旧配置，打 stderr 告警继续运行
+                print(f"[warn] 配置热重载失败，保留旧配置: {e}", file=sys.stderr)
+                return
+            self.config = new_config
             self._inject_base_dir()
             self._config_mtime = mtime
             self.state.config = self.config
@@ -185,8 +191,8 @@ class DecisionEngine:
         try:
             with open(self.log_path, "a") as f:
                 f.write(json.dumps(decision, ensure_ascii=False) + "\n")
-        except Exception:
-            pass  # 日志失败不影响主流程
+        except Exception as e:
+            print(f"[warn] 写入 {self.log_path} 失败: {e}", file=sys.stderr)  # 日志失败不影响主流程
 
     def _check_data_freshness(self) -> str | None:
         """
@@ -585,6 +591,8 @@ class DecisionEngine:
             if self.state.cooldown.last_message_at:
                 try:
                     last = datetime.fromisoformat(self.state.cooldown.last_message_at)
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=CST)  # 与 _parse_tz 一致：naive → 补 CST
                     nxt = last + timedelta(minutes=min_int + 2)
                     if nxt > now:
                         return nxt.isoformat()
@@ -853,7 +861,7 @@ class DecisionEngine:
             "instruction": instruction,
         }
 
-    RECV_DEDUP_WINDOW_S = 600  # v9: bridge 确定性记录与 standing order 分析升级的判定窗口
+    RECV_DEDUP_WINDOW_S = 30  # v9: 补报升级判定的极短窗口（<30s 才视为 bridge 补报）
 
     def record_user_message(self, text: str, analysis_json: str | None = None):
         now = datetime.now(CST)
@@ -876,21 +884,27 @@ class DecisionEngine:
             # 同一条消息会被记录两次：bridge 先确定性 --user-msg（无分析），
             # standing order 随后补 --user-msg --analysis。基础回复效果
             # （延迟/情绪骤降/好感/元气）只应应用一次；第二次只补分析微调。
-            # 去重仅对"带分析"副本生效：无分析真实重发 → 完整处理；
-            # 带分析重复上报（窗口内第二次）→ 升级分支内兜底静默跳过，防双重应用。
+            # 仅当上一条同文本记录"无分析"且时间差极短（<30s）时，本条才视为
+            # bridge 补报的升级副本；其余同文本（已升级过的、或时间差较长的）
+            # 一律视为用户真实重发 → 走完整 on_user_message。
             text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
             dedup = self.state.cooldown.recv_dedup
-            is_dup = bool(dedup and dedup.get("text_sha") == text_sha and dedup.get("at"))
-            if is_dup:
+            is_upgrade = (
+                analysis_dict is not None
+                and bool(dedup)
+                and not dedup.get("analysis")
+                and dedup.get("text_sha") == text_sha
+                and dedup.get("at")
+            )
+            if is_upgrade:
                 try:
                     prev_at = datetime.fromisoformat(dedup["at"])
-                    is_dup = (now - prev_at).total_seconds() < self.RECV_DEDUP_WINDOW_S
+                    is_upgrade = (now - prev_at).total_seconds() < self.RECV_DEDUP_WINDOW_S
                 except (ValueError, TypeError):
-                    is_dup = False
-            is_dup = is_dup and analysis_dict is not None
+                    is_upgrade = False
 
-            if is_dup:
-                if analysis_dict and not dedup.get("analysis"):
+            if is_upgrade:
+                if analysis_dict:
                     self.state._apply_analysis_impact(analysis_dict, now)
                     self.state.cooldown.recv_dedup = {
                         "text_sha": text_sha,
@@ -1007,8 +1021,8 @@ class DecisionEngine:
         try:
             with open(self.messages_log_path, "a") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception:
-            pass  # 消息归档失败不影响主流程
+        except Exception as e:
+            print(f"[warn] 写入 {self.messages_log_path} 失败: {e}", file=sys.stderr)  # 消息归档失败不影响主流程
 
     def record_send_text(self, msg_id: str, text: str,
                          trigger: str = None, intensity: str = None,
@@ -1050,18 +1064,32 @@ class DecisionEngine:
         return texts
 
     def _has_send_result(self, msg_id: str) -> bool:
-        """日志中是否已有该 msg_id 的 send_result 条目（幂等防护）。"""
+        """日志中是否已有该 msg_id 的 send_result 条目（幂等防护）。
+        从文件尾部倒序扫描最近 500 行（窗口不足自动扩展），
+        避免全量 O(n) 扫描：send_result 紧邻对应 send 决策，无需看更早日志。"""
+        tail: list[str] = []
         try:
-            with open(self.log_path, "r") as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if entry.get("action") == "send_result" and entry.get("msg_id") == msg_id:
-                        return True
+            with open(self.log_path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                pos = size
+                buf = b""
+                while pos > 0 and len(tail) < 500:
+                    step = min(65536, pos)
+                    pos -= step
+                    f.seek(pos)
+                    buf = f.read(step) + buf
+                    tail = buf.decode("utf-8", errors="replace").splitlines()
+                tail = tail[-500:]
         except OSError:
-            pass
+            return False
+        for line in reversed(tail):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("action") == "send_result" and entry.get("msg_id") == msg_id:
+                return True
         return False
 
     def record_send_result(self, msg_id: str, status: str, error: str = None):
@@ -1526,13 +1554,13 @@ def main():
     if args.user_msg_file:
         try:
             args.user_msg = Path(args.user_msg_file).read_text(encoding="utf-8")
-        except OSError as e:
+        except (OSError, UnicodeDecodeError, ValueError) as e:
             print(json.dumps({"error": f"读取消息文件失败: {e}"}, ensure_ascii=False))
             sys.exit(1)
     if args.analysis_file:
         try:
             args.analysis = Path(args.analysis_file).read_text(encoding="utf-8")
-        except OSError as e:
+        except (OSError, UnicodeDecodeError, ValueError) as e:
             print(json.dumps({"error": f"读取分析文件失败: {e}"}, ensure_ascii=False))
             sys.exit(1)
 
