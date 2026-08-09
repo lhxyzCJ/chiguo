@@ -9,7 +9,7 @@
 
 ```bash
 # Run ALL tests: 36 py + 10 script runners (every runner exits non-zero on failure)
-node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && \
+node tests/test_agent_run.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && \
 node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
 bash tests/test_install_agent.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
 bash tests/test_tick_health.sh && \
@@ -291,14 +291,14 @@ Intent × Cue × Vibe three-layer system:
 ## 11. LLM Host Integration (Phase 4 — pi-agent)
 
 > Current architecture: system crontab `chiguo-tick.sh` (send side, session `chiguo-send`) + wechat-bridge
-> `askPi` (reply side, session `chiguo-main`) + `scripts/agent-run.mjs` + `scripts/install_agent.sh`.
+> `askAgent` (reply side, session `chiguo-main`) + `scripts/agent-run.mjs` + `scripts/install_agent.sh`.
 > See `doc/AGENT_INTEGRATION.md`.
 >
 > v1.8 agent runner abstraction: `[host].runner` = `agent` (default, pi binary) or `command` (any CLI agent
 > via `[host].agent_command` array). In command mode agent-run.mjs executes
 > `<agent_command> --prompt <full prompt> --mode <analysis|send|extract|verify|recall|replan>` and parses
 > stdout JSON `{ok,text,analysis?,parsed?,raw?}` (NDJSON compatible); prompts are built from agent-run.mjs
-> per-mode templates. The RPC persistent mode stays agent-only (`WECHAT_BRIDGE_PI_RPC=1`).
+> per-mode templates. The RPC persistent mode stays agent-only (`WECHAT_BRIDGE_AGENT_RPC=1`).
 
 ### Send side — trigger-script gate (zero model calls on idle)
 1. **Cron**: system crontab `*/15 * * * *` runs `scripts/chiguo-tick.sh` (send side, session `chiguo-send`; registered by `scripts/install_agent.sh`)
@@ -306,13 +306,13 @@ Intent × Cue × Vibe three-layer system:
 3. `action: "idle"` → `{fire: false}` (~90% of evaluations never wake the agent)
 4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `curl --noproxy '*' -X POST http://127.0.0.1:18790/send` (wechat-bridge) → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
 
-### Reply side — bridge askPi
-1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askPi` (`agent-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
+### Reply side — bridge askAgent
+1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askAgent` (`agent-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
-3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askPi `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 600s → analysis-only upgrade, no double counting)
+3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askAgent `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 600s → analysis-only upgrade, no double counting)
 
 ### Schedule-center CLI (daemon subcommands, schedule/ 包)
-- `chiguo_daemon.py --attention` — T1/T2/T3 注意力快照（回复侧注入，零写；失败降级继续 askPi）
+- `chiguo_daemon.py --attention` — T1/T2/T3 注意力快照（回复侧注入，零写；失败降级继续 askAgent）
 - `chiguo_daemon.py --schedule-recall <query>` — 安排回忆检索（日期或关键词，A4 形状）
 - `chiguo_daemon.py --schedule-change <json>` — 写安排（reminder/add/cancel/move/exam_week/remove；畸形 JSON → bad_json 不写入；ApiRejection → H5 文案）
 - `python -m schedule.replan --check` — 复盘只读检查明日计划；`python -m schedule.holiday [YYYY-MM-DD]` — 节假日查询

@@ -114,10 +114,10 @@ flowchart LR
         CRON[系统 crontab<br/>每 15 分钟] --> TICK[chiguo-tick.sh]
         TICK --> DC[daemon --compact<br/>零 LLM 决策门控]
         DC -->|action≠send| X1((本轮不发))
-        DC -->|action=send| PI[agent-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
-        PI --> SEND[POST /send<br/>127.0.0.1:18790]
+        DC -->|action=send| AGENT[agent-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
+        AGENT --> SEND[POST /send<br/>127.0.0.1:18790]
         SEND --> WX[(微信)]
-        PI -. 发送结果回传 .-> DC
+        AGENT -. 发送结果回传 .-> DC
     end
     subgraph 被动回复链
         WX -->|新消息| BR[bridge 收消息<br/>OWNER_ID 门<br/>TurnQueue 串行]
@@ -143,7 +143,7 @@ flowchart LR
         DC <-->|音乐话题| NE[(网易云)]
         MON[monitor] -. 巡检 .-> ST
     end
-    PI -. 成败记账 .-> PH[agent_health.py 假死状态机]
+    AGENT -. 成败记账 .-> PH[agent_health.py 假死状态机]
     AP -. 成败记账 .-> PH
     PH -. 告警/恢复 .-> WX
 
@@ -236,7 +236,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 **作用**：agent 后端抽象——所有 LLM 能力都从这里来：主动消息的生成、回复时的情绪分析与回复文本。默认经 pi-agent 调用模型 API，支持任意 provider（OpenAI / DeepSeek / Anthropic / 自建网关…），由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定；`[host].runner = command` 时可替换为任意 CLI agent（`[host].agent_command` 指定，统一契约 `--prompt <完整提示词> --mode <mode>`，stdout 输出 JSON 或 NDJSON）。
 
-**安装/配置**：默认 pi 模式：`export PI_API_KEY=... && bash scripts/install_agent.sh --yes`，或 `pi` 交互式 `/login <provider>`；command 模式只需任意可执行 agent。详见 [🧠 接入模型后端](#-接入模型后端) 与 [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)。
+**安装/配置**：默认 pi 模式：`export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`，或 `pi` 交互式 `/login <provider>`；command 模式只需任意可执行 agent。详见 [🧠 接入模型后端](#-接入模型后端) 与 [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)。
 
 **缺失影响**：消息无法生成——决策引擎照常评估"该不该发"，但没有 LLM 就没有话可说。
 
@@ -290,7 +290,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 消息生成与情绪分析走 **agent 后端**（默认 pi-agent），provider 由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定（缺省示例 opencode-go，可换任意 pi 支持的接入方式）；`[host].runner = command` 时替换为任意 CLI agent（`[host].agent_command`，契约 `--prompt` + `--mode`，stdout JSON/NDJSON）：
 
-- **内置 provider**：`pi` 交互式 `/login <provider>` 写入 auth.json，或 `export PI_API_KEY=... && bash scripts/install_agent.sh --yes`
+- **内置 provider**：`pi` 交互式 `/login <provider>` 写入 auth.json，或 `export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`
 - **自定义 OpenAI 兼容端点**：写 `~/.pi/agent/models.json`（pi 官方机制，支持 ollama/vLLM/自建网关）
 - **任意 CLI agent**：`[host].runner = "command"` + `[host].agent_command = [...]`（RPC 常驻仅 agent 模式）
 
@@ -322,7 +322,7 @@ personality/
 
 ## 🛠 部署与运维
 
-**前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export PI_API_KEY=...`）；ollama 可选（记忆嵌入）。
+**前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export AGENT_API_KEY=...`）；ollama 可选（记忆嵌入）。
 
 **分级部署**：三档路径见 [🚀 快速开始](#-快速开始)；完整指南（六步详解/落点地图/迁移/验证）见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 

@@ -23,7 +23,7 @@
 
 - Debian Linux + systemd（root 或可 sudo——微信桥自启与网易云服务要写 systemd）
 - git / curl（deploy.sh 自装 uv 需要 curl）/ Node.js + npm（wechatbot SDK 与记忆扩展都要构建）
-- 模型 API key（`export PI_API_KEY=...` 再跑部署）
+- 模型 API key（`export AGENT_API_KEY=...` 再跑部署）
 - 可选：ollama（`qwen3-embedding:0.6b` 嵌入模型，记忆扩展用；缺则记忆降级，不影响主链路）
 - 默认端口：18790（微信桥 /send）/ 3000（网易云 API）/ 11434（ollama）
 
@@ -59,7 +59,7 @@
 
 ### 5. pi 环境
 
-`bash scripts/install_agent.sh`（七阶段：探测 → 记忆扩展 clone+build → settings.json → json5 配置 → ollama 检查 → auth.json 写 key → crontab 注册 + 冒烟）。先 `export PI_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。
+`bash scripts/install_agent.sh`（七阶段：探测 → 记忆扩展 clone+build → settings.json → json5 配置 → ollama 检查 → auth.json 写 key → crontab 注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。
 
 ### 6. 网易云 API 服务（可选）
 

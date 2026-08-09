@@ -114,10 +114,10 @@ flowchart LR
         CRON[系统 crontab<br/>每 15 分钟] --> TICK[chiguo-tick.sh]
         TICK --> DC[daemon --compact<br/>零 LLM 决策门控]
         DC -->|action≠send| X1((本轮不发))
-        DC -->|action=send| PI[agent-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
-        PI --> SEND[POST /send<br/>127.0.0.1:18790]
+        DC -->|action=send| AGENT[agent-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
+        AGENT --> SEND[POST /send<br/>127.0.0.1:18790]
         SEND --> WX[(微信)]
-        PI -. 发送结果回传 .-> DC
+        AGENT -. 发送结果回传 .-> DC
     end
     subgraph 被动回复链
         WX -->|新消息| BR[bridge 收消息<br/>OWNER_ID 门<br/>TurnQueue 串行]
@@ -143,7 +143,7 @@ flowchart LR
         DC <-->|音乐话题| NE[(网易云)]
         MON[monitor] -. 巡检 .-> ST
     end
-    PI -. 成败记账 .-> PH[agent_health.py 假死状态机]
+    AGENT -. 成败记账 .-> PH[agent_health.py 假死状态机]
     AP -. 成败记账 .-> PH
     PH -. 告警/恢复 .-> WX
 
@@ -236,7 +236,7 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 **Role**: the agent backend abstraction — all LLM capabilities come from here: proactive message generation, and reply mood analysis + reply text. By default they go through pi-agent, which supports any provider (OpenAI / DeepSeek / Anthropic / self-hosted gateways…), decided by the single source `[host].provider` in `chiguo_proactive.toml`; with `[host].runner = command` you can swap in any CLI agent instead (`[host].agent_command`, unified contract `--prompt <full prompt> --mode <mode>`, JSON or NDJSON on stdout).
 
-**Setup**: default pi mode: `export PI_API_KEY=... && bash scripts/install_agent.sh --yes`, or `pi` interactive `/login <provider>`; command mode just needs any executable agent. See [🧠 Bring Your Own Model](#-bring-your-own-model) and [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md).
+**Setup**: default pi mode: `export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`, or `pi` interactive `/login <provider>`; command mode just needs any executable agent. See [🧠 Bring Your Own Model](#-bring-your-own-model) and [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md).
 
 **Missing**: no messages can be generated — the decision engine still evaluates *whether* to send, but there is no LLM to produce the words.
 
@@ -290,7 +290,7 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 All message generation and mood analysis go through the **agent backend** (pi-agent by default); the provider is decided by a single source — `[host].provider` in `chiguo_proactive.toml` (default example: opencode-go; any provider supported by pi works). With `[host].runner = command` you can swap in any CLI agent (`[host].agent_command`, contract `--prompt` + `--mode`, JSON/NDJSON on stdout):
 
-- **Built-in providers**: run `pi` interactively and `/login <provider>` to store the key in auth.json, or `export PI_API_KEY=... && bash scripts/install_agent.sh --yes`
+- **Built-in providers**: run `pi` interactively and `/login <provider>` to store the key in auth.json, or `export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`
 - **Custom OpenAI-compatible endpoints**: write `~/.pi/agent/models.json` (pi's official mechanism — works with ollama / vLLM / self-hosted gateways)
 - **Any CLI agent**: `[host].runner = "command"` + `[host].agent_command = [...]` (RPC resident mode is agent-only)
 
@@ -322,7 +322,7 @@ Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (3
 
 ## 🛠 Deploy & Ops
 
-**Prerequisites**: Debian Linux (systemd) + git + Node.js/npm + a model API key (`export PI_API_KEY=...`); ollama optional (memory embeddings).
+**Prerequisites**: Debian Linux (systemd) + git + Node.js/npm + a model API key (`export AGENT_API_KEY=...`); ollama optional (memory embeddings).
 
 **Tiered deployment**: the three tiers are in [🚀 Quick Start](#-quick-start); the full guide (six steps in detail / landing map / migration / verification) is [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
 

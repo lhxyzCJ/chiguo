@@ -13,19 +13,19 @@
 | `scripts/pi_health.py` | `scripts/agent_health.py` |
 | `scripts/install_pi.sh` | `scripts/install_agent.sh` |
 | `scripts/pi-auth.sh` | `scripts/agent-auth.sh` |
-| `tests/test_pi_run.mjs` | `tests/test_agent_run.mjs` |
+| `tests/test_agent_run.mjs` | `tests/test_agent_run.mjs` |
 | `tests/test_pi_health.py` | `tests/test_agent_health.py` |
-| `tests/test_bridge_askpi.mjs` | `tests/test_bridge_askagent.mjs` |
+| `tests/test_bridge_askagent.mjs` | `tests/test_bridge_askagent.mjs` |
 | `tests/test_install_pi.sh` | `tests/test_install_agent.sh` |
 | `doc/PI_INTEGRATION.md` | `doc/AGENT_INTEGRATION.md`（本文件） |
 | `pi_health.json(.lock)` | `agent_health.json(.lock)`（运行时） |
 | `logs/pi-run.log` | `logs/agent-run.log`（运行时） |
 
 ### env 映射
-`PIRUN_*`→`AGENTRUN_*`（AGENTRUN_RUNNER/PROVIDER/MODEL/THINKING/REPLY_THINKING/TIMEOUT/SESSION/NEW_SESSION/PERSONALITY/GUIDE/TOOLS/TELEMETRY/AGENT_COMMAND）、`PI_BIN`→`AGENT_BIN`、`PI_TIMEOUT`→`AGENT_TIMEOUT`、`PI_RUN_SCRIPT`→`AGENT_RUN_SCRIPT`、`WECHAT_BRIDGE_PI_RUN/RPC/HEALTH/HEALTH_PY`→`WECHAT_BRIDGE_AGENT_*`、`PI_FALLBACK_PROVIDER`→`AGENT_FALLBACK_PROVIDER`、`PI_KEY`→`AGENT_KEY`、`PI_MODE_FILE`→`AGENT_MODE_FILE`（测试用）。
+`PIRUN_*`→`AGENTRUN_*`（AGENTRUN_RUNNER/PROVIDER/MODEL/THINKING/REPLY_THINKING/TIMEOUT/SESSION/NEW_SESSION/PERSONALITY/GUIDE/TOOLS/TELEMETRY/AGENT_COMMAND）、`PI_BIN`→`AGENT_BIN`、`PI_TIMEOUT`→`AGENT_TIMEOUT`、`PI_RUN_SCRIPT`→`AGENT_RUN_SCRIPT`、`WECHAT_BRIDGE_AGENT_RUN/RPC/HEALTH/HEALTH_PY`→`WECHAT_BRIDGE_AGENT_*`、`PI_FALLBACK_PROVIDER`→`AGENT_FALLBACK_PROVIDER`、`PI_KEY`→`AGENT_KEY`、`PI_MODE_FILE`→`AGENT_MODE_FILE`（测试用）。
 
 ### 标识符映射
-`askPi`→`askAgent`、`runPiRun`→`runAgentRun`、`PiRpc`→`AgentRpc`、`check_pi`→`check_agent`、`pi_bin`→`agent_bin`、`RUNNER==='pi'`→`'agent'`、`PI_RPC_ENABLED`→`AGENT_RPC_ENABLED`。
+`askAgent`→`askAgent`、`runPiRun`→`runAgentRun`、`PiRpc`→`AgentRpc`、`check_pi`→`check_agent`、`pi_bin`→`agent_bin`、`RUNNER==='pi'`→`'agent'`、`PI_RPC_ENABLED`→`AGENT_RPC_ENABLED`。
 
 ### CLI/配置映射
 `--skip-pi`→`--skip-agent`（deploy.sh/envcheck 用户可见参数）、`[host].runner="pi"`→`"agent"`（默认值 = pi-agent 二进制，行为不变）。
@@ -83,7 +83,7 @@ bash deploy.sh                         # 或随部署一起（传 --skip-agent �
 | 2 settings.json | `extensions` 写 `~/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js`（修正 Windows 残留路径） |
 | 3 json5 配置 | 写 `~/.pi/agent/memory-lancedb-pro.json5`（dbPath=~/.pi-agent/memory/lancedb-pro + ollama embedding + deepseek llm + autoCapture/autoRecall/smartExtraction） |
 | 4 ollama | `curl localhost:11434/api/tags` 有 `qwen3-embedding:0.6b`（缺 → 提示/`ollama pull`） |
-| 5 auth.json | `[host].provider` 条目（key 从 `PI_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文，chmod 600） |
+| 5 auth.json | `[host].provider` 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文，chmod 600） |
 | 6 crontab | 注册 `*/15 * * * * scripts/chiguo-tick.sh >> logs/cron-tick.log 2>&1`（幂等，旧条目整行替换） |
 | 7 冒烟 | `memory-pro stats` + `pi -p --provider <[host].provider> ...`（仅 --yes/ask） |
 
@@ -107,7 +107,7 @@ node scripts/agent-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + �
 - **输出解析**：NDJSON 取最后一条 `message_end` 的 text 拼接；analysis-mode 提取
   `<<ANALYSIS>>{...}<<END>>` 块
 - **失败语义**：`{"ok":false,"error":"..."}`；非零退出但 stdout 含完整回复 → salvage 不丢回复
-- 单测：`node tests/test_pi_run.mjs`（19 用例）
+- 单测：`node tests/test_agent_run.mjs`（19 用例）
 
 ## 三、chiguo-tick（系统 crontab 入口）
 
@@ -117,16 +117,16 @@ node scripts/agent-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + �
   `--record-send` 回写发送状态（失败不阻塞）
 - 日志：`logs/cron-tick.log`
 
-## 四、bridge askPi（回复侧）
+## 四、bridge askAgent（回复侧）
 
 `wechat-bridge/bridge.mjs`（v4）：
 
 - 消息到达 → `recordUserMsg(text)`（daemon `--user-msg`，确定性，失败不阻塞）
 - → `detectSpecialCommand(text)`（特殊命令，见 §五；命中 → 执行 daemon 并回复，**不经 pi**）
-- → `askPi(text)`（agent-run `--analysis-mode`，一次完成分析+回复；进程内 `TurnQueue` 串行 pi 调用）
+- → `askAgent(text)`（agent-run `--analysis-mode`，一次完成分析+回复；进程内 `TurnQueue` 串行 pi 调用）
 - → `upgradeAnalysis(text, analysis)`（daemon `--user-msg --analysis`，recv_dedup 升级语义）
 - → `bot.reply(msg, reply)`
-- 环境变量：`WECHAT_BRIDGE_PI_RUN`（默认仓库内 agent-run.mjs）、`WECHAT_BRIDGE_DAEMON_PY`、
+- 环境变量：`WECHAT_BRIDGE_AGENT_RUN`（默认仓库内 agent-run.mjs）、`WECHAT_BRIDGE_DAEMON_PY`、
   `WECHAT_BRIDGE_DAEMON`、`WECHAT_BRIDGE_OWNER`、`WECHAT_BRIDGE_SEND_PORT`、`WECHAT_BRIDGE_STORAGE`
 - 测试：`node tests/test_bridge_askagent.mjs`（10 用例）、`node tests/test_bridge_cmd.mjs`（31 用例）
 
@@ -155,7 +155,7 @@ node scripts/agent-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + �
 ## 六、provider key 配置
 
 - pi 读 `~/.pi/agent/auth.json` 的 **`[host].provider` 名**条目（`{"type":"api_key","key":...}`，chmod 600；键名 = provider 名，opencode-go 为默认示例）
-- 写入途径：`export PI_API_KEY=... && bash scripts/install_agent.sh --yes`（阶段 5；兼容回退 `OPENCODE_API_KEY`）
+- 写入途径：`export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`（阶段 5；兼容回退 `OPENCODE_API_KEY`）
 - key **不落盘明文到仓库**；`chiguo_envcheck.py` 的 `check_pi_auth` 校验该条目存在且有真值（自动跟随 toml provider）
 
 ## 七、接入任意模型 API（provider 可配）
@@ -167,7 +167,7 @@ chiguo 对后端模型不做绑定：**消息生成/情绪分析全部走 pi-age
 
 1. 配 key（chiguo 工具链以 auth.json 为唯一校验源）：
    - `pi` 交互式 `/login <provider>` 存入 `~/.pi/agent/auth.json`（键名 = provider 名；pi 官方方式）
-   - 或 `export PI_API_KEY=<provider 的 key> && bash scripts/install_agent.sh --yes`（阶段 5 写入；兼容回退 `OPENCODE_API_KEY`）
+   - 或 `export AGENT_API_KEY=<provider 的 key> && bash scripts/install_agent.sh --yes`（阶段 5 写入；兼容回退 `OPENCODE_API_KEY`）
    - 注：`DEEPSEEK_API_KEY`/`OPENAI_API_KEY` 等 provider 专用环境变量对 pi 运行时有效，但 install/envcheck 只认 auth.json——两者都配才全绿
 2. 改 toml：
    ```toml
@@ -203,7 +203,7 @@ chiguo 对后端模型不做绑定：**消息生成/情绪分析全部走 pi-age
 - `chiguo-tick.sh` / `wechat-bridge.sh` 注入的 `OPENCODE_API_KEY`（memory 扩展 smart extraction 固定 env 名）**优先取
   auth.json 的 `opencode-go` 条目**（扩展 json5 llm 端点固定 opencode 网关），无该条目时回退 `[host].provider` 条目
   （best effort）——换对话 provider 无需改脚本；若不再有 opencode-go key，smart extraction 降级为正则（pi 启动日志可见）
-- install_agent.sh 的 auth 写入与冒烟自动跟随 `[host].provider`（key 环境变量用通用名 `PI_API_KEY`，兼容回退 `OPENCODE_API_KEY`）
+- install_agent.sh 的 auth 写入与冒烟自动跟随 `[host].provider`（key 环境变量用通用名 `AGENT_API_KEY`，兼容回退 `OPENCODE_API_KEY`）
 - 换 provider 后会话记忆（chiguo-main/chiguo-send）保留；模型能力差异（thinking 档位等）按 pi 侧 model 配置生效
 
 ## 八、接入自定义 agent（runner=command）
@@ -238,11 +238,11 @@ agent_command = ["node", "/path/to/agent.mjs"]  # 必填：可执行命令 + 固
 
 **限制与运维**
 
-- bridge 的 **RPC 常驻模式仅 `runner=agent` 可用**（`WECHAT_BRIDGE_PI_RPC=1`）；command 模式下
-  bridge askPi 走进程内 `TurnQueue` 串行调用 agent-run.mjs（与 pi 路径一致）
+- bridge 的 **RPC 常驻模式仅 `runner=agent` 可用**（`WECHAT_BRIDGE_AGENT_RPC=1`）；command 模式下
+  bridge askAgent 走进程内 `TurnQueue` 串行调用 agent-run.mjs（与 pi 路径一致）
 - `chiguo_envcheck.py` 的 `check_pi` 支持 `runner`/`agent_command` 参数：runner=command 时检查
   agent_command 可执行性（不再要求 pi 二进制）
-- 失败排查：askPi 报「⚠️ 处理失败」时，除 bridge 日志（logs/wechat-bridge.log）外，手跑
+- 失败排查：askAgent 报「⚠️ 处理失败」时，除 bridge 日志（logs/wechat-bridge.log）外，手跑
   `<agent_command> --prompt '测试' --mode send` 直接看 agent 自身输出/日志
 
 ## 九、记忆后端抽象（[memory].backend）
@@ -314,15 +314,15 @@ class MyBackend(MemoryBackend):
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
-| `pi exited 1: ... No API key found` | auth.json 无 [host].provider 对应条目 | install_agent.sh 阶段 5（PI_API_KEY/OPENCODE_API_KEY） |
+| `pi exited 1: ... No API key found` | auth.json 无 [host].provider 对应条目 | install_agent.sh 阶段 5（AGENT_API_KEY/OPENCODE_API_KEY） |
 | `401 Unauthorized` | provider key 失效 | 换 key 重写 auth.json；`chiguo_envcheck.py` 复核 |
 | `{"ok":false,"error":"empty reply"}` | pi 无 message_end 文本（空回复/坏 JSON） | 重试；检查 provider/model 是否可生成中文文本；`pi -p --provider <[host].provider> ... --mode json '测试'` 手动验证 |
 | 超时（120s kill） | 网关慢/thinking 过高 | 调低 `[host].thinking_level`（off/minimal/low/medium/high/xhigh/max） |
 | `[chiguo-tick] agent-run 未生成消息` | agent-run 失败（多数是 key/网络） | 看 logs/cron-tick.log；先手动跑一次 agent-run 复现 |
-| bridge 回复「⚠️ 处理失败」 | askPi 抛错（agent-run 非 JSON/失败） | bridge 日志（logs/wechat-bridge.log）看具体 error |
+| bridge 回复「⚠️ 处理失败」 | askAgent 抛错（agent-run 非 JSON/失败） | bridge 日志（logs/wechat-bridge.log）看具体 error |
 | 特殊命令回「处理失败」 | daemon CLI 报错（如日期格式错） | 命令 JSON 输出含 error；对照 §五 命令表手跑验证 |
 | memory-pro stats 失败 | 扩展未 build/ollama 停 | install_agent.sh 阶段 1/4；`ollama serve` 后重跑 |
-| command runner 下 askPi 失败/回「⚠️ 处理失败」 | agent 脚本自身报错（非 JSON/非零退出/脚本缺失） | 手跑 `<agent_command> --prompt '测试' --mode send` 看 agent stdout/日志；核对 `AGENTRUN_RUNNER`/`AGENTRUN_AGENT_COMMAND` 生效配置与 `[host].agent_command` |
+| command runner 下 askAgent 失败/回「⚠️ 处理失败」 | agent 脚本自身报错（非 JSON/非零退出/脚本缺失） | 手跑 `<agent_command> --prompt '测试' --mode send` 看 agent stdout/日志；核对 `AGENTRUN_RUNNER`/`AGENTRUN_AGENT_COMMAND` 生效配置与 `[host].agent_command` |
 
 ## 十二、维护速查
 

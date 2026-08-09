@@ -39,7 +39,7 @@ function tmpRepo() {
 
 /** 注入式测试替身:extract/verify/daemon 全部脚本化返回。
  * 函数值按对应参数调用(extract(original)/verify(item, original)),对象值直接返回。
- * askPi 为 stub('聊'),chat 放行路径不 hit 真实 pi。 */
+ * askAgent 为 stub('聊'),chat 放行路径不 hit 真实 agent。 */
 function depsWith(script, repoRoot = null) {
   const call = (v) => (typeof v === 'function' ? v : async () => v)
   return {
@@ -250,7 +250,7 @@ t('⑬ 确认文案引用已登记条目原文(含星期数+日期,L1/A2)', asyn
   rmSync(repo, { recursive: true, force: true })
 })
 
-t('鉴权:非 OWNER_ID 不进命令/回忆/追问路径,仅 askPi 回复,不 recordUserMsg', async () => {
+t('鉴权:非 OWNER_ID 不进命令/回忆/追问路径,仅 askAgent 回复,不 recordUserMsg', async () => {
   const repo = tmpRepo()
   const replies = []
   const calls = []
@@ -261,7 +261,7 @@ t('鉴权:非 OWNER_ID 不进命令/回忆/追问路径,仅 askPi 回复,不 rec
   assert.strictEqual(r, 'agent', '非本人走聊天链')
   assert.ok(!calls.includes('record'), '不 recordUserMsg/状态零写入')
   assert.ok(!existsSync(scheduleClarifyPath(repo)), '不写澄清记录')
-  assert.ok(replies.includes('聊'), '仅 askPi 回复(聊天链)')
+  assert.ok(replies.includes('聊'), '仅 askAgent 回复(聊天链)')
   rmSync(repo, { recursive: true, force: true })
 })
 
