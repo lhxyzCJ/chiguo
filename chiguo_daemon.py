@@ -1184,7 +1184,7 @@ def _cmd_schedule_change(json_arg: str, config_path: str | None = None):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="迟菓主动消息 决策引擎")
-    parser.add_argument("--version", action="version", version=f"chiguo v{VERSION} (规则: 每轮修改 +0.1)")
+    parser.add_argument("--version", action="version", version=f"chiguo v{VERSION} (规则: 次版本 MINOR+1: 1.9→1.10→1.11)")
     parser.add_argument("--loop", type=int, nargs="?", const=300, metavar="SECONDS",
                         help="循环评估间隔秒数（最小60）")
     parser.add_argument("--user-msg", type=str, default=None,

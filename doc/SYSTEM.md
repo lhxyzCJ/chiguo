@@ -1,6 +1,6 @@
 # 迟菓主动消息系统 — 系统文档
 
-> 版本: v1.10（`chiguo_version.py` VERSION=1.10,每轮修改 +0.1;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
+> 版本: v1.10（`chiguo_version.py` VERSION=1.10,规则: MINOR+1 次版本步进（1.9→1.10→1.11,非十进制加法）;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
 
 ## 一、架构总览
 
@@ -737,7 +737,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
-| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.10"`，每轮修改 +0.1；daemon/envcheck/monitor import 引用） | 无 |
+| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.10"`，规则: MINOR+1（1.9→1.10→1.11,非十进制加法）;daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
 | `chiguo_state.json` | 运行时状态（STATE_VERSION=10，首次运行后生成；v10 含 `personality_baseline`/`personality_history`） | 无 |
@@ -826,7 +826,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 # 单次决策（输出 JSON 到 stdout）
 python3 chiguo_daemon.py
 
-# 版本号（chiguo_version.py: 规则 每轮修改 +0.1）
+# 版本号（chiguo_version.py: 规则 MINOR+1,1.9→1.10→1.11）
 python3 chiguo_daemon.py --version
 
 # 紧凑模式（idle 输出最小单行 JSON {"action":"idle","version":...,"time":...}）

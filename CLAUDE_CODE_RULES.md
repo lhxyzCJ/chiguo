@@ -77,7 +77,7 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 ├── chiguo_topics.py        TopicPicker — 8 sources (incl. v9 netease), Ebbinghaus-weighted memory
 ├── chiguo_composer.py      MessageComposer — Intent × Cue × Vibe (389 lines)
 ├── chiguo_rotation.py      Monthly log rotation → archive/
-├── chiguo_version.py       Project version single source (VERSION="1.8", +0.1 per round)
+├── chiguo_version.py       Project version single source (VERSION="1.10", MINOR +1 per round: 1.9→1.10→1.11, not decimal addition)
 └── chiguo_monitor.py       ChiguoMonitor + AlertManager + DecisionIndex (1196 lines)
 
 Supporting (not imported by daemon):

@@ -84,7 +84,7 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_watchdog.py  → daemon health checks (disk, memory, tick freshness)
   ├─ chiguo_rotation.py  → monthly log rotation → archive/
   ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
-  ├─ chiguo_version.py   → project version single source (VERSION="1.10", +0.1 per round)
+  ├─ chiguo_version.py   → project version single source (VERSION="1.10", MINOR +1 per round: 1.9→1.10→1.11, not decimal addition)
   └─ chiguo_monitor.py   → streaming JSONL analytics (stats/alerts/health)
 
   Output: chiguo_decisions.jsonl (append-only structured log)
