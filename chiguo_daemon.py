@@ -301,6 +301,9 @@ class DecisionEngine:
 
         # 4. 构建上下文（给 pi-agent 生成消息用）
         context = self._build_context(trigger, now)
+        # v10 (#73 A4): trigger 层高段激活的 must_send 标记写入 context（情绪类必发）
+        if trigger.data.get("must_send"):
+            context["must_send"] = True
 
         # 4.5 保存 prev_send_was_replied（必须在 on_character_message 递增 messages_without_reply 之前）
         # NOTE: prev_send_was_replied means "was the PREVIOUS character message replied to"

@@ -19,6 +19,14 @@ class Trigger:
     data: dict = field(default_factory=dict)
 
 
+# v10 (#73 A3/A4): 情绪类触发集合 —— A3 日程乘数只作用于此集合；
+# A4 activation = 该集合候选权重之和。仪式类（special/morning/night/meal/memory/follow_up）豁免。
+EMOTION_TRIGGERS = frozenset({
+    "lonely_low", "lonely_mid", "lonely_high",
+    "anxiety", "playful", "reflect", "longing",
+})
+
+
 def evaluate_triggers(state: ChiguoState, now: datetime,
                       trigger_scale: dict | None = None) -> Trigger | None:
     """
@@ -157,10 +165,8 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
 
     raw_low = state.trigger_weight("lonely_low") * (1 + 0.3 * tsun) * rate_factor
     raw_mid = state.trigger_weight("lonely_mid") * (1 + 0.5 * tsun) * rate_factor
-    # 连续崩溃降级：24h 内再次 lonely_high → 权重衰减
-    recent_high = sum(1 for t in state.cooldown.trigger_history[-3:] if t == "lonely_high")
-    high_decay = 0.3 ** recent_high
-    raw_high = state.trigger_weight("lonely_high") * (1 - 0.4 * tsun) * rate_factor * high_decay
+    # v10 (#73 A6): lonely_high 专属 0.3^n 阻尼已删除 → 统一 repeat 阻尼（候选收集后统一乘）覆盖
+    raw_high = state.trigger_weight("lonely_high") * (1 - 0.4 * tsun) * rate_factor
     # Softmax 式归一化：三个触发互斥，改一个中点 → 另两个自动重分配
     total = raw_low + raw_mid + raw_high + 0.5  # 0.5 = "不触发"基线
     w_low = raw_low / total
@@ -253,28 +259,83 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             c["weight"] *= trigger_scale.get(c["trigger"].type,
                                              trigger_scale.get("default", 1.0))
 
-    # ── 加权随机选择（而非硬排序取max） ──────────────────
-    chosen = weighted_trigger_choice(weighted_candidates)
+    # ── v10 (#73): 触发层三段优化 — A3 日程乘数 → A6 repeat 阻尼 → A4 三段激活 ──
+    # trg_cfg 已在 follow_up 段定义，此处复用。
+
+    # A3 日程乘数 + 抖动：只作用于情绪类候选，仪式类（morning/night/meal/special/memory/follow_up）豁免。
+    # 上课中 ×0.3；空闲（节假日/周末/课间）× free_multiplier（默认 1.2）；半忙 ×0.6。
+    # 再乘 uniform(0.8, 1.2) 随机抖动防机械感。逃生阀已在函数首 return → 天然豁免。
+    free_mult = trg_cfg.get("free_multiplier", 1.2)
+    sched_mult = _schedule_multiplier(state, now, free_mult)
+    # 抖动一次采样全局乘：保持类型间相对权重稳定，activation（A4 输入）不受逐候选随机扰动
+    jitter = random.uniform(0.8, 1.2)
+    for c in weighted_candidates:
+        if c["trigger"].type in EMOTION_TRIGGERS:
+            c["weight"] *= sched_mult * jitter
+
+    # A6 统一 repeat 阻尼：trigger_history 按 type 计数 n，weight ×= repeat_decay ** min(n, cap)。
+    # 对所有 trigger 类型统一生效（daemon 发送时 append history，本层只读不写）。
+    repeat_decay = trg_cfg.get("repeat_decay", 0.6)
+    repeat_cap = trg_cfg.get("repeat_cap", 3)
+    history = state.cooldown.trigger_history
+    for c in weighted_candidates:
+        n = sum(1 for t in history if t == c["trigger"].type)
+        c["weight"] *= repeat_decay ** min(n, repeat_cap)
+
+    # A4 三段激活阈值：activation = 情绪类候选权重之和。
+    # 低段（< min_activation）→ 情绪类退出竞争（等效低能量沉默，仪式类照发）；
+    # 中段 → 现状加权随机；高段（>= must_send_activation）→ 情绪类加权随机必选
+    # （仪式类本轮退让），选中结果标记 must_send: true。
+    min_activation = trg_cfg.get("min_activation", 0.08)
+    must_send_activation = trg_cfg.get("must_send_activation", 0.5)
+    emo_cands = [c for c in weighted_candidates if c["trigger"].type in EMOTION_TRIGGERS]
+    ritual_cands = [c for c in weighted_candidates if c["trigger"].type not in EMOTION_TRIGGERS]
+    activation = sum(c["weight"] for c in emo_cands)
+    must_send = False
+    if activation >= must_send_activation and emo_cands:
+        chosen = weighted_trigger_choice(emo_cands)
+        must_send = True
+    elif activation < min_activation:
+        chosen = weighted_trigger_choice(ritual_cands)
+    else:
+        chosen = weighted_trigger_choice(weighted_candidates)
     if chosen is None:
         return None
 
     trigger = chosen["trigger"]
+    if must_send:
+        trigger.data["must_send"] = True
 
     # ── v7: 接话茬触发后标记已尝试(防重复;记忆兜底条目不在 pending 中,no-op)──
     if trigger.type == "follow_up" and chosen.get("topic_ref") is not None:
         state.mark_pending_topic_attempted(chosen["topic_ref"].get("topic", ""))
 
-    # ── v4.1: 安全阀 — 连续崩溃降级 ──
+    # ── v4.1: 安全阀 — 连续崩溃降级（降级只改类型/强度，继承 data 保留 must_send 标记）──
     safety = state.safety_level(now)
     if safety >= 1 and trigger.type == "lonely_high":
-        trigger = Trigger(type="lonely_mid", intensity="soft")
+        trigger = Trigger(type="lonely_mid", intensity="soft", data=trigger.data)
     elif safety >= 2:
         if trigger.type == "anxiety":
-            trigger = Trigger(type="lonely_low", intensity="soft")
+            trigger = Trigger(type="lonely_low", intensity="soft", data=trigger.data)
         else:
             trigger.intensity = "soft"
 
     return trigger
+
+
+def _schedule_multiplier(state: ChiguoState, now: datetime, free_mult: float) -> float:
+    """A3 日程乘数：上课中 0.3 / 空闲 free_multiplier（默认 1.2）/ 半忙 0.6。
+    只经 chiguo_state 既有只读接口判断（schedule_status/_is_free_time），不直触 schedule 包。
+    schedule_status 异常/课表不可用 → None → 按空闲处理（与 _is_free_time 同语义）。"""
+    try:
+        sch = state.schedule_status(now)
+        if sch and sch.get("in_class"):
+            return 0.3
+    except Exception:
+        pass
+    if _is_free_time(state, now):
+        return free_mult
+    return 0.6
 
 
 def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
