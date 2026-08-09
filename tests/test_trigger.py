@@ -415,7 +415,7 @@ def test_a4_low_activation_silences_emotion_ritual_fires():
 
 
 def test_a4_must_send_high_activation():
-    """A4 高段：孤独 75 + 特殊日 → activation ≥ must_send_activation(0.5)
+    """A4 高段：孤独 75 + 特殊日 → activation ≥ must_send_activation(0.75)
     → 情绪类必选（special 退让 0 次），选中结果标记 must_send: true；
     中段（孤独 30）→ 加权竞争 special 占优且不标记"""
     with tempfile.TemporaryDirectory() as td:
