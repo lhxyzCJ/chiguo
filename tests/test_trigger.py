@@ -626,14 +626,23 @@ if __name__ == "__main__":
         test_backoff_level2_escape_valve_exempt,
     ]
     failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            print(f"  FAIL {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
+    # CHIGUO_MEM0_DISABLED 恢复：_make_state 设置后须在收尾还原（同进程其它测试不受污染）
+    _prev_mem0 = os.environ.get("CHIGUO_MEM0_DISABLED")
+    os.environ["CHIGUO_MEM0_DISABLED"] = "1"
+    try:
+        for t in tests:
+            try:
+                t()
+            except Exception as e:
+                print(f"  FAIL {t.__name__}: {e}")
+                import traceback
+                traceback.print_exc()
+                failed += 1
+    finally:
+        if _prev_mem0 is None:
+            os.environ.pop("CHIGUO_MEM0_DISABLED", None)
+        else:
+            os.environ["CHIGUO_MEM0_DISABLED"] = _prev_mem0
 
     print(f"\n{'='*40}")
     total = len(tests)
