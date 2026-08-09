@@ -58,6 +58,16 @@ export class PiRpc {
     const proc = spawn(this.bin, args, { stdio: ['pipe', 'pipe', 'pipe'] })
     this.proc = proc
     writeFileSync(PID_FILE, String(proc.pid))
+    // #84: spawn 失败(bin 不存在等)或运行期异常 → 立即标记死亡并 reject ready/pending,不等 10s 超时
+    let readyReject = null
+    proc.on('error', (e) => {
+      this.dead = true
+      this._cleanupPid()
+      const p = this.pending
+      this.pending = null
+      if (p) p.reject(e)
+      if (readyReject) { const r = readyReject; readyReject = null; r(e) }
+    })
     proc.stdout.on('data', (d) => {
       const lines = d.toString().split('\n')
       for (const line of lines) {
@@ -76,6 +86,7 @@ export class PiRpc {
     })
     // 等待 RPC 就绪:发 get_state 命令,收到 response 即确认(stdin/stdout 通路 + 会话已绑定)
     await new Promise((resolve, reject) => {
+      readyReject = reject
       const stateId = `ready-${Date.now()}`
       const t = setTimeout(() => reject(new Error('pi rpc 启动超时')), 10_000)
       const onLine = (line) => {
@@ -146,6 +157,7 @@ export class PiRpc {
       return { text: reply, analysis }
     } finally {
       clearTimeout(timer)
+      this.buffer = this.buffer.slice(bufStart)  // #84: 本轮数据消费后裁剪,防 buffer 无界增长
       if (timedOut) this.restart()
     }
   }
