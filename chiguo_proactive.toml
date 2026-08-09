@@ -132,6 +132,17 @@ noise_anxiety_sigma = 0.3      # anxiety 噪声幅度（/√h）
 noise_theta = 0.5              # OU 回归强度（/h），越大越贴 target
 noise_seed = 42                # 独立 RNG 种子（不污染全局 random 序列）
 
+# ── ④ 情绪基线长期漂移（关系动力学；drift_rate=0 关闭 → 行为恒等，可灰度）──
+# 对标 astrbot_plugin_emotion_state_machine：长期互动缓慢移动情绪收敛目标（基线），
+# 与人格层 regress_to_baseline（防人格漂移）分层——"人格稳定、情绪基线可漂移"。
+# 只漂移 loneliness/anxiety/affection 三个关系感受维度；tsundere 全归人格层。
+baseline_drift_rate = 0.0              # 0=关闭（灰度默认）；>0 时每次事件漂移 = rate × shift
+baseline_shift_loneliness = 0.15       # 单事件漂移量（冷落/冷淡/未回复 → +）
+baseline_shift_anxiety = 0.15          # 单事件漂移量（冷淡/未回复 → +；温柔 → −）
+baseline_shift_affection = 0.15        # 单事件漂移量（冷落/冷淡/未回复 → −；温柔 → +）
+baseline_max_drift = 20.0              # 有界钳位：基线不得超过 [全局默认 ± max_drift]
+baseline_forget_half_life = 720.0      # 淡忘半衰期（h；30 天回全局默认，0=不淡忘）
+
 # ── ① 用户情绪感知（user_mood；系数默认 0 = 关闭恒等，可灰度）──
 # 对标 ESConv：感知主人情绪（LLM 报 mood/intensity），幅度由系数表决定（决策零 LLM）。
 user_mood_low_anxiety_factor = 0.0          # low：anxiety +2.0 × intensity × 系数（心疼 → 不安略升）

@@ -98,6 +98,47 @@ def apply_interaction_matrix(emotion: dict, cfg: dict) -> dict:
     return out
 
 
+# ── ④ 情绪基线长期漂移（关系动力学） ──────────────────────
+# 对标 astrbot_plugin_emotion_state_machine 的 GROUP/RELATION_BASELINE 概念：
+# 长期互动缓慢移动情绪收敛目标（基线），与人格层 regress_to_baseline（防人格
+# 漂移）分层——"人格稳定、情绪基线可漂移"。
+
+def baseline_shift_of(interaction: dict) -> dict:
+    """
+    事件 → 基线漂移方向表 {dim: ±1}。纯函数，可精确断言。
+    - user_reply + latency very_slow/slow → 冷落：loneliness↑、affection↓
+    - user_reply + warmth<−0.2 → 冷淡：loneliness/anxiety↑、affection↓
+    - user_reply + warmth>0.3 → 温柔：anxiety↓、affection↑
+    - character_send + was_replied=False → 未回复：loneliness/anxiety↑、affection↓
+    其余（快回/中性/被回复）→ 零漂移。
+    """
+    shift = {"loneliness": 0, "anxiety": 0, "affection": 0}
+    itype = interaction.get("type", "")
+    try:
+        warmth = float(interaction.get("warmth", 0.0))
+    except (TypeError, ValueError):
+        warmth = 0.0
+    lat_cat = interaction.get("latency_category", "normal")
+
+    if itype == "user_reply":
+        if lat_cat in ("slow", "very_slow"):
+            shift["loneliness"] += 1
+            shift["affection"] -= 1
+        if warmth < -0.2:
+            shift["loneliness"] += 1
+            shift["anxiety"] += 1
+            shift["affection"] -= 1
+        elif warmth > 0.3:
+            shift["anxiety"] -= 1
+            shift["affection"] += 1
+    elif itype == "character_send":
+        if not interaction.get("was_replied", False):
+            shift["loneliness"] += 1
+            shift["anxiety"] += 1
+            shift["affection"] -= 1
+    return shift
+
+
 # ── ② 情绪自然波动（OU 过程 + 动态上限） ──────────────────
 # 对标 lacuna_core FluctuationEngine：小幅带均值回归的噪声模拟情绪自然起伏。
 # OU 连续化公式对不规则 Δt（60s~24h+）数学一致，优于 1/f 粉红噪声（滤波器状态

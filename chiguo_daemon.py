@@ -359,6 +359,12 @@ class DecisionEngine:
                     "was_replied": prev_send_was_replied,
                     "trigger": trigger.type,
                 })
+                # v1.11 ④: 情绪基线漂移（同一 interaction，默认关闭）
+                self.state.update_emotion_baseline({
+                    "type": "character_send",
+                    "was_replied": prev_send_was_replied,
+                    "trigger": trigger.type,
+                })
             except Exception:
                 pass
 
@@ -963,6 +969,12 @@ class DecisionEngine:
             if prev_send_was_replied:
                 try:
                     self.state.adapt_personality({
+                        "type": "character_send",
+                        "was_replied": True,
+                        "trigger": "user_reply",
+                    })
+                    # v1.11 ④: 情绪基线漂移（被回复 → 零漂移，保持接口对称）
+                    self.state.update_emotion_baseline({
                         "type": "character_send",
                         "was_replied": True,
                         "trigger": "user_reply",
