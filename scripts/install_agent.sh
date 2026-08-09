@@ -2,14 +2,12 @@
 # ============================================================
 # chiguo pi-agent 环境安装/校验器（可移植：任意 pull 仓库的机器）
 # Phase 4 新架构：LLM 消息生成走 pi-agent（provider 可配，见 [host].provider；opencode-go 为默认示例）
-# + memory-lancedb-pro
-# （pi 版扩展，ollama embedding）+ 系统 crontab（chiguo-tick）。
+# （ollama embedding）+ 系统 crontab（chiguo-tick）。
 # 模式: --dry-run（只扫描报告，只读）/ --yes（自动全部）/ 默认交互 ask（逐项确认；
 #       非 TTY 等价 --dry-run）
 # 退出码: 0=完成  1=有待办/警告/残留未处理  2=严重问题
 # 幂等: 重复运行安全；每次修改前备份。
-# 安全边界: 只写 ~/.pi/ 与 ~/.pi-agent/；记忆库位于 ~/.pi-agent/memory/lancedb-pro
-#       （历史记忆库路径沿用 ~/.pi-agent/memory/lancedb-pro，不修改）。
+# 安全边界: 只写 ~/.pi/。
 # ============================================================
 set -uo pipefail
 
@@ -72,11 +70,6 @@ PYC
 
 # ── 固定路径 ───────────────────────────────────────────────
 AGENT_BIN="$(command -v pi || true)"
-EXT_DIR="$HOME/.pi-agent"
-CLONE="$EXT_DIR/TestForPi-memory-lancedb-pro"
-EXT_JS="$CLONE/dist/pi-adapter/index.js"
-SETTINGS="$HOME/.pi/agent/settings.json"
-JSON5="$HOME/.pi/agent/memory-lancedb-pro.json5"
 AUTH="$HOME/.pi/agent/auth.json"
 TICK="$CHIGUO_REPO/scripts/chiguo-tick.sh"
 CRON_LINE="*/15 * * * * $TICK >> $CHIGUO_REPO/logs/cron-tick.log 2>&1"
@@ -91,164 +84,6 @@ if [ -n "$KEY_VAL" ]; then
   say "$KEY_VAR 已设置 → 阶段 5 可写入 $PROVIDER key"
 else
   warn "$KEY_VAR 未设置 → $PROVIDER key 无法写入（auth.json 已有该条目则不受影响）"
-fi
-
-# ── 阶段 1: memory-lancedb-pro（clone + build）─────────────
-say "阶段 1: memory-lancedb-pro 扩展（$CLONE）..."
-if [ ! -d "$CLONE" ]; then
-  if [ "$DRY" = 1 ]; then
-    PENDING=1
-    echo "  [dry-run] 将 git clone https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro → $CLONE，然后 npm install && npm run build"
-  elif confirm "clone memory-lancedb-pro 到 $CLONE 并构建（npm install && npm run build）"; then
-    for t in git node npm; do command -v "$t" >/dev/null 2>&1 || fail "缺 $t → 无法 clone/build memory-lancedb-pro"; done
-    if git clone --depth 1 https://github.com/lhxyzCJ/TestForPi-memory-lancedb-pro "$CLONE" \
-       && ( cd "$CLONE" && npm install && npm run build ); then
-      say "clone + build OK（$EXT_JS）"
-    else
-      PENDING=1; warn "clone/build 失败（残留未处理，请手工处理）"
-    fi
-  fi
-elif [ ! -f "$EXT_JS" ]; then
-  if [ "$DRY" = 1 ]; then
-    PENDING=1
-    echo "  [dry-run] $CLONE 已存在但缺 dist/pi-adapter/index.js → 将 npm install && npm run build"
-  elif confirm "在 $CLONE 执行 npm install && npm run build"; then
-    for t in node npm; do command -v "$t" >/dev/null 2>&1 || fail "缺 $t → 无法构建 memory-lancedb-pro"; done
-    if ( cd "$CLONE" && npm install && npm run build ); then
-      say "build OK（$EXT_JS）"
-    else
-      PENDING=1; warn "build 失败（残留未处理，请手工处理）"
-    fi
-  fi
-else
-  say "扩展已 clone + build（$EXT_JS 存在）"
-fi
-
-# ── 阶段 2: settings.json extensions（修正 Windows 残留路径）──
-say "阶段 2: ~/.pi/agent/settings.json extensions..."
-if [ -f "$SETTINGS" ] && "$PY" - "$SETTINGS" "$EXT_JS" <<'PYC' >/dev/null 2>&1; then
-import json, sys
-p, want = sys.argv[1], sys.argv[2]
-with open(p, encoding="utf-8") as f:
-    cfg = json.load(f)
-exts = cfg.get("extensions") or []
-def is_windows(e):
-    return (isinstance(e, str)
-            and ("/mnt/" in e or "\\" in e
-                 or (len(e) > 1 and e[1] == ":" and e[0].isalpha())))
-sys.exit(0 if (want in exts and not any(is_windows(e) for e in exts)) else 1)
-PYC
-  say "settings.json OK（extensions 含 $EXT_JS，无 Windows 残留）"
-else
-  if [ "$DRY" = 1 ]; then
-    PENDING=1
-    echo "  [dry-run] 将修正 $SETTINGS：extensions 写 $EXT_JS（清除 /mnt/c/ 等 Windows 残留路径，含 .bak 备份）"
-  elif confirm "修正 $SETTINGS 的 extensions（清除 Windows 残留，写 $EXT_JS）"; then
-    [ -f "$SETTINGS" ] && cp -a "$SETTINGS" "$SETTINGS.bak"
-    if "$PY" - "$SETTINGS" "$EXT_JS" <<'PYJ'; then
-import json, os, sys
-p, want = sys.argv[1], sys.argv[2]
-cfg = {}
-if os.path.exists(p):
-    try:
-        with open(p, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except Exception:
-        cfg = {}
-    if not isinstance(cfg, dict):
-        cfg = {}
-def is_windows(e):
-    return (isinstance(e, str)
-            and ("/mnt/" in e or "\\" in e
-                 or (len(e) > 1 and e[1] == ":" and e[0].isalpha())))
-exts = [e for e in (cfg.get("extensions") or []) if not is_windows(e)]
-if want not in exts:
-    exts.append(want)
-cfg["extensions"] = exts
-os.makedirs(os.path.dirname(p), exist_ok=True)
-with open(p, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, ensure_ascii=False, indent=2)
-PYJ
-      say "settings.json 已修正"
-    else
-      PENDING=1; warn "settings.json 修正失败（.bak 已保留，请手工处理）"
-    fi
-  fi
-fi
-
-# ── 阶段 3: memory-lancedb-pro.json5（dbPath + ollama embedding + llm 端点可配置）──
-# llm 段(扩展的 smart extraction/upgrade 调用)端点可配:CHIGUO_MEMORY_LLM_APIKEY /
-# CHIGUO_MEMORY_LLM_MODEL / CHIGUO_MEMORY_LLM_BASEURL(缺省 opencode 网关 + ${OPENCODE_API_KEY} 引用;
-# opencode 网关不可用时切任意 OpenAI 兼容端点,如官方 API)。
-say "阶段 3: ~/.pi/agent/memory-lancedb-pro.json5..."
-if [ -f "$JSON5" ] \
-   && grep -q 'qwen3-embedding' "$JSON5" \
-   && grep -q 'localhost:11434' "$JSON5" \
-   && grep -q '\.pi-agent/memory/lancedb-pro' "$JSON5" \
-   && grep -qE '"autoCapture"[[:space:]]*:[[:space:]]*true' "$JSON5" \
-   && grep -qE '"autoRecall"[[:space:]]*:[[:space:]]*true' "$JSON5" \
-   && grep -qE '"smartExtraction"[[:space:]]*:[[:space:]]*true' "$JSON5"; then
-  say "memory-lancedb-pro.json5 OK（embedding=ollama qwen3-embedding:0.6b + dbPath=~/.pi-agent/memory/lancedb-pro）"
-else
-  # 注意:默认值含 ${...} 时不能嵌套在 :-\${...} 里(bash 解析会残留尾 }),用显式分支
-  if [ -n "${CHIGUO_MEMORY_LLM_APIKEY:-}" ]; then
-    MEM_LLM_APIKEY="$CHIGUO_MEMORY_LLM_APIKEY"
-  else
-    MEM_LLM_APIKEY='${OPENCODE_API_KEY}'
-  fi
-  MEM_LLM_MODEL="${CHIGUO_MEMORY_LLM_MODEL:-deepseek-v4-flash}"
-  MEM_LLM_BASEURL="${CHIGUO_MEMORY_LLM_BASEURL:-https://opencode.ai/zen/go/v1}"
-  if [ "$DRY" = 1 ]; then
-    PENDING=1
-    echo "  [dry-run] 将写 $JSON5：dbPath=~/.pi-agent/memory/lancedb-pro、embedding=ollama qwen3-embedding:0.6b、llm=$MEM_LLM_BASEURL、autoCapture/autoRecall/smartExtraction（含 .bak 备份）"
-  elif confirm "写入 $JSON5（memory-lancedb-pro 配置：dbPath 沿用历史库 + ollama embedding）"; then
-    mkdir -p "$(dirname "$JSON5")"
-    [ -f "$JSON5" ] && cp -a "$JSON5" "$JSON5.bak"
-    cat > "$JSON5" <<'EOJ'
-{
-  // memory-lancedb-pro configuration for the pi coding agent (install_agent.sh 生成)
-  // embedding: local Ollama (qwen3-embedding:0.6b, 1024 dims)
-  // llm: smart extraction / upgrades 端点（install_agent.sh 按 CHIGUO_MEMORY_LLM_* 生成）
-  "dbPath": "~/.pi-agent/memory/lancedb-pro",
-  "embedding": {
-    "provider": "openai-compatible",
-    "apiKey": "ollama",
-    "model": "qwen3-embedding:0.6b",
-    "baseURL": "http://localhost:11434/v1",
-    "dimensions": 1024
-  },
-  "llm": {
-    "apiKey": "__MEM_LLM_APIKEY__",
-    "model": "__MEM_LLM_MODEL__",
-    "baseURL": "__MEM_LLM_BASEURL__"
-  },
-  "autoCapture": true,
-  "autoRecall": true,
-  "smartExtraction": true,
-  "extractMinMessages": 2,
-  "extractMaxChars": 8000,
-  "retrieval": { "mode": "hybrid", "vectorWeight": 0.7, "bm25Weight": 0.3, "minScore": 0.3, "rerank": "none" },
-  "sessionMemory": { "enabled": false }
-}
-EOJ
-    # issue #85: json5 含 LLM API key，收紧为仅属主可读写（.bak 备份同权限）
-    chmod 600 "$JSON5"
-    [ -f "$JSON5.bak" ] && chmod 600 "$JSON5.bak"
-    if "$PY" - "$JSON5" "$MEM_LLM_APIKEY" "$MEM_LLM_MODEL" "$MEM_LLM_BASEURL" <<'PYR'; then
-import sys
-p, api, model, base = sys.argv[1:5]
-src = open(p, encoding="utf-8").read()
-for token, val in (("__MEM_LLM_APIKEY__", api), ("__MEM_LLM_MODEL__", model), ("__MEM_LLM_BASEURL__", base)):
-    src = src.replace(token, val)
-open(p, "w", encoding="utf-8").write(src)
-PYR
-      say "memory-lancedb-pro.json5 已写入（llm=$MEM_LLM_BASEURL）"
-    else
-      rm -f "$JSON5"
-      PENDING=1
-      warn "json5 占位符替换失败,已删除待下轮重写（.bak 已保留）"
-    fi
-  fi
 fi
 
 # ── 阶段 4: ollama embedding 模型检查 ──────────────────────
@@ -273,6 +108,7 @@ fi
 # ── 阶段 5: auth.json $PROVIDER 条目（key 从环境变量读，不落盘明文）──
 # 集中认证迁移源：~/.chiguo/auth/agent-auth.json → ~/.pi/agent/auth.json（目标已有则不动，本地为准）
 if [ ! -f "$AUTH" ] && [ -f "$HOME/.chiguo/auth/agent-auth.json" ]; then
+  mkdir -p "$(dirname "$AUTH")"
   cp -a "$HOME/.chiguo/auth/agent-auth.json" "$AUTH" && chmod 600 "$AUTH" \
     && say "已从 ~/.chiguo/auth/agent-auth.json 导入认证（集中认证目录迁移）"
 fi
@@ -383,26 +219,11 @@ fi
 # ── 阶段 7: 冒烟验证（仅 --yes/ask；dry-run 不执行任何命令）──
 say "阶段 7: 冒烟验证..."
 if [ "$DRY" = 1 ]; then
-  say "dry-run 不执行冒烟（memory-pro stats / pi 实调留给 --yes 或 Task 15 集成冒烟）"
-elif [ "$MODE" = ask ] && ! confirm "执行冒烟（memory-pro stats + pi 实调，key 可用时）"; then
+  say "dry-run 不执行冒烟（pi 实调留给 --yes 或 Task 15 集成冒烟）"
+elif [ "$MODE" = ask ] && ! confirm "执行冒烟（pi 实调，key 可用时）"; then
   :
 else
   SMOKE_BAD=0
-  # memory-pro bin 链接可能未生成（npm allow-scripts 拦截）→ 直接 node 跑 cli-main.js
-  MEMORY_PRO="$CLONE/node_modules/.bin/memory-pro"
-  [ -x "$MEMORY_PRO" ] || MEMORY_PRO="node $CLONE/dist/pi-adapter/cli-main.js"
-  if timeout 60 bash -c "$MEMORY_PRO stats" >/dev/null 2>&1; then
-    say "memory-pro stats OK（记忆库 ~/.pi-agent/memory/lancedb-pro 可读）"
-  else
-    SMOKE_BAD=1; warn "memory-pro stats 失败（见上方错误）"
-  fi
-  # 冒烟: config-path 断言生效 dbPath == 配置值 (防 INC-001 双脑分裂复发)
-  if CONFIG_PATH_OUT="$($MEMORY_PRO config-path 2>&1)" \
-     && grep -q "dbPath: .*memory/lancedb-pro (source: config)" <<<"$CONFIG_PATH_OUT"; then
-    say "config-path OK (dbPath 来自配置文件)"
-  else
-    SMOKE_BAD=1; warn "config-path 断言失败 — 生效 dbPath 与预期不一致: $CONFIG_PATH_OUT"
-  fi
   if auth_has_key; then
     MODEL="$(sed -n 's/^model *= *"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
     [ -n "$MODEL" ] || MODEL=deepseek-v4-flash

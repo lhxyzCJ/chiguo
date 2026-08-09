@@ -788,7 +788,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_schedule_cli.py` | 安排 CLI 测试（3 用例：--schedule-change 成功与形状/--schedule-recall 形状） | chiguo_daemon, schedule.api |
 | `scripts/agent-run.mjs` | **agent 调用统一封装**（Phase 4，v1.8 runner 抽象）：runner=agent（默认，pi-agent 二进制）/ runner=command（任意 CLI agent，`<agent_command> --prompt <完整提示词> --mode <mode>` 统一契约，stdout JSON/NDJSON 兼容）；生成/分析/安排多模式，`[host]` 配置 + AGENTRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage；导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand | node |
 | `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → agent-run（AGENTRUN_SESSION=chiguo-send）→ bridge /send → --record-send；agent 失败 → chiguo_composer.py 模板池兜底（v1.10 A8，成功发送 + fallback 标记，composer 也失败才 exit 1） | bash, node, curl |
-| `scripts/install_agent.sh` | **pi 环境安装器**（Phase 4）：memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟（三模式幂等） | bash |
+| `scripts/install_agent.sh` | **pi 环境安装器**（Phase 4）：ollama/auth/crontab/冒烟（三模式幂等） | bash |
 | `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askAgent 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
 | `wechat-bridge/command-detect.mjs` | **特殊命令检测/执行**（Phase 4）：纪念日/假期规则化（方案 A），daemon JSON → 迟菓风确认 | node |
 | `scripts/agent_health.py` | **agent 假死状态机**：askAgent/tick 成败记账（flock+原子写 `agent_health.json`），transition=down/up 产出告警/恢复文案；bridge（bot.send）与 tick（curl /send）只负责投递 | python, stdlib |
@@ -1683,7 +1683,7 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 - `chiguo-send`：主动发送会话（tick 经 `AGENTRUN_SESSION` 注入；决策 JSON 自足，无需对话连续性）
 - 两条链路**永不共享会话** → 消除跨进程并发 turn 风险（同会话并发在 pi 侧可能交错/上下文竞争）
 
-pi 环境（memory-lancedb-pro 扩展 clone+build、`~/.pi/agent/settings.json` extensions、`memory-lancedb-pro.json5`（dbPath 沿用历史库 + ollama embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
+pi 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
 
 ---
 

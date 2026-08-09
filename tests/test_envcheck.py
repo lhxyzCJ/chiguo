@@ -53,36 +53,6 @@ def test_check_agent_ok():
     print("  OK test_check_agent_ok")
 
 
-def test_check_agent_ext_missing_warn():
-    with tempfile.TemporaryDirectory() as td:
-        r = ec.check_agent_ext(Path(td) / "settings.json", Path(td) / "ext" / "index.js")
-        assert r["severity"] == "warn" and not r["ok"]
-        assert "install_agent.sh" in r["detail"]
-    print("  OK test_check_agent_ext_missing_warn")
-
-
-def test_check_agent_ext_windows_warn():
-    with tempfile.TemporaryDirectory() as td:
-        td = Path(td)
-        want = str(td / ".pi-agent" / "TestForPi-memory-lancedb-pro" / "dist" / "pi-adapter" / "index.js")
-        _mk(td, {".pi/agent/settings.json":
-                 json.dumps({"extensions": ["/mnt/c/Users/USER/projects/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js", want]})})
-        r = ec.check_agent_ext(td / ".pi/agent/settings.json", Path(want))
-        assert r["severity"] == "warn" and not r["ok"]
-        assert "Windows" in r["detail"]
-    print("  OK test_check_agent_ext_windows_warn")
-
-
-def test_check_agent_ext_ok():
-    with tempfile.TemporaryDirectory() as td:
-        td = Path(td)
-        want = str(td / ".pi-agent" / "TestForPi-memory-lancedb-pro" / "dist" / "pi-adapter" / "index.js")
-        _mk(td, {".pi/agent/settings.json": json.dumps({"extensions": [want]})})
-        r = ec.check_agent_ext(td / ".pi/agent/settings.json", Path(want))
-        assert r["severity"] == "ok" and r["ok"]
-    print("  OK test_check_agent_ext_ok")
-
-
 def test_check_agent_auth_missing_warn():
     with tempfile.TemporaryDirectory() as td:
         r = ec.check_agent_auth(Path(td) / "auth.json")
@@ -255,12 +225,12 @@ def test_run_checks_never_crashes():
         # #99: runner 值 pi→agent（契约），真实 toml 副本同步替换以保持 8 项检查路径
         cfg.write_text(re.sub(r"(?m)^runner\s*=.*$", 'runner = "agent"', cfg.read_text()))
         report = ec.run_checks(base_dir=td)
-        assert len(report["checks"]) == 8
-        assert report["summary"]["ok"] + report["summary"]["info"] + report["summary"]["warn"] + report["summary"]["critical"] == 8
+        assert len(report["checks"]) == 7
+        assert report["summary"]["ok"] + report["summary"]["info"] + report["summary"]["warn"] + report["summary"]["critical"] == 7
         # netease/ollama 检查会尝试连 localhost —— 只要求不崩(超时 5s 内失败 → warn)
         json.dumps(report)
         report2 = ec.run_checks(base_dir=td, skip_agent=True)
-        assert len(report2["checks"]) == 8
+        assert len(report2["checks"]) == 7
     print("  OK test_run_checks_never_crashes")
 
 
@@ -287,7 +257,7 @@ def test_run_checks_custom_backend_skips_mem0():
         assert "memory_backend" in names, names
         mb = next(c for c in report["checks"] if c["name"] == "memory_backend")
         assert mb["ok"] and "mymodule.MyBackend" in mb["detail"], mb
-        assert len(report["checks"]) == 8
+        assert len(report["checks"]) == 7
     print("  OK test_run_checks_custom_backend_skips_mem0")
 
 
@@ -296,9 +266,6 @@ if __name__ == "__main__":
     test_check_agent_missing_critical()
     test_check_agent_skip_warn()
     test_check_agent_ok()
-    test_check_agent_ext_missing_warn()
-    test_check_agent_ext_windows_warn()
-    test_check_agent_ext_ok()
     test_check_agent_auth_missing_warn()
     test_check_agent_auth_ok()
     test_check_agent_auth_custom_provider()
@@ -314,4 +281,4 @@ if __name__ == "__main__":
     test_run_checks_never_crashes()
     test_mem0_default_path_anchored()
     test_run_checks_custom_backend_skips_mem0()
-    print(f"test_envcheck.py: ALL {22} TESTS PASSED")
+    print(f"test_envcheck.py: ALL {19} TESTS PASSED")

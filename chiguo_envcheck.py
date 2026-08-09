@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ============================================================
 # chiguo_envcheck.py — 环境就绪检查(v10.3)
-# 检查:Python/uv 版本、pi-agent(pi --version)、pi 扩展路径(settings.json)、
+# 检查:Python/uv 版本、pi-agent(pi --version)、
 #       ollama embedding(qwen3-embedding)、auth.json [host].provider 条目（缺省 opencode-go）、
 #       mem0 记忆层(qdrant 目录 + key + mem0ai)、网易云 API+登录、数据文件完整。
 # 输出:JSON → stdout,汇总退出码 0=就绪 1=warn 2=critical(与 watchdog 一致)。
@@ -165,41 +165,6 @@ def check_agent(agent_bin: str = "pi", skip_agent: bool = False,
     return {"name": "agent", "ok": True, "severity": "ok", "detail": f"agent OK ({ver})"}
 
 
-def _is_windows_ext(e) -> bool:
-    return (isinstance(e, str)
-            and ("/mnt/" in e or "\\" in e
-                 or (len(e) > 1 and e[1] == ":" and e[0].isalpha())))
-
-
-def check_agent_ext(settings_path: Path, expected_path: Path) -> dict:
-    """pi settings.json extensions 指向 Linux 扩展路径。缺失/指向 Windows 残留 → warn。"""
-    if not settings_path.is_file():
-        return {"name": "agent_ext", "ok": False, "severity": "warn",
-                "detail": f"{_sanitize_path(settings_path)} 不存在 → pi 记忆扩展未注册(bash scripts/install_agent.sh --yes)"}
-    try:
-        cfg = json.loads(settings_path.read_text(encoding="utf-8"))
-        exts = cfg.get("extensions") or []
-        if not isinstance(exts, list):
-            exts = []
-    except Exception as e:
-        return {"name": "agent_ext", "ok": False, "severity": "warn",
-                "detail": f"{_sanitize_path(settings_path)} 解析失败: {_truncate(e)}"
-                          f"(bash scripts/install_agent.sh --yes 修复)"}
-    want = str(expected_path)
-    bad = [e for e in exts if _is_windows_ext(e)]
-    if want in exts and not bad:
-        return {"name": "agent_ext", "ok": True, "severity": "ok",
-                "detail": f"pi 扩展 OK ({_sanitize_path(want)})"}
-    if bad:
-        return {"name": "agent_ext", "ok": False, "severity": "warn",
-                "detail": f"settings.json 扩展指向 Windows 残留 {[_sanitize_path(x) for x in bad]}"
-                          f" → 记忆扩展不会加载"
-                          f"(bash scripts/install_agent.sh --yes 修正)"}
-    return {"name": "agent_ext", "ok": False, "severity": "warn",
-            "detail": f"settings.json 缺扩展路径 {_sanitize_path(want)} → 记忆扩展不会加载"
-                      f"(bash scripts/install_agent.sh --yes)"}
-
-
 def check_ollama(base_url: str = "http://localhost:11434") -> dict:
     """ollama 服务可达 + qwen3-embedding 模型在册。任一缺失 → warn(记忆 embedding 降级)。"""
     try:
@@ -324,7 +289,7 @@ def check_data(xlsx_path: Path, memories_path: Path) -> dict:
 
 
 def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = None) -> dict:
-    """按序执行 8 组检查。返回完整报告 dict。单项失败不中断。
+    """按序执行 7 组检查。返回完整报告 dict。单项失败不中断。
     skip_agent: deploy.sh --skip-agent 传入 → agent 缺失降为 warn,不阻塞部署。
     home: 测试注入用（默认 Path.home()）。"""
     base = base_dir or _BASE_DIR
@@ -335,8 +300,6 @@ def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = Non
     mem = _cfg_path(cfg, "memory", "manual_path", "data/chiguo_memories.json", base)
     api_base = os.environ.get("NETEASE_API_BASE", "http://localhost:3000")
     home = home or Path.home()
-    pi_settings = home / ".pi" / "agent" / "settings.json"
-    agent_ext = home / ".pi-agent" / "TestForPi-memory-lancedb-pro" / "dist" / "pi-adapter" / "index.js"
     agent_auth = home / ".pi" / "agent" / "auth.json"
     ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
     provider = cfg.get("host", {}).get("provider") or "opencode-go"
@@ -350,8 +313,6 @@ def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = Non
         check_env(),
         check_agent(skip_agent=skip_agent, runner=runner, agent_command=agent_command),
     ]
-    if runner == "agent":
-        checks.append(check_agent_ext(pi_settings, agent_ext))
     if memory_backend in ("mem0", "auto"):
         checks.append(check_mem0(mem0_qdrant, mem0_history))
     else:
