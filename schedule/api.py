@@ -437,9 +437,13 @@ class ScheduleApi:
             start_str, end_str = parts[1], parts[2]
             note = " ".join(parts[3:]) if len(parts) > 3 else ""
             try:
-                date.fromisoformat(start_str); date.fromisoformat(end_str)
+                s_d = date.fromisoformat(start_str)
+                e_d = date.fromisoformat(end_str)
             except ValueError as e:
                 return {"action": "break_add", "ok": False, "error": f"日期格式错误: {e}"}
+            if s_d > e_d:
+                return {"action": "break_add", "ok": False,
+                        "error": f"倒序区间: start {start_str} > end {end_str}"}
             self._guard()
             data = _load()
             entry = {"start": start_str, "end": end_str, "note": note}

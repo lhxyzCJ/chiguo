@@ -86,7 +86,8 @@ def _resolve_start_end(when: dict, today: date) -> tuple[date, date]:
             raise ResolveReject("invalid_value", f"end 非法: {e!r}")
     start = _transcribe(s, anchor)
     end = _transcribe(e, anchor)
-    if end < start and end.month < start.month:
+    if end < start and end.month < start.month and not (s_explicit and e_explicit):
+        # 跨年推断仅限端点非显式年(MM-DD);显式双端点严格 end>=start,倒序直接拒绝
         end = date(end.year + 1, end.month, end.day)
     if end < start:
         raise ResolveReject("invalid_value", "start-end 倒序")

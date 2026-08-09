@@ -41,13 +41,39 @@ class OverrideStore:
             return
         try:
             data = json.loads(self._path.read_text())
-            self._items = [it for it in data.get("items", [])
-                           if isinstance(it, dict) and it.get("id")]
         except (json.JSONDecodeError, TypeError, OSError):
             self._items = []
             self._corrupt = True
             print(f"[schedule.override_store] schedule_overrides.json 损坏,读为空集: {self._path}",
                   file=sys.stderr)
+            return
+        # 字段级校验:逐条 kind 枚举 + ISO 日期,坏条目剔除并置 corrupt(防读路径崩溃)
+        items, bad = [], 0
+        for it in data.get("items", []) if isinstance(data, dict) else []:
+            if not isinstance(it, dict) or not it.get("id"):
+                bad += 1
+                continue
+            if it.get("kind") not in KINDS:
+                bad += 1
+                continue
+            ok = True
+            for key in ("date", "end_date", "to_date"):
+                v = it.get(key)
+                if v is not None:
+                    try:
+                        date.fromisoformat(v)
+                    except (ValueError, TypeError):
+                        ok = False
+                        break
+            if ok:
+                items.append(it)
+            else:
+                bad += 1
+        self._items = items
+        if bad:
+            self._corrupt = True
+            print(f"[schedule.override_store] {bad} 条坏条目已剔除(字段非法),读入 {len(items)} 条: "
+                  f"{self._path}", file=sys.stderr)
 
     def _save(self):
         data = json.dumps({"override_version": OVERRIDE_VERSION, "items": self._items},
@@ -121,6 +147,8 @@ class OverrideStore:
         has_label = item.get("label") is not None
         has_to = item.get("to_date") is not None or item.get("to_period") is not None
         if kind == "cancel":
+            if item.get("period") is None:
+                raise OverrideError("cancel 必有 period")
             if has_course or has_to or has_label:
                 raise OverrideError("cancel 仅可带 date/end_date/period/note")
         elif kind == "move":
@@ -128,6 +156,8 @@ class OverrideStore:
             if item.get("to_period") is None or has_end or has_label:
                 raise OverrideError("move 必有 to_period,可带 to_date,无 end_date/label")
         elif kind == "add":
+            if item.get("period") is None:
+                raise OverrideError("add 必有 period")
             if not has_course or has_to or has_label:
                 raise OverrideError("add 必有 course,无 to_*/label")
         elif kind == "exam_week":

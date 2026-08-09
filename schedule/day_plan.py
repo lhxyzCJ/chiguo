@@ -65,6 +65,8 @@ def resolve_classes(d: date, sources) -> dict:
                 else:
                     entries[p]["cancelled"] = True
         elif kind == "add":
+            if p is None:
+                continue   # 防御:坏条目缺 period → 跳过不呈现
             entries[p] = {"period": p, "course": ov.get("course", {}).get("course", ""),
                           "teacher": ov.get("course", {}).get("teacher", ""),
                           "location": ov.get("course", {}).get("location", ""),
@@ -147,7 +149,8 @@ def class_load_adjust(base: float, resolved_classes: dict, now) -> float:
     课间按剩余节数:先判 0 → 0.85,再判 1 → 0.70,其余 → 0.50(桶无重叠,实现顺序钉死)。
     R3:课间 remaining = 尚未开始的节数(该节起始时间 > now.time()),0/1/其余桶序钉死。
     cancelled 不计入有效节数/剩余 → 例外取消 → availability 上升。"""
-    active = {p: c for p, c in resolved_classes.items() if not c.get("cancelled")}
+    active = {p: c for p, c in resolved_classes.items()
+              if p is not None and not c.get("cancelled")}
     cp = current_period(now)
     if cp in active:
         n = len(active)
