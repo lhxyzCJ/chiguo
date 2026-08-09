@@ -25,7 +25,7 @@ from chiguo_math import (
     sigmoid, decay, recover, elastic_recover,
     dynamic_lambda, hawkes_intensity, longing_decay,
     in_quiet_window,
-    apply_interaction_matrix, drop_damp,
+    apply_interaction_matrix, drop_damp, impact_inertia,
 )
 from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
@@ -1436,22 +1436,48 @@ class ChiguoState:
         effort = _num("effort", 0.0, 0.0, 1.0)
         attention = _num("attention", 0.0, 0.0, 1.0)
 
+        # ── ③ 回复影响惯性阻尼（默认 0 = 关闭恒等，可灰度）──
+        # 对标 lacuna_core InertiaFilter：单条 analysis delta 幅度压缩，负向更重。
+        try:
+            inertia_pos = float(cfg.get("impact_inertia_positive", 0.0))
+            inertia_neg = float(cfg.get("impact_inertia_negative", 0.0))
+            aff_mod = float(cfg.get("impact_inertia_affection_mod", 0.0))
+        except (TypeError, ValueError):
+            inertia_pos = inertia_neg = aff_mod = 0.0
+
+        def _damp(delta: float, channel: str = "auto") -> float:
+            """按通道效价选择惯性键（不依赖 delta 数值符号）：
+            auto = 按 delta 符号（affection/energy 增减）；
+            neg  = 效价恒负（anxiety 回升）→ 恒用 inertia_neg；
+            pos  = 效价恒正（tsundere 软化）→ 恒用 inertia_pos。"""
+            if channel == "neg":
+                return impact_inertia(delta, inertia_neg, inertia_neg,
+                                      aff_mod, self.emotion.affection)
+            if channel == "pos":
+                return impact_inertia(delta, inertia_pos, inertia_pos,
+                                      aff_mod, self.emotion.affection)
+            return impact_inertia(delta, inertia_pos, inertia_neg,
+                                  aff_mod, self.emotion.affection)
+
         # ── 温暖度 → 好感 & 元气 ──
-        self.emotion.affection += warmth * cfg.get("affection_warmth_factor", 1.5)
-        self.emotion.energy += warmth * cfg.get("energy_warmth_factor", 4.0)
+        self.emotion.affection += _damp(warmth * cfg.get("affection_warmth_factor", 1.5))
+        self.emotion.energy += _damp(warmth * cfg.get("energy_warmth_factor", 4.0))
 
-        # 负温暖 → 不安回升（冷淡回复部分抵消 decay 效果）
+        # 负温暖 → 不安回升（冷淡回复部分抵消 decay 效果；效价恒负 → neg 键）
         if warmth < 0:
-            self.emotion.anxiety += abs(warmth) * cfg.get("anxiety_warmth_recovery", 3.0)
+            self.emotion.anxiety += _damp(
+                abs(warmth) * cfg.get("anxiety_warmth_recovery", 3.0), "neg")
 
-        # ── 用心度 → 好感 & 傲娇软化 ──
-        self.emotion.affection += effort * cfg.get("affection_effort_factor", 1.0)
-        self.emotion.tsundere_index -= effort * cfg.get("tsundere_effort_factor", 2.0)
+        # ── 用心度 → 好感 & 傲娇软化（软化效价恒正 → pos 键）──
+        self.emotion.affection += _damp(effort * cfg.get("affection_effort_factor", 1.0))
+        self.emotion.tsundere_index -= _damp(
+            effort * cfg.get("tsundere_effort_factor", 2.0), "pos")
 
-        # ── 关注度 → 元气 & 被忽视时不安 ──
-        self.emotion.energy += attention * cfg.get("energy_attention_factor", 4.0)
+        # ── 关注度 → 元气 & 被忽视时不安（回升效价恒负 → neg 键）──
+        self.emotion.energy += _damp(attention * cfg.get("energy_attention_factor", 4.0))
         if attention < 0.3:
-            self.emotion.anxiety += (0.3 - attention) * cfg.get("anxiety_ignore_factor", 2.0)
+            self.emotion.anxiety += _damp(
+                (0.3 - attention) * cfg.get("anxiety_ignore_factor", 2.0), "neg")
 
         # ── v4: 人格 anxiety_sensitivity 调制不安变化幅度 ──
         anx_sens = getattr(self.personality, '_cached_anxiety_sensitivity', 1.0)

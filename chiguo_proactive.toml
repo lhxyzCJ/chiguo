@@ -117,6 +117,12 @@ interaction_affection_anxiety = 1.0   # affection>60 → anxiety 恢复加速（
 interaction_energy_loneliness = 1.0   # energy<30 → loneliness 恢复加速（loneliness *= 1 + 0.02*k*(30-energy)/30）
 interaction_anxiety_energy = 1.0      # anxiety>70 → energy 恢复减速（energy *= 1 - 0.01*k）
 
+# ── ③ 回复影响惯性阻尼（默认 0 = 关闭恒等，可灰度；>0 压缩单条 analysis delta）──
+# 对标 lacuna_core InertiaFilter：单条回复不跳变；负向独立键可设更高（负向更重）。
+impact_inertia_positive = 0.0        # 正向 delta 阻尼比例（建议开启值 0.15）
+impact_inertia_negative = 0.0        # 负向 delta 阻尼比例（建议开启值 0.35，负向更重）
+impact_inertia_affection_mod = 0.0   # 亲密度调制：好感偏离 50 时对 inertia 的缩放（建议 0.5）
+
 [sigmoid]
 # ── 触发概率的 sigmoid 参数 ──
 # P(触发) = 1 / (1 + e^(-k * (loneliness - midpoint)))

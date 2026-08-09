@@ -98,6 +98,36 @@ def apply_interaction_matrix(emotion: dict, cfg: dict) -> dict:
     return out
 
 
+# ── ③ 回复影响惯性阻尼 ──────────────────────────────────
+# 单条 analysis delta 幅度压缩（默认 inertia=0 → 恒等，可灰度）。
+# 对标 lacuna_core InertiaFilter：负向权重更高（inertia_neg 独立键）。
+
+def impact_inertia(
+    delta: float,
+    inertia: float,
+    inertia_neg: float,
+    affection_mod: float = 0.0,
+    affection: float = 50.0,
+) -> float:
+    """
+    单条回复影响阻尼：effective_delta = delta × (1 - inertia_eff)。
+
+    - delta < 0（负向，如冷淡回复的不安回升）→ 用 inertia_neg（可设更高，
+      参考 lacuna_core 负向权重 1.5 vs 1.0 先例）
+    - affection_mod > 0 → 亲密度调制：好感偏离 50 越远，阻尼缩放越大
+      （好感高 → 阻尼小，更易被哄好/更快被伤）
+    - inertia_eff 钳制 [0, 0.9]（永不反向、永不归零）
+    - inertia 与 inertia_neg 均 ≤ 0 → 恒等返回（默认关闭灰度）
+    """
+    sign = -1.0 if delta < 0 else 1.0
+    base = inertia_neg if sign < 0 else inertia
+    if base <= 0:
+        return delta
+    eff = base * (1.0 - affection_mod * (affection - 50.0) / 100.0)
+    eff = max(0.0, min(eff, 0.9))
+    return delta * (1.0 - eff)
+
+
 # ── A10: 回复饱和阻尼 ────────────────────────────────────
 # 30 分钟窗口内同向回复事件越多，情绪加成越小（防刷）。
 
