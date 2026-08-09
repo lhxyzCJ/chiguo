@@ -1162,10 +1162,14 @@ class ChiguoState:
             rng = self._noise_rng()
             lo_step = abs(self.emotion.loneliness - old_lo)
             anx_step = abs(self.emotion.anxiety - old_anx)
-            self.emotion.loneliness += noise_cap(
-                lo_step, ou_step(0.0, 0.0, noise_theta, lo_sigma, hours, rng))
-            self.emotion.anxiety += noise_cap(
-                anx_step, ou_step(0.0, 0.0, noise_theta, anx_sigma, hours, rng))
+            # OU 内存态：x += θ(0−x)Δt + σ√Δt·ε；cron 单次 tick 从 0 出发等效
+            # 零均值扰动，loop 常驻模式连续 tick 时均值回归生效（θ 有效）。
+            nx = self._noise_x
+            x_lo = ou_step(nx["loneliness"], 0.0, noise_theta, lo_sigma, hours, rng)
+            x_anx = ou_step(nx["anxiety"], 0.0, noise_theta, anx_sigma, hours, rng)
+            nx["loneliness"], nx["anxiety"] = x_lo, x_anx
+            self.emotion.loneliness += noise_cap(lo_step, x_lo)
+            self.emotion.anxiety += noise_cap(anx_step, x_anx)
 
         # ── ④ 情绪基线淡忘（向全局默认弱回归，防无限漂移；默认 720h）──
         try:
@@ -1225,6 +1229,8 @@ class ChiguoState:
                 seed = 42
             rng = random.Random(seed)
             self._noise_rng_instance = rng
+        if not hasattr(self, "_noise_x"):
+            self._noise_x = {"loneliness": 0.0, "anxiety": 0.0}
         return rng
 
     # ── v7: 接话茬 — 待接续话题管理 ────────────────────
@@ -1320,20 +1326,27 @@ class ChiguoState:
 
     def _consume_user_mood(self, analysis: dict, now: datetime):
         """v1.11 ①: 解析 analysis 的 user_mood/user_mood_intensity → cooldown.user_mood。
-        5 层容错降级：缺键/非法枚举/非数值强度 → 按 calm 清空（旧 analysis 天然兼容）。"""
+        容错语义（5 层）：analysis 无 user_mood 键 / 非法枚举 / 非数值强度 → 本次
+        零效果且**保留旧感知**（旧 analysis 天然兼容，TTL 由读取端 mood_fresh 判定）；
+        仅显式 calm 或强度 <=0 才清空感知。"""
+        if "user_mood" not in analysis:
+            return  # 本次未感知 → 不覆盖旧感知
         try:
             mood = str(analysis.get("user_mood", "calm")).strip().lower()
         except (TypeError, ValueError):
-            mood = "calm"
+            return
+        if mood == "calm":
+            self.cooldown.user_mood = None  # 显式平静 → 清空
+            return
         if mood not in MOOD_DELTA:
-            mood = "calm"
+            return  # 非法枚举 → 视为未感知，保留旧感知
         try:
             intensity = float(analysis.get("user_mood_intensity", 0.0))
         except (TypeError, ValueError):
-            intensity = 0.0
+            return
         intensity = max(0.0, min(1.0, intensity))
-        if mood == "calm" or intensity <= 0:
-            self.cooldown.user_mood = None  # 平静/缺失 → 清空，等价"无感知"
+        if intensity <= 0:
+            self.cooldown.user_mood = None  # 强度 0 → 等价平静
         else:
             self.cooldown.user_mood = {
                 "mood": mood, "intensity": intensity, "at": now.isoformat()}

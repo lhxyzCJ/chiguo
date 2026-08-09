@@ -206,9 +206,10 @@ repeat_cap = 3                  # 计数封顶（超过不再继续衰减）
 # 对标 ESConv：感知到低落/崩溃（user_mood=fresh）→ 更主动安慰。
 # comfort 入 EMOTION_TRIGGERS → 自动继承 A3 日程乘数 / A4 三段激活 / A5 退场 / A6 repeat 阻尼。
 user_mood_ttl_minutes = 360.0   # user_mood 感知有效窗口（6h，过期不再触发/注解）
-user_mood_anxiety_bonus = 0.0   # 低落时 anxiety 触发权重加成（× (1 + bonus × intensity)，0=关闭）
+user_mood_anxiety_bonus = 0.0   # 低落(low/distressed)时 anxiety 触发权重加成（× (1 + bonus × intensity)，0=关闭）
+user_mood_note_enabled = 0      # 语气注解开关（mood_note 注入 _build_context；0=关闭恒等）
 comfort_weight_base = 0.0       # comfort 基础权重（0=关闭；>0 时低落在窗口内可触发安慰）
-comfort_baseline = 0.5          # comfort softmax 归一化"不触发"基线（同 anxiety 模式）
+comfort_baseline = 0.5          # comfort 归一化"不触发"基线（raw/(raw+baseline)，同 anxiety 模式）（同 anxiety 模式）
 comfort_min_weight = 0.03       # 低于此权重不成为候选
 
 [poisson]

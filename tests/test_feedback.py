@@ -338,8 +338,6 @@ def test_recv_dedup_analysis_upgrade():
     print("  OK test_recv_dedup_analysis_upgrade")
 
 
-
-
 def test_recv_dedup_different_text_full_record():
     """v9: 窗口内不同文本 → 正常完整记录（不误杀真实新消息）；A10: 同窗口第 2 次回复加成 ×0.5"""
     with tempfile.TemporaryDirectory() as td:

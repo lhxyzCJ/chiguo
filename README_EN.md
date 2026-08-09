@@ -21,7 +21,7 @@ Zero-LLM math decision engine · LLM message generation · WeChat delivery
 
 - **Decision/generation separation**: `chiguo_daemon.py` never calls an LLM and never writes message text — only structured JSON
 - **Zero-dependency core**: emotion decay, send gating, trigger evaluation, and topic selection all run locally on pure Python stdlib
-- **Interpretable**: 13 trigger types, 5 emotion dimensions, 8 topic sources — every parameter tunable in `chiguo_proactive.toml`, no code changes
+- **Interpretable**: 14 trigger types, 5 emotion dimensions, 8 topic sources — every parameter tunable in `chiguo_proactive.toml`, no code changes
 
 ## Table of Contents
 
@@ -70,7 +70,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 |---------|-------------|
 | 🧭 5-dimension emotion engine | Loneliness / affection / anxiety / energy / tsundere, half-life decay, real-time response to replies |
 | 🌙 Circadian learning | Dual-schedule dual-bucket learning, dynamic quiet window (no late-night pings) |
-| 🎯 13 trigger types | Sigmoid weights + weighted randomness instead of hard thresholds |
+| 🎯 14 trigger types | Sigmoid weights + weighted randomness instead of hard thresholds |
 | 💡 8 topic sources | Schedule/holidays, memory recall, solar terms, anniversaries, weather, NetEase Music… |
 | 🎵 Music bidirectional linkage | Playback inside the sleep window disproves "asleep" + reverse-calibrates the circadian model |
 | 🧠 Bayesian user state | 6 states inferred online: chatting / browsing / busy / sleeping / away / needs care |
@@ -163,7 +163,7 @@ Inside the decision engine (`chiguo_daemon.py`, zero LLM):
 
 ```
 emotion decay (elastic + interaction matrix) → send gating (quiet window / caps / interval / energy / Bayesian sleep inference)
-  → trigger evaluation (13 sigmoid + 3-stage activation / schedule multiplier / repeat damping / backoff) → topic injection (8 sources for ice-breaking)
+  → trigger evaluation (14 sigmoid + 3-stage activation / schedule multiplier / repeat damping / backoff) → topic injection (8 sources for ice-breaking)
   → circadian learning (dual-schedule buckets → dynamic quiet window) → follow-up (pending topics)
   → music linkage (playback in sleep window disproves sleeping) → JSON output
 ```

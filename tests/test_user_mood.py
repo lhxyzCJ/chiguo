@@ -106,21 +106,22 @@ def _make_state(temp_dir: str, **emo_overrides) -> ChiguoState:
 
 
 def test_consume_mood_tolerance_matrix():
-    """容错矩阵：缺键/非法枚举/非数值强度 → 全部按 calm 清空，不报错。"""
+    """容错矩阵：缺键/非法枚举/非数值强度 → 零效果且保留旧感知；显式 calm → 清空。"""
     with tempfile.TemporaryDirectory() as td:
         st = _make_state(td)
         now = datetime(2026, 8, 9, 12, 0, tzinfo=CST)
-        # 缺键
-        st._consume_user_mood({}, now)
-        assert st.cooldown.user_mood is None
-        # 非法枚举
-        st._consume_user_mood({"user_mood": "angsty", "user_mood_intensity": 0.9}, now)
-        assert st.cooldown.user_mood is None
-        # 强度非数值
-        st._consume_user_mood({"user_mood": "low", "user_mood_intensity": "high"}, now)
-        assert st.cooldown.user_mood is None
-        # calm 显式 → 清空
+        # 缺键 → 零效果且不覆盖旧感知
         st.cooldown.user_mood = {"mood": "low", "intensity": 0.5, "at": now.isoformat()}
+        st._consume_user_mood({}, now)
+        assert st.cooldown.user_mood and st.cooldown.user_mood["mood"] == "low", \
+            "缺键应保留旧感知"
+        # 非法枚举 → 保留旧感知
+        st._consume_user_mood({"user_mood": "angsty", "user_mood_intensity": 0.9}, now)
+        assert st.cooldown.user_mood and st.cooldown.user_mood["mood"] == "low"
+        # 强度非数值 → 保留旧感知
+        st._consume_user_mood({"user_mood": "low", "user_mood_intensity": "high"}, now)
+        assert st.cooldown.user_mood and st.cooldown.user_mood["mood"] == "low"
+        # 显式 calm → 清空
         st._consume_user_mood({"user_mood": "calm", "user_mood_intensity": 0.5}, now)
         assert st.cooldown.user_mood is None
 
@@ -156,17 +157,16 @@ def test_apply_analysis_impact_applies_mood_delta():
 
 
 def test_old_state_missing_user_mood_defaults():
-    """旧状态无 user_mood 字段 → 加载补默认 None（drop_events 先例）。"""
+    """旧状态无 user_mood 字段 → 加载补默认 None（drop_events 先例）；save→load 往返保留。"""
     with tempfile.TemporaryDirectory() as td:
         st = _make_state(td)
-        # 模拟旧状态：cooldown 无 user_mood 键
-        data = {"cooldown": {"last_message_at": None}}
-        state_path = Path(td) / "state.json"
-        state_path.write_text("")
-        # dataclass 缺省即 None——直接断言构造与 asdict 往返
-        assert st.cooldown.user_mood is None
-        d = st.cooldown.to_dict() if hasattr(st.cooldown, "to_dict") else {}
-        assert "user_mood" in d or st.cooldown.user_mood is None
+        assert st.cooldown.user_mood is None  # dataclass 默认
+        # save→load 往返：感知字段持久化保留
+        st.cooldown.user_mood = {"mood": "low", "intensity": 0.5,
+                                 "at": "2026-08-09T11:00:00+08:00"}
+        st.save()
+        st2 = ChiguoState(st.config)
+        assert st2.cooldown.user_mood == st.cooldown.user_mood, "user_mood 应持久化保留"
 
 
 # ── 触发层：comfort 触发 ─────────────────────────────────────────
@@ -198,7 +198,6 @@ def test_comfort_trigger_appears_when_enabled():
             r = evaluate_triggers(st, now)
             assert r is not None and r.type == "comfort", \
                 f"期望 comfort，实际 {r}"
-            assert r.data.get("user_mood") == "low"
 
 
 def test_comfort_weight_monotonic_and_ttl():
@@ -273,18 +272,20 @@ def _make_engine(temp_dir: str):
 
 
 def test_build_context_mood_note():
-    """_build_context：fresh low mood → guidance 含温柔注解；无感知 → 不注入。"""
+    """_build_context：开关开启 + fresh low mood → guidance 含温柔注解；默认关闭 → 不注入。"""
     from chiguo_trigger import Trigger
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
         st = engine.state
         now = datetime(2026, 8, 9, 12, 0, tzinfo=CST)
-        # 无感知 → 无注解
-        ctx = engine._build_context(Trigger("lonely_mid"), now, user_state=None)
-        assert "哥哥似乎心情低落" not in ctx["layer_guidance"]
-        # fresh low → 注解注入
+        # 默认关闭（开关=0）→ 即使有 fresh mood 也不注入
         st.cooldown.user_mood = {"mood": "low", "intensity": 0.6,
                                  "at": now.isoformat()}
+        ctx = engine._build_context(Trigger("lonely_mid"), now, user_state=None)
+        assert "哥哥似乎心情低落" not in ctx["layer_guidance"], \
+            "user_mood_note_enabled=0 默认关闭 → 不注入注解"
+        # 开启 → 注解注入
+        engine.config["trigger"]["user_mood_note_enabled"] = 1
         ctx = engine._build_context(Trigger("lonely_mid"), now, user_state=None)
         assert "哥哥似乎心情低落" in ctx["layer_guidance"], \
             "fresh low mood 应注入温柔语气注解"

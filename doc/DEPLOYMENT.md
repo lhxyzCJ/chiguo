@@ -44,7 +44,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 ### 2. 全量自检
 
-`bash scripts/ci-test.sh`：36 个 Python + 10 个脚本测试，任一失败即中止。验证：看输出「全部测试通过 ✓」。
+`bash scripts/ci-test.sh`：42 个 Python + 10 个脚本测试，任一失败即中止。验证：看输出「全部测试通过 ✓」。
 
 该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot` 与 `data/xskb.xlsx`（`ci-test.sh` 自动自举 stub 与最小课表 fixture），因此本地与 CI 结果一致。
 

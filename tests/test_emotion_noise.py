@@ -5,7 +5,6 @@ import math
 import os
 import random
 import re
-import shutil
 import sys
 import tempfile
 import tomllib
@@ -85,7 +84,7 @@ def test_noise_cap_bounds():
 
 # ── 行为级：tick 恒等 + 开启统计 ────────────────────────────────
 
-def _make_state(temp_dir: str, **emo_overrides) -> ChiguoState:
+def _make_state(temp_dir: str) -> ChiguoState:
     """构造临时目录中的 ChiguoState（隔离配置/状态文件）。"""
     src = Path("chiguo_proactive.toml").read_text()
     src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
@@ -99,23 +98,24 @@ def _make_state(temp_dir: str, **emo_overrides) -> ChiguoState:
 
 
 def test_tick_disabled_identity():
-    """noise_enabled=0（默认）→ tick 结果与无噪声版本逐位相等。"""
+    """noise_enabled=0（默认）→ 与 sigma=0 的 OU（纯恒等）结果逐位一致。"""
     with tempfile.TemporaryDirectory() as td:
         st = _make_state(td)
         now = datetime(2026, 8, 9, 12, 0, tzinfo=CST)
         st.emotion.loneliness = 60.0
         st.emotion.anxiety = 50.0
-        # 记录关闭时的 tick 结果
         st.tick(1.0, now)
         lo_off, anx_off = st.emotion.loneliness, st.emotion.anxiety
 
         st2 = _make_state(td)
+        st2.config["emotion"]["noise_enabled"] = 1
+        st2.config["emotion"]["noise_loneliness_sigma"] = 0.0  # σ=0 → ou_step 恒等
+        st2.config["emotion"]["noise_anxiety_sigma"] = 0.0
         st2.emotion.loneliness = 60.0
         st2.emotion.anxiety = 50.0
         st2.tick(1.0, now)
-        lo2, anx2 = st2.emotion.loneliness, st2.emotion.anxiety
-        assert lo_off == lo2 and anx_off == anx2, \
-            "默认关闭 → 与现状逐位相等"
+        assert lo_off == st2.emotion.loneliness and anx_off == st2.emotion.anxiety, \
+            "默认关闭 与 σ=0 开启 应逐位一致"
 
 
 def test_tick_enabled_stays_in_bounds():

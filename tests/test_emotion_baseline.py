@@ -54,7 +54,7 @@ def test_shift_send_replied_and_neutral():
 
 # ── 行为级：update_emotion_baseline ──────────────────────────────
 
-def _make_state(temp_dir: str, **emo_overrides) -> ChiguoState:
+def _make_state(temp_dir: str) -> ChiguoState:
     """构造临时目录中的 ChiguoState（隔离配置/状态文件）。"""
     src = Path("chiguo_proactive.toml").read_text()
     src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
@@ -140,17 +140,17 @@ def test_tick_target_uses_baseline():
 
 
 def test_old_state_missing_baseline_defaults():
-    """旧状态无 baseline_* 字段 → dataclass 默认补（100/100/0，无需升版）。"""
+    """旧状态无 baseline_* 字段 → dataclass 默认补（100/100/0，无需升版）；save→load 往返保留。"""
     with tempfile.TemporaryDirectory() as td:
         st = _make_state(td)
-        # 手工构造旧状态 cooldown 类比：baseline 字段是 emotion 上的，直接断言默认
         assert st.emotion.baseline_loneliness == 100.0
         assert st.emotion.baseline_anxiety == 100.0
         assert st.emotion.baseline_affection == 0.0
-        # save→load 往返不丢字段
+        # save→load 往返：新实例（同 cfg 同 state_path）自动 _load，字段不丢
+        st.emotion.baseline_loneliness = 70.0
         st.save()
-        st2 = ChiguoState.load(str(Path(td) / "state.json"),
-                               st.config) if hasattr(ChiguoState, "load") else None
+        st2 = ChiguoState(st.config)
+        assert st2.emotion.baseline_loneliness == 70.0, "save→load 往返应保留漂移基线"
 
 
 def test_tsundere_isolated_from_baseline():

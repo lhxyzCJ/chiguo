@@ -746,12 +746,13 @@ class DecisionEngine:
                 "不要再次崩溃。可以先聊聊别的。"
             )
 
-        # ── v1.11 ①: 用户情绪感知语气注解（mood_note；无感知 → 空串）──
+        # ── v1.11 ①: 用户情绪感知语气注解（mood_note；开关默认关闭）──
         # 对标 ESConv：感知到低落 → 语气更温柔克制；仅叠加注解，不改变人格铁律。
         mood_note = ""
         mood = self.state.cooldown.user_mood
         trg_cfg = self.config.get("trigger", {})
-        if mood and mood_fresh(mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0)):
+        if (trg_cfg.get("user_mood_note_enabled", 0) != 0
+                and mood and mood_fresh(mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0))):
             mood_note = user_mood_note(mood["mood"], mood["intensity"])
             if user_state and user_state.get("most_likely") == "needs_care":
                 mood_note += "\n（哥哥可能需要关心（Bayesian 推断））"

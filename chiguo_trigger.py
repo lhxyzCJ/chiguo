@@ -240,13 +240,13 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     mood_fresh_flag = bool(mood and mood_fresh(
         mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0)))
     if mood_fresh_flag:
-        # 低落时 anxiety 触发小幅加成（user_mood_anxiety_bonus 默认 0）
+        # 低落时 anxiety 触发小幅加成（user_mood_anxiety_bonus 默认 0；仅 low/distressed）
         anx_bonus = trg_cfg.get("user_mood_anxiety_bonus", 0.0)
         try:
             anx_bonus = max(0.0, float(anx_bonus))
         except (TypeError, ValueError):
             anx_bonus = 0.0
-        if anx_bonus > 0:
+        if anx_bonus > 0 and mood["mood"] in ("low", "distressed"):
             raw_anx = raw_anx * (1.0 + anx_bonus * mood["intensity"])
 
     w_anx = raw_anx / (raw_anx + anx_baseline) if raw_anx + anx_baseline > 0 else 0.0
@@ -270,9 +270,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         w_cf = raw_cf / (raw_cf + cf_baseline) if raw_cf + cf_baseline > 0 else 0.0
         if w_cf > cf_min:
             weighted_candidates.append({
-                "trigger": Trigger("comfort", "soft",
-                                   data={"user_mood": mood["mood"],
-                                         "intensity": mood["intensity"]}),
+                "trigger": Trigger("comfort", "soft"),
                 "weight": w_cf,
             })
 

@@ -1,6 +1,6 @@
 # Claude Code Rules — Chiguo Proactive Message System
 
-> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-03. 42 py + 10 script runners, zero framework, pure Python stdlib.
+> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-09 (v1.11). 42 py + 10 script runners, zero framework, pure Python stdlib.
 > **Iron law**: decision/generation separation. Daemon outputs JSON. pi-agent generates messages (Phase 4).
 
 ---
@@ -74,7 +74,7 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 │   ├── schedule/ 包        schedule 数据面 parser.py (xskb.xlsx → schedule_cache.json → query) + parsing.py 纯解析 + query.py 策略 + holiday.py (节假日) + anniversary.py (纪念日) + override_store/plan_store/api (覆盖/计划/澄清存储) + sources/day_plan/resolve_when/attention/recall (检索与安排) + confirm + replan
 │   ├── memory/ 包            MemoryBackend abstraction (v1.8): base.py (available/search/random_memory/stats primitives + base-class Ebbinghaus) / mem0_backend.py Mem0Backend (mem0ai: LLM fact extraction + ollama embedding + qdrant embedded, lazy import, available=False degrade, CHIGUO_MEM0_DISABLED=1 test hook) / factory.py create_backend; memory_bridge.py kept as compat facade (MemoryBridge alias + CLI)
 │   └── chiguo_circadian.py    dual-bucket sleep-window learning (weekday/weekend + active-time merging)
-├── chiguo_trigger.py       evaluate_triggers() → 13 trigger types (incl. v7 follow_up), sigmoid-weighted
+├── chiguo_trigger.py       evaluate_triggers() → 14 trigger types (incl. v7 follow_up + v1.11 comfort), sigmoid-weighted
 ├── chiguo_topics.py        TopicPicker — 8 sources (incl. v9 netease), Ebbinghaus-weighted memory
 ├── chiguo_composer.py      MessageComposer — Intent × Cue × Vibe (389 lines)
 ├── chiguo_rotation.py      Monthly log rotation → archive/
@@ -154,7 +154,7 @@ evaluate(now)
 
 ## 5. Trigger System (chiguo_trigger.py)
 
-13 trigger types (v7: + follow_up 接话茬), all sigmoid-weighted random selection (no hard thresholds):
+14 trigger types (v7: + follow_up 接话茬; v1.11: + comfort 安慰), all sigmoid-weighted random selection (no hard thresholds):
 
 | Trigger | Weight | Condition |
 |---------|--------|-----------|
@@ -199,7 +199,7 @@ evaluate(now)
 
 Intent × Cue × Vibe three-layer system:
 
-- **Layer 1 (Intent)** — 20%: What to express (~36 intents across 13 trigger types)
+- **Layer 1 (Intent)** — 20%: What to express (~36 intents across 14 trigger types)
 - **Layer 2 (Intent + Cue)** — 50%: How to express (8 personality styles: tsundere_classic/soft/cool, dere_dere, playful_bubbly, anxious_clingy, caring_gentle, cool_mysterious)
 - **Layer 3 (Intent + Cue + Vibe)** — 30%: Atmosphere (13 vibes: early_morning, morning, noon, afternoon, evening, night, late_night, weekend variants, holiday, rainy, sunny, exam_season)
 
@@ -310,7 +310,7 @@ Intent × Cue × Vibe three-layer system:
 ### Reply side — bridge askAgent
 1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askAgent` (`agent-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
-3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askAgent `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 600s → analysis-only upgrade, no double counting)
+3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askAgent `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 30s → analysis-only upgrade, no double counting)
 
 ### Schedule-center CLI (daemon subcommands, schedule/ 包)
 - `chiguo_daemon.py --attention` — T1/T2/T3 注意力快照（回复侧注入，零写；失败降级继续 askAgent）
