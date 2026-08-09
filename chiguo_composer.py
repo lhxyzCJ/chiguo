@@ -5,10 +5,15 @@
 # 替代单一的 "situation + topic hint" 注入
 # ============================================================
 
+import argparse
+import json
 import random
+import re
+import sys
 import tomllib
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 
 class MessageComposer:
@@ -468,3 +473,83 @@ class MessageComposer:
             parts.append(f"\n[话题提示：{topic_data['hint']}]")
 
         return "\n".join(parts)
+
+
+# ═══════════════════════════════════════════════════════════
+# A8: 生成失败确定性回退 CLI（零 LLM）
+# pi 生成失败时由 scripts/chiguo-tick.sh 调用本 CLI 兜底：
+# 接收 daemon decision JSON（或 --trigger），用现有
+# select_combo + 模板池直接拼出 1-3 句可发送文本，输出到 stdout。
+# 不追求文采（兜底场景），模板直出即可。
+# ═══════════════════════════════════════════════════════════
+
+# A8: intent 无 cue 模板（size=1 等）时的兜底文案池。
+# 注意：INTENTS 的 text 是给 LLM 的内部意图指示（如「轻松试探——假装恰好想到哥哥」），
+# 不可直发用户，故用固定可发送文案随机一条。
+_FALLBACK_LINES = ("想哥哥了。", "哥哥在干嘛呀？", "今天过得怎么样？", "有点想你了。")
+
+
+def _fallback_text(combo: dict) -> str:
+    """从 combo 拼 1-3 句可发送文本。
+    优先 cue 台词模板（personality/*.toml 的 trigger_templates，直出）；
+    无模板（size=1 等）→ 固定文案池随机一条。剥离行号注释（如 （L1069 报单风早安））。
+    """
+    lines: list[str] = []
+    cue = combo.get("cue")
+    if cue:
+        lines = list(cue.get("templates") or [])
+    if not lines:
+        lines = [random.choice(_FALLBACK_LINES)]
+    cleaned: list[str] = []
+    for line in lines[:3]:
+        # 剥结尾注释：中文全角（…）或半角 (…) 括号组（原著行号/风格标注）
+        line = re.sub(r"\s*[（(][^（）()]*[）)]\s*$", "", line).strip()
+        if line:
+            cleaned.append(line)
+    return "\n".join(cleaned)
+
+
+def _cli_main(argv=None) -> int:
+    """A8 兜底 CLI 入口。退出码：0=成功（文本已输出）；非零=失败。"""
+    cst = timezone(timedelta(hours=8))
+    parser = argparse.ArgumentParser(
+        prog="chiguo_composer",
+        description="A8 确定性兜底：从 decision JSON 生成可发送消息文本（零 LLM）",
+    )
+    parser.add_argument("decision_file", nargs="?",
+                        help="daemon decision JSON 文件路径（含 trigger 字段）")
+    parser.add_argument("--trigger", default=None, help="触发类型（不用文件时）")
+    args = parser.parse_args(argv)
+
+    if args.decision_file:
+        try:
+            with open(args.decision_file, "r", encoding="utf-8") as f:
+                decision = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"composer fallback: 决策文件不可读: {e}", file=sys.stderr)
+            return 1
+        trigger_type = decision.get("trigger")
+        if not trigger_type:
+            print("composer fallback: decision JSON 缺 trigger 字段", file=sys.stderr)
+            return 1
+    else:
+        trigger_type = args.trigger
+        if not trigger_type:
+            parser.error("需要 decision JSON 文件路径或 --trigger")
+
+    # 最小 state stub：无 personality/schedule_status 属性 → composer 内部
+    # AttributeError 保护自动降级（cue 权重不调制 + 按当前时间选 vibe）。
+    state_stub = SimpleNamespace()
+    composer = MessageComposer(state_stub, config={})
+    now = datetime.now(cst)
+    combo = composer.select_combo(trigger_type, now)
+    text = _fallback_text(combo)
+    if not text:
+        print("composer fallback: 无可用模板", file=sys.stderr)
+        return 1
+    print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli_main())

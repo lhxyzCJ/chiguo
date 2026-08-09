@@ -594,6 +594,86 @@ def test_pick_valid_set_includes_netease():
 
 
 # ═══════════════════════════════════════════════════════════
+# A9: 内容级防复读（3-gram Jaccard 查重）
+# ═══════════════════════════════════════════════════════════
+
+def _dedup_picker(recent_sent_texts, **kwargs):
+    """可用候选收窄为 weather + general（schedule in_class → None；mem0/anniv/solar 不可用），
+    netease 不注入 → 查重行为确定可断言的场景。"""
+    state = MockState(schedule_status={"in_class": True, "current_course": "高数"},
+                      bridge=FakeBridge([]))
+    return TopicPicker(state, _picker_cfg(), recent_sent_texts=recent_sent_texts, **kwargs)
+
+
+def test_repeat_dedup_rejects_high_similarity():
+    """高相似候选（jaccard ≥ 0.6）被弃用：general hint 与最近已发消息相同 → 只剩 weather"""
+    now = datetime(2026, 6, 15, 9, 0, tzinfo=CST)  # 上午 → general hint 固定
+    general_hint = "问问哥哥今天上午有什么安排"
+    picker = _dedup_picker([general_hint])
+    assert picker.repeat_jaccard_threshold == 0.6
+    assert picker.recent_sent_texts == [general_hint]
+    for i in range(50):
+        random.seed(20000 + i)
+        t = picker.pick(now)
+        assert t is not None, f"seed {i}: weather 仍可用"
+        assert t["type"] == "weather", f"seed {i}: general 应被弃用, got {t}"
+    print("  OK test_repeat_dedup_rejects_high_similarity")
+
+
+def test_repeat_dedup_low_similarity_normal():
+    """低相似最近消息 → 不弃用任何候选（general/weather 正常竞争）"""
+    now = datetime(2026, 6, 15, 9, 0, tzinfo=CST)
+    picker = _dedup_picker(["最近在追什么番剧"])
+    seen = set()
+    for i in range(200):
+        random.seed(20100 + i)
+        t = picker.pick(now)
+        assert t is not None and t["type"] in ("general", "weather"), f"seed {i}: {t}"
+        seen.add(t["type"])
+    assert seen == {"general", "weather"}, f"两种候选都应出现, got {seen}"
+    print("  OK test_repeat_dedup_low_similarity_normal")
+
+
+def test_repeat_dedup_all_rejected_returns_none():
+    """全部候选被弃用 → topic 空注入（返回 None）"""
+    now = datetime(2026, 6, 15, 9, 0, tzinfo=CST)
+    weather_hint = "天气很热，提醒哥哥注意防暑、多喝水"
+    general_hint = "问问哥哥今天上午有什么安排"
+    picker = _dedup_picker([general_hint, weather_hint])
+    for i in range(30):
+        random.seed(20200 + i)
+        assert picker.pick(now) is None, f"seed {i}: 全部候选应被弃用"
+    print("  OK test_repeat_dedup_all_rejected_returns_none")
+
+
+def test_repeat_dedup_threshold_configurable():
+    """阈值 0.0 → 非空候选全部弃用（jaccard ≥ 0 恒真）；阈值 1.0 → 不弃用"""
+    now = datetime(2026, 6, 15, 9, 0, tzinfo=CST)
+    cfg = dict(_picker_cfg())
+    cfg["repeat_jaccard_threshold"] = 0.0
+    picker = TopicPicker(MockState(schedule_status={"in_class": True}, bridge=FakeBridge([])),
+                         cfg, recent_sent_texts=["随便一条历史消息"])
+    for i in range(20):
+        random.seed(20300 + i)
+        assert picker.pick(now) is None, f"seed {i}: 阈值 0 应全弃用"
+    cfg["repeat_jaccard_threshold"] = 1.0
+    picker2 = TopicPicker(MockState(schedule_status={"in_class": True}, bridge=FakeBridge([])),
+                          cfg, recent_sent_texts=["随便一条历史消息"])
+    for i in range(100):
+        random.seed(20400 + i)
+        assert picker2.pick(now) is not None, f"seed {i}: 阈值 1 不应弃用"
+    print("  OK test_repeat_dedup_threshold_configurable")
+
+
+def test_repeat_dedup_history_n_truncated():
+    """repeat_history_n=5：注入 8 条 → 只保留最近 5 条"""
+    picker = _dedup_picker([f"历史消息{i}" for i in range(8)])
+    assert len(picker.recent_sent_texts) == 5, picker.recent_sent_texts
+    assert picker.recent_sent_texts == [f"历史消息{i}" for i in range(5)]
+    print("  OK test_repeat_dedup_history_n_truncated")
+
+
+# ═══════════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════════
 
@@ -622,6 +702,12 @@ if __name__ == "__main__":
         test_netease_not_injected_no_crash,
         test_netease_service_exception_silent,
         test_pick_valid_set_includes_netease,
+        # A9 内容级防复读
+        test_repeat_dedup_rejects_high_similarity,
+        test_repeat_dedup_low_similarity_normal,
+        test_repeat_dedup_all_rejected_returns_none,
+        test_repeat_dedup_threshold_configurable,
+        test_repeat_dedup_history_n_truncated,
     ]
     failed = 0
     for t in tests:

@@ -30,7 +30,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-bash scripts/ci-test.sh   # full suite (37 py + 10 script) — 本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
+bash scripts/ci-test.sh   # full suite (38 py + 10 script) — 本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
 ```
 
 - Python 3.14 via uv (`.venv` exists, Python 3.14.6). 3.14-only syntax is intentional: bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`.
@@ -63,5 +63,5 @@ bash scripts/ci-test.sh   # full suite (37 py + 10 script) — 本地与 GitHub 
 
 ## After any code change
 
-1. Run affected test files; full chain (37 py + 10 script) if touching math/state/daemon.
+1. Run affected test files; full chain (38 py + 10 script) if touching math/state/daemon.
 2. Update affected sections of `doc/SYSTEM.md`, `doc/README.md`；`doc/DEPLOYMENT.md` 在 deploy.sh/scripts 改动时同步。

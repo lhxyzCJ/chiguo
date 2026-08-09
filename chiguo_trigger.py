@@ -19,14 +19,33 @@ class Trigger:
     data: dict = field(default_factory=dict)
 
 
-# v10 (#73 A3/A4): 情绪类触发集合 —— A3 日程乘数只作用于此集合；
-# A4 activation = 该集合候选权重之和。仪式类（special/morning/night/meal/memory/follow_up）豁免。
+# 情绪类触发集合 —— A3 日程乘数只作用于此集合；A4 activation = 该集合候选权重之和；
+# A5 未回复退场（backing_off）时该集合禁发。仪式类（special/morning/night/meal/memory/follow_up）豁免。
 EMOTION_TRIGGERS = frozenset({
     "lonely_low", "lonely_mid", "lonely_high",
     "anxiety", "playful", "reflect", "longing",
 })
 
 
+def backoff_level(state: ChiguoState, now: datetime) -> int:
+    """
+    A5 未回复退场状态机（三态，不新增持久化字段——用现有 messages_without_reply 推导）：
+      0 = normal      （< backoff_start 条未回复：正常竞争）
+      1 = backing_off （backoff_start ≤ n < backoff_silent：情绪类禁发、仪式类照发）
+      2 = silent      （n ≥ backoff_silent：全禁发；escape_valve longing 破防豁免——防死锁语义）
+    参数：[cooldown].backoff_start=3 / backoff_silent=5。
+    与 current_lambda() 的 0.7^n 退避（λ 降频）是两层独立机制：λ 降频 + 硬性禁发层，不冲突。
+    now 保留作签名（未来可用 last_user_message_at 加时间窗扩展），当前只用计数推导。
+    """
+    cfg = state.config.get("cooldown", {})
+    start = int(cfg.get("backoff_start", 3))
+    silent = int(cfg.get("backoff_silent", 5))
+    n = state.cooldown.messages_without_reply
+    if n >= silent:
+        return 2
+    if n >= start:
+        return 1
+    return 0
 def evaluate_triggers(state: ChiguoState, now: datetime,
                       trigger_scale: dict | None = None) -> Trigger | None:
     """
@@ -43,6 +62,13 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # longing_break_eligible 检查：① 焦虑 ≥ 阻塞阈值 ② 墙钟沉默 ≥ 72h ③ 冷却期外
     if state.longing_break_eligible(now):
         return Trigger("longing", "high", data={"escape_valve": True})
+
+    # ── A5: 未回复退场状态机（硬性禁发层，escape_valve 已在上面 return → 天然豁免）──
+    # 0=normal 正常竞争；1=backing_off 情绪类禁发、仪式类照发；2=silent 全禁发。
+    # 与 current_lambda 的 0.7^n 退避（λ 降频）是两层独立机制，不冲突。
+    backoff = backoff_level(state, now)
+    if backoff >= 2:
+        return None
 
     weighted_candidates: list[dict] = []
 
@@ -246,6 +272,14 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
                                    data={"held_count": held, "accumulated_lambda": round(acc_lam, 3)}),
                 "weight": w_longing,
             })
+
+    # ── A5: backing_off（1 级）→ 情绪类候选整体跳过，仪式类照发 ──
+    # 过滤在加权选择前统一执行（不散落各收集块），仪式类候选不受影响。
+    if backoff == 1:
+        weighted_candidates = [
+            c for c in weighted_candidates
+            if c["trigger"].type not in EMOTION_TRIGGERS
+        ]
 
     if not weighted_candidates:
         return None

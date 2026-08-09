@@ -64,12 +64,14 @@ class DecisionEngine:
         self.state = ChiguoState(self.config)
         # v9: 网易云策略层(健康/配额/音乐话题),base_dir 锚定
         self.netease_service = NeteaseService(self.config, str(self._base_dir))
-        self.topic_picker = TopicPicker(self.state, self.config.get("topic_picker", {}),
-                                        netease_service=self.netease_service)
-        self.composer = MessageComposer(self.state, self.config.get("composer", {}))
         # 显式 log_path（测试）原样使用；否则锚定 base_dir
+        # （先于 topic_picker 构造：A9 recent_sent_texts() 依赖 messages_log_path）
         self.log_path = log_path or str(self._base_dir / "chiguo_decisions.jsonl")
         self.messages_log_path = self._base_dir / "chiguo_messages.jsonl"
+        self.topic_picker = TopicPicker(self.state, self.config.get("topic_picker", {}),
+                                        netease_service=self.netease_service,
+                                        recent_sent_texts=self.recent_sent_texts())
+        self.composer = MessageComposer(self.state, self.config.get("composer", {}))
         print(f"[chiguo_daemon] base_dir={self._base_dir}", file=sys.stderr)
         print(f"[chiguo_daemon] state={self.state.state_path}", file=sys.stderr)
         print(f"[chiguo_daemon] log={self.log_path}", file=sys.stderr)
@@ -111,7 +113,8 @@ class DecisionEngine:
             # v9: 热重载时同步重建策略层(重试/配额参数可能被改)与 TopicPicker
             self.netease_service = NeteaseService(self.config, str(self._base_dir))
             self.topic_picker = TopicPicker(self.state, self.config.get("topic_picker", {}),
-                                            netease_service=self.netease_service)
+                                            netease_service=self.netease_service,
+                                            recent_sent_texts=self.recent_sent_texts())
             self.composer = MessageComposer(self.state, self.config.get("composer", {}))
             self.state._bayesian_estimator = None
 
@@ -958,7 +961,8 @@ class DecisionEngine:
 
     def _log_message(self, msg_id: str, direction: str, text: str,
                      trigger: str = None, intensity: str = None,
-                     user_emotion_analysis: dict = None):
+                     user_emotion_analysis: dict = None,
+                     fallback: bool = False):
         """追加人类可读对话记录到 chiguo_messages.jsonl。"""
         now = datetime.now(CST)
         snap = self.state.snapshot(now)
@@ -971,6 +975,9 @@ class DecisionEngine:
         if direction == "send":
             record["trigger"] = trigger
             record["intensity"] = intensity
+            # A8: pi 生成失败 → composer 确定性兜底 → 打标记（health 仍记 success）
+            if fallback:
+                record["fallback"] = True
             record["emotion_snapshot"] = {
                 "loneliness": round(snap["emotion"]["loneliness"], 0),
                 "affection": round(snap["emotion"]["affection"], 0),
@@ -988,10 +995,12 @@ class DecisionEngine:
             pass  # 消息归档失败不影响主流程
 
     def record_send_text(self, msg_id: str, text: str,
-                         trigger: str = None, intensity: str = None):
+                         trigger: str = None, intensity: str = None,
+                         fallback: bool = False):
         """记录已发送消息文本（发送侧回调）。
         仅写 chiguo_messages.jsonl —— decisions.jsonl 已有 send 决策条目。
         trigger/intensity 从 send 决策中提取，使 messages.jsonl 自包含。
+        fallback（A8）: composer 确定性兜底生成的标记（pi 生成失败时 True）。
         """
         self._log_message(
             msg_id=msg_id,
@@ -999,7 +1008,30 @@ class DecisionEngine:
             text=text,
             trigger=trigger,
             intensity=intensity,
+            fallback=fallback,
         )
+
+    def recent_sent_texts(self, n: int = 5) -> list[str]:
+        """A9 查重数据源：最近 n 条已发送消息文本（chiguo_messages.jsonl 倒序取）。
+        记录由 --record-send --text 写入（含 direction=send + text 字段），
+        不新增文件。文件缺失/损坏行 → 静默跳过（查重降级为不启用）。"""
+        try:
+            with open(self.messages_log_path, "r") as f:
+                lines = f.readlines()
+        except OSError:
+            return []
+        texts: list[str] = []
+        # 只扫最近 500 行（倒序前截断）：日志随运行时间线性增长，全量扫描无必要
+        for line in reversed(lines[-500:]):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("direction") == "send" and rec.get("text"):
+                texts.append(rec["text"])
+                if len(texts) >= n:
+                    break
+        return texts
 
     def _has_send_result(self, msg_id: str) -> bool:
         """日志中是否已有该 msg_id 的 send_result 条目（幂等防护）。"""
@@ -1204,6 +1236,8 @@ def main():
     parser.add_argument("--record-send", type=str, default=None,
                         metavar="MSG_ID",
                         help="记录已发送消息文本 (配合 --text)")
+    parser.add_argument("--fallback", action="store_true",
+                        help="A8: 标记该消息为 composer 确定性兜底生成 (配合 --record-send)")
     parser.add_argument("--text", type=str, default=None,
                         help="消息文本 (配合 --record-send)")
     parser.add_argument("--trigger", type=str, default=None,
@@ -1286,7 +1320,8 @@ def main():
             print(json.dumps({"error": "--text required with --record-send"}, ensure_ascii=False))
             sys.exit(1)
         engine = DecisionEngine()
-        engine.record_send_text(args.record_send, args.text, args.trigger, args.intensity)
+        engine.record_send_text(args.record_send, args.text, args.trigger, args.intensity,
+                                fallback=args.fallback)
         print(json.dumps({"action": "send_text_recorded", "msg_id": args.record_send, "ok": True}, ensure_ascii=False))
         return
 

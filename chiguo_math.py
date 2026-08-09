@@ -253,3 +253,29 @@ def in_quiet_window(dt: _dt, start: int, end: int) -> bool:
     if end < start:
         return dt.hour >= start or dt.hour < end
     return start <= dt.hour < end
+
+
+# ── 内容级查重（A9） ─────────────────────────────────────
+# topic 候选与最近已发消息文本做 3-gram Jaccard 查重，防复读。
+
+def jaccard_3gram(a: str, b: str) -> float:
+    """
+    文本相似度：按字符（中文按字）滑窗 3-gram 集合的 Jaccard 系数。
+    Jaccard = |A∩B| / |A∪B|，值域 [0, 1]。
+
+    - 长度 < 3 的文本退化为整串字符集合（短-短比较仍可比对；与 ≥3 字文本比较
+      因字符集与 3-gram 集无交集恒为 0，属预期）。
+    - 任一文本为空 → 返回 0.0（空集与任何集合无重叠）。
+    """
+    def _grams(s: str) -> set:
+        s = (s or "").strip()
+        if not s:
+            return set()
+        if len(s) < 3:
+            return set(s)
+        return {s[i:i + 3] for i in range(len(s) - 2)}
+
+    ga, gb = _grams(a), _grams(b)
+    if not ga or not gb:
+        return 0.0
+    return len(ga & gb) / len(ga | gb)

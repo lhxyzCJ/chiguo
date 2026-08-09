@@ -192,6 +192,11 @@ netease_fault_daily_quota = 1        # v9 新增:故障提及日配额
 topic_probability = 0.70        # 孤独触发时注入话题的概率（0~1）
 force_topic_threshold = 3       # 连续N次都是孤独触发时，强制注入话题
 trigger_history_max = 6         # 触发历史记录最大长度
+# ── A9: 内容级防复读（行为层）──
+# 候选 topic 与最近已发消息文本做 3-gram Jaccard 查重，相似度 ≥ 阈值 → 弃用该候选
+# （换下一候选；全部弃用 → topic 空注入）。只作用于候选选择层，不改发不发决策。
+repeat_jaccard_threshold = 0.6  # 相似度阈值（0~1）
+repeat_history_n = 5            # 对比最近 N 条已发送消息
 
 [schedule]
 enabled = true                   # 可选来源：false 时完全不解析课表（缺 xlsx 亦自动禁用，按空闲处理）
@@ -245,6 +250,11 @@ max_daily_silent = 2
 min_interval_minutes = 30
 # 退避：无回复累计时，λ 乘以衰减因子
 no_reply_lambda_decay = 0.7   # 每条无回复消息，λ × 0.7
+# ── A5: 未回复退场状态机（行为层,与 no_reply_lambda_decay 的 λ 降频是两层独立机制）──
+# 0=normal（<3 条未回复）;1=backing_off（3-4 条：情绪类禁发、仪式类照发）;
+# 2=silent（≥5 条：全禁发,escape_valve longing 破防豁免——防死锁语义）
+backoff_start = 3
+backoff_silent = 5
 # ── v4: 概率累积 ──
 longing_growth_factor = 0.08   # 每次 held λ 增长量
 anxiety_block_threshold = 70.0  # 焦虑大于此 → 不累积（"生气了不会找你"）

@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from chiguo_math import (
     sigmoid, decay, recover, elastic_recover,
     dynamic_lambda, weighted_trigger_choice, hawkes_intensity,
-    drop_damp,
+    drop_damp, jaccard_3gram,
 )
 from datetime import datetime, timezone, timedelta
 
@@ -310,6 +310,48 @@ def test_hawkes_monotonic():
     print("  OK test_hawkes_monotonic")
 
 
+# ── jaccard_3gram（A9 内容级防复读） ──────────────────────
+
+def test_jaccard_same_text_is_1():
+    """相同文本 → jaccard = 1.0"""
+    assert jaccard_3gram("今天天气不错", "今天天气不错") == 1.0
+    assert jaccard_3gram("嗯嗯。一个鸡肉三明治～", "嗯嗯。一个鸡肉三明治～") == 1.0
+    print("  OK test_jaccard_same_text_is_1")
+
+
+def test_jaccard_unrelated_text_is_0():
+    """完全无关文本（无共同 3-gram）→ 0.0"""
+    assert jaccard_3gram("今天天气不错", "苹果香蕉橘子") == 0.0
+    assert jaccard_3gram("关心哥哥吃饭了吗", "最近在追什么番剧") == 0.0
+    print("  OK test_jaccard_unrelated_text_is_0")
+
+
+def test_jaccard_short_text_boundary():
+    """短文本边界：长度 < 3 退化为整串字符集合，仍可比对"""
+    assert jaccard_3gram("哈哈", "哈哈") == 1.0       # 相同短串
+    assert jaccard_3gram("哈哈", "呵呵") == 0.0       # 不同短串
+    assert jaccard_3gram("哈", "哈") == 1.0           # 单字
+    assert jaccard_3gram("哈", "呵") == 0.0
+    print("  OK test_jaccard_short_text_boundary")
+
+
+def test_jaccard_empty_handling():
+    """空文本/空集 → 0.0（不除零）"""
+    assert jaccard_3gram("", "abc") == 0.0
+    assert jaccard_3gram("abc", "") == 0.0
+    assert jaccard_3gram("", "") == 0.0
+    assert jaccard_3gram("   ", "abc") == 0.0  # 空白剥离后为空
+    print("  OK test_jaccard_empty_handling")
+
+
+def test_jaccard_partial_overlap():
+    """部分重叠：共享 3-gram 越多相似度越高（0 < j < 1）"""
+    j_partial = jaccard_3gram("今天天气不错呀", "今天天气不错呢")
+    assert 0.0 < j_partial < 1.0
+    assert jaccard_3gram("今天天气不错呀", "今天天气不错呢") > jaccard_3gram("今天天气不错呀", "午饭吃了吗哥哥")
+    print("  OK test_jaccard_partial_overlap")
+
+
 if __name__ == "__main__":
     print("test_chiguo_math.py\n")
     tests = [
@@ -329,6 +371,10 @@ if __name__ == "__main__":
         test_hawkes_no_events, test_hawkes_one_event, test_hawkes_multiple_events,
         test_hawkes_old_events, test_hawkes_monotonic,
         test_hawkes_naive_and_broken_ts_guarded,
+        # jaccard_3gram (A9)
+        test_jaccard_same_text_is_1, test_jaccard_unrelated_text_is_0,
+        test_jaccard_short_text_boundary, test_jaccard_empty_handling,
+        test_jaccard_partial_overlap,
     ]
     for t in tests:
         t()

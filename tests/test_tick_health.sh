@@ -144,6 +144,20 @@ CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1 || fail "成功路径 tick
 post_texts | grep -q "测试主动消息" || fail "应发出真实主动消息"
 post_texts | grep -q "恢复" || fail "应发出恢复通知"
 
+# ── 用例 4.5: A8 composer 兜底——pi 失败但 composer 模板池兜底成功 → 照常发送 + success ──
+# fake repo 放入真实 chiguo_composer.py（无 personality 目录 → 无台词模板 → intent 文本兜底，
+# 仍产出非空文本）→ tick 应退出 0、发出消息、health 记 success（fail_streak 归零）。
+cp "$REPO_ROOT/chiguo_composer.py" "$REPO/chiguo_composer.py"
+echo fail > "$FAKE_PI_MODE_FILE"
+POST_BEFORE="$(post_count)"
+set +e; CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] || fail "composer 兜底成功时 tick 应退出 0, 实得 $RC"
+[ "$(post_count)" = $((POST_BEFORE + 1)) ] \
+  && pass "composer 兜底: 照常发出 1 条消息" || fail "期望 $((POST_BEFORE + 1)) POST 实得 $(post_count)"
+[ "$(state_field state)" = up ] || fail "composer 兜底后 health 应仍为 up, 实得 $(state_field state)"
+[ "$(state_field fail_streak)" = 0 ] || fail "composer 兜底应记 success（fail_streak 归零）, 实得 $(state_field fail_streak)"
+rm -f "$REPO/chiguo_composer.py"
+
 # ── 用例 5: OPENCODE_API_KEY 注入——优先 opencode-go 条目（memory 扩展端点固定），无则回退 [host].provider ──
 mkdir -p "$TMP/home/.pi/agent"
 printf '{"opencode-go":{"type":"api_key","key":"sk-og"},"deepseek":{"type":"api_key","key":"sk-ds"}}' \
