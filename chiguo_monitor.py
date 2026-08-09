@@ -781,8 +781,7 @@ class ChiguoMonitor:
         status_paths = []
         if daemon_pid:
             status_paths.append(f"/proc/{daemon_pid}/status")
-        if not daemon_pid:
-            status_paths.append("/proc/self/status")
+        status_paths.append("/proc/self/status")  # daemon PID 无效/不可读时回退当前进程
         for status_path in status_paths:
             try:
                 with open(status_path, encoding="utf-8") as f:
@@ -794,7 +793,7 @@ class ChiguoMonitor:
                 if rss_mb is not None:
                     break
             except OSError:
-                continue  # /proc/<pid> 不存在/不可读 → null，不报错
+                continue  # /proc/<pid> 不存在/不可读 → 尝试下一候选（最后回退 self）
         if rss_mb is not None:
             critical = self._monitor_config.get("memory_critical_mb", 1000)
             warn = self._monitor_config.get("memory_warn_mb", 500)
