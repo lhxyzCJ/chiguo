@@ -1641,13 +1641,20 @@ class ChiguoState:
         # 移除 Hawkes 事件记录（该消息从未发出，不应激发后续 λ）
         if self.cooldown.event_timestamps:
             if msg_id is not None:
+                # 事件均为 legacy（无 msg_id 键）→ 沿用旧回退 pop()（与 daemon legacy_events 判定一致）；
+                # 存在带 msg_id 的事件但都不匹配 → 不删任何事件，仅告警（防误删，#83）
+                legacy_events = all("msg_id" not in ev for ev in self.cooldown.event_timestamps)
+                matched = False
                 for i, ev in enumerate(self.cooldown.event_timestamps):
                     if ev.get("msg_id") == msg_id:
                         del self.cooldown.event_timestamps[i]
+                        matched = True
                         break
-                else:
+                if not matched and not legacy_events:
                     # 未匹配到该 msg_id → 不误删其他事件记录(#83)
                     print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
+                elif not matched:
+                    self.cooldown.event_timestamps.pop()  # legacy 事件：旧行为回退删除
             else:
                 self.cooldown.event_timestamps.pop()
         self.cooldown.last_longing_break_at = None
