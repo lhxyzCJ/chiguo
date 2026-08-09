@@ -74,7 +74,10 @@ class HolidayParser:
             self._makeup[date.fromisoformat(d_str)] = reason
 
     def _load_override(self, path: str):
-        """从 JSON 文件加载覆盖数据（用于跨年更新）"""
+        """从 JSON 文件加载覆盖数据（用于跨年更新）。
+        跨年键策略:同名同键同年 → 覆盖(更新精确数据);同名不同年 → 按 start.year 归组追加
+        (不按键覆盖,避免 2027 键把内置 2026 表冲掉);坏条目(缺 start/end 或日期非法)逐条
+        try/except 跳过 + stderr 告警。"""
         import json
         p = Path(path)
         if not p.exists():
@@ -84,13 +87,34 @@ class HolidayParser:
         except (json.JSONDecodeError, OSError):
             print(f"[schedule.holiday] holidays.json 损坏,忽略 override 仅用内嵌: {path}", file=sys.stderr)
             return
+        if not isinstance(data, dict):
+            print(f"[schedule.holiday] holidays.json 顶层非 dict,忽略 override 仅用内嵌: {path}",
+                  file=sys.stderr)
+            return
         for name, r in data.get("holidays", {}).items():
-            self._holidays[name] = (
-                date.fromisoformat(r["start"]),
-                date.fromisoformat(r["end"]),
-            )
+            try:
+                s = date.fromisoformat(r["start"])
+                e = date.fromisoformat(r["end"])
+            except (KeyError, ValueError, TypeError):
+                print(f"[schedule.holiday] holidays.json 坏条目跳过(缺 start/end 或日期非法): "
+                      f"{name!r}", file=sys.stderr)
+                continue
+            if s > e:
+                print(f"[schedule.holiday] holidays.json 坏条目跳过(start > end): {name!r}",
+                      file=sys.stderr)
+                continue
+            if name in self._holidays:
+                if self._holidays[name][0].year == s.year:
+                    self._holidays[name] = (s, e)
+                else:
+                    self._holidays[f"{name}@{s.year}"] = (s, e)   # 同名不同年 → 归组追加
+            else:
+                self._holidays[name] = (s, e)
         for d_str, reason in data.get("makeup_workdays", {}).items():
-            self._makeup[date.fromisoformat(d_str)] = reason
+            try:
+                self._makeup[date.fromisoformat(d_str)] = reason
+            except (ValueError, TypeError):
+                print(f"[schedule.holiday] holidays.json 坏调休日跳过: {d_str!r}", file=sys.stderr)
 
     # ── 查询 API ──────────────────────────────────────────
 
@@ -136,12 +160,19 @@ class HolidayParser:
             d = d.date()
         for name, (start, end) in self._holidays.items():
             if start <= d <= end:
-                return name
+                return name.split("@", 1)[0]   # 跨年归组键剥年份后缀,返回原名
         return None
 
     def range_of(self, name: str) -> tuple[date, date] | None:
-        """按名称查区间;未知名称返回 None。供 replan ref 校验 / resolve_scale / T2 文案同源。"""
-        return self._holidays.get(name)
+        """按名称查区间;未知名称返回 None。供 replan ref 校验 / resolve_scale / T2 文案同源。
+        跨年归组键（name@year）按原名匹配最近年份区间——先精确匹配，再回退同名前缀。"""
+        hit = self._holidays.get(name)
+        if hit is not None:
+            return hit
+        for key, (s, e) in self._holidays.items():
+            if key.split("@", 1)[0] == name:
+                return (s, e)
+        return None
 
     def all_ranges(self) -> dict[str, tuple[date, date]]:
         """合并后全部区间副本(内嵌 + json override)。"""

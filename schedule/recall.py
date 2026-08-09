@@ -43,15 +43,10 @@ def _by_date(d: date, sources, today: date) -> list[dict]:
         if a.get("type") != "anniversary":
             continue
         try:
-            ad = date.fromisoformat(f"{today.year}-{a['date']}") if "-" not in a["date"] else None
+            from schedule.anniversary import mmdd_to_date
+            ad = mmdd_to_date(a["date"], d.year)   # 按查询日 d 的年份解析(跨年窗口不漏报)
         except ValueError:
-            ad = None
-        if ad is None:
-            try:
-                from schedule.anniversary import mmdd_to_date
-                ad = mmdd_to_date(a["date"], today.year)
-            except ValueError:
-                continue
+            continue
         if _in_window(ad, d):
             matches.append({"type": "anniversary", "date": a["date"], "label": a["name"],
                             "days_until": (ad - today).days})

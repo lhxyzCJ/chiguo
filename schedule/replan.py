@@ -59,7 +59,11 @@ def validate_plan(plan: dict, sources=None) -> list[str]:
     """错误清单(全部命中才返回错误;空清单 = 通过)。ref 存在性/类型名/clamp/上限/字段。
     R3:ref 前缀检查恒跑;ref 存在性核对仅 sources 提供时执行(单参调用只做结构检查)。"""
     errs = []
+    if not isinstance(plan, dict):
+        return ["plan 非 dict"]   # 结构崩溃防御:非法输入直接拒绝
     mods = plan.get("modifiers", [])
+    if not isinstance(mods, list):
+        return ["modifiers 非 list"]
     if len(mods) > MAX_MODIFIERS:
         errs.append(f"modifiers > {MAX_MODIFIERS}")
     for m in mods:

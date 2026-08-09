@@ -20,7 +20,7 @@ def build_confirmation(item: dict) -> str:
     kind = item["kind"]
     if kind == "cancel":
         name = (item.get("course") or {}).get("course", "课") if item.get("course") else "课"
-        return f"好,{ds}第{item['period']}节的{name}停课,记下了。"
+        return f"好,{ds}第{item.get('period')}节的{name}停课,记下了。"
     if kind == "move":
         name = (item.get("course") or {}).get("course", "课")
         ts = fmt_date(date.fromisoformat(item["to_date"])) if item.get("to_date") else ds
@@ -29,7 +29,7 @@ def build_confirmation(item: dict) -> str:
         return f"好,{ds}第{item['period']}节的{name}调到{ts}第{item['to_period']}节,记下了。"
     if kind == "add":
         name = (item.get("course") or {}).get("course", "课")
-        return f"好,{ds}第{item['period']}节加了一节{name},记下了。"
+        return f"好,{ds}第{item.get('period')}节加了一节{name},记下了。"
     if kind == "exam_week":
         es = fmt_date(date.fromisoformat(item["end_date"])) if item.get("end_date") else ds
         label = item.get("label", "考试周")
