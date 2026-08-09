@@ -1,6 +1,40 @@
-# pi-agent 集成指南（Phase 4，v1.8）
+# agent 后端集成指南（Phase 4，v1.8→v1.11 契约冻结）
 
-> 寄主迁移后的当前架构：**消息生成与情绪分析全部走 agent 后端**（v1.8 起 runner 可替换：默认 runner=pi 走 pi-agent，provider 可配，opencode-go 为默认示例；
+> 本文件为 agent 后端集成契约（原 pi-agent 集成指南，#99 全库 pi→agent 重命名）。
+> **版本不步进（用户确认）：VERSION 保持 1.10**，本文档重命名不改变行为语义。
+
+## 命名契约（#99 冻结）
+
+### 文件映射（git mv 保留历史）
+| 旧名 | 新名 |
+|---|---|
+| `scripts/pi-run.mjs` | `scripts/agent-run.mjs`（唯一 agent 调用层） |
+| `wechat-bridge/pi-rpc.mjs` | `wechat-bridge/agent-rpc.mjs` |
+| `scripts/pi_health.py` | `scripts/agent_health.py` |
+| `scripts/install_pi.sh` | `scripts/install_agent.sh` |
+| `scripts/pi-auth.sh` | `scripts/agent-auth.sh` |
+| `tests/test_pi_run.mjs` | `tests/test_agent_run.mjs` |
+| `tests/test_pi_health.py` | `tests/test_agent_health.py` |
+| `tests/test_bridge_askpi.mjs` | `tests/test_bridge_askagent.mjs` |
+| `tests/test_install_pi.sh` | `tests/test_install_agent.sh` |
+| `doc/PI_INTEGRATION.md` | `doc/AGENT_INTEGRATION.md`（本文件） |
+| `pi_health.json(.lock)` | `agent_health.json(.lock)`（运行时） |
+| `logs/pi-run.log` | `logs/agent-run.log`（运行时） |
+
+### env 映射
+`PIRUN_*`→`AGENTRUN_*`（AGENTRUN_RUNNER/PROVIDER/MODEL/THINKING/REPLY_THINKING/TIMEOUT/SESSION/NEW_SESSION/PERSONALITY/GUIDE/TOOLS/TELEMETRY/AGENT_COMMAND）、`PI_BIN`→`AGENT_BIN`、`PI_TIMEOUT`→`AGENT_TIMEOUT`、`PI_RUN_SCRIPT`→`AGENT_RUN_SCRIPT`、`WECHAT_BRIDGE_PI_RUN/RPC/HEALTH/HEALTH_PY`→`WECHAT_BRIDGE_AGENT_*`、`PI_FALLBACK_PROVIDER`→`AGENT_FALLBACK_PROVIDER`、`PI_KEY`→`AGENT_KEY`、`PI_MODE_FILE`→`AGENT_MODE_FILE`（测试用）。
+
+### 标识符映射
+`askPi`→`askAgent`、`runPiRun`→`runAgentRun`、`PiRpc`→`AgentRpc`、`check_pi`→`check_agent`、`pi_bin`→`agent_bin`、`RUNNER==='pi'`→`'agent'`、`PI_RPC_ENABLED`→`AGENT_RPC_ENABLED`。
+
+### CLI/配置映射
+`--skip-pi`→`--skip-agent`（deploy.sh/envcheck 用户可见参数）、`[host].runner="pi"`→`"agent"`（默认值 = pi-agent 二进制，行为不变）。
+
+### 豁免清单（产品名，grep 允许残留）
+`~/.pi/`、`~/.pi-agent/`、pi-agent 二进制名 `pi`（`AGENT_BIN` 默认值 `'pi'`、`check_agent(agent_bin="pi")`）、`memory-lancedb-pro`（独立仓库 lhxyzCJ/TestForPi-memory-lancedb-pro）、`pi --provider/--model/--session-id` 子命令、`pi_health` 相关历史文档引用。
+**误匹配排除**：`topics`/`api`/`_pi` 等普通子串（chiguo_topics.py、schedule/api.py、tests/test_topics.py 等）。
+
+> 寄主迁移后的当前架构：**消息生成与情绪分析全部走 agent 后端**（v1.8 起 runner 可替换：默认 runner=agent 走 pi-agent 二进制，provider 可配，opencode-go 为默认示例；
 > 定时触发走系统 crontab（chiguo-tick），微信收发走 wechat-bridge，记忆走 mem0（data/mem0/，qdrant 嵌入式 + ollama 本地 embedding）
 > （pi 版 memory-lancedb-pro 扩展仅服务 pi 宿主侧，chiguo 不再读取其历史 LanceDB 库）。
 

@@ -35,9 +35,9 @@ PY
 fi
 
 if ! (
-node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && \
+node tests/test_agent_run.mjs && node tests/test_bridge_askagent.mjs && \
 node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && \
-node tests/test_bridge_schedule.mjs && bash tests/test_install_pi.sh && \
+node tests/test_bridge_schedule.mjs && bash tests/test_install_agent.sh && \
 bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
 bash tests/test_tick_health.sh && bash tests/test_service.sh && \
 uv run python tests/test_chiguo_math.py && uv run python tests/test_emotion_dynamics.py && \
@@ -54,7 +54,7 @@ uv run python tests/test_circadian.py && uv run python tests/test_followup.py &&
 uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
 uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
 uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
-uv run python tests/test_adapt_personality.py && uv run python tests/test_pi_health.py && \
+uv run python tests/test_adapt_personality.py && uv run python tests/test_agent_health.py && \
 uv run python tests/test_anniversary.py && uv run python tests/test_schedule_override.py && \
 uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
 uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
