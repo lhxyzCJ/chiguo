@@ -225,7 +225,7 @@ export async function recordUserMsg(text) {
 }
 
 /** 分析升级：askAgent 已产出情绪分析 JSON → daemon --user-msg --analysis。
- * recv_dedup 升级语义：同一原文（600s 窗口内）只补分析微调，不重复记账。失败不阻塞回复流。 */
+ * recv_dedup 升级语义：同一原文（30s 窗口内，RECV_DEDUP_WINDOW_S）只补分析微调，不重复记账。失败不阻塞回复流。 */
 export async function upgradeAnalysis(text, analysis) {
   if (!analysis) return
   const analysisJson = typeof analysis === 'string' ? analysis : JSON.stringify(analysis)
@@ -465,7 +465,7 @@ async function askChat(text, msg, bot, queue, askAgentFn) {
 
 /** 单条微信消息处理链路（onMessage 委托；导出供测试）：
  * 路由顺序:OWNER_ID 门(最顶部,C1) → recordUserMsg(仅本人) → 澄清检查 → detectSpecialCommand
- * → detectScheduleIntent → askAgent;命令消息经 --user-msg 无分析(recordUserMsg 已先行,dedup 600s 继承);
+ * → detectScheduleIntent → askAgent;命令消息经 --user-msg 无分析(recordUserMsg 已先行,dedup 30s 继承);
  * 非本人 = 仅 askAgent 回复 + 失败回通用文案(不回内部诊断,安全补钉)。
  * bot 需提供 reply(msg, text)/sendTyping(userId)；queue 提供 run(task)。 */
 export async function handleMessage(text, msg, bot, queue, deps = {}) {
@@ -484,7 +484,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     return 'agent'
   }
 
-  await recordUserMsg(text)   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 600s 继承)
+  await recordUserMsg(text)   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 30s 继承)
 
   // 澄清检查:有待澄清记录且非退出词 → 路由回提取(词表命中=新命令;否则合并"原意+回答")
   const clarify = readClarify(repoRoot)

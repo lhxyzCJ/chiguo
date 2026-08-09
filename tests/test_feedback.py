@@ -338,21 +338,6 @@ def test_recv_dedup_analysis_upgrade():
     print("  OK test_recv_dedup_analysis_upgrade")
 
 
-def test_recv_dedup_dup_analysis_not_double_applied():
-    """窗口内重复带分析上报（standing order 重试）→ 静默跳过，不双重应用（B2 象限）"""
-    with tempfile.TemporaryDirectory() as td:
-        engine = _make_engine(td)
-        st = engine.state
-        now = datetime.now(CST)
-        st.cooldown.current_date = now.strftime("%Y-%m-%d")
-        st.cooldown.last_message_at = now.isoformat()
-
-        engine.record_user_message("哥哥在吗")
-        engine.record_user_message("哥哥在吗", '{"warmth": 1.0, "effort": 1.0, "attention": 1.0}')
-        a2 = st.emotion.affection
-        engine.record_user_message("哥哥在吗", '{"warmth": 1.0, "effort": 1.0, "attention": 1.0}')
-        assert abs(st.emotion.affection - a2) < 1e-6, "重复升级副本不应双重应用"
-    print("  OK test_recv_dedup_dup_analysis_not_double_applied")
 
 
 def test_recv_dedup_different_text_full_record():

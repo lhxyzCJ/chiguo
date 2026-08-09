@@ -1,6 +1,6 @@
 # Claude Code Rules — Chiguo Proactive Message System
 
-> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-03. 36 py + 10 script runners, zero framework, pure Python stdlib.
+> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-03. 42 py + 10 script runners, zero framework, pure Python stdlib.
 > **Iron law**: decision/generation separation. Daemon outputs JSON. pi-agent generates messages (Phase 4).
 
 ---
@@ -8,7 +8,7 @@
 ## 1. Build & Test
 
 ```bash
-# Run ALL tests: 36 py + 10 script runners (every runner exits non-zero on failure)
+# Run ALL tests: 42 py + 10 script runners (every runner exits non-zero on failure)
 node tests/test_agent_run.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && \
 node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
 bash tests/test_install_agent.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
@@ -66,9 +66,10 @@ python3 chiguo_rotation.py --force
 
 ```
 chiguo_daemon.py (DecisionEngine — 1580 lines)
-├── chiguo_math.py          Pure functions: sigmoid, decay, recover, dynamic_lambda, Hawkes, longing
+├── chiguo_math.py          Pure functions: sigmoid, decay, recover, dynamic_lambda, Hawkes, longing, v1.11 impact_inertia/user_mood_impact/ou_step/baseline_shift_of
 ├── chiguo_state.py         ChiguoState + ChiguoEmotion + CooldownState (1701 lines)
 │   ├── chiguo_personality.py  PersonalityTraits (8 dims) + PersonalityDelta + Deltas (231 lines)
+│   ├── v1.11: impact_inertia 阻尼 + user_mood 感知（CooldownState.user_mood）+ OU 噪声 + baseline_* 漂移（ChiguoEmotion 字段，默认关闭恒等）
 │   ├── chiguo_bayesian.py     UserStateEstimator (6 states) + BayesianLearner
 │   ├── schedule/ 包        schedule 数据面 parser.py (xskb.xlsx → schedule_cache.json → query) + parsing.py 纯解析 + query.py 策略 + holiday.py (节假日) + anniversary.py (纪念日) + override_store/plan_store/api (覆盖/计划/澄清存储) + sources/day_plan/resolve_when/attention/recall (检索与安排) + confirm + replan
 │   ├── memory/ 包            MemoryBackend abstraction (v1.8): base.py (available/search/random_memory/stats primitives + base-class Ebbinghaus) / mem0_backend.py Mem0Backend (mem0ai: LLM fact extraction + ollama embedding + qdrant embedded, lazy import, available=False degrade, CHIGUO_MEM0_DISABLED=1 test hook) / factory.py create_backend; memory_bridge.py kept as compat facade (MemoryBridge alias + CLI)
@@ -77,7 +78,7 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 ├── chiguo_topics.py        TopicPicker — 8 sources (incl. v9 netease), Ebbinghaus-weighted memory
 ├── chiguo_composer.py      MessageComposer — Intent × Cue × Vibe (389 lines)
 ├── chiguo_rotation.py      Monthly log rotation → archive/
-├── chiguo_version.py       Project version single source (VERSION="1.10", MINOR +1 per round: 1.9→1.10→1.11, not decimal addition)
+├── chiguo_version.py       Project version single source (VERSION="1.11", MINOR +1 per round: 1.9→1.10→1.11, not decimal addition)
 └── chiguo_monitor.py       ChiguoMonitor + AlertManager + DecisionIndex (1196 lines)
 
 Supporting (not imported by daemon):
@@ -247,7 +248,7 @@ Intent × Cue × Vibe three-layer system:
 
 | Section | Key params | Effect |
 |---------|-----------|--------|
-| `[emotion]` | half_life values, event deltas | Emotion dynamics speed |
+| `[emotion]` | half_life values, event deltas, v1.11 impact_inertia_*/user_mood_*/noise_*/baseline_*（全部默认关闭） | Emotion dynamics speed + 惯性阻尼/情绪感知/波动/基线漂移 |
 | `[sigmoid]` | k, midpoint per dimension | Trigger probability curves |
 | `[poisson]` | base_lambda (0.25/h) | Message frequency baseline |
 | `[hawkes]` | alpha=0.3, beta=0.5 | Self-excitation strength/decay |
