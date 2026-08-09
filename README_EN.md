@@ -85,15 +85,15 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 
 ### v1.10 Changelog (9 external-comparison optimizations, 2026-08)
 
-1. **Elastic decay**: recovery half-life adapts to deviation (`effective_hl = half_life / (1 + |gap| / baseline)`, `[emotion].elastic_baseline`) → [SYSTEM.md §2.3](doc/SYSTEM.md)
-2. **Emotion interaction matrix**: cross-dimension coupling after each tick (affection→anxiety, energy→loneliness, anxiety→energy; `[emotion].interaction_*` off by default) → §2.3
-3. **Reply saturation damping**: more same-direction replies in a 30-minute window → weaker mood boost (×0.5^min(n,3)) → §2.4
-4. **Schedule multiplier + jitter**: emotional trigger weights scaled by in-class 0.3 / free 1.2 / half-busy 0.6 × uniform(0.8,1.2); ritual triggers exempt → §2.6
-5. **Three-stage activation**: emotional weight sum < 0.08 → silent, ≥ 0.5 → must-send (must_send lands in the decision JSON) → §2.6
-6. **Generalized repeat damping**: all trigger types decay by history count (×0.6^min(n,3)) → §2.6
-7. **Unreplied backoff state machine**: graded suppression after consecutive unreplied messages (3-4 → emotional blocked, ≥5 → all blocked; escape valve exempt) → §2.6
-8. **Deterministic generation fallback**: pi failure → composer template fallback outputs the message (`_FALLBACK_LINES` last resort) → §5.7 & CLI reference
-9. **Content-level anti-repetition**: topic candidates with 3-gram Jaccard ≥ 0.6 vs recent sends are dropped → §4.1
+1. **A1 Elastic decay**: recovery half-life adapts to deviation (`effective_hl = half_life / (1 + |gap| / baseline)`, `[emotion].elastic_baseline`) → [SYSTEM.md §2.3](doc/SYSTEM.md)
+2. **A2 Emotion interaction matrix**: cross-dimension coupling after each tick (affection→anxiety, energy→loneliness, anxiety→energy; `[emotion].interaction_*` off by default) → §2.3
+3. **A10 Reply saturation damping**: more same-direction replies in a 30-minute window → weaker mood boost (×0.5^min(n,3)) → §2.4
+4. **A3 Schedule multiplier + jitter**: emotional trigger weights scaled by in-class 0.3 / free 1.2 / half-busy 0.6 × uniform(0.8,1.2); ritual triggers exempt → §2.6
+5. **A4 Three-stage activation**: emotional weight sum < 0.08 → silent, ≥ 0.5 → must-send (must_send lands in the decision JSON) → §2.6
+6. **A6 Generalized repeat damping**: all trigger types decay by history count (×0.6^min(n,3)) → §2.6
+7. **A5 Unreplied backoff state machine**: graded suppression after consecutive unreplied messages (3-4 → emotional blocked, ≥5 → all blocked; escape valve exempt) → §2.6
+8. **A8 Deterministic generation fallback**: pi failure → composer template fallback outputs the message (`_FALLBACK_LINES` last resort) → §5.7 & CLI reference
+9. **A9 Content-level anti-repetition**: topic candidates with 3-gram Jaccard ≥ 0.6 vs recent sends are dropped → §4.1
 
 ---
 
@@ -152,8 +152,8 @@ flowchart LR
 Inside the decision engine (`chiguo_daemon.py`, zero LLM):
 
 ```
-emotion decay (half-life) → send gating (quiet window / caps / interval / energy / Bayesian sleep inference)
-  → trigger evaluation (13 sigmoid + weighted randomness) → topic injection (8 sources for ice-breaking)
+emotion decay (elastic + interaction matrix) → send gating (quiet window / caps / interval / energy / Bayesian sleep inference)
+  → trigger evaluation (13 sigmoid + 3-stage activation / schedule multiplier / repeat damping / backoff) → topic injection (8 sources for ice-breaking)
   → circadian learning (dual-schedule buckets → dynamic quiet window) → follow-up (pending topics)
   → music linkage (playback in sleep window disproves sleeping) → JSON output
 ```
@@ -252,7 +252,7 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ### Memory system (memory backend abstraction)
 
-**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Since v1.8 this is a **memory backend abstraction**: the `memory/` package provides the `MemoryBackend` abstract base class + the `create_backend` factory (`memory_bridge.py` is now a compatibility facade), switched via `[memory].backend` in `chiguo_proactive.toml` — `mem0` (default since v1.9, the [mem0ai](https://github.com/mem0ai/mem0) memory layer) / a custom class `module.path.ClassName`. In mem0 mode, the daemon **auto-writes** after conversations (`_mem0_autowrite`, LLM fact extraction via deepseek-v4-flash through the opencode gateway); retrieval uses **vector semantic search** (local ollama `qwen3-embedding:0.6b`, zero API cost) over an embedded qdrant store (`data/mem0/`, no docker) plus a SQLite operation history. The decision engine recalls **read-only** (semantic search + Ebbinghaus weighting), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
+**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Since v1.8 this is a **memory backend abstraction**: the `memory/` package provides the `MemoryBackend` abstract base class + the `create_backend` factory (`memory_bridge.py` is now a compatibility facade), switched via `[memory].backend` in `chiguo_proactive.toml` — `mem0` (default, the [mem0ai](https://github.com/mem0ai/mem0) memory layer) / a custom class `module.path.ClassName`. In mem0 mode, the daemon **auto-writes** after conversations (`_mem0_autowrite`, LLM fact extraction via deepseek-v4-flash through the opencode gateway); retrieval uses **vector semantic search** (local ollama `qwen3-embedding:0.6b`, zero API cost) over an embedded qdrant store (`data/mem0/`, no docker) plus a SQLite operation history. The decision engine recalls **read-only** (semantic search + Ebbinghaus weighting), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
 
 **Setup**: `uv sync` (mem0ai + ollama client are required dependencies); the store lives at `data/mem0/` (embedded qdrant + history.db; paths/LLM/embedder are configured by the `[memory]` `mem0_*` keys; the LLM key defaults to the opencode-go entry of `~/.pi/agent/auth.json`).
 
@@ -316,7 +316,7 @@ personality/
 └── deredere.toml           # sweet phrasing material (combined with tsundere, not a switch)
 ```
 
-Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (314 lines, hot-reloaded in `--loop` mode) — no code changes needed.
+Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (368 lines, hot-reloaded in `--loop` mode) — no code changes needed.
 
 ---
 
@@ -404,6 +404,8 @@ Just say it in WeChat: "明天停课" / "下周三开始考试周" / "8月20号�
 chiguo_proactive.toml    # main config (all parameters, hot-reloaded)
 chiguo_daemon.py         # decision engine (main entry, zero LLM)
 chiguo_state.py          # emotion engine + persona + Bayesian + schedule facade + circadian
+chiguo_math.py           # pure math library (sigmoid / elastic decay / interaction matrix / damping / Hawkes / Jaccard)
+chiguo_composer.py       # Intent×Cue×Vibe composer + fallback CLI (A8 generation fallback)
 memory/                  # memory backend abstraction (base/mem0_backend/factory; memory_bridge.py facade)
 schedule/                # schedule center (holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan)
