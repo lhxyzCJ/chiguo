@@ -216,13 +216,18 @@ export function runnerCommand(mode, sysPrompt) {
 }
 
 /** 共享 agent 参数构造(print 模式与 RPC 常驻复用):不含 -p/--mode/prompt。 */
-export function buildBaseAgentArgs({ analysisMode } = {}) {
+export function buildBaseAgentArgs({ analysisMode = false, sessionId = SESSION_ID, noSkills = true } = {}) {
   return ['--provider', PROVIDER, '--model', MODEL,
-    '--session-id', SESSION_ID, '--no-context-files', '--no-skills',
+    '--session-id', sessionId, '--no-context-files', ...(noSkills ? ['--no-skills'] : []),
     '--append-system-prompt', PERSONALITY,
     '--append-system-prompt', GUIDE,
     '--append-system-prompt', TOOLS,
     '--thinking', analysisMode ? REPLY_THINKING : THINKING]
+}
+
+/** send-mode 主动消息模板（print 与 RPC 共用）。 */
+export function buildSendPrompt(decisionJson) {
+  return `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${decisionJson}`
 }
 
 /** analysis-mode 用户消息模板(print 与 RPC 共用)。 */
@@ -235,7 +240,7 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
   if (analysisMode) {
     sysPrompt = buildAnalysisPrompt(prompt)
   } else if (sendMode) {
-    sysPrompt = `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${prompt}`
+    sysPrompt = buildSendPrompt(prompt)
   }
   const mode = analysisMode ? 'analysis' : sendMode ? 'send' : 'other'
   const custom = runnerCommand(mode, sysPrompt)
@@ -319,11 +324,9 @@ period?, to_period?, to_date?, course?, label?, match?}。
   const custom = runnerCommand(mode, sysPrompt)
   const bin = custom ? custom.bin : AGENT_BIN
   const args = custom ? custom.args
-    : ['-p', '--provider', PROVIDER, '--model', MODEL,
-      '--session-id', SESSIONS[mode] || SESSION_ID, '--no-context-files',
-      '--append-system-prompt', PERSONALITY, '--append-system-prompt', GUIDE,
-      '--append-system-prompt', TOOLS,
-      '--thinking', THINKING, '--mode', 'json', sysPrompt]
+    : ['-p', ...buildBaseAgentArgs({
+        sessionId: SESSIONS[mode] || SESSION_ID, noSkills: false }),
+      '--mode', 'json', sysPrompt]
   try {
     const { stdout } = await exec(bin, args, { timeout: AGENT_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
     let text = ''

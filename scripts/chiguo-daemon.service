@@ -1,0 +1,18 @@
+# chiguo-daemon.service — 迟菓决策引擎常驻（--loop，发送侧内聚）
+# 由 scripts/install_agent.sh 阶段 6c 生成（CHIGUO_DAEMON_LOOP=1 时安装）；
+# REPO/PY 占位符在安装时替换。依赖 chiguo-bridge（/agent/prompt 与 /send 转发）。
+[Unit]
+Description=chiguo decision daemon (loop resident, agent RPC send)
+After=network-online.target chiguo-bridge.service
+Wants=chiguo-bridge.service
+
+[Service]
+Type=simple
+ExecStart=__PY__ __REPO__/chiguo_daemon.py --loop 900 --compact
+Restart=on-failure
+RestartSec=10
+WorkingDirectory=__REPO__
+# loop 模式经 bridge /agent/prompt 与 /send（toml [loop] 段配置），无需 wechat-bridge/.env
+
+[Install]
+WantedBy=multi-user.target

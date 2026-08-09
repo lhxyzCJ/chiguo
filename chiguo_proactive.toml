@@ -386,6 +386,12 @@ archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 # （AGENTRUN_* 环境变量可覆盖：AGENTRUN_PROVIDER/AGENTRUN_MODEL/AGENTRUN_THINKING/AGENTRUN_SESSION；AGENTRUN_PERSONALITY/AGENTRUN_GUIDE 仅测试/开发用，生产人格固定仓库内 personality/）
 # ────────────────────────────────────────────────────────────
 [host]
+# ── v1.11 C: daemon --loop 常驻（发送侧内聚）──
+[loop]
+# bridge 常驻服务（持 AgentRpc）：--loop send 分支经此处转发 /agent/prompt 与 /send
+bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 服务地址（含 /agent/prompt 与 /send 端点）
+bridge_token = ""                       # 与 bridge WECHAT_BRIDGE_TOKEN 同源；空=不带头（向后兼容）
+agent_timeout_ms = 125000               # /agent/prompt 超时（agent 生成 LLM 往返兜底）
 # 沟通：全程中文；直接切入不客套（不要「您好/请问有什么可以帮您」）；默认精简输出，需要细节时哥哥会主动说明
 # 输出：命令类内容用可直接复制执行的代码块，不拆分不加前缀；步骤类用有序列表，关键信息加粗；排查先给直接解决方案，原理按需补充
 # 安全：高危操作（rm -rf、磁盘格式化、系统重启、服务强制停止、配置覆盖）必须先确认，禁止自动执行

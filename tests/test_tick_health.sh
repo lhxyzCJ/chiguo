@@ -55,14 +55,26 @@ POST_LOG="$TMP/post.log"
 cat > "$TMP/recorder.js" <<'JS'
 const http = require('http')
 const fs = require('fs')
+const rpcModeFile = process.argv[4]
 http.createServer((req, res) => {
   let b = ''
   req.on('data', (c) => { b += c })
-  req.on('end', () => { fs.appendFileSync(process.argv[2], b + '\n'); res.end('{"ok":true}') })
+  req.on('end', () => {
+    fs.appendFileSync(process.argv[2], JSON.stringify({ url: req.url, body: b }) + '\n')
+    if (req.url === '/agent/prompt') {
+      let rpc = false
+      try { rpc = fs.readFileSync(rpcModeFile, 'utf8').trim() === 'success' } catch {}
+      res.end(rpc ? JSON.stringify({ ok: true, text: 'RPC 主动消息' }) : JSON.stringify({ ok: false, error: 'mock RPC 故障' }))
+    } else {
+      res.end('{"ok":true}')
+    }
+  })
 }).listen(Number(process.argv[3]), '127.0.0.1')
 JS
-node "$TMP/recorder.js" "$POST_LOG" "$PORT" &
+node "$TMP/recorder.js" "$POST_LOG" "$PORT" "$TMP/rpc_mode" &
 SRV_PID=$!
+RPC_MODE="$TMP/rpc_mode"
+echo fail > "$RPC_MODE"
 
 cat > "$REPO/chiguo_proactive.toml" <<TOML
 [host]
@@ -88,7 +100,8 @@ else:
 PY
 
 cat > "$REPO/scripts/agent-run.mjs" <<'JS'
-import { readFileSync } from 'node:fs'
+import { readFileSync, appendFileSync } from 'node:fs'
+appendFileSync(process.env.FAKE_AGENT_CALLS, 'x')
 const mode = readFileSync(process.env.FAKE_AGENT_MODE_FILE, 'utf8').trim()
 if (mode === 'success') {
   process.stdout.write(JSON.stringify({ ok: true, text: '测试主动消息' }))
@@ -97,17 +110,31 @@ if (mode === 'success') {
 }
 JS
 
+export FAKE_AGENT_CALLS="$TMP/agent_calls"
+: > "$FAKE_AGENT_CALLS"
+spawn_count() { [ -f "$FAKE_AGENT_CALLS" ] && wc -c < "$FAKE_AGENT_CALLS" || echo 0; }
+
 cp "$REPO_ROOT/scripts/agent_health.py" "$REPO/scripts/agent_health.py"
 export FAKE_AGENT_MODE_FILE="$TMP/agent_mode"
 echo fail > "$FAKE_AGENT_MODE_FILE"
 
 STATE="$REPO/agent_health.json"  # agent_health.py record 默认状态文件（#99：agent_health.json）
-post_count() { [ -f "$POST_LOG" ] && wc -l < "$POST_LOG" || echo 0; }
+post_count() { python3 -c "
+import json
+n = 0
+for line in open('$POST_LOG'):
+    try:
+        if json.loads(line).get('url') == '/send': n += 1
+    except Exception: pass
+print(n)" 2>/dev/null || echo 0; }
 state_field() { python3 -c "import json; print(json.load(open('$STATE')).get('$1',''))" 2>/dev/null || echo ''; }
 post_texts() { python3 -c "
 import json
 for line in open('$POST_LOG'):
-    try: print(json.loads(line).get('text',''))
+    try:
+        d = json.loads(line)
+        if d.get('url') != '/send': continue
+        print(json.loads(d.get('body','{}')).get('text',''))
     except Exception: pass" 2>/dev/null; }
 
 # ── 用例 1: 单次失败 → 记账但未达阈值，无告警；tick 仍退出 1 ──
@@ -177,6 +204,7 @@ fail_threshold = 3
 TOML
 cat > "$REPO/scripts/agent-run.mjs" <<'JS'
 import { readFileSync, appendFileSync } from 'node:fs'
+appendFileSync(process.env.FAKE_AGENT_CALLS, 'x')
 appendFileSync(process.env.KEY_LOG, 'KEY=' + (process.env.OPENCODE_API_KEY || '') + '\n')
 const mode = readFileSync(process.env.FAKE_AGENT_MODE_FILE, 'utf8').trim()
 if (mode === 'success') {
@@ -222,6 +250,23 @@ HOME="$TMP/home" CHIGUO_REPO="$REPO" env -u OPENCODE_API_KEY bash "$REAL_TICK" >
 grep -q "real_openid@im.wechat" "$POST_LOG" || fail "主动消息应发往真实 userId: $(cat "$POST_LOG")"
 grep -q '"to": "owner@im.wechat"' "$POST_LOG" && fail "不应发往占位符" || true
 pass "登录后收件人自动注入（credentials userId 生效）"
+
+# ── 用例 6b: 发送侧 RPC 优先——RPC success → 零 spawn；RPC fail → 回退 spawn ──
+: > "$FAKE_AGENT_CALLS"
+: > "$POST_LOG"
+echo success > "$RPC_MODE"          # recorder /agent/prompt 返回 {ok:true,text:'RPC 主动消息'}
+echo success > "$FAKE_AGENT_MODE_FILE"
+HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1 \
+  || fail "RPC 成功用例 tick 应退出 0"
+[ "$(spawn_count)" = 0 ] && pass "RPC 成功 → 零 spawn agent-run" || fail "期望 0 spawn 实得 $(spawn_count)"
+post_texts | grep -q "RPC 主动消息" && pass "RPC 生成的文本已发送" || fail "应发送 RPC 文本: $(post_texts)"
+echo fail > "$RPC_MODE"             # recorder /agent/prompt 返回 {ok:false}
+: > "$FAKE_AGENT_CALLS"
+HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >"$TMP/tick6b.log" 2>&1 \
+  || { cat "$TMP/tick6b.log" >&2 || true; fail "RPC 失败回退用例 tick 应退出 0"; }
+  cat "$TMP/tick6b.log" >&2 || true
+[ "$(spawn_count)" -ge 1 ] && pass "RPC 失败 → 回退 spawn agent-run" || fail "期望 spawn ≥1 实得 $(spawn_count)"
+post_texts | grep -q "测试主动消息" && pass "回退 spawn 的文本已发送" || fail "应发送 spawn 文本"
 
 # ── 用例 7: bridge 不可达 → 回传 --send-result failed（refund 反馈闭环不断）──
 kill ${SRV_PID:-} 2>/dev/null || true

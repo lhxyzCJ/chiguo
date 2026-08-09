@@ -33,7 +33,7 @@ else
     warn "mem0 未安装 → 记忆未启用(可运行: uv sync --all-extras)"
 fi
 
-# ── 3. 全量自检(ci-test.sh 单一入口: 42 py + 10 script + stub 自举) ──
+# ── 3. 全量自检(ci-test.sh 单一入口: 44 py + 13 script + stub 自举) ──
 say "运行全量自检(bash scripts/ci-test.sh,任一失败即中止) ..."
 bash "$PROJECT_DIR/scripts/ci-test.sh" || fail "全量测试失败,中止部署"
 say "全部测试通过 ✓"

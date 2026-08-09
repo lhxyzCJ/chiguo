@@ -292,12 +292,12 @@ export function clearClarify(repoRoot = REPO_ROOT) { rmSync(scheduleClarifyPath(
 export function exitWordMatch(text) { return /^(?:算了|不要了|没事)/.test(text.trim()) }
 
 /** /send 来源校验:Host/Origin 必须本地回环(127.0.0.1/localhost/::1),容忍端口后缀。 */
-function isLocalHost(host) {
+export function isLocalHost(host) {
   if (!host) return false
   const h = String(host).toLowerCase().replace(/:\d+$/, '')
   return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]'
 }
-function isLocalOrigin(origin) {
+export function isLocalOrigin(origin) {
   if (!origin) return true  // curl 等无 Origin 客户端:靠 Host + token 把关
   try {
     const u = new URL(origin)
@@ -305,15 +305,43 @@ function isLocalOrigin(origin) {
   } catch { return false }
 }
 
-/** 主动发送端点：POST /send {"to","text"} → bot.send()。仅本地回环来源(#84 鉴权)+ 可选 token。 */
+/** /agent/prompt 处理器（导出供测试）：经常驻 AgentRpc 生成回复。
+ *  返回 {ok:true,text,analysis?}；失败抛 503（调用方回退 spawn）。 */
+export async function handleAgentPrompt(payload, res) {
+  const deny = (status, error) => {
+    res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error }))
+  }
+  const { text, mode } = payload ?? {}
+  if (typeof text !== 'string' || !text.trim()) { deny(400, 'text 必填'); return }
+  if (mode !== undefined && !['analysis', 'send'].includes(mode)) {
+    deny(400, 'mode 必须是 analysis|send')
+    return
+  }
+  try {
+    const { AgentRpc } = await import('./agent-rpc.mjs')
+    if (!globalThis.__agentRpc) globalThis.__agentRpc = new AgentRpc()
+    const r = await withTimeout(globalThis.__agentRpc.prompt(text, { mode: mode ?? 'analysis' }), 180_000)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true, text: r.text, analysis: r.analysis ?? null }))
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    console.error('[agent/prompt error]', reason)
+    res.writeHead(503, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: reason }))
+  }
+}
+
+/** 主动发送端点：POST /send {"to","text"} → bot.send()；POST /agent/prompt {"text","mode"} → AgentRpc。
+ *  仅本地回环来源(#84 鉴权)+ 可选 token。 */
 function startSendServer(bot) {
   const server = createServer((req, res) => {
     const deny = (status, error) => {
       res.writeHead(status, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ ok: false, error }))
     }
-    if (req.method !== 'POST' || req.url !== '/send') {
-      deny(405, 'only POST /send')
+    if (req.method !== 'POST' || (req.url !== '/send' && req.url !== '/agent/prompt')) {
+      deny(405, 'only POST /send or /agent/prompt')
       return
     }
     // #84 鉴权:Content-Type JSON → 本地来源(Host/Origin) → 共享 token(未配置跳过)
@@ -337,9 +365,13 @@ function startSendServer(bot) {
     })
     req.on('error', () => {})  // destroy 后连接重置，避免未处理错误事件
     req.on('end', async () => {
-      // #84 参数校验:非法 JSON / to / text 缺失 → 400(而非 500)
+      // #84 参数校验:非法 JSON / 必填缺失 → 400(而非 500)
       let payload
       try { payload = JSON.parse(body || '{}') } catch { deny(400, 'invalid JSON'); return }
+      if (req.url === '/agent/prompt') {
+        await handleAgentPrompt(payload, res)
+        return
+      }
       const { to, text } = payload
       if (typeof to !== 'string' || !to.trim()) { deny(400, 'to 必填'); return }
       if (typeof text !== 'string' || !text.trim()) { deny(400, 'text 必填'); return }
