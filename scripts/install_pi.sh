@@ -231,6 +231,9 @@ else
   "sessionMemory": { "enabled": false }
 }
 EOJ
+    # issue #85: json5 含 LLM API key，收紧为仅属主可读写（.bak 备份同权限）
+    chmod 600 "$JSON5"
+    [ -f "$JSON5.bak" ] && chmod 600 "$JSON5.bak"
     if "$PY" - "$JSON5" "$MEM_LLM_APIKEY" "$MEM_LLM_MODEL" "$MEM_LLM_BASEURL" <<'PYR'; then
 import sys
 p, api, model, base = sys.argv[1:5]

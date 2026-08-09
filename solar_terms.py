@@ -44,7 +44,7 @@ class SolarTerms:
 
     def __init__(self, data_path: str = None):
         self._terms = list(SOLAR_TERMS)
-        for path in ([data_path] if data_path else []) + ["solar_terms.json"]:
+        for path in ([data_path] if data_path else []) + [str(Path(__file__).resolve().parent / "solar_terms.json")]:
             p = Path(path)
             if p.exists():
                 try:

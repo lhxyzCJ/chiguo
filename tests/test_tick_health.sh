@@ -228,7 +228,7 @@ kill ${SRV_PID:-} 2>/dev/null || true
 export SEND_RESULT_LOG="$TMP/sendresult.log"
 : > "$SEND_RESULT_LOG"
 set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
-[ "$RC" = 0 ] || fail "bridge 不可达 tick 仍应退出 0（下个 tick 重试）"
+[ "$RC" = 1 ] || fail "bridge 不可达 tick 应退出 1（发送失败，issue #85）"
 grep -q "send-result.*failed" "$SEND_RESULT_LOG" \
   || fail "bridge 不可达应回传 --send-result failed: $(cat "$SEND_RESULT_LOG")"
 pass "bridge 不可达 → 回传 failed（refund 闭环）"
