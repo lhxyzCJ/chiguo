@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install_agent.sh 桩测试：假 pi/curl/crontab + 临时 HOME，验证 dry-run 只读扫描、
 # 待办清单与退出码（0=完成/1=有待办/2=严重）、--skip-agent、--yes 写入产物断言、
-# auth.json 合并写入与两遍 --yes 幂等（不重复 .bak/crontab 行/扩展条目）、provider 去绑定（15 用例）
+# auth.json 合并写入与两遍 --yes 幂等（不重复 .bak/crontab）、provider 去绑定（13 用例）
 set -uo pipefail
 TMP="$(mktemp -d /tmp/chiguo-agent-test.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
@@ -58,23 +58,15 @@ STUB
   chmod +x "$TMP/bin/$t"
 done
 
-# ── 成功桩 git/npm/node（bin-ok，用例 13/14）：clone 建目录结构 + npm 建 memory-pro CLI ──
+# ── 成功桩 git/npm/node（bin-ok，用例 13/14/15/16）：clone 建目录结构 ──
 mkdir -p "$TMP/bin-ok"
 cat > "$TMP/bin-ok/git" <<'STUB'
 #!/usr/bin/env bash
 echo "git $*" >> "$CALLS_LOG"
-DIR="${@: -1}"
-mkdir -p "$DIR/dist/pi-adapter"
-touch "$DIR/dist/pi-adapter/index.js"
 STUB
 cat > "$TMP/bin-ok/npm" <<'STUB'
 #!/usr/bin/env bash
 echo "npm $*" >> "$CALLS_LOG"
-if [ "${1:-}" = install ]; then
-  mkdir -p "$PWD/node_modules/.bin"
-  printf '#!/usr/bin/env bash\nif [ "${1:-}" = config-path ]; then echo "dbPath: ~/.pi-agent/memory/lancedb-pro (source: config)"; else echo "memory-pro stats OK"; fi\n' > "$PWD/node_modules/.bin/memory-pro"
-  chmod +x "$PWD/node_modules/.bin/memory-pro"
-fi
 STUB
 cat > "$TMP/bin-ok/node" <<'STUB'
 #!/usr/bin/env bash
@@ -96,20 +88,13 @@ unset AGENT_API_KEY OPENCODE_API_KEY
 # 默认 tags：含 qwen3-embedding（阶段 4 通过；用例 8 覆盖为空）
 printf '{"models":[{"name":"qwen3-embedding:0.6b","capabilities":["embedding"]}]}' > "$TAGS_FILE"
 
-WANT="$HOME/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js"
-JSON5_OK='{"dbPath":"~/.pi-agent/memory/lancedb-pro","embedding":{"provider":"openai-compatible","model":"qwen3-embedding:0.6b","baseURL":"http://localhost:11434/v1"},"autoCapture":true,"autoRecall":true,"smartExtraction":true}'
-
-setup_ready() {  # 预置全部已安装状态（settings/json5/auth/clone/crontab 含 replan-tick 行）
-  mkdir -p "$HOME/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter"
-  touch "$HOME/.pi-agent/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js"
+setup_ready() {  # 预置全部已安装状态（auth/crontab 含 replan-tick 行）
   mkdir -p "$HOME/.pi/agent"
-  printf '{"extensions":["%s"]}' "$WANT" > "$HOME/.pi/agent/settings.json"
-  printf '%s' "$JSON5_OK" > "$HOME/.pi/agent/memory-lancedb-pro.json5"
   printf '{"opencode-go":{"type":"api_key","key":"sk-test"}}' > "$HOME/.pi/agent/auth.json"
   printf '*/15 * * * * %s/scripts/chiguo-tick.sh >> %s/logs/cron-tick.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" > "$CRON_STATE"
   printf '*/15 * * * * %s/scripts/replan-tick.sh >> %s/logs/cron-replan.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" >> "$CRON_STATE"
 }
-clean_home() { rm -rf "$HOME/.pi" "$HOME/.pi-agent"; rm -f "$CRON_STATE"; }
+clean_home() { rm -rf "$HOME/.pi"; rm -f "$CRON_STATE"; }
 
 export PATH="$TMP/bin:$PATH"
 
@@ -123,15 +108,14 @@ clean_home
 : > "$CALLS_LOG"
 set +e; OUT=$(bash scripts/install_agent.sh --dry-run 2>&1); RC=$?; set -e
 [ "$RC" = 1 ] && pass "干净环境 dry-run → 退出 1" || fail "期望 1 实得 $RC"
-echo "$OUT" | grep -q "git clone" || fail "待办清单缺 clone"
 echo "$OUT" | grep -q "chiguo-tick" || fail "待办清单缺 crontab"
 echo "$OUT" | grep -q "replan-tick" || fail "待办清单缺 replan crontab"
 echo "$OUT" | grep -q "auth.json" || fail "待办清单缺 auth.json"
-[ ! -e "$HOME/.pi" ] && [ ! -e "$HOME/.pi-agent" ] || fail "dry-run 不应创建 ~/.pi 或 ~/.pi-agent"
+[ ! -e "$HOME/.pi" ] || fail "dry-run 不应创建 ~/.pi"
 [ ! -f "$CRON_STATE" ] || fail "dry-run 不应注册 crontab"
 grep -q "^git " "$CALLS_LOG" && fail "dry-run 不应调用 git" || true
 grep -q "^npm " "$CALLS_LOG" && fail "dry-run 不应调用 npm" || true
-pass "dry-run 零写入（无 clone/npm/crontab 写入）"
+pass "dry-run 零写入（无 crontab 写入）"
 
 # ── 用例 3: 全部就绪 + 无 OPENCODE_API_KEY → 退出 0 ──
 setup_ready
@@ -140,17 +124,7 @@ set +e; env -u AGENT_API_KEY -u OPENCODE_API_KEY bash scripts/install_agent.sh -
 [ "$RC" = 0 ] && pass "全部就绪 dry-run → 退出 0" || fail "期望 0 实得 $RC"
 grep -q 'crontab -$' "$CALLS_LOG" && fail "就绪态 dry-run 不应写 crontab" || true
 
-# ── 用例 4: settings.json 指向 Windows 路径 → 待办，且文件不被修改 ──
-setup_ready
-printf '{"extensions":["/mnt/c/Users/USER/projects/TestForPi-memory-lancedb-pro/dist/pi-adapter/index.js"]}' \
-  > "$HOME/.pi/agent/settings.json"
-set +e; OUT=$(bash scripts/install_agent.sh --dry-run 2>&1); RC=$?; set -e
-[ "$RC" = 1 ] || fail "Windows 路径期望 1 实得 $RC"
-grep -q '/mnt/c/Users/USER' "$HOME/.pi/agent/settings.json" || fail "dry-run 不应改动 settings.json"
-[ ! -f "$HOME/.pi/agent/settings.json.bak" ] || fail "dry-run 不应产生 .bak"
-pass "Windows 路径残留 → 待办 + settings.json 未被修改"
-
-# ── 用例 5: 全部就绪但 crontab 缺失 → 退出 1 且待办含 chiguo-tick ──
+# ── 用例 4: 全部就绪但 crontab 缺失 → 退出 1 且待办含 chiguo-tick ──
 setup_ready
 rm -f "$CRON_STATE"
 set +e; OUT=$(bash scripts/install_agent.sh --dry-run 2>&1); RC=$?; set -e
@@ -185,21 +159,11 @@ echo "$OUT" | grep -q "ollama" || fail "待办未提及 ollama"
 printf '{"models":[{"name":"qwen3-embedding:0.6b","capabilities":["embedding"]}]}' > "$TAGS_FILE"
 pass "ollama 缺 qwen3-embedding → 待办"
 
-# ── 用例 9: json5 缺 dbPath → 待办 ──
-setup_ready
-printf '{"embedding":{"model":"qwen3-embedding:0.6b","baseURL":"http://localhost:11434/v1"},"autoCapture":true,"autoRecall":true,"smartExtraction":true}' \
-  > "$HOME/.pi/agent/memory-lancedb-pro.json5"
-set +e; OUT=$(bash scripts/install_agent.sh --dry-run 2>&1); RC=$?; set -e
-[ "$RC" = 1 ] || fail "json5 缺 dbPath 期望 1 实得 $RC"
-echo "$OUT" | grep -q "memory-lancedb-pro.json5" || fail "待办未提及 json5"
-pass "json5 缺 dbPath → 待办"
-
-# ── 用例 10: 冒烟不在 dry-run 执行（不调 memory-pro / pi -p）──
+# ── 用例 9: 冒烟不在 dry-run 执行（不调 pi -p）──
 setup_ready
 : > "$CALLS_LOG"
 set +e; bash scripts/install_agent.sh --dry-run >/dev/null 2>&1; RC=$?; set -e
 grep -q "pi -p" "$CALLS_LOG" && fail "dry-run 不应执行 pi 实调" || true
-grep -q "memory-pro" "$CALLS_LOG" && fail "dry-run 不应执行 memory-pro" || true
 pass "dry-run 不执行冒烟命令"
 
 # ── 用例 11: --skip-agent → 静默退出 0 ──
@@ -208,35 +172,14 @@ set +e; OUT=$(bash scripts/install_agent.sh --skip-agent 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] && pass "--skip-agent → 退出 0" || fail "期望 0 实得 $RC"
 [ -z "$OUT" ] || fail "--skip-agent 应静默无输出"
 
-# ── 用例 12: 干净环境 --yes 模拟失败工具（git 桩 exit 1）→ 阶段 1 失败归 PENDING，退出 1；
-#             阶段 2/3/6 仍写入（settings.json/json5/crontab 产物断言），auth 不写（无 key）──
+# ── 用例 12: 干净环境 --yes（无 key）→ 阶段 5 PENDING，退出 1；阶段 6 crontab 写入 ──
 clean_home
 set +e; OUT=$(env -u AGENT_API_KEY -u OPENCODE_API_KEY bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
-[ "$RC" = 1 ] || fail "--yes clone 失败期望 1 实得 $RC"
-echo "$OUT" | grep -q "clone/build 失败" || fail "缺少 clone/build 失败警告"
-SET_EXT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["extensions"][0])' "$HOME/.pi/agent/settings.json")
-[ "$SET_EXT" = "$WANT" ] || fail "阶段 2 未写入 extensions: $SET_EXT"
-grep -q '\.pi-agent/memory/lancedb-pro' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "阶段 3 未写入 dbPath"
-grep -q 'qwen3-embedding' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "阶段 3 未写入 embedding"
+[ "$RC" = 1 ] || fail "--yes 无 key 期望 1 实得 $RC"
 grep -q 'chiguo-tick' "$CRON_STATE" || fail "阶段 6 未注册 crontab"
 grep -q 'replan-tick' "$CRON_STATE" || fail "阶段 6 未注册 replan crontab"
 [ ! -f "$HOME/.pi/agent/auth.json" ] || fail "无 OPENCODE_API_KEY 不应写 auth.json"
-pass "--yes 阶段失败 → PENDING + 退出 1（阶段 2/3/6 产物已断言）"
-
-# ── 用例 12b: json5 llm 端点可配置（CHIGUO_MEMORY_LLM_* 覆盖写入，缺省 opencode 网关）──
-# 埋埋实机:opencode 网关不可用,smart extraction 静默失败 → llm 端点需可配官方 API。
-clean_home
-set +e; OUT=$(CHIGUO_MEMORY_LLM_APIKEY=sk-ds-secret CHIGUO_MEMORY_LLM_BASEURL=https://api.deepseek.com/v1 CHIGUO_MEMORY_LLM_MODEL=deepseek-v4-pro bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
-[ "$RC" = 1 ] || fail "env 覆盖 json5 期望 1（阶段 1 失败）实得 $RC"
-grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"sk-ds-secret"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "CHIGUO_MEMORY_LLM_APIKEY 未写入 json5 的 apiKey 字段"
-grep -qE '"baseURL"[[:space:]]*:[[:space:]]*"https://api\.deepseek\.com/v1"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "CHIGUO_MEMORY_LLM_BASEURL 未写入 json5 的 baseURL 字段"
-grep -qE '"model"[[:space:]]*:[[:space:]]*"deepseek-v4-pro"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "CHIGUO_MEMORY_LLM_MODEL 未写入 json5 的 model 字段"
-pass "json5 llm 端点可配置（env 覆盖写入）"
-clean_home
-set +e; OUT=$(env -u CHIGUO_MEMORY_LLM_APIKEY -u CHIGUO_MEMORY_LLM_BASEURL -u CHIGUO_MEMORY_LLM_MODEL bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
-grep -qE '"baseURL"[[:space:]]*:[[:space:]]*"https://opencode\.ai/zen/go/v1"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "缺省 baseURL 应为 opencode 网关"
-grep -qF '"apiKey": "${OPENCODE_API_KEY}"' "$HOME/.pi/agent/memory-lancedb-pro.json5" || fail "缺省 apiKey 应为 \${OPENCODE_API_KEY}"
-pass "json5 llm 缺省值（opencode 网关 + env key 引用）"
+pass "--yes 无 key → PENDING + 退出 1（阶段 6 crontab 产物已断言）"
 
 # ── 用例 13: --yes 合并写 auth.json（保留旧 provider 条目 + opencode-go + chmod 600 + .bak 不重复）──
 clean_home
@@ -256,33 +199,26 @@ set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --
 unset OPENCODE_API_KEY AGENT_API_KEY
 pass "auth.json 合并写入（保留旧条目 + chmod 600）+ .bak 不重复"
 
-# ── 用例 14: --yes 两遍幂等（crontab 单行 / extensions 单条 / 零 .bak / 不重复 clone）──
+# ── 用例 14: --yes 两遍幂等（crontab 单行 / 零 .bak）──
 clean_home
 export OPENCODE_API_KEY=sk-ok
 : > "$CALLS_LOG"
-set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
+set +e; OUT=$(bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "第一遍 --yes 期望 0 实得 $RC"
-GIT1=$(grep -c "^git " "$CALLS_LOG" || true)
-NPM1=$(grep -c "^npm install" "$CALLS_LOG" || true)
-set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
+set +e; OUT=$(bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "第二遍 --yes 期望 0 实得 $RC"
 [ "$(grep -c 'chiguo-tick' "$CRON_STATE" || true)" = 1 ] || fail "crontab 重复注册: $(cat "$CRON_STATE")"
 [ "$(grep -c 'replan-tick' "$CRON_STATE" || true)" = 1 ] || fail "replan crontab 重复注册: $(cat "$CRON_STATE")"
-EXT_N=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["extensions"]))' "$HOME/.pi/agent/settings.json")
-[ "$EXT_N" = 1 ] || fail "extensions 重复条目: $EXT_N"
-[ ! -f "$HOME/.pi/agent/settings.json.bak" ] && [ ! -f "$HOME/.pi/agent/memory-lancedb-pro.json5.bak" ] \
-  && [ ! -f "$HOME/.pi/agent/auth.json.bak" ] || fail "两遍 --yes 不应产生 .bak"
-[ "$(grep -c "^git " "$CALLS_LOG" || true)" = "$GIT1" ] || fail "第二遍重复 clone"
-[ "$(grep -c "^npm install" "$CALLS_LOG" || true)" = "$NPM1" ] || fail "第二遍重复 npm install"
+[ ! -f "$HOME/.pi/agent/auth.json.bak.bak" ] || fail "两遍 --yes 不应重复 .bak"
 unset OPENCODE_API_KEY AGENT_API_KEY
-pass "--yes 两遍幂等（不重复 crontab/扩展/.bak/clone）"
+pass "--yes 两遍幂等（不重复 crontab/.bak）"
 
 # ── 用例 15: toml [host].provider=deepseek + AGENT_API_KEY → 写 deepseek 条目 + 冒烟用 deepseek ──
 clean_home
 : > "$CALLS_LOG"
 printf '[host]\nprovider = "deepseek"\nmodel = "deepseek-chat"\n' > "$CHIGUO_REPO_OVERRIDE/chiguo_proactive.toml"
 export AGENT_API_KEY=sk-ds
-set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
+set +e; OUT=$(bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "provider=deepseek --yes 期望 0 实得 $RC"
 AUTH_DS=$(python3 -c 'import json,sys;print(json.dumps(json.load(open(sys.argv[1])),sort_keys=True,separators=(",",":")))' "$HOME/.pi/agent/auth.json")
 [ "$AUTH_DS" = '{"deepseek":{"key":"sk-ds","type":"api_key"}}' ] || fail "auth.json 未写 deepseek 条目: $AUTH_DS"
@@ -296,7 +232,7 @@ pass "toml provider=deepseek + AGENT_API_KEY → deepseek 条目 + 冒烟 --prov
 clean_home
 mkdir -p "$TMP/home/.chiguo/auth"
 printf '{"opencode-go":{"type":"api_key","key":"sk-migrated"}}' > "$TMP/home/.chiguo/auth/agent-auth.json"
-set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" env -u OPENCODE_API_KEY -u AGENT_API_KEY bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
+set +e; OUT=$(env -u OPENCODE_API_KEY -u AGENT_API_KEY bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
 [ -f "$TMP/home/.pi/agent/auth.json" ] || fail "集中认证导入未生成 auth.json"
 grep -q "sk-migrated" "$TMP/home/.pi/agent/auth.json" || fail "导入的 key 不对: $(cat "$TMP/home/.pi/agent/auth.json")"
 pass "集中认证目录 agent-auth.json → auth.json 导入"

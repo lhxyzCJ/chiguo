@@ -9,22 +9,21 @@
 
 > 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API，无封号风险；隐私数据（登录态/对话/状态）仅存本机，不进 git。
 
-## 二、外部依赖（3 个 GitHub 公开仓库）
+## 二、外部依赖（2 个 GitHub 公开仓库）
 
 | 仓库 | 用途 | 落点 | 由谁安装 |
 |------|------|------|----------|
 | github.com/lhxyzCJ/wechatbot（wechatbot iLink SDK 的个人 fork） | 微信登录/收发 SDK | `$HOME/wechatbot` | `wechat-bridge.sh install` 自动 clone + npm 安装 |
-| github.com/lhxyzCJ/TestForPi-memory-lancedb-pro（pi 记忆扩展 fork，仅 pi 宿主侧；chiguo 记忆已迁 mem0） | 对话记忆自动沉淀/召回（autoCapture/autoRecall） | `~/.pi-agent/TestForPi-memory-lancedb-pro` | `scripts/install_agent.sh` 阶段 1 |
 | github.com/NeteaseCloudMusicApiEnhanced/api-enhanced（锁 v4.39.0 tag） | 网易云数据源（可选） | `/opt/netease-api` | `scripts/netease-api.sh install` |
 
-前两个是必需，第三个可选跳过（`--skip-netease`）。
+wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 ## 三、前提条件
 
 - Debian Linux + systemd（root 或可 sudo——微信桥自启与网易云服务要写 systemd）
-- git / curl（deploy.sh 自装 uv 需要 curl）/ Node.js + npm（wechatbot SDK 与记忆扩展都要构建）
+- git / curl（deploy.sh 自装 uv 需要 curl）/ Node.js + npm（wechatbot SDK 要构建）
 - 模型 API key（`export AGENT_API_KEY=...` 再跑部署）
-- 可选：ollama（`qwen3-embedding:0.6b` 嵌入模型，记忆扩展用；缺则记忆降级，不影响主链路）
+- 可选：ollama（`qwen3-embedding:0.6b` 嵌入模型，mem0 记忆用；缺则记忆降级，不影响主链路）
 - 默认端口：18790（微信桥 /send）/ 3000（网易云 API）/ 11434（ollama）
 
 ## 四、分级部署路径
@@ -75,7 +74,6 @@
 | `$HOME/wechatbot` | wechatbot SDK（iLink） | 否 | 重装自动 clone |
 | 仓库内 `wechat-bridge/node_modules` + `.env` | bridge 依赖与运行环境 | 否 | install 重建 |
 | `~/.chiguo/auth/`（`wechat/credentials.json`、`netease_cookie.txt`、`pi-auth.json`） | 微信登录态/网易云 cookie/pi key 迁移源 | 否 | 拷贝即用（微信/网易云跨设备可能自动重登一次） |
-| `~/.pi-agent/`（`TestForPi-memory-lancedb-pro/` + `~/.pi-agent/memory/lancedb-pro` 库，pi 宿主侧；chiguo 记忆已迁 mem0） | pi 记忆扩展（pi 生态） | 否 | 拷贝 |
 | `data/mem0/`（qdrant 嵌入式向量库 + history.db，gitignore） | mem0 记忆层 | 否 | 拷贝 |
 | `~/.pi/agent/`（`auth.json` / `models.json`） | pi 配置与 key（含 mem0 LLM key 来源） | 否 | 拷贝 |
 | `/opt/netease-api` | 网易云 API 服务 | 否 | 重装 |

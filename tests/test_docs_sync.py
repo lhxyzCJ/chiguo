@@ -43,7 +43,7 @@ check("DEPLOYMENT.md 引用全部 --skip-*", all(f in dep for f in flags))
 anchors = [
     ("wechatbot", "scripts/wechat-bridge.sh"),
     ("/opt/netease-api", "scripts/netease-api.sh"),
-    (".pi-agent/memory/lancedb-pro", "scripts/install_agent.sh"),
+    ("data/mem0", "chiguo_proactive.toml"),
     (".chiguo/auth", "scripts/wechat-bridge.sh"),
 ]
 for anchor, script in anchors:
