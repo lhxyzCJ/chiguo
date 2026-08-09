@@ -30,6 +30,8 @@ ws.cell(row=5, column=1, value=1)
 ws.cell(row=5, column=2, value="高等数学BII(理论)-刘洋【2-17周】尚行楼")
 wb.save("data/xskb.xlsx")
 PY
+  # issue #85: 标记 CI 自举的假课表（区别于真实入库课表）
+  touch data/.ci-fixture
 fi
 
 if ! (
