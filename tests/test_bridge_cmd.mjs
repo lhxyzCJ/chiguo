@@ -330,20 +330,31 @@ t('slash: /help 列出白名单', async () => {
   const r = await executeSlashCommand(spawn, { action: 'help' }, process.cwd())
   assert.ok(r.reply.includes('/new') && r.reply.includes('/status') && r.reply.includes('/记忆'))
 })
-t('slash: /new 移走最近 chiguo-main 会话文件到备份目录', async () => {
+t('slash: /new 移走最近 chiguo-main 会话文件到备份目录（HOME 注入隔离）', async () => {
   const fs = await import('node:fs')
   const os = await import('node:os')
   const path = await import('node:path')
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'slash-new-'))
-  const dir = path.join(os.homedir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
-  fs.mkdirSync(dir, { recursive: true })
-  const fake = path.join(dir, '2099-01-01T00-00-00-000Z_chiguo-main.jsonl')
-  fs.writeFileSync(fake, '{"type":"session"}\n')
-  const r = await executeSlashCommand(spawn, { action: 'new_session' }, cwd)
-  assert.strictEqual(r.ok, true)
-  assert.ok(!fs.existsSync(fake), '会话文件已移走')
-  const backups = path.join(os.homedir(), '.chiguo', 'session-backups')
-  assert.ok(fs.readdirSync(backups).some((f) => f.endsWith('-chiguo-main.jsonl')), '备份文件存在')
+  // HOME 注入临时目录：backupSessionFile 经 os.homedir() 读 $HOME（Node 优先环境变量）
+  // → 会话与备份全部落在临时 HOME，绝不触碰真实 ~/.pi、~/.chiguo；跑完恢复并删除。
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'slash-home-'))
+  const prevHome = process.env.HOME
+  process.env.HOME = home
+  try {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'slash-new-'))
+    const dir = path.join(home, '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
+    fs.mkdirSync(dir, { recursive: true })
+    const fake = path.join(dir, '2099-01-01T00-00-00-000Z_chiguo-main.jsonl')
+    fs.writeFileSync(fake, '{"type":"session"}\n')
+    const r = await executeSlashCommand(spawn, { action: 'new_session' }, cwd)
+    assert.strictEqual(r.ok, true)
+    assert.ok(!fs.existsSync(fake), '会话文件已移走')
+    const backups = path.join(home, '.chiguo', 'session-backups')
+    assert.ok(fs.readdirSync(backups).some((f) => f.endsWith('-chiguo-main.jsonl')), '备份文件存在')
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    fs.rmSync(home, { recursive: true, force: true })
+  }
 })
 t('slash: /记忆 → memory_bridge.py --stats（经 memory 抽象 CLI，不硬编码 pi 扩展）', async () => {
   const fs = await import('node:fs')
