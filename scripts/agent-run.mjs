@@ -197,12 +197,21 @@ export function parseAgentOutput(stdout) {
 /** v1.8: 按 runner 构造子进程命令。pi → null（调用方走 piArgs）；command → {bin, args}。
  *  契约：<agent_command> --prompt <完整提示词> --mode <mode>，stdout 输出
  *  {"ok":true,"text":...,"analysis"?:...,"parsed"?:...,"raw"?:...}（或 NDJSON 兼容）。
- *  mode: analysis|send|other（run）/ extract|verify|recall|replan（runSchedule）。 */
+ *  mode: analysis|send|other（run）/ extract|verify|recall|replan（runSchedule）。
+ *  #99：command 分支自动拼接 PERSONALITY/GUIDE/TOOLS 三段内容进 --prompt，
+ *  与 pi 模式（--append-system-prompt 三段）行为一致，保证换后端不丢人格。 */
 export function runnerCommand(mode, sysPrompt) {
   if (RUNNER !== 'command' || !AGENT_COMMAND.length) return null
+  let prompt = sysPrompt
+  if (RUNNER === 'command') {
+    const parts = [PERSONALITY, GUIDE, TOOLS].map((p) => {
+      try { return readFileSync(p, 'utf8') } catch { return '' }
+    }).filter(Boolean)
+    if (parts.length) prompt = `${parts.join('\n\n')}\n\n${sysPrompt}`
+  }
   return {
     bin: AGENT_COMMAND[0],
-    args: [...AGENT_COMMAND.slice(1), '--prompt', sysPrompt, '--mode', mode],
+    args: [...AGENT_COMMAND.slice(1), '--prompt', prompt, '--mode', mode],
   }
 }
 
@@ -275,6 +284,13 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
     tele(false, null, null, err.message)
     return { ok: false, error: err.message }
   }
+}
+
+/** #99: agent 后端统一入口（bridge 只依赖本函数 + runSchedule，不 import 内部解析函数）。
+ *  一次调用完成「情绪分析 JSON + 回复」（= run analysisMode 便捷封装）。
+ *  exec 可注入（测试）；默认 runPiBin。返回 {ok, text, analysis?} 或 {ok:false, error}。 */
+export async function askAgent(exec = runPiBin, prompt) {
+  return run(exec, { prompt, analysisMode: true })
 }
 
 /** 写/回忆命令链路新模式:独立会话,知识边界(与聊天会话零共享)。提取/校验块解析,C7。 */

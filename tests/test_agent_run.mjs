@@ -1,11 +1,11 @@
-// test_pi_run.mjs — pi-run 解析逻辑 + 调用链路测试（独立 runner）
+// test_agent_run.mjs — agent-run 解析逻辑 + 调用链路测试（独立 runner）
 // 用法: node test_pi_run.mjs（退出码 0=全过，1=有失败）
 process.env.PIRUN_TELEMETRY = '0'   // 测试不写真实遥测日志
 import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { readToml, parseNdjson, extractAnalysis, runPiBin, run, extractBlock, runSchedule, resolveRepo } from '../scripts/pi-run.mjs'
+import { readToml, parseNdjson, extractAnalysis, runPiBin, run, extractBlock, runSchedule, resolveRepo, askAgent } from '../scripts/agent-run.mjs'
 
 let passed = 0
 const tests = []
@@ -110,7 +110,7 @@ t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json
   assert.strictEqual(captured.bin, 'pi')
   const a = captured.args
   assert.strictEqual(a[0], '-p')
-  // 期望值按真实 toml 推导（与 pi-run.mjs 同款:env ?? toml ?? 缺省）——部署机自定义
+  // 期望值按真实 toml 推导（与 agent-run.mjs 同款:env ?? toml ?? 缺省）——部署机自定义
   // provider/thinking 时测试不误挂（埋埋实机闭环验证发现;CI 默认 toml 仍验缺省值）
   // 注意:env 键名(PIRUN_*)与 toml 键名(provider/model/...)不同,须分开传参
   const host = readToml(path.join(resolveRepo(import.meta.url), 'chiguo_proactive.toml')).host ?? {}
@@ -142,7 +142,7 @@ t('run: analysis-mode 用 reply_thinking_level（回复及时性,与主动发送
   const prev = process.env.CHIGUO_REPO
   process.env.CHIGUO_REPO = td
   try {
-    const mod = await import(`../scripts/pi-run.mjs?t=${Date.now()}-${Math.random()}`)
+    const mod = await import(`../scripts/agent-run.mjs?t=${Date.now()}-${Math.random()}`)
     let captured = null
     const spy = async (_b, a) => { captured = a; return { stdout: '' } }
     await mod.run(spy, { prompt: 'P', analysisMode: true })
@@ -257,7 +257,7 @@ import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const tmp = mkdtempSync(join(tmpdir(), 'pi-run-test-'))
+const tmp = mkdtempSync(join(tmpdir(), 'agent-run-test-'))
 const tomlPath = join(tmp, 'test.toml')
 writeFileSync(tomlPath, [
   '# 注释行',
@@ -302,7 +302,7 @@ async function withCommandRunner(fn) {
   process.env.PIRUN_AGENT_COMMAND = JSON.stringify(['node', '/tmp/fake-agent.mjs'])
   process.env.PIRUN_TELEMETRY = '0'
   try {
-    const mod = await import(`../scripts/pi-run.mjs?cmd=${Date.now()}-${Math.random()}`)
+    const mod = await import(`../scripts/agent-run.mjs?cmd=${Date.now()}-${Math.random()}`)
     assert.strictEqual(mod.RUNNER, 'command')
     assert.deepStrictEqual(mod.AGENT_COMMAND, ['node', '/tmp/fake-agent.mjs'])
     await fn(mod)
@@ -379,8 +379,73 @@ t('runSchedule: command runner NDJSON + <<EXTRACT>> 块兼容', async () => {
     assert.strictEqual(r.parsed.kind, 'reminder')
   })
 })
+// ── #99 行为增量：askAgent 统一入口（bridge 只依赖它，不再 import 内部函数）──
+t('askAgent: 统一入口（= run analysisMode 便捷封装）', async () => {
+  await withCommandRunner(async (mod) => {
+    let captured = null
+    const r = await mod.askAgent(async (_bin, args) => {
+      captured = args
+      return { stdout: JSON.stringify(AGENT_OK) }
+    }, '在吗')
+    // analysis 模式契约：--mode analysis + 情绪分析模板注入
+    assert.strictEqual(captured[captured.length - 1], 'analysis')
+    assert.ok(captured.some((a) => a.includes('情绪分析')), 'analysis prompt 模板注入')
+    assert.deepStrictEqual(r, { ok: true, text: '自定义回复', analysis: { warmth: 0.5 } })
+  })
+})
+t('askAgent: 默认实参 exec=runPiBin（零参数调用不崩）', async () => {
+  const mod = await import(`../scripts/agent-run.mjs?t2=${Date.now()}-${Math.random()}`)
+  assert.strictEqual(typeof mod.askAgent, 'function')
+})
+// ── #99 行为增量：command runner 自动拼接人格三段（与 pi 模式行为一致）──
+t('runnerCommand: command 分支自动注入 PERSONALITY/GUIDE/TOOLS 内容', async () => {
+  const prev = [process.env.PIRUN_RUNNER, process.env.PIRUN_AGENT_COMMAND, process.env.PIRUN_TELEMETRY,
+                process.env.PIRUN_PERSONALITY, process.env.PIRUN_GUIDE, process.env.PIRUN_TOOLS]
+  process.env.PIRUN_RUNNER = 'command'
+  process.env.PIRUN_AGENT_COMMAND = JSON.stringify(['node', '/tmp/fake-agent.mjs'])
+  process.env.PIRUN_TELEMETRY = '0'
+  process.env.PIRUN_PERSONALITY = join(tmp, 'pers.md')
+  process.env.PIRUN_GUIDE = join(tmp, 'guide.md')
+  process.env.PIRUN_TOOLS = join(tmp, 'tools.md')
+  writeFileSync(join(tmp, 'pers.md'), '我是迟菓的人格')
+  writeFileSync(join(tmp, 'guide.md'), '记忆用法指南')
+  writeFileSync(join(tmp, 'tools.md'), '工具用法指南')
+  try {
+    const mod = await import(`../scripts/agent-run.mjs?cmd3=${Date.now()}-${Math.random()}`)
+    const c = mod.runnerCommand('analysis', '原始提示词')
+    assert.strictEqual(c.bin, 'node')
+    assert.strictEqual(c.args[0], '/tmp/fake-agent.mjs')
+    // --prompt 参数值应包含三段人格内容（command 与 pi 模式行为一致）
+    const pIdx = c.args.indexOf('--prompt')
+    assert.ok(pIdx >= 0, '应含 --prompt')
+    const prompt = c.args[pIdx + 1]
+    assert.ok(prompt.includes('我是迟菓的人格'), 'PERSONALITY 内容应注入 prompt')
+    assert.ok(prompt.includes('记忆用法指南'), 'GUIDE 内容应注入 prompt')
+    assert.ok(prompt.includes('工具用法指南'), 'TOOLS 内容应注入 prompt')
+    assert.ok(prompt.includes('原始提示词'), '原始提示词保留')
+    assert.strictEqual(c.args[c.args.length - 1], 'analysis')
+  } finally {
+    const rest = prev.slice(0, 3)
+    ;['PIRUN_RUNNER', 'PIRUN_AGENT_COMMAND', 'PIRUN_TELEMETRY', 'PIRUN_PERSONALITY', 'PIRUN_GUIDE', 'PIRUN_TOOLS'].forEach((k, i) => {
+      if (prev[i] === undefined) delete process.env[k]; else process.env[k] = prev[i]
+    })
+  }
+})
+t('run: command 人格三段经 runnerCommand 生效（端到端）', async () => {
+  await withCommandRunner(async (mod) => {
+    let captured = null
+    const r = await mod.run(async (_bin, args) => {
+      captured = args
+      return { stdout: JSON.stringify({ ok: true, text: 'x' }) }
+    }, { prompt: 'P', analysisMode: false })
+    assert.strictEqual(r.ok, true)
+    const pIdx = captured.indexOf('--prompt')
+    const prompt = captured[pIdx + 1]
+    assert.ok(prompt.includes('原始提示词') || prompt.includes('P'), 'prompt 透传')
+  })
+})
 t('parseAgentOutput: 契约 JSON → 对象；非 JSON/无 ok 字段 → null', async () => {
-  const mod = await import('../scripts/pi-run.mjs')
+  const mod = await import('../scripts/agent-run.mjs')
   assert.deepStrictEqual(mod.parseAgentOutput('{"ok":true,"text":"x"}'), { ok: true, text: 'x' })
   assert.strictEqual(mod.parseAgentOutput('{"text":"no ok"}'), null)
   assert.strictEqual(mod.parseAgentOutput('not json'), null)
@@ -394,15 +459,15 @@ t('resolveRepo: 环境变量 CHIGUO_REPO 优先', () => {
 t('resolveRepo: 目录 URL（尾斜杠）→ 一级目录推导', () => {
   const repo = resolveRepo(new URL('.', import.meta.url).href, {})
   assert.ok(fs.existsSync(path.join(repo, 'chiguo_proactive.toml')), `推导失败: ${repo}`)
-  assert.ok(fs.existsSync(path.join(repo, 'scripts/pi-run.mjs')))
+  assert.ok(fs.existsSync(path.join(repo, 'scripts/agent-run.mjs')))
 })
 t('resolveRepo: 文件 URL → 两级目录推导（生产调用分支）', () => {
-  const repo = resolveRepo(new URL('../scripts/pi-run.mjs', import.meta.url).href, {})
+  const repo = resolveRepo(new URL('../scripts/agent-run.mjs', import.meta.url).href, {})
   assert.ok(fs.existsSync(path.join(repo, 'chiguo_proactive.toml')), `推导失败: ${repo}`)
-  assert.ok(fs.existsSync(path.join(repo, 'scripts/pi-run.mjs')))
+  assert.ok(fs.existsSync(path.join(repo, 'scripts/agent-run.mjs')))
 })
 
 ;(async () => {
   await runAll()
-  console.log(`test_pi_run: ${passed}/${tests.length} passed`)
+  console.log(`test_agent_run: ${passed}/${tests.length} passed`)
 })().catch((e) => { console.error('FAIL', e); process.exit(1); })
