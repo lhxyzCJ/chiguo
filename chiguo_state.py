@@ -12,6 +12,7 @@
 
 import json
 import os
+import random
 import hashlib
 import shutil
 import sys
@@ -25,7 +26,8 @@ from chiguo_math import (
     sigmoid, decay, recover, elastic_recover,
     dynamic_lambda, hawkes_intensity, longing_decay,
     in_quiet_window,
-    apply_interaction_matrix, drop_damp,
+    apply_interaction_matrix, drop_damp, impact_inertia,
+    user_mood_impact, MOOD_DELTA, ou_step, noise_cap, baseline_shift_of,
 )
 from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
@@ -57,6 +59,9 @@ class ChiguoEmotion:
     tsundere_index: float = 70.0
     loneliness_rate: float = 0.0    # Δloneliness/hour
     anxiety_rate: float = 0.0       # Δanxiety/hour
+    baseline_loneliness: float = 100.0  # v1.11 ④: 长期收敛目标（默认=现 tick target → 恒等）
+    baseline_anxiety: float = 100.0     # v1.11 ④
+    baseline_affection: float = 0.0     # v1.11 ④
 
     @property
     def neediness(self) -> float:
@@ -77,6 +82,10 @@ class ChiguoEmotion:
         self.anxiety = max(0, min(100, self.anxiety))
         self.energy = max(0, min(100, self.energy))
         self.tsundere_index = max(10, min(95, self.tsundere_index))
+
+
+# v1.11 ④: 情绪基线全局默认（= 原 tick 收敛 target：loneliness/anxiety→100、affection→0）
+BASELINE_DEFAULTS = {"loneliness": 100.0, "anxiety": 100.0, "affection": 0.0}
 
 
 @dataclass
@@ -101,6 +110,7 @@ class CooldownState:
     last_longing_break_at: str | None = None  # v6: 上次逃生阀破防时间 ISO（冷却用）
     recv_dedup: dict | None = None  # v9: 最近一次用户消息去重标记 {"text_sha","at","analysis"}（bridge 确定性记录 + standing order 升级共用）
     drop_events: list[dict] = field(default_factory=list)  # A10: 回复饱和阻尼事件 [{time: iso, direction: str}]（30 分钟窗口滚动）
+    user_mood: dict | None = None  # v1.11 ①: 最近一次用户情绪感知 {"mood","intensity","at"}（TTL 由读取端 mood_fresh 判定，旧状态缺省自动补 None）
 
     def __post_init__(self):
         # v6: 睡眠窗口来源配置（非 dataclass 字段，不序列化）。ChiguoState 负责注入。
@@ -1079,7 +1089,7 @@ class ChiguoState:
             half_life = half_life * 0.6
         old_lo = self.emotion.loneliness
         self.emotion.loneliness = elastic_recover(
-            self.emotion.loneliness, 100.0, hours, half_life, elastic_baseline
+            self.emotion.loneliness, self.emotion.baseline_loneliness, hours, half_life, elastic_baseline
         )
 
         # ── 不安值: 向 100 靠拢。知道主人在上课时焦虑减速 ──
@@ -1100,7 +1110,7 @@ class ChiguoState:
                     anx_hl *= 1.4  # 满课日 → 焦虑涨得慢
             except Exception:
                 pass
-        self.emotion.anxiety = elastic_recover(self.emotion.anxiety, 100.0, hours, anx_hl, elastic_baseline)
+        self.emotion.anxiety = elastic_recover(self.emotion.anxiety, self.emotion.baseline_anxiety, hours, anx_hl, elastic_baseline)
 
         # 记录变化率（urgency 感知：暴涨 vs 缓慢累积）
         if hours > 0.01:
@@ -1111,10 +1121,10 @@ class ChiguoState:
                 self.emotion.anxiety - old_anx
             ) / hours
 
-        # ── 好感值: 向 0 极慢靠拢 ──
+        # ── 好感值: 向基线（默认 0）极慢靠拢 ──
         aff_hl = cfg.get("affection_loss_half_life", 500.0)
         if silent_h > 24:
-            self.emotion.affection = elastic_recover(self.emotion.affection, 0.0, hours, aff_hl, elastic_baseline)
+            self.emotion.affection = elastic_recover(self.emotion.affection, self.emotion.baseline_affection, hours, aff_hl, elastic_baseline)
 
         # ── 傲娇指数（快变量：情绪波动）──
         if self.emotion.affection > 65:
@@ -1137,7 +1147,91 @@ class ChiguoState:
         for k, v in new_vals.items():
             setattr(self.emotion, k, v)
 
+        # ── ② 情绪自然波动（OU 噪声；noise_enabled=0 关闭 → 行为恒等，可灰度）──
+        # 对标 lacuna_core FluctuationEngine：小幅带均值回归的噪声消除"机械感"。
+        # 仅作用于 loneliness/anxiety（当下感受维度）；affection（长期存量）/tsundere
+        # （角色维度）/energy（资源+安全阀）不碰。独立 RNG 不污染全局 random 序列；
+        # 噪声为瞬态不落盘；动态上限 min(σ√Δt, 0.5×弹性步进) 保证 噪声<信号。
+        if cfg.get("noise_enabled", 0) != 0:
+            try:
+                noise_theta = float(cfg.get("noise_theta", 0.5))
+                lo_sigma = float(cfg.get("noise_loneliness_sigma", 0.3))
+                anx_sigma = float(cfg.get("noise_anxiety_sigma", 0.3))
+            except (TypeError, ValueError):
+                noise_theta, lo_sigma, anx_sigma = 0.5, 0.3, 0.3
+            rng = self._noise_rng()
+            lo_step = abs(self.emotion.loneliness - old_lo)
+            anx_step = abs(self.emotion.anxiety - old_anx)
+            # OU 内存态：x += θ(0−x)Δt + σ√Δt·ε；cron 单次 tick 从 0 出发等效
+            # 零均值扰动，loop 常驻模式连续 tick 时均值回归生效（θ 有效）。
+            nx = self._noise_x
+            x_lo = ou_step(nx["loneliness"], 0.0, noise_theta, lo_sigma, hours, rng)
+            x_anx = ou_step(nx["anxiety"], 0.0, noise_theta, anx_sigma, hours, rng)
+            nx["loneliness"], nx["anxiety"] = x_lo, x_anx
+            self.emotion.loneliness += noise_cap(lo_step, x_lo)
+            self.emotion.anxiety += noise_cap(anx_step, x_anx)
+
+        # ── ④ 情绪基线淡忘（向全局默认弱回归，防无限漂移；默认 720h）──
+        try:
+            forget_hl = float(cfg.get("baseline_forget_half_life", 720.0))
+        except (TypeError, ValueError):
+            forget_hl = 720.0
+        if forget_hl > 0 and hours > 0:
+            for dim, dflt in BASELINE_DEFAULTS.items():
+                key = f"baseline_{dim}"
+                cur = getattr(self.emotion, key)
+                if cur != dflt:
+                    setattr(self.emotion, key,
+                            cur + (dflt - cur) * (1 - 2.0 ** (-hours / forget_hl)))
+
         self._finalize(now)
+
+    def update_emotion_baseline(self, interaction: dict):
+        """v1.11 ④: 事件驱动情绪基线漂移（关系动力学）。
+        与 adapt_personality 并列调用（输入复用同一 interaction dict）。
+        - baseline_drift_rate=0（默认）→ 恒等关闭（灰度先例）
+        - 每次事件漂移 = rate × baseline_shift_<dim>（默认 0.15）
+        - 有界钳位 [全局默认 ± baseline_max_drift]（默认 20，防极端化）
+        职责边界：只漂移 loneliness/anxiety/affection 三个关系感受维度，
+        tsundere 全部归人格层（避免双重回归打架）。"""
+        cfg = self.config.get("emotion", {})
+        try:
+            rate = float(cfg.get("baseline_drift_rate", 0.0))
+        except (TypeError, ValueError):
+            rate = 0.0
+        if rate <= 0:
+            return
+        try:
+            max_drift = float(cfg.get("baseline_max_drift", 20.0))
+        except (TypeError, ValueError):
+            max_drift = 20.0
+        shift = baseline_shift_of(interaction)
+        for dim, d in shift.items():
+            if d == 0:
+                continue
+            try:
+                step = float(cfg.get(f"baseline_shift_{dim}", 0.15))
+            except (TypeError, ValueError):
+                step = 0.15
+            key = f"baseline_{dim}"
+            cur = getattr(self.emotion, key) + d * rate * step
+            dflt = BASELINE_DEFAULTS[dim]
+            setattr(self.emotion, key, max(dflt - max_drift, min(dflt + max_drift, cur)))
+
+    def _noise_rng(self):
+        """②: 惰性创建独立 random.Random 实例（非 dataclass 字段，不序列化）。
+        种子来自 [emotion].noise_seed——与全局 random.seed(42) 序列完全隔离。"""
+        rng = getattr(self, "_noise_rng_instance", None)
+        if rng is None:
+            try:
+                seed = int(self.config.get("emotion", {}).get("noise_seed", 42))
+            except (TypeError, ValueError):
+                seed = 42
+            rng = random.Random(seed)
+            self._noise_rng_instance = rng
+        if not hasattr(self, "_noise_x"):
+            self._noise_x = {"loneliness": 0.0, "anxiety": 0.0}
+        return rng
 
     # ── v7: 接话茬 — 待接续话题管理 ────────────────────
 
@@ -1208,9 +1302,20 @@ class ChiguoState:
     def _apply_analysis_impact(self, analysis: dict, now: datetime | None = None):
         """v9: LLM 分析微调独立应用（情绪影响 + 接话茬话题摄入）。
         供 on_user_message（首次记录）与 recv_dedup 升级路径（bridge 已记录后
-        standing order 补分析）共用——只叠加分析维度，不重复基础回复效果。"""
+        standing order 补分析）共用——只叠加分析维度，不重复基础回复效果。
+        v1.11 ①: 额外消费 user_mood（用户情绪感知）——写入 cooldown.user_mood
+        并叠加情绪 delta（系数默认 0 关闭）。"""
         self._anxiety_before_analysis = self.emotion.anxiety
         self._apply_emotion_impact(analysis, now)
+
+        # ── v1.11 ①: 用户情绪感知 ──
+        self._consume_user_mood(analysis, now or datetime.now(CST))
+        cfg = self.config.get("emotion", {})
+        for dim, d in user_mood_impact(
+                (self.cooldown.user_mood or {}).get("mood", "calm"),
+                (self.cooldown.user_mood or {}).get("intensity", 0.0),
+                cfg).items():
+            setattr(self.emotion, dim, getattr(self.emotion, dim) + d)
 
         # ── v7: 接话茬话题摄入 ──
         topic = analysis.get("topic")
@@ -1218,6 +1323,33 @@ class ChiguoState:
             self.resolve_pending_topic(topic, now)
         elif topic:
             self.add_pending_topic(topic, now)
+
+    def _consume_user_mood(self, analysis: dict, now: datetime):
+        """v1.11 ①: 解析 analysis 的 user_mood/user_mood_intensity → cooldown.user_mood。
+        容错语义（5 层）：analysis 无 user_mood 键 / 非法枚举 / 非数值强度 → 本次
+        零效果且**保留旧感知**（旧 analysis 天然兼容，TTL 由读取端 mood_fresh 判定）；
+        仅显式 calm 或强度 <=0 才清空感知。"""
+        if "user_mood" not in analysis:
+            return  # 本次未感知 → 不覆盖旧感知
+        try:
+            mood = str(analysis.get("user_mood", "calm")).strip().lower()
+        except (TypeError, ValueError):
+            return
+        if mood == "calm":
+            self.cooldown.user_mood = None  # 显式平静 → 清空
+            return
+        if mood not in MOOD_DELTA:
+            return  # 非法枚举 → 视为未感知，保留旧感知
+        try:
+            intensity = float(analysis.get("user_mood_intensity", 0.0))
+        except (TypeError, ValueError):
+            return
+        intensity = max(0.0, min(1.0, intensity))
+        if intensity <= 0:
+            self.cooldown.user_mood = None  # 强度 0 → 等价平静
+        else:
+            self.cooldown.user_mood = {
+                "mood": mood, "intensity": intensity, "at": now.isoformat()}
 
     def on_user_message(self, now: datetime, msg_length: int = 10,
                          analysis: dict | None = None):
@@ -1316,6 +1448,13 @@ class ChiguoState:
                     lat_cat = "very_slow"
             warmth = analysis.get("warmth", 0.0) if analysis else 0.0
             self.adapt_personality({
+                "type": "user_reply",
+                "warmth": warmth,
+                "latency_category": lat_cat,
+                "msg_length": msg_length,
+            })
+            # v1.11 ④: 情绪基线漂移（同一 interaction，默认关闭）
+            self.update_emotion_baseline({
                 "type": "user_reply",
                 "warmth": warmth,
                 "latency_category": lat_cat,
@@ -1436,22 +1575,48 @@ class ChiguoState:
         effort = _num("effort", 0.0, 0.0, 1.0)
         attention = _num("attention", 0.0, 0.0, 1.0)
 
+        # ── ③ 回复影响惯性阻尼（默认 0 = 关闭恒等，可灰度）──
+        # 对标 lacuna_core InertiaFilter：单条 analysis delta 幅度压缩，负向更重。
+        try:
+            inertia_pos = float(cfg.get("impact_inertia_positive", 0.0))
+            inertia_neg = float(cfg.get("impact_inertia_negative", 0.0))
+            aff_mod = float(cfg.get("impact_inertia_affection_mod", 0.0))
+        except (TypeError, ValueError):
+            inertia_pos = inertia_neg = aff_mod = 0.0
+
+        def _damp(delta: float, channel: str = "auto") -> float:
+            """按通道效价选择惯性键（不依赖 delta 数值符号）：
+            auto = 按 delta 符号（affection/energy 增减）；
+            neg  = 效价恒负（anxiety 回升）→ 恒用 inertia_neg；
+            pos  = 效价恒正（tsundere 软化）→ 恒用 inertia_pos。"""
+            if channel == "neg":
+                return impact_inertia(delta, inertia_neg, inertia_neg,
+                                      aff_mod, self.emotion.affection)
+            if channel == "pos":
+                return impact_inertia(delta, inertia_pos, inertia_pos,
+                                      aff_mod, self.emotion.affection)
+            return impact_inertia(delta, inertia_pos, inertia_neg,
+                                  aff_mod, self.emotion.affection)
+
         # ── 温暖度 → 好感 & 元气 ──
-        self.emotion.affection += warmth * cfg.get("affection_warmth_factor", 1.5)
-        self.emotion.energy += warmth * cfg.get("energy_warmth_factor", 4.0)
+        self.emotion.affection += _damp(warmth * cfg.get("affection_warmth_factor", 1.5))
+        self.emotion.energy += _damp(warmth * cfg.get("energy_warmth_factor", 4.0))
 
-        # 负温暖 → 不安回升（冷淡回复部分抵消 decay 效果）
+        # 负温暖 → 不安回升（冷淡回复部分抵消 decay 效果；效价恒负 → neg 键）
         if warmth < 0:
-            self.emotion.anxiety += abs(warmth) * cfg.get("anxiety_warmth_recovery", 3.0)
+            self.emotion.anxiety += _damp(
+                abs(warmth) * cfg.get("anxiety_warmth_recovery", 3.0), "neg")
 
-        # ── 用心度 → 好感 & 傲娇软化 ──
-        self.emotion.affection += effort * cfg.get("affection_effort_factor", 1.0)
-        self.emotion.tsundere_index -= effort * cfg.get("tsundere_effort_factor", 2.0)
+        # ── 用心度 → 好感 & 傲娇软化（软化效价恒正 → pos 键）──
+        self.emotion.affection += _damp(effort * cfg.get("affection_effort_factor", 1.0))
+        self.emotion.tsundere_index -= _damp(
+            effort * cfg.get("tsundere_effort_factor", 2.0), "pos")
 
-        # ── 关注度 → 元气 & 被忽视时不安 ──
-        self.emotion.energy += attention * cfg.get("energy_attention_factor", 4.0)
+        # ── 关注度 → 元气 & 被忽视时不安（回升效价恒负 → neg 键）──
+        self.emotion.energy += _damp(attention * cfg.get("energy_attention_factor", 4.0))
         if attention < 0.3:
-            self.emotion.anxiety += (0.3 - attention) * cfg.get("anxiety_ignore_factor", 2.0)
+            self.emotion.anxiety += _damp(
+                (0.3 - attention) * cfg.get("anxiety_ignore_factor", 2.0), "neg")
 
         # ── v4: 人格 anxiety_sensitivity 调制不安变化幅度 ──
         anx_sens = getattr(self.personality, '_cached_anxiety_sensitivity', 1.0)

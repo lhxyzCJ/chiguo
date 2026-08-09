@@ -158,6 +158,14 @@ new_value = target - (target - current) × 2^(-hours / effective_hl)
 | 元气联动 | energy < 30 | loneliness × (1 + 0.02·k·(30-energy)/30)（没力气 → 孤独恢复加速） |
 | 焦虑拖累 | anxiety > 70 | energy × (1 - 0.01·k)（不安 → 元气恢复减速） |
 
+**A11 回复影响惯性阻尼（v1.11）**：单条 analysis 微调 delta 经 `impact_inertia()`（`chiguo_math.py`）幅度压缩，防单条消息情绪跳变——`effective_delta = delta × (1 - inertia_eff)`，负向独立键可设更高（对标 lacuna_core InertiaFilter 负向权重更高）、`inertia_eff` 钳制 [0, 0.9] 永不反向/归零。`[emotion].impact_inertia_positive/negative/affection_mod` 默认 0 = 关闭恒等，可安全灰度；应用在 `_apply_emotion_impact` 各维度 delta，按**通道效价**分桶（anxiety 回升恒走 neg 键、tsundere 软化恒走 pos 键），先于人格 anxiety_sensitivity 调制（幅度上限语义）。
+
+**A12 用户情绪感知（v1.11）**：analysis 契约新增 `user_mood`（calm|low|distressed|happy|angry）+ `user_mood_intensity`（0~1），容错语义：缺键/非法枚举/非数值 → 本次零效果且保留旧感知（旧 analysis 天然兼容），仅显式 calm 或强度 ≤0 清空；感知写入 `CooldownState.user_mood`（TTL 6h 由 `mood_fresh` 判定）→ 三路消费：①情绪 delta（`user_mood_impact`，`[emotion].user_mood_*_factor` 默认 0）；②新增 `comfort` 安慰触发（入 EMOTION_TRIGGERS 自动继承 A3/A4/A5/A6，归一化（raw/(raw+baseline)）防恒候选，`[trigger].comfort_*` 默认关闭）+ 低落（low/distressed）时 anxiety 权重加成（`user_mood_anxiety_bonus`）；③`_build_context` 注入 mood_note 语气注解（`[trigger].user_mood_note_enabled=0` 默认关闭；开启后叠加在 layer_guidance 上，不改变傲娇铁律）+ Bayesian `needs_care` 推断提示。职责边界：λ/频率通道（`day_plan.py` needs_care ×1.2）与内容/语气通道（comfort）正交不相乘。对标 thu-coai/Emotional-Support-Conversation（ACL 2021）共情范式。
+
+**A13 情绪自然波动（v1.11）**：tick() A2 之后对 loneliness/anxiety 叠加 OU 过程噪声（`ou_step`/`noise_cap`，`chiguo_math.py`）——带均值回归的小幅起伏消除"机械感"。`[emotion].noise_enabled=0` 关闭恒等；噪声幅度 σ√Δt 且受 `min(σ√Δt, 0.5×弹性步进)` 动态上限钳制（噪声<信号）；独立 `random.Random(noise_seed)` 不污染全局序列；瞬态不落盘。affection（长期存量）/tsundere（角色维度）/energy（资源+安全阀）不加噪声。对标 lacuna_core FluctuationEngine。
+
+**A14 情绪基线长期漂移（v1.11）**：`ChiguoEmotion` 新增 `baseline_loneliness/anxiety/affection`（默认 = 原收敛 target 100/100/0 → 恒等，旧状态缺字段自动补默认，不升 STATE_VERSION）。`update_emotion_baseline(interaction)` 事件驱动慢漂移（`baseline_shift_of` 方向表：冷落/冷淡/未回复 → loneliness↑affection↓、温柔 → anxiety↓affection↑），`[emotion].baseline_drift_rate=0` 关闭灰度；有界钳位 `baseline_max_drift=20` + 淡忘回归 720h 防无限漂移；tick 3 处 `elastic_recover` target 改用漂移后基线。与人格层 `regress_to_baseline` 分层（人格稳定、情绪基线可漂移），tsundere 全归人格层避免双重回归。对标 astrbot_plugin_emotion_state_machine 的 GROUP/RELATION_BASELINE 概念。
+
 ### 2.4 事件响应（半衰期衰减）
 
 | 事件 | 孤独 | 不安 | 好感 | 元气 |
@@ -232,7 +240,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 
 ### 2.6 触发决策（sigmoid 权重 + 加权随机）
 
-13 种触发类型：
+14 种触发类型：
 
 | 触发 | 权重计算 | 说明 |
 |------|---------|------|
@@ -271,7 +279,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 |----|------|------|
 | 低段 | activation < `min_activation`（0.08） | 情绪类退出竞争（等效低能量沉默，仪式类照发） |
 | 中段 | 其余 | 现状加权随机（全部候选） |
-| 高段 | activation ≥ `must_send_activation`（0.5） | 情绪类加权随机**必选**（仪式类本轮退让），选中标记 `must_send: true` 进 decision JSON（context.must_send） |
+| 高段 | activation ≥ `must_send_activation`（0.75） | 情绪类加权随机**必选**（仪式类本轮退让），选中标记 `must_send: true` 进 decision JSON（context.must_send） |
 
 escape_valve 豁免（v6 逃生阀不走本层）。
 
@@ -628,6 +636,9 @@ bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / 
 | `warmth` | -1.0~1.0 | 情感温度。负=冷淡，正=温暖 |
 | `effort` | 0.0~1.0 | 用心程度 |
 | `attention` | 0.0~1.0 | 对迟菓的关注度 |
+| `user_mood` | calm\|low\|distressed\|happy\|angry | 主人此刻情绪（v1.11，可选；缺失/非法 → calm 零效果） |
+| `user_mood_intensity` | 0.0~1.0 | 情绪强度（v1.11，可选；缺失/非数值 → 0） |
+| `recall` | 文本 | 记忆检索词（涉及登记事实/过去日期时给，否则省略；v9，5.1 表补记） |
 
 ### 5.2 情绪映射
 
@@ -638,6 +649,8 @@ effort  → affection += effort × 1.0, tsundere -= effort × 2.0
 attention → energy += attention × 4.0
 attention < 0.3 → anxiety += (0.3 - attention) × 2.0
 ```
+
+**v1.11 追加**：以上 delta 全部经 `impact_inertia()` 惯性阻尼（A11，默认 0 关闭）；user_mood 情绪 delta（A12）在 analysis 叠加后追加：`low → anxiety +2.0×i×k、affection +0.5×i×k`；`distressed → anxiety +3.0×i×k、affection +1.0×i×k`；`happy → energy +2.0×i×k、affection +1.0×i×k`；`angry → anxiety +2.0×i×k、affection -1.0×i×k`（k 为 `[emotion].user_mood_*_factor`，默认 0）。
 
 所有系数在 `chiguo_proactive.toml` `[emotion]` 段可调。
 
@@ -811,7 +824,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `scripts/service.sh` | 服务统一管理（ollama + wechat-bridge）：`autostart`（systemd 开机自启，写 `/etc/systemd/system/chiguo-bridge.service` + `enable --now`）/ `temp`（临时启动，nohup 后台 + pidfile `~/.chiguo/run/bridge-temp.pid`，不注册自启）/ `status` / `stop` / `uninstall`；两模式互斥接管（启动前停对方实例，避免 18790 端口冲突）；全子命令支持 `--dry-run`；测试注入 `CHIGUO_REPO_OVERRIDE/CHIGUO_SYSTEMD_DIR/CHIGUO_SYSTEMCTL/CHIGUO_PID_DIR/CHIGUO_NODE` | bash, systemd |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
 
-共计 **600+** 个测试用例（38 个 py 测试文件 + 10 个脚本测试；另含 node 侧 test_agent_run.mjs 31 用例 + test_bridge_askagent.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_agent.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
+共计 **600+** 个测试用例（42 个 py 测试文件 + 10 个脚本测试；另含 node 侧 test_agent_run.mjs 31 用例 + test_bridge_askagent.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_agent.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `tests/test_holiday_parser.py` 9/9 用例通过。
@@ -1183,7 +1196,7 @@ follow_up_min_weight = 0.03     # 低于此权重不成为候选
 # v1.10: A3 日程乘数 / A4 三段激活 / A6 repeat 阻尼
 free_multiplier = 1.2            # 空闲（节假日/周末/课间）时情绪类候选乘数（建议 1.0~1.4）
 min_activation = 0.08            # 情绪类候选权重和 < 此值 → 情绪类退出竞争（低能量沉默，仪式类照发）
-must_send_activation = 0.5       # 情绪类权重和 ≥ 此值 → 情绪类加权随机必选（must_send 进 decision JSON）
+must_send_activation = 0.75      # 情绪类权重和 ≥ 此值 → 情绪类加权随机必选（must_send 进 decision JSON）
 repeat_decay = 0.6               # 同类型触发历史计数 n → 候选 weight ×= repeat_decay^n
 repeat_cap = 3                   # repeat 计数封顶（超过不再继续衰减）
 
@@ -1661,7 +1674,7 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
   支持 runner/agent_command 参数按 runner 检查
 
 1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_agent.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/agent-run.mjs`（`AGENTRUN_SESSION=chiguo-send`）按 SUN2.md 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
-2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，600s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
+2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，30s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
 
 ### 11.1 特殊命令（纪念日/假期，bridge 规则化）
 
@@ -1815,6 +1828,7 @@ rm <仓库根目录>/chiguo_state.json
 
 | 版本 | 日期 | 变更 |
 |:----:|:----:|------|
+| **v1.11** | **2026-08-09** | **情绪引擎四项改进（对标调研后确定；STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移）**：A11 回复影响惯性阻尼（`impact_inertia` 压缩单条 analysis delta，负向独立键、按通道效价分桶、先于 anxiety_sensitivity；`[emotion].impact_inertia_*` 默认 0=关闭）+ A12 用户情绪感知（analysis 新增 `user_mood`/`user_mood_intensity`，5 层容错；`CooldownState.user_mood` TTL 6h；`comfort` 安慰触发入 EMOTION_TRIGGERS（自动继承 A3/A4/A5/A6）+ 低落时 anxiety 权重加成 + `_build_context` mood_note 语气注解 + Bayesian needs_care 提示；`[emotion].user_mood_*`/`[trigger].comfort_*` 默认关闭）+ A13 情绪自然波动（tick 内 OU 噪声：σ√Δt + 动态上限 ≤0.5×弹性步进、独立 RNG、瞬态不落盘；`[emotion].noise_*` 默认关闭）+ A14 情绪基线长期漂移（`ChiguoEmotion.baseline_*` 默认=原收敛 target，事件驱动漂移 ±max_drift 20 有界 + 720h 淡忘，tick 3 处 target 改用基线；`[emotion].baseline_*` 默认关闭；与人格层 regress_to_baseline 分层、tsundere 全归人格层）；测试 42 py + 10 script（新增 test_impact_inertia / test_user_mood / test_emotion_noise / test_emotion_baseline）；修正 bridge.mjs 去重窗口注释 600s→30s、must_send_activation 文档 0.5→0.75；删除死测试 test_recv_dedup_dup_analysis_not_double_applied |
 | **v1.10** | **2026-08-09** | **外部对比优化 9 项（v1.9→v1.10，simplify/72-74 行为层；STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移）**：A1 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+\|gap\|/baseline)，loneliness/anxiety/affection/energy 四处推进改调，`[emotion].elastic_baseline=100`）+ A2 情绪交互矩阵（tick 后 `apply_interaction_matrix`，3 条跨维度规则，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ A3 日程乘数×抖动（情绪类 × 上课 0.3/空闲 free_multiplier 1.2/半忙 0.6 × uniform(0.8,1.2) 一次采样，仪式类豁免）+ A4 三段激活（activation=情绪类权重和：<min_activation 0.08 沉默 / ≥must_send_activation 0.5 必选，must_send 进 decision JSON，escape_valve 豁免）+ A5 未回复退场状态机（backoff_level：<backoff_start 3 正常 / 3-4 backing_off 情绪类禁发 / ≥backoff_silent 5 silent 全禁发，escape_valve longing 破防豁免；λ×0.7^n 保留）+ A6 repeat 阻尼泛化（全类型 × repeat_decay 0.6^min(n,3)，删 lonely_high 专属 0.3^n）+ A8 生成失败确定性回退（chiguo_composer `__main__` CLI：decision JSON 或 --trigger 模板池直出 + `_FALLBACK_LINES` 兜底；chiguo-tick.sh agent 失败时调用，成功发送+fallback 标记）+ A9 内容级防复读（TopicPicker 候选与最近已发 5 条 3-gram Jaccard ≥0.6 弃用，全弃用空注入，`[topic_picker] repeat_jaccard_threshold/repeat_history_n`）+ A10 回复饱和阻尼（`CooldownState.drop_events` 30 分钟窗口同向计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）；测试 38 py + 10 script（新增 test_emotion_dynamics / test_composer_fallback） |
 | v1 | 2025-12 | 初始版本。线性情绪 + 硬阈值触发 |
 | v2 | 2026-01 | sigmoid 概率替代硬阈值，Poisson 过程，半衰期情绪模型 |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 全量测试链（38 py + 10 script）——本地与 CI 同一入口；任一失败即退出非零
+# 全量测试链（42 py + 10 script）——本地与 CI 同一入口；任一失败即退出非零
 # 前置: .venv 存在（本地 dev 机已有；CI 由 uv sync 创建）
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
@@ -41,6 +41,7 @@ node tests/test_bridge_schedule.mjs && bash tests/test_install_agent.sh && \
 bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
 bash tests/test_tick_health.sh && bash tests/test_service.sh && \
 uv run python tests/test_chiguo_math.py && uv run python tests/test_emotion_dynamics.py && \
+uv run python tests/test_emotion_noise.py && uv run python tests/test_emotion_baseline.py && \
 uv run python tests/test_holiday_parser.py && \
 uv run python tests/test_schedule_parser.py && \
 uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
@@ -49,6 +50,7 @@ uv run python tests/test_bayesian.py && uv run python tests/test_composer.py && 
 uv run python tests/test_composer_fallback.py && \
 uv run python tests/test_ebbinghaus.py && uv run python tests/test_longing.py && \
 uv run python tests/test_escape_valve.py && uv run python tests/test_feedback.py && \
+uv run python tests/test_impact_inertia.py && uv run python tests/test_user_mood.py && \
 uv run python tests/test_trigger.py && uv run python tests/test_topics.py && \
 uv run python tests/test_circadian.py && uv run python tests/test_followup.py && \
 uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \

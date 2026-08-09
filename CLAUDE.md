@@ -22,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required) — 38 py + 10 script tests
+# Run all tests (Python 3.14+ required) — 42 py + 10 script tests
 bash scripts/ci-test.sh   # 本地与 GitHub Actions ci.yml 同一入口
 ```
 
@@ -64,12 +64,12 @@ No build step. Minimal dependencies beyond Python stdlib (plus `tomllib` for Pyt
 
 **v8 (2026-07-31)** adds: dual-schedule circadian learning (双作息 — weekday/weekend buckets with separate learned windows, `bucket_for()` handles 调休上班日→weekday / 节假日→weekend / Fri 20:00+ & Sat & Sun before 20:00→weekend; v7 state auto-migrates by backfilling buckets) and NetEase play proof (听歌双向联动 — `netease.bridge` 的 `NeteaseBridge.fetch_recent_play()` fetches recent plays only inside the active quiet window, play within the 2h proof window suppresses Bayesian sleeping confidence ×0.5 and records active times back into the circadian tracker). STATE_VERSION 7→8.
 
-**v1.10 (2026-08-09)** adds: 外部对比优化 9 项（STATE_VERSION 不变仍为 10）— A1 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+|gap|/baseline)，偏离越远回弹越快，`[emotion].elastic_baseline`）+ A2 情绪交互矩阵（tick 后跨维度联动，`[emotion].interaction_*` 默认 1.0=关闭）+ A3 日程乘数×抖动（情绪类，仪式类豁免）+ A4 三段激活（<min_activation 沉默 / ≥must_send_activation 必选 must_send）+ A5 未回复退场状态机（backing_off 禁情绪类 / silent 全禁发）+ A6 repeat 阻尼泛化（全类型 ×0.6^min(n,3)）+ A8 生成失败确定性回退（composer 兜底 CLI）+ A9 内容级防复读（3-gram Jaccard 弃用候选）+ A10 回复饱和阻尼（30 分钟窗口 ×0.5^min(n,3)）。
+**v1.11 (2026-08-09)** adds: 情绪引擎四项改进（STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移；全部默认关闭恒等可灰度）— A11 回复影响惯性阻尼（`impact_inertia` 压缩单条 analysis delta，负向独立键、按通道效价分桶、先于 anxiety_sensitivity，`[emotion].impact_inertia_*` 默认 0）+ A12 用户情绪感知（analysis 新增 `user_mood`/`user_mood_intensity`，5 层容错；`CooldownState.user_mood` TTL 6h；`comfort` 安慰触发入 EMOTION_TRIGGERS + 低落时 anxiety 权重加成 + mood_note 语气注解 + Bayesian needs_care 提示，`[emotion].user_mood_*`/`[trigger].comfort_*` 默认关闭）+ A13 情绪自然波动（tick 内 OU 噪声：σ√Δt + 动态上限、独立 RNG、瞬态不落盘，`[emotion].noise_*` 默认关闭）+ A14 情绪基线长期漂移（`ChiguoEmotion.baseline_*` 默认=原 target，事件驱动漂移 ±20 有界 + 720h 淡忘，tick 3 处 target 改用基线，`[emotion].baseline_*` 默认关闭）；测试 42 py + 10 script（新增 4 个 runner）；删除死测试 test_recv_dedup_dup_analysis_not_double_applied；修正 bridge.mjs 600s→30s 注释与 must_send 文档 0.5→0.75。
 
 ```
 chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_state.py     → 5-dimension emotion engine + 8-dim personality + Bayesian inference + schedule + holidays + memory
-  ├─ chiguo_trigger.py   → sigmoid-weighted random trigger selection (13 trigger types incl. reflect, longing, follow_up)
+  ├─ chiguo_trigger.py   → sigmoid-weighted random trigger selection (14 trigger types incl. reflect, longing, follow_up, comfort)
   ├─ chiguo_topics.py    → 8-source topic injection with Ebbinghaus-weighted memory + personality modulation
   ├─ chiguo_composer.py  → Intent × Cue × Vibe three-layer message composition (v4)
   ├─ chiguo_math.py      → pure functions: sigmoid, half-life decay, Hawkes, longing accumulation (v4)
@@ -84,7 +84,7 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_watchdog.py  → daemon health checks (disk, memory, tick freshness)
   ├─ chiguo_rotation.py  → monthly log rotation → archive/
   ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
-  ├─ chiguo_version.py   → project version single source (VERSION="1.10", MINOR +1 per round: 1.9→1.10→1.11, not decimal addition)
+  ├─ chiguo_version.py   → project version single source (VERSION="1.11", MINOR +1 per round: 1.9→1.10→1.11, not decimal addition)
   └─ chiguo_monitor.py   → streaming JSONL analytics (stats/alerts/health)
 
   Output: chiguo_decisions.jsonl (append-only structured log)
@@ -93,11 +93,11 @@ chiguo_daemon.py (DecisionEngine)
 
 **Config**: `chiguo_proactive.toml` — all parameters (368 lines). Legacy host section from Task 14 (superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
-**Version**: `chiguo_version.py` is the single source (`VERSION="1.10"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
+**Version**: `chiguo_version.py` is the single source (`VERSION="1.11"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
 
-**5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h). v1.10: 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+|target-current|/baseline)，偏离越远回弹越快；loneliness/anxiety/affection/energy 四处推进改调）+ 情绪交互矩阵（tick 后 `apply_interaction_matrix` 一次：affection>60→anxiety 恢复加速 / energy<30→loneliness 恢复加速 / anxiety>70→energy 恢复减速，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ 回复饱和阻尼（30 分钟窗口同向回复计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）。
+**5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h). v1.10: 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+|target-current|/baseline)，偏离越远回弹越快；loneliness/anxiety/affection/energy 四处推进改调）+ 情绪交互矩阵（tick 后 `apply_interaction_matrix` 一次：affection>60→anxiety 恢复加速 / energy<30→loneliness 恢复加速 / anxiety>70→energy 恢复减速，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ 回复饱和阻尼（30 分钟窗口同向回复计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）。v1.11: 惯性阻尼（`impact_inertia` 压缩单条 analysis delta）+ 用户情绪感知（`user_mood` 三路消费：情绪 delta / comfort 触发 / mood_note 注解）+ OU 噪声（tick 内 loneliness/anxiety 小幅起伏）+ 基线漂移（`baseline_*` 长期收敛目标，tick target 改用基线）。
 
-**Trigger selection**: sigmoid-weighted, not hard-threshold. `chiguo_trigger.py` computes weights for 13 trigger types (incl. v7 follow_up), then weighted random choice. No priority-based cascading — every eligible trigger has non-zero probability. v1.10 三段：A3 日程乘数×抖动（上课 0.3/空闲 free_multiplier 1.2/半忙 0.6 × uniform(0.8,1.2)，仪式类豁免）→ A6 repeat 阻尼（全类型 ×0.6^min(n,3)）→ A4 三段激活（情绪类权重和 < min_activation 0.08 沉默 / ≥ must_send_activation 0.5 必选 must_send）；A5 未回复退场状态机（backoff_start=3 backing_off 禁情绪类、backoff_silent=5 silent 全禁发，escape_valve 豁免）。
+**Trigger selection**: sigmoid-weighted, not hard-threshold. `chiguo_trigger.py`  computes weights for 14 trigger types (incl. v7 follow_up + v1.11 comfort), then weighted random choice. No priority-based cascading — every eligible trigger has non-zero probability. v1.10 三段：A3 日程乘数×抖动（上课 0.3/空闲 free_multiplier 1.2/半忙 0.6 × uniform(0.8,1.2)，仪式类豁免）→ A6 repeat 阻尼（全类型 ×0.6^min(n,3)）→ A4 三段激活（情绪类权重和 < min_activation 0.08 沉默 / ≥ must_send_activation 0.75 必选 must_send）；A5 未回复退场状态机（backoff_start=3 backing_off 禁情绪类、backoff_silent=5 silent 全禁发，escape_valve 豁免）。v1.11: comfort 安慰触发（fresh user_mood 低落时按归一化权重（raw/(raw+baseline)）竞争，默认关闭）。
 
 **Topic injection**: When `lonely_low` or `lonely_mid` triggers fire, 70% chance to inject a conversation topic from 8 weighted sources (schedule, memory, weather, anniversary, solar terms, preference followup, general, netease). 3 consecutive lonely triggers → forced topic injection.
 
@@ -129,7 +129,7 @@ All auto-generated at first run, all in `.gitignore`:
 - **Emotion trends**: first-half vs second-half mean comparison; no heavy regression needed.
 - **Reply rate estimation**: inferred from `messages_without_reply` deltas between consecutive sends (no explicit reply tracking in logs).
 - **Config hot-reload**: `_maybe_reload_config()` checks toml mtime before each `evaluate()` call. Only matters for `--loop` mode; cron spawns fresh processes.
-- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 36 py test runners (+ 10 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
+- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 42 py test runners (+ 10 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
 
 ## 安全边界
 
