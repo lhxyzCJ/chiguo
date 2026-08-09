@@ -296,7 +296,7 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
       try {
         let tele = null
         try {
-          const lines = readFileSync(join(repo, 'logs', 'pi-run.log'), 'utf8').trim().split('\n')
+          const lines = readFileSync(join(repo, 'logs', 'agent-run.log'), 'utf8').trim().split('\n')
           if (lines.length) tele = JSON.parse(lines[lines.length - 1])
         } catch {}
         const usage = tele?.usage ?? {}

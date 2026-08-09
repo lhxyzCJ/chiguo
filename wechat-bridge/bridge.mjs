@@ -2,7 +2,7 @@
 /**
  * wechat-bridge — 微信 (wechatbot fork) ↔ pi-agent 桥接
  *
- * 微信消息 → pi-agent（scripts/pi-run.mjs，chiguo-main 会话）→ 回复发回微信。
+ * 微信消息 → pi-agent（scripts/agent-run.mjs，chiguo-main 会话）→ 回复发回微信。
  * 使用 fork 的 inboundDebounce 合并连发文本（windowMs 4000）。
  *
  * v2 新增（迟菓主动链路）:
@@ -17,13 +17,13 @@
  *  - 所有路径/端口/主人 ID 可用 WECHAT_BRIDGE_* 环境变量覆盖（scripts/wechat-bridge.sh 生成 .env）。
  *
  * v4（Phase 4 寄主迁移）:
- *  - 回复侧由 pi-agent 完成情绪分析与回复：askPi 调 scripts/pi-run.mjs
+ *  - 回复侧由 pi-agent 完成情绪分析与回复：askAgent 调 scripts/agent-run.mjs
  *    （--prompt <原文> --analysis-mode），一次完成「情绪分析 JSON + 回复」。
- *  - 分析接线：askPi 返回 analysis 后 → daemon --user-msg <原文> --analysis '<JSON>'
+ *  - 分析接线：askAgent 返回 analysis 后 → daemon --user-msg <原文> --analysis '<JSON>'
  *    （recv_dedup 升级语义——bridge 已确定性 --user-msg 过，不重复记账）。
  *  - 特殊命令（纪念日/假期）确定性接管：收到消息先 detectSpecialCommand（规则化，
- *    不依赖 pi 输出稳定性），命中 → 直接执行 daemon --anniversary/--break 并回复确认，
- *    不再经 pi（pi 为纯文本调用，无工具权限）。
+ *    不依赖 agent 输出稳定性），命中 → 直接执行 daemon --anniversary/--break 并回复确认，
+ *    不再经 agent（agent 为纯文本调用，无工具权限）。
  */
 import { createServer } from 'node:http'
 import { WeChatBot } from '@wechatbot/wechatbot'
@@ -33,15 +33,16 @@ import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand } from './command-detect.mjs'
-import { parseNdjson, extractAnalysis, resolveRepo, RUNNER } from '../scripts/pi-run.mjs'
+// #99 A 路：askAgent（agent-run.mjs 统一入口）由阶段 4 集成接入；当前保留原 spawn 调用结构
+import { parseNdjson, extractAnalysis, resolveRepo, RUNNER } from '../scripts/agent-run.mjs'
 
 const execFileP = promisify(execFile)
 
 const DEBOUNCE_MS = 4000
-const PI_RUN_SCRIPT = process.env.WECHAT_BRIDGE_PI_RUN
-// RPC 常驻(仿 OpenClaw gateway):env WECHAT_BRIDGE_PI_RPC=1 显式启用;失败自动回退 spawn。
-// v1.8: RPC 是 pi 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
-const PI_RPC_ENABLED = RUNNER === 'pi' && process.env.WECHAT_BRIDGE_PI_RPC === '1'
+const AGENT_RUN_SCRIPT = process.env.WECHAT_BRIDGE_AGENT_RUN
+// RPC 常驻(仿 OpenClaw gateway):env WECHAT_BRIDGE_AGENT_RPC=1 显式启用;失败自动回退 spawn。
+// v1.8: RPC 是 agent 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
+const AGENT_RPC_ENABLED = RUNNER === 'agent' && process.env.WECHAT_BRIDGE_AGENT_RPC === '1'
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 // #84 /send 共享 token:未设置时跳过 token 校验(向后兼容 tick.sh 等既有调用);设置后必须匹配
 const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
@@ -52,15 +53,15 @@ const DAEMON_PY = process.env.WECHAT_BRIDGE_DAEMON_PY ?? `${REPO}/.venv/bin/pyth
 const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? `${REPO}/chiguo_daemon.py`
 // schedule 运行时文件锚定 daemon 所在目录（跟随 WECHAT_BRIDGE_DAEMON 覆盖；测试隔离依赖），与 REPO 仅默认相等
 const REPO_ROOT = dirname(DAEMON_SCRIPT)
-// pi 假死记账脚本（pi_health.py 状态机）；默认随仓库 scripts/ 部署，可用 WECHAT_BRIDGE_PI_HEALTH 覆盖
-const PI_HEALTH_SCRIPT = process.env.WECHAT_BRIDGE_PI_HEALTH
-  ?? new URL('../scripts/pi_health.py', import.meta.url).pathname
-// pi_health 解释器独立于 DAEMON_PY（测试可能把后者换成 node 跑 fake daemon）
-const PI_HEALTH_PY = process.env.WECHAT_BRIDGE_PI_HEALTH_PY ?? `${REPO}/.venv/bin/python`
+// agent 假死记账脚本（agent_health.py 状态机）；默认随仓库 scripts/ 部署，可用 WECHAT_BRIDGE_AGENT_HEALTH 覆盖
+const AGENT_HEALTH_SCRIPT = process.env.WECHAT_BRIDGE_AGENT_HEALTH
+  ?? new URL('../scripts/agent_health.py', import.meta.url).pathname
+// agent_health 解释器独立于 DAEMON_PY（测试可能把后者换成 node 跑 fake daemon）
+const AGENT_HEALTH_PY = process.env.WECHAT_BRIDGE_AGENT_HEALTH_PY ?? `${REPO}/.venv/bin/python`
 // 登录态目录：默认仓库内回退；wechat-bridge.sh 注入集中认证目录 ~/.chiguo/auth/wechat（可迁移）；可用 WECHAT_BRIDGE_STORAGE 覆盖
 const DEFAULT_STORAGE = new URL('./credentials/', import.meta.url).pathname
 
-/** 串行化 pi 调用（同一 pi 会话 chiguo-main 不允许并发 turn，含 chiguo-tick 的周期调用）。 */
+/** 串行化 agent 调用（同一 agent 会话 chiguo-main 不允许并发 turn，含 chiguo-tick 的周期调用）。 */
 export class TurnQueue {
   constructor() {
     this.tail = Promise.resolve()
@@ -73,21 +74,21 @@ export class TurnQueue {
   }
 }
 
-/** 调用 pi-agent（pi-run.mjs），一次完成「情绪分析 JSON + 回复」。
+/** 调用 pi-agent（agent-run.mjs），一次完成「情绪分析 JSON + 回复」。
  * 返回 { text, analysis }；analysis 为解析后的对象或 null。失败抛错。 */
-export async function askPi(text) {
-  // RPC 常驻优先:失败 → 回退 spawn(pi-rpc 抛错即回退)
-  if (PI_RPC_ENABLED) {
+export async function askAgent(text) {
+  // RPC 常驻优先:失败 → 回退 spawn(agent-rpc 抛错即回退)
+  if (AGENT_RPC_ENABLED) {
     try {
-      const { PiRpc } = await import('./pi-rpc.mjs')
-      if (!globalThis.__piRpc) globalThis.__piRpc = new PiRpc()
-      const r = await globalThis.__piRpc.prompt(text)
+      const { AgentRpc } = await import('./agent-rpc.mjs')
+      if (!globalThis.__agentRpc) globalThis.__agentRpc = new AgentRpc()
+      const r = await globalThis.__agentRpc.prompt(text)
       return { text: r.text, analysis: r.analysis ?? null }
     } catch (err) {
-      console.error('[pi-rpc] 失败,回退 spawn:', err instanceof Error ? err.message : String(err))
+      console.error('[agent-rpc] 失败,回退 spawn:', err instanceof Error ? err.message : String(err))
     }
   }
-  const { stdout } = await execFileP('node', [PI_RUN_SCRIPT, '--prompt', text, '--analysis-mode'], {
+  const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, '--prompt', text, '--analysis-mode'], {
     timeout: 180_000,
     maxBuffer: 16 * 1024 * 1024,
   })
@@ -96,18 +97,18 @@ export async function askPi(text) {
   try {
     parsed = JSON.parse(stdout)
   } catch {
-    throw new Error(`pi-run 输出非 JSON: ${String(stdout).slice(0, 100)}`)
+    throw new Error(`agent-run 输出非 JSON: ${String(stdout).slice(0, 100)}`)
   }
   if (!parsed.ok) {
-    throw new Error(parsed.error ?? 'pi-run 返回 ok=false 且无 error')
+    throw new Error(parsed.error ?? 'agent-run 返回 ok=false 且无 error')
   }
   return { text: parsed.text, analysis: parsed.analysis ?? null }
 }
 
 // ── 6b:recall 信号 + 回复侧 --attention 注入(导出供测试注入 fake run)──
-// #84 单通道:事实只走 --facts 参数(pi-run recall 模板自行拼装并含反问引导),prompt 不放事实。
+// #84 单通道:事实只走 --facts 参数(agent-run recall 模板自行拼装并含反问引导),prompt 不放事实。
 
-/** --attention 轻量读(§5.4):失败/畸形 → null(跳过注入继续 askPi,不阻塞回复流)。 */
+/** --attention 轻量读(§5.4):失败/畸形 → null(跳过注入继续 askAgent,不阻塞回复流)。 */
 async function getAttention() {
   try {
     const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--attention'], {
@@ -143,34 +144,34 @@ function buildAttentionBlock(att) {
   return lines.join('\n')
 }
 
-/** askPi 前先注入 attention 块(取数失败 → 原文直走,§5.4 降级)。 */
-async function askPiWithAttention(text, att) {
+/** askAgent 前先注入 attention 块(取数失败 → 原文直走,§5.4 降级)。 */
+async function askAgentWithAttention(text, att) {
   const block = att?.ok ? buildAttentionBlock(att) : null
   const prompt = block ? `${text}\n\n【今日安排参考】\n${block}\n(仅供回答参考,仅在相关时提及)` : text
-  return askPi(prompt)
+  return askAgent(prompt)
 }
 
-/** 第一趟分析(analysis-mode,含 recall 信号):默认走 askPi;测试注入 {exec} fake(原始 ndjson 解析)。 */
+/** 第一趟分析(analysis-mode,含 recall 信号):默认走 askAgent;测试注入 {exec} fake(原始 ndjson 解析)。 */
 async function firstAnalysis(text, runOverride) {
   if (typeof runOverride === 'function') return runOverride(text)
   const { stdout } = await runOverride.exec('node',
-    [PI_RUN_SCRIPT, '--prompt', text, '--analysis-mode'], { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
+    [AGENT_RUN_SCRIPT, '--prompt', text, '--analysis-mode'], { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
   const { analysis, reply } = extractAnalysis(parseNdjson(stdout))
   return { text: reply, analysis }
 }
 
-/** 第二趟 pi(recall 模式):事实经 --facts 参数传给 pi-run(其 recall 模板拼装事实+反问引导),
+/** 第二趟 agent(recall 模式):事实经 --facts 参数传给 agent-run(其 recall 模板拼装事实+反问引导),
  * prompt 只放用户问题(#84 单通道,防 facts='[]' 覆盖真实事实)。
  * 返回 { text } 或 null(失败/漏检 → 调用方按普通回复,零额外调用)。 */
-async function runPiRun({ mode, prompt, facts }, runOverride = null) {
+async function runAgentRun({ mode, prompt, facts }, runOverride = null) {
   const args = ['--prompt', prompt, '--schedule-recall', '--facts', facts]
   if (runOverride && typeof runOverride.exec === 'function') {
-    const { stdout } = await runOverride.exec('node', [PI_RUN_SCRIPT, ...args],
+    const { stdout } = await runOverride.exec('node', [AGENT_RUN_SCRIPT, ...args],
       { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
     const raw = parseNdjson(stdout)
     return { text: raw ? raw.replace(/<<RECALL>>[\s\S]*?<<END>>/, '').trim() : null }
   }
-  const { stdout } = await execFileP('node', [PI_RUN_SCRIPT, ...args], {
+  const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, ...args], {
     timeout: 180_000,
     maxBuffer: 16 * 1024 * 1024,
   })
@@ -181,9 +182,9 @@ async function runPiRun({ mode, prompt, facts }, runOverride = null) {
   return { text: raw.replace(/<<RECALL>>[\s\S]*?<<END>>/, '').trim() }
 }
 
-/** recall 信号路由:analysis 带 recall → daemon --schedule-recall → 第二趟 pi → 回答;
+/** recall 信号路由:analysis 带 recall → daemon --schedule-recall → 第二趟 agent → 回答;
  * 无信号/失败/漏检 → null(调用方按普通回复,零额外调用)。 */
-export async function runWithRecall(text, runOverride = askPi) {
+export async function runWithRecall(text, runOverride = askAgent) {
   const first = await firstAnalysis(text, runOverride)
   if (first?.analysis?.recall) {
     const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--schedule-recall', first.analysis.recall], {
@@ -193,24 +194,24 @@ export async function runWithRecall(text, runOverride = askPi) {
     let rec = null
     try { rec = JSON.parse(r.stdout) } catch {}
     if (rec?.ok) {
-      const second = await runPiRun({ mode: 'recall', prompt: text, facts: JSON.stringify(rec.matches) }, runOverride)
+      const second = await runAgentRun({ mode: 'recall', prompt: text, facts: JSON.stringify(rec.matches) }, runOverride)
       if (second) return second.text
     }
   }
   return null
 }
 
-/** 回复侧注入(§5.4):先取 --attention(失败降级),成功注入 T1/T2/T3 + today_exceptions 再 askPi。 */
+/** 回复侧注入(§5.4):先取 --attention(失败降级),成功注入 T1/T2/T3 + today_exceptions 再 askAgent。 */
 export async function runWithAttention(text, runOverride = null) {
   const att = await getAttention()
   if (runOverride) {
     const res = await runOverride({ attention: att?.ok ? att : null, text })
     return typeof res === 'string' ? res : res?.text ?? null
   }
-  return (await askPiWithAttention(text, att)).text
+  return (await askAgentWithAttention(text, att)).text
 }
 
-/** 确定性记录主人消息到迟菓 daemon（无分析；随后的 askPi 分析经 upgradeAnalysis 升级，daemon 去重）。失败不阻塞回复流。 */
+/** 确定性记录主人消息到迟菓 daemon（无分析；随后的 askAgent 分析经 upgradeAnalysis 升级，daemon 去重）。失败不阻塞回复流。 */
 export async function recordUserMsg(text) {
   try {
     await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--user-msg', text], {
@@ -223,7 +224,7 @@ export async function recordUserMsg(text) {
   }
 }
 
-/** 分析升级：askPi 已产出情绪分析 JSON → daemon --user-msg --analysis。
+/** 分析升级：askAgent 已产出情绪分析 JSON → daemon --user-msg --analysis。
  * recv_dedup 升级语义：同一原文（600s 窗口内）只补分析微调，不重复记账。失败不阻塞回复流。 */
 export async function upgradeAnalysis(text, analysis) {
   if (!analysis) return
@@ -239,25 +240,25 @@ export async function upgradeAnalysis(text, analysis) {
   }
 }
 
-/** pi 假死记账：askPi/pi-run 成败记录进 pi_health 状态机（零额外 pi 调用）。
+/** agent 假死记账：askAgent/agent-run 成败记录进 agent_health 状态机（零额外 agent 调用）。
  * transition=down/up 时向 OWNER_ID 发告警/恢复消息。整体绝不抛错、绝不影响回复流。 */
-export async function recordPiHealth(bot, outcome, reason = null) {
+export async function recordAgentHealth(bot, outcome, reason = null) {
   try {
-    const args = [PI_HEALTH_SCRIPT, 'record', '--outcome', outcome]
+    const args = [AGENT_HEALTH_SCRIPT, 'record', '--outcome', outcome]
     if (reason) args.push('--reason', String(reason).slice(0, 100))
-    const { stdout } = await execFileP(PI_HEALTH_PY, args, {
+    const { stdout } = await execFileP(AGENT_HEALTH_PY, args, {
       timeout: 30_000,
       maxBuffer: 4 * 1024 * 1024,
     })
     const parsed = JSON.parse(stdout)
     if (parsed.transition !== 'none' && parsed.message) {
       await bot.send(OWNER_ID, parsed.message)
-        .catch((e) => console.error('[pi health alert send error]',
+        .catch((e) => console.error('[agent health alert send error]',
           e instanceof Error ? e.message : String(e)))
     }
     return parsed
   } catch (err) {
-    console.error('[pi health record error]',
+    console.error('[agent health record error]',
       err instanceof Error ? err.message : String(err))
     return null
   }
@@ -366,21 +367,21 @@ function startSendServer(bot) {
   })
 }
 
-/** 命令链路默认实现:pi-run 模式 + daemon CLI(独立会话 chiguo-extract/verify;A4 shape 直读 stdout JSON) */
+/** 命令链路默认实现:agent-run 模式 + daemon CLI(独立会话 chiguo-extract/verify;A4 shape 直读 stdout JSON) */
 function makeScheduleDeps(repoRoot) {
   return {
-    async extractPi(original) {
+    async extractAgent(original) {
       const att = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--attention'], { timeout: 30_000 }).catch(() => ({ stdout: '{}' }))
       let attention = {}
       try { attention = JSON.parse(att.stdout) } catch {}
-      const { stdout } = await execFileP('node', [PI_RUN_SCRIPT, '--prompt', original,
+      const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, '--prompt', original,
         '--schedule-extract', '--attention', JSON.stringify(attention), '--week-num', String(attention.week_num ?? 1)],
         { timeout: 180_000 })
       const res = JSON.parse(stdout)
       return res.parsed ?? { ok: false, error: 'no block' }
     },
-    async verifyPi(item, original) {
-      const { stdout } = await execFileP('node', [PI_RUN_SCRIPT, '--prompt', original,
+    async verifyAgent(item, original) {
+      const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, '--prompt', original,
         '--schedule-verify', '--item', JSON.stringify(item)], { timeout: 180_000 })
       return JSON.parse(stdout).parsed ?? { ok: false }
     },
@@ -397,15 +398,15 @@ function scheduleDefaults() {
   scheduleDeps ??= makeScheduleDeps(REPO_ROOT)
   return scheduleDeps
 }
-const defaultExtractPi = (original) => scheduleDefaults().extractPi(original)
-const defaultVerifyPi = (item, original) => scheduleDefaults().verifyPi(item, original)
+const defaultExtractAgent = (original) => scheduleDefaults().extractAgent(original)
+const defaultVerifyAgent = (item, original) => scheduleDefaults().verifyAgent(item, original)
 const defaultRunDaemon = (item) => scheduleDefaults().runDaemon(item)
 
 /** 命令链路:提取 → 校验 → daemon 写入 → 确认/追问/澄清记录(180s 超时不阻塞队列,M16) */
 async function handleScheduleCommand(original, msg, bot, deps) {
   const repoRoot = deps.repoRoot ?? REPO_ROOT
   try {
-    const ex = await withTimeout(deps.extractPi(original), 180_000)
+    const ex = await withTimeout(deps.extractAgent(original), 180_000)
     if (!ex.ok) {
       if (ex.not_command) return 'chat'                 // ⑤/⑥ 释放回聊天链(记录保留)
       const rec = { original, missing: ex.missing ?? [], question: ex.question ?? '哥哥没太听明白,再告诉哥哥一次具体安排?',
@@ -414,7 +415,7 @@ async function handleScheduleCommand(original, msg, bot, deps) {
       await bot.reply(msg, rec.question)
       return 'clarify'
     }
-    const vf = await withTimeout(deps.verifyPi(ex.item, original), 180_000)
+    const vf = await withTimeout(deps.verifyAgent(ex.item, original), 180_000)
     if (!vf.ok) {
       const rec = { original, missing: vf.missing ?? [], question: vf.question ?? '这个安排有点对不上,哥哥再确认一下?',
                     created_at: deps.now().toISOString(), expires_at: new Date(deps.now().getTime() + 6 * 3600e3).toISOString() }
@@ -449,38 +450,38 @@ async function withTimeout(p, ms) {
   } finally { clearTimeout(timer) }
 }
 
-/** 聊天链回复:queue 串行 + askPi;失败回通用文案(非本人/chat 放行共用,不回内部诊断)。 */
-async function askChat(text, msg, bot, queue, askPiFn) {
+/** 聊天链回复:queue 串行 + askAgent;失败回通用文案(非本人/chat 放行共用,不回内部诊断)。 */
+async function askChat(text, msg, bot, queue, askAgentFn) {
   await queue.run(async () => {
     try {
-      const { text: reply } = await askPiFn(text)
+      const { text: reply } = await askAgentFn(text)
       await bot.reply(msg, reply).catch(() => {})
     } catch (err) {
       await bot.reply(msg, '⚠️ 处理失败').catch(() => {})   // 不回内部诊断(安全补钉)
-      await recordPiHealth(bot, 'fail', err.message)
+      await recordAgentHealth(bot, 'fail', err.message)
     }
   })
 }
 
 /** 单条微信消息处理链路（onMessage 委托；导出供测试）：
  * 路由顺序:OWNER_ID 门(最顶部,C1) → recordUserMsg(仅本人) → 澄清检查 → detectSpecialCommand
- * → detectScheduleIntent → askPi;命令消息经 --user-msg 无分析(recordUserMsg 已先行,dedup 600s 继承);
- * 非本人 = 仅 askPi 回复 + 失败回通用文案(不回内部诊断,安全补钉)。
+ * → detectScheduleIntent → askAgent;命令消息经 --user-msg 无分析(recordUserMsg 已先行,dedup 600s 继承);
+ * 非本人 = 仅 askAgent 回复 + 失败回通用文案(不回内部诊断,安全补钉)。
  * bot 需提供 reply(msg, text)/sendTyping(userId)；queue 提供 run(task)。 */
 export async function handleMessage(text, msg, bot, queue, deps = {}) {
   if (!text?.trim()) return null
   const isOwner = msg.userId === OWNER_ID
   const repoRoot = deps.repoRoot ?? REPO_ROOT
-  const askPiFn = deps.askPi ?? askPi
-  const extractPi = deps.extractPi ?? defaultExtractPi
-  const verifyPi = deps.verifyPi ?? defaultVerifyPi
+  const askAgentFn = deps.askAgent ?? askAgent
+  const extractAgent = deps.extractAgent ?? defaultExtractAgent
+  const verifyAgent = deps.verifyAgent ?? defaultVerifyAgent
   const runDaemon = deps.runDaemon ?? defaultRunDaemon
   const now = deps.now ?? (() => new Date())
 
-  // ── C1 门:非本人不进写/回忆/追问/特殊命令路径,不取 --attention;仅 askPi 回复 ──
+  // ── C1 门:非本人不进写/回忆/追问/特殊命令路径,不取 --attention;仅 askAgent 回复 ──
   if (!isOwner) {
-    await askChat(text, msg, bot, queue, askPiFn)
-    return 'pi'
+    await askChat(text, msg, bot, queue, askAgentFn)
+    return 'agent'
   }
 
   await recordUserMsg(text)   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 600s 继承)
@@ -493,9 +494,9 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     const isNewCommand = wordIntent && wordIntent.intent !== 'extract'
     const original = isNewCommand ? text : `${clarify.original}\n(补充回答:${text})`
     const released = await handleScheduleCommand(original, msg, bot,
-      { ...deps, repoRoot, clarify, extractPi, verifyPi, runDaemon, now })
+      { ...deps, repoRoot, clarify, extractAgent, verifyAgent, runDaemon, now })
     if (released !== 'chat') return released
-    await askChat(text, msg, bot, queue, askPiFn)   // ⑥ 放行回聊天链:消息必须获得回复(不静默丢弃)
+    await askChat(text, msg, bot, queue, askAgentFn)   // ⑥ 放行回聊天链:消息必须获得回复(不静默丢弃)
     return 'chat'
   }
   if (clarify && exitWordMatch(text)) {
@@ -503,16 +504,16 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     exitWord = true   // 退出词:清记录后本消息不再进命令路径(短消息兜底不再重写记录)
   }
 
-  // 微信端斜杠命令（白名单制）：全部 / 开头消息确定性接管，不经 pi/daemon
+  // 微信端斜杠命令（白名单制）：全部 / 开头消息确定性接管，不经 agent/daemon
   const slash = detectSlashCommand(text)
   if (slash) {
     await queue.run(async () => {
       try {
         const r = await executeSlashCommand(spawn, slash, process.cwd())
-        // /new 后常驻 pi 仍持有旧会话句柄 → 重启,下一轮 prompt 重载最新 chiguo-main
-        if (slash.action === 'new_session' && PI_RPC_ENABLED && globalThis.__piRpc) {
-          globalThis.__piRpc.restart()
-          console.log('[slash] pi-rpc 已重启(新会话)')
+        // /new 后常驻 agent 仍持有旧会话句柄 → 重启,下一轮 prompt 重载最新 chiguo-main
+        if (slash.action === 'new_session' && AGENT_RPC_ENABLED && globalThis.__agentRpc) {
+          globalThis.__agentRpc.restart()
+          console.log('[slash] agent-rpc 已重启(新会话)')
         }
         console.log(`[slash] ${slash.action} → ok=${r.ok}`)
         await bot.reply(msg, r.reply)
@@ -525,7 +526,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     return 'slash'
   }
 
-  // 特殊命令（纪念日/假期）确定性接管：命中则直接执行 daemon，不经 pi（Phase 4 Task 14）
+  // 特殊命令（纪念日/假期）确定性接管：命中则直接执行 daemon，不经 agent（Phase 4 Task 14）
   const special = detectSpecialCommand(text)
   if (special) {
     await queue.run(async () => {
@@ -547,9 +548,9 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   const intent = exitWord ? null : detectScheduleIntent(text)
   if (intent) {
     const released = await queue.run(() => handleScheduleCommand(text, msg, bot,
-      { ...deps, repoRoot, clarify: null, extractPi, verifyPi, runDaemon, now }))
+      { ...deps, repoRoot, clarify: null, extractAgent, verifyAgent, runDaemon, now }))
     if (released !== 'chat') return released
-    await askChat(text, msg, bot, queue, askPiFn)   // ⑤ 误命中释放:消息必须获得回复(不静默丢弃)
+    await askChat(text, msg, bot, queue, askAgentFn)   // ⑤ 误命中释放:消息必须获得回复(不静默丢弃)
     return 'chat'
   }
 
@@ -561,9 +562,9 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     .run(async () => {
       let recalled = false
       try {
-        // 回复侧:先取 --attention 注入(失败降级,§5.4),analysis 带 recall 信号 → 第二趟 pi
+        // 回复侧:先取 --attention 注入(失败降级,§5.4),analysis 带 recall 信号 → 第二趟 agent
         const att = await getAttention()
-        const { text: reply, analysis } = await askPiWithAttention(text, att)
+        const { text: reply, analysis } = await askAgentWithAttention(text, att)
         if (analysis?.recall) {
           const second = await runWithRecall(text)
           if (second) {
@@ -578,16 +579,16 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
         }
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
-        console.error('[pi error]', reason)
+        console.error('[agent error]', reason)
         await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
-        await recordPiHealth(bot, 'fail', reason)
+        await recordAgentHealth(bot, 'fail', reason)
         return
       }
-      // 回复失败不记 pi 假死（发送故障 ≠ pi 故障）；记账在回复后执行，不延迟当前消息
-      await recordPiHealth(bot, 'success')
+      // 回复失败不记 agent 假死（发送故障 ≠ agent 故障）；记账在回复后执行，不延迟当前消息
+      await recordAgentHealth(bot, 'success')
     })
     .catch((err) => console.error('[queue error]', err))
-  return 'pi'
+  return 'agent'
 }
 
 async function main() {

@@ -1,30 +1,33 @@
-// test_bridge_health.mjs — bridge 的 pi 假死记账 + 微信告警/恢复链路测试（独立 runner）
+// test_bridge_health.mjs — bridge 的 agent 假死记账 + 微信告警/恢复链路测试（独立 runner）
 // 用法: node test_bridge_health.mjs（退出码 0=全过，1=有失败）
-// 隔离: temp dir 内 fake pi-run（响应文件切换成败）+ 真 pi_health.py 拷贝（状态落 tmp）
-// + stub bot（记录 reply/send）；绝不碰真实 pi_health.json。
+// 隔离: temp dir 内 fake agent-run（响应文件切换成败）+ 真 agent_health.py 拷贝（状态落 tmp）
+// + stub bot（记录 reply/send）；绝不碰真实 agent_health.json。
 import assert from 'node:assert'
-import { writeFileSync, mkdtempSync, readFileSync, cpSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const tmp = mkdtempSync(join(tmpdir(), 'bridge-health-'))
-const FAKE_PI = join(tmp, 'fake-pi-run.mjs')
+const FAKE_AGENT = join(tmp, 'fake-agent-run.mjs')
 const FAKE_DAEMON = join(tmp, 'fake-daemon.py')
-const PH_DIR = join(tmp, 'pi_health')
-const PH_SCRIPT = join(PH_DIR, 'pi_health.py')
-const PH_STATE = join(PH_DIR, 'pi_health.json')
+const PH_DIR = join(tmp, 'agent_health')
+const PH_SCRIPT = join(PH_DIR, 'agent_health.py')
+// #99 同步：agent_health.py 的 _anchor() 取脚本父目录 → 默认状态文件落在 tmp/（= PH_STATE）
+const PH_STATE = join(tmp, 'agent_health.json')
 
-writeFileSync(FAKE_PI, `
+writeFileSync(FAKE_AGENT, `
 import { readFileSync } from 'node:fs'
-process.stdout.write(readFileSync(process.env.FAKE_PI_RESPONSE, 'utf8'))
+process.stdout.write(readFileSync(process.env.FAKE_AGENT_RESPONSE, 'utf8'))
 `)
 writeFileSync(FAKE_DAEMON, 'import sys\nsys.exit(0)\n')
-cpSync(new URL('../scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
+// #99 同步：agent_health.py 默认状态文件名常量仍为 pi_health.json → 副本内替换，与实际写入路径（PH_STATE）一致
+const PH_SRC = readFileSync(new URL('../scripts/agent_health.py', import.meta.url).pathname, 'utf8')
+writeFileSync(PH_SCRIPT, PH_SRC.replaceAll('pi_health.json', 'agent_health.json'))
 const PH_REAL_CONTENT = readFileSync(PH_SCRIPT, 'utf8')
 
-process.env.WECHAT_BRIDGE_PI_RUN = FAKE_PI
+process.env.WECHAT_BRIDGE_AGENT_RUN = FAKE_AGENT
 process.env.WECHAT_BRIDGE_DAEMON = FAKE_DAEMON
-process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
+process.env.WECHAT_BRIDGE_AGENT_HEALTH = PH_SCRIPT
 
 const { handleMessage, TurnQueue } = await import('../wechat-bridge/bridge.mjs')
 
@@ -47,42 +50,42 @@ const bot = {
 }
 const queue = new TurnQueue()
 
-function setPiResponse(obj) {
+function setAgentResponse(obj) {
   writeFileSync(join(tmp, 'resp.json'), JSON.stringify(obj))
-  process.env.FAKE_PI_RESPONSE = join(tmp, 'resp.json')
+  process.env.FAKE_AGENT_RESPONSE = join(tmp, 'resp.json')
 }
-const FAIL_RESP = { ok: false, error: '模拟 pi 故障' }
+const FAIL_RESP = { ok: false, error: '模拟 agent 故障' }
 const OK_RESP = { ok: true, text: '正常回复', analysis: null }
 const msg = { userId: 'owner@im.wechat' }
 
-// ── 特殊命令路径不记账（不经 pi → pi_health 状态不变）──
-t('特殊命令（纪念日）→ pi_health.json 内容不变（不记账）', async () => {
-  setPiResponse(FAIL_RESP)
+// ── 特殊命令路径不记账（不经 agent → agent_health 状态不变）──
+t('特殊命令（纪念日）→ agent_health.json 内容不变（不记账）', async () => {
+  setAgentResponse(FAIL_RESP)
   const stateContent = () => {
     try { return readFileSync(PH_STATE, 'utf8') } catch { return '' }
   }
   const before = stateContent()
   await handleMessage('记住5月11日是生日', msg, bot, queue)
-  assert.strictEqual(stateContent(), before, '特殊命令不得写入 pi_health')
+  assert.strictEqual(stateContent(), before, '特殊命令不得写入 agent_health')
   assert.strictEqual(sends.length, 0, '特殊命令不得触发告警')
 })
 
 // ── 假死告警：连续 3 次失败 → 恰 1 次告警；第 4 次不重复 ──
-t('连续 3 次 askPi 失败 → 恰好 1 次告警（含次数与原因），第 4 次失败不重复告警', async () => {
-  setPiResponse(FAIL_RESP)
+t('连续 3 次 askAgent 失败 → 恰好 1 次告警（含次数与原因），第 4 次失败不重复告警', async () => {
+  setAgentResponse(FAIL_RESP)
   for (let i = 0; i < 3; i++) {
     await handleMessage('这是一条测试消息', msg, bot, queue)
   }
   assert.strictEqual(sends.length, 1, `期望 1 次告警，实际 ${sends.length}`)
   assert.ok(sends[0].text.includes('3'), `告警应含失败次数: ${sends[0].text}`)
-  assert.ok(sends[0].text.includes('模拟 pi 故障'), `告警应含失败原因: ${sends[0].text}`)
+  assert.ok(sends[0].text.includes('模拟 agent 故障'), `告警应含失败原因: ${sends[0].text}`)
   await handleMessage('这是一条新消息', msg, bot, queue)
   assert.strictEqual(sends.length, 1, `第 4 次失败不应重复告警，实际 ${sends.length}`)
 })
 
 // ── 恢复通知：成功后发恢复；再次成功不再发 ──
 t('恢复后首次 success → 发送恢复通知；随后 success 不再发送', async () => {
-  setPiResponse(OK_RESP)
+  setAgentResponse(OK_RESP)
   await handleMessage('我回来了呀今天', msg, bot, queue)
   assert.strictEqual(sends.length, 2, `期望 1 次恢复通知，实际 ${sends.length}`)
   assert.ok(sends[1].text.includes('恢复'), `应为恢复文案: ${sends[1].text}`)
@@ -98,18 +101,18 @@ t('健康状态下成功消息：零告警、零恢复', async () => {
   assert.strictEqual(sends.length, 2, `不应有新增发送，实际 ${sends.length}`)
 })
 
-// ── 记账失败（pi_health.py 崩溃）不阻塞回复流 ──
+// ── 记账失败（agent_health.py 崩溃）不阻塞回复流 ──
 t('记账脚本崩溃 → 消息仍收到 ⚠️ 处理失败回复，进程不中断', async () => {
   const before = sends.length
   writeFileSync(PH_SCRIPT, 'raise SystemExit("boom")\n')
   try {
-    setPiResponse(FAIL_RESP)
+    setAgentResponse(FAIL_RESP)
     await handleMessage('触发失败的消息来了', msg, bot, queue)
     assert.ok(replies.some((r) => r.startsWith('⚠️ 处理失败')), '应回复 ⚠️ 处理失败')
     assert.strictEqual(sends.length, before, '记账崩溃不应产生告警发送')
     // 恢复后链路仍可用
     writeFileSync(PH_SCRIPT, PH_REAL_CONTENT)
-    setPiResponse(OK_RESP)
+    setAgentResponse(OK_RESP)
     await handleMessage('恢复链路的消息', msg, bot, queue)
     assert.ok(replies.some((r) => r === '正常回复'), '链路应恢复')
   } finally {
@@ -117,20 +120,20 @@ t('记账脚本崩溃 → 消息仍收到 ⚠️ 处理失败回复，进程不�
   }
 })
 
-// ── M1 回归：bot.reply 发送失败 ≠ pi 假死，不得误记/误告警 ──
-t('bot.reply 失败（微信发送故障）→ 不误记 pi 假死：无告警、链路继续', async () => {
+// ── M1 回归：bot.reply 发送失败 ≠ agent 假死，不得误记/误告警 ──
+t('bot.reply 失败（微信发送故障）→ 不误记 agent 假死：无告警、链路继续', async () => {
   const before = sends.length
   const origReply = bot.reply
   bot.reply = async () => { throw new Error('wechat 会话过期') }
   try {
-    setPiResponse(OK_RESP)
+    setAgentResponse(OK_RESP)
     await handleMessage('发送失败的消息', msg, bot, queue)
   } finally {
     bot.reply = origReply
   }
-  assert.strictEqual(sends.length, before, '回复失败不得触发告警/恢复（发送故障≠pi 故障）')
-  // 记账仍记 success（pi 活着），且后续消息正常
-  setPiResponse(OK_RESP)
+  assert.strictEqual(sends.length, before, '回复失败不得触发告警/恢复（发送故障≠agent 故障）')
+  // 记账仍记 success（agent 活着），且后续消息正常
+  setAgentResponse(OK_RESP)
   await handleMessage('下一条消息来了', msg, bot, queue)
   assert.ok(replies.at(-1) === '正常回复', '链路应继续正常回复')
 })
