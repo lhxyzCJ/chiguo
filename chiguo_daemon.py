@@ -313,6 +313,20 @@ class DecisionEngine:
             if len(self.state.cooldown.trigger_history) > history_max:
                 self.state.cooldown.trigger_history = \
                     self.state.cooldown.trigger_history[-history_max:]
+            # #79: reminder 一次性提醒去重——发送确认后在该 mem 上标记，
+            # trigger 层 (_memory_should_trigger) 据此跳过，同进程不重复触发。
+            if trigger.type == "memory":
+                mem_ref = trigger.data.get("memory")
+                if isinstance(mem_ref, dict) and mem_ref.get("type") == "reminder":
+                    mem_ref["last_triggered_at"] = now.isoformat()
+
+            # 3.5 记录触发历史（用于话题多样性检查）
+            cfg_topic = self.config.get("topic_picker", {})
+            history_max = cfg_topic.get("trigger_history_max", 6)
+            self.state.cooldown.trigger_history.append(trigger.type)
+            if len(self.state.cooldown.trigger_history) > history_max:
+                self.state.cooldown.trigger_history = \
+                    self.state.cooldown.trigger_history[-history_max:]
 
             # 4. 构建上下文（给 pi-agent 生成消息用）
             context = self._build_context(trigger, now)

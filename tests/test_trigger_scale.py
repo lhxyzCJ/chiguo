@@ -28,7 +28,7 @@ def make_state(td, cfg, now):
     c["_base_dir"] = td
     c["schedule"].update(cfg.get("schedule", {}))
     s = ChiguoState(c)
-    # v10 (#73 A4): 默认孤独 30 → activation ≈ 0.26~0.38 < must_send_activation(0.5)，
+    # v10 (#73 A4): 默认孤独 30 → activation ≈ 0.26~0.38 < must_send_activation(0.75)，
     # 保持中段加权竞争语义（special/仪式类不被 must_send 压制）；高段用例显式传 loneliness。
     s.emotion = ChiguoEmotion(loneliness=30.0, affection=55.0, anxiety=40.0, energy=40.0)
     s.cooldown.event_timestamps = []

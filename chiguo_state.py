@@ -1150,11 +1150,14 @@ class ChiguoState:
                 t["attempted"] = True
 
     def prune_pending_topics(self, now: datetime, max_age_hours: float = 48.0):
-        """移除过期/已尝试话题,防状态膨胀。坏时间戳直接丢弃。"""
+        """移除过期/已尝试话题,防状态膨胀。坏时间戳直接丢弃。
+        #79: 非 dict / 缺 topic 键 / topic 非字符串 → 直接丢弃（防后续 KeyError）。"""
         kept = []
         for t in self.pending_topics:
             if not isinstance(t, dict):
                 continue
+            if not isinstance(t.get("topic"), str):
+                continue  # #79: 缺 topic 键或非字符串 → 丢弃
             try:
                 dt = datetime.fromisoformat(t.get("created_at", ""))
             except (ValueError, TypeError):
