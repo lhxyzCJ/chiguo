@@ -286,7 +286,8 @@ def test_recv_dedup_same_text_skipped():
 
 
 def test_analysis_string_values_sanitized():
-    """LLM 输出字符串数值（warmth="1.0"）→ 强转不崩溃，正常应用"""
+    """LLM 输出字符串数值（warmth="1.0"）→ 强转不崩溃，正常应用。
+    同文本重复上报（已带分析）按新去重语义视为用户真实重发 → 走完整处理。"""
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
         st = engine.state
@@ -294,11 +295,11 @@ def test_analysis_string_values_sanitized():
         st.cooldown.current_date = now.strftime("%Y-%m-%d")
 
         engine.record_user_message("哥哥在吗", '{"warmth": "1.0", "effort": "1.0", "attention": "1.0", "suppress_hours": "3"}')
-        e0 = st.emotion.energy
+        e1 = st.emotion.energy
+        # 字符串数值被强转应用：基础 +10，warmth=1.0→+4、attention=1.0→+4 → 明显正向
+        assert e1 > 10, f"字符串数值应被强转应用, energy={e1}"
         engine.record_user_message("哥哥在吗", '{"warmth": "bad", "effort": null}')
-        # 坏值回退默认 → 不崩溃；warmth=0 → energy 不变
-        assert abs(st.emotion.energy - e0) < 1e-6, f"坏值应回退默认, energy 变化 {st.emotion.energy - e0}"
-        # suppress_hours 字符串 → 强转 3 小时
+        # 坏值回退默认 → 不崩溃（warmth=0 → 无分析加成，仅基础效果）
         engine.record_user_message("哥哥在吗", '{"suppress_hours": "2"}')
         assert st.cooldown.busy_suppress_until, "suppress_hours 字符串应生效"
     print("  OK test_analysis_string_values_sanitized")
