@@ -9,23 +9,29 @@
 import random
 from datetime import datetime
 
-from chiguo_math import weighted_trigger_choice
+from chiguo_math import weighted_trigger_choice, in_quiet_window, jaccard_3gram
 from solar_terms import SolarTerms
-from chiguo_math import in_quiet_window
 
 
 class TopicPicker:
     """话题选择器：从可用来源加权随机选取一个自然话题。"""
 
-    def __init__(self, state, config: dict, netease_service=None):
+    def __init__(self, state, config: dict, netease_service=None,
+                 recent_sent_texts: list[str] | None = None):
         """
         Args:
             state: ChiguoState 实例（访问 schedule/holiday/memory 数据面）
             config: chiguo_proactive.toml 的 [topic_picker] 段
             netease_service: 网易云策略层(NeteaseService 实例)，可为 None(降级)
+            recent_sent_texts: A9 最近已发消息文本列表（内容级防复读数据源，
+                由调用方从发送日志读取注入；None/空 = 不查重，行为同旧版）
         """
         self.state = state
         self.netease_service = netease_service  # v9: 网易云策略层,可为 None(降级)
+        # ── A9: 内容级防复读参数（[topic_picker] 段）──
+        self.repeat_jaccard_threshold = config.get("repeat_jaccard_threshold", 0.6)
+        self.repeat_history_n = int(config.get("repeat_history_n", 5))
+        self.recent_sent_texts = list(recent_sent_texts or [])[:self.repeat_history_n]
         self.weights = {
             "schedule": config.get("schedule_weight", 0.30),
             "memory": config.get("memory_weight", 0.25),
@@ -105,8 +111,19 @@ class TopicPicker:
             "weight": weights["general"],
         })
 
+        # ── A9: 内容级防复读——候选与最近已发消息查重,高相似候选弃用 ──
+        # 只作用于 topic 候选选择层（生成侧内容多样性），不改 daemon 发不发决策。
+        # 全部候选被弃用 → topic 空注入（返回 None）。
+        if self.recent_sent_texts:
+            candidates = [
+                c for c in candidates
+                if not self._is_repeat(c["topic"].get("hint", ""))
+            ]
+        if not candidates:
+            return None
+
         chosen = weighted_trigger_choice(candidates)
-        topic = chosen["topic"] if chosen else self._general_topic(now)
+        topic = chosen["topic"] if chosen else None
         # v9: netease 候选被选中 → 确认消费配额(peek 不消费,抽选后补)
         if topic and self.netease_service and topic.get("type") in ("netease_music", "netease_fault"):
             try:
@@ -117,6 +134,15 @@ class TopicPicker:
             except Exception:
                 pass
         return topic
+
+    def _is_repeat(self, hint: str) -> bool:
+        """A9: 候选 hint 与任一最近已发消息的 jaccard_3gram ≥ 阈值 → 视为复读。"""
+        if not hint:
+            return False
+        for text in self.recent_sent_texts:
+            if jaccard_3gram(hint, text) >= self.repeat_jaccard_threshold:
+                return True
+        return False
 
     def pick_netease_only(self, now: datetime) -> dict | None:
         """v9 审计 F-4:仅尝试 netease 源(非孤独触发时用)。未注入/无可用 → None。

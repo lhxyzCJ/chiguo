@@ -47,8 +47,23 @@ except: print("|")' 2>/dev/null || true)"
       || echo "[chiguo-tick] 告警/恢复发送失败（transition=$trans），下个 tick 不再重发" >&2
   fi
 }
+# ── A8: 生成失败确定性回退 ──
+# pi 失败 → composer 模板池兜底（零 LLM）：decision JSON 落盘传给
+# chiguo_composer.py CLI，成功则照常发送（health 记 success + record-send 打 fallback 标记）；
+# composer 也失败才 record_health fail + exit 1。
 if [ -z "$TEXT" ]; then
   echo "[chiguo-tick] pi-run 未生成消息: $(printf '%s' "$RES" | head -c 300)" >&2
+  DECISION_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-fallback-XXXXXX.json")"
+  printf '%s' "$OUT" > "$DECISION_FILE"
+  FALLBACK_TEXT="$("$PY" "$REPO/chiguo_composer.py" "$DECISION_FILE" 2>/dev/null || true)"
+  rm -f "$DECISION_FILE"
+  if [ -n "$FALLBACK_TEXT" ]; then
+    TEXT="$FALLBACK_TEXT"
+    COMPOSER_FALLBACK=1
+    echo "[chiguo-tick] pi 失败,composer 兜底生成消息" >&2
+  fi
+fi
+if [ -z "$TEXT" ]; then
   FAIL_REASON="$(printf '%s' "$RES" | python3 -c 'import json,sys
 try: print((json.load(sys.stdin).get("error") or "")[:100])
 except: print("")' 2>/dev/null || true)"
@@ -56,7 +71,7 @@ except: print("")' 2>/dev/null || true)"
   record_health fail "$FAIL_REASON"
   exit 1
 fi
-# pi 已产出消息 → 先记 success（发送失败不丢成功信号）；再发送
+# 消息已产出（pi 或 composer 兜底）→ 先记 success（发送失败不丢成功信号）；再发送
 record_health success
 BODY="$(python3 -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$TEXT")"
 MSG_ID="$(printf '%s' "$OUT" | python3 -c 'import json,sys
@@ -72,8 +87,13 @@ if ! curl -sf --noproxy '*' -X POST "$BRIDGE_URL" \
   fi
   exit 0
 fi
-# 回传发送结果
+# 回传发送结果（A8: composer 兜底时额外打 fallback 标记，health 已记 success）
 if [ -n "$MSG_ID" ]; then
-  "$PY" "$REPO/chiguo_daemon.py" --record-send "$MSG_ID" --text "$TEXT" >/dev/null 2>&1 \
-    || echo "[chiguo-tick] record-send 失败 msg_id=$MSG_ID" >&2
+  if [ -n "${COMPOSER_FALLBACK:-}" ]; then
+    "$PY" "$REPO/chiguo_daemon.py" --record-send "$MSG_ID" --text "$TEXT" --fallback >/dev/null 2>&1 \
+      || echo "[chiguo-tick] record-send 失败 msg_id=$MSG_ID" >&2
+  else
+    "$PY" "$REPO/chiguo_daemon.py" --record-send "$MSG_ID" --text "$TEXT" >/dev/null 2>&1 \
+      || echo "[chiguo-tick] record-send 失败 msg_id=$MSG_ID" >&2
+  fi
 fi

@@ -467,6 +467,72 @@ def test_a6_repeat_damping_same_type_only():
         assert abs(capped_low - damped_low) <= damped_low * 0.15, \
             f"cap 应封顶: {damped_low} vs {capped_low}"
     print("  OK test_a6_repeat_damping_same_type_only")
+# A5: 未回复退场状态机
+# ═══════════════════════════════════════════════════════════
+
+def test_backoff_level_boundaries():
+    """三态边界：<3 → 0；3-4 → 1；≥5 → 2；参数可配"""
+    from chiguo_trigger import backoff_level
+    now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+    with tempfile.TemporaryDirectory() as td:
+        # 默认参数 [cooldown].backoff_start=3 / backoff_silent=5
+        for n, expect in [(0, 0), (1, 0), (2, 0), (3, 1), (4, 1), (5, 2), (6, 2)]:
+            s = _make_state(td, now, energy=40)
+            s.cooldown.messages_without_reply = n
+            assert backoff_level(s, now) == expect, f"n={n} expect {expect}"
+        # 参数覆盖
+        s = _make_state(td, now, energy=40)
+        s.config["cooldown"]["backoff_start"] = 2
+        s.config["cooldown"]["backoff_silent"] = 4
+        s.cooldown.messages_without_reply = 2
+        assert backoff_level(s, now) == 1
+        s.cooldown.messages_without_reply = 4
+        assert backoff_level(s, now) == 2
+    print("  OK test_backoff_level_boundaries")
+
+
+def test_backoff_level1_suppresses_emotional_keeps_ritual():
+    """backing_off（3-4 条未回复）：情绪类禁发、仪式类照发"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        # 14:00 无仪式候选 + 高孤独：情绪类全被禁 → 全 None
+        s = _make_state(td, now, loneliness=75, energy=40, messages_without_reply=3)
+        counts = _run_seeds(s, now, n=100)
+        assert counts.get("None", 0) == 100, f"backing_off must suppress all emotional, got {counts}"
+        # 09:00 早安窗口：仪式类照发（morning ~20/200），情绪类仍为 0
+        now2 = datetime(2026, 6, 15, 9, 0, tzinfo=CST)
+        s2 = _make_state(td, now2, loneliness=75, energy=40, messages_without_reply=4)
+        counts2 = _run_seeds(s2, now2, n=200)
+        assert counts2.get("morning", 0) > 0, f"ritual must still fire, got {counts2}"
+        emotional = {k: v for k, v in counts2.items()
+                     if k in ("lonely_low", "lonely_mid", "lonely_high", "anxiety",
+                              "playful", "reflect", "longing")}
+        assert not emotional, f"emotional must be suppressed in backing_off, got {counts2}"
+    print("  OK test_backoff_level1_suppresses_emotional_keeps_ritual")
+
+
+def test_backoff_level2_silent_suppresses_all():
+    """silent（≥5 条未回复）：全禁发（仪式类也被禁）"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 9, 0, tzinfo=CST)  # 早安窗口
+        s = _make_state(td, now, loneliness=75, energy=40, messages_without_reply=5)
+        counts = _run_seeds(s, now, n=100)
+        assert counts.get("None", 0) == 100, f"silent must suppress everything, got {counts}"
+    print("  OK test_backoff_level2_silent_suppresses_all")
+
+
+def test_backoff_level2_escape_valve_exempt():
+    """silent 态 escape_valve longing 破防豁免（防死锁语义必须保留）"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, anxiety=85, energy=40, messages_without_reply=5)
+        # 高焦虑阻塞 + 墙钟沉默 ≥72h + 无冷却记录 → longing_break_eligible
+        s.cooldown.last_user_message_at = (now - timedelta(hours=100)).isoformat()
+        assert s.longing_break_eligible(now) is True, "precondition: escape valve eligible"
+        t = evaluate_triggers(s, now)
+        assert t is not None, "escape_valve must bypass silent suppression"
+        assert t.type == "longing" and t.data.get("escape_valve") is True, t
+    print("  OK test_backoff_level2_escape_valve_exempt")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -497,6 +563,11 @@ if __name__ == "__main__":
         test_a4_must_send_high_activation,
         test_a4_must_send_preserved_across_safety_downgrade,
         test_a6_repeat_damping_same_type_only,
+        # A5 退场状态机
+        test_backoff_level_boundaries,
+        test_backoff_level1_suppresses_emotional_keeps_ritual,
+        test_backoff_level2_silent_suppresses_all,
+        test_backoff_level2_escape_valve_exempt,
     ]
     failed = 0
     for t in tests:
