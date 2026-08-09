@@ -32,7 +32,9 @@ fi
 BRIDGE_URL="$(grep -oP '(?<=wechat_bridge_url = ")[^"]+' "$REPO/chiguo_proactive.toml" | head -1 || true)"
 [ -n "$BRIDGE_URL" ] || BRIDGE_URL="http://127.0.0.1:18790/send"
 # #84 共享 token:bridge 配置了 WECHAT_BRIDGE_TOKEN 时同源传入,未配置时零 header(向后兼容)
+# cron 环境无 .env → 从 wechat-bridge/.env 读（wechat-bridge.sh write_env 生成随机 token）
 TOKEN_HDR=()
+[ -n "${WECHAT_BRIDGE_TOKEN:-}" ] || WECHAT_BRIDGE_TOKEN="$(grep -oP '(?<=^WECHAT_BRIDGE_TOKEN=).*' "$REPO/wechat-bridge/.env" 2>/dev/null | head -1 || true)"
 [ -n "${WECHAT_BRIDGE_TOKEN:-}" ] && TOKEN_HDR=(-H "X-Bridge-Token: $WECHAT_BRIDGE_TOKEN")
 # 生成消息（主动发送用独立会话 chiguo-send，与回复侧 chiguo-main 分离 → 跨进程零并发 turn；
 # 决策 JSON 自足，无需对话连续性；值从 toml [host].send_session_id 读，缺省回退 chiguo-send）

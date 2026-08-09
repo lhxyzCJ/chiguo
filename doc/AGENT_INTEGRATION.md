@@ -44,9 +44,9 @@
 crontab */15 * * * * scripts/chiguo-tick.sh
   → .venv/bin/python chiguo_daemon.py --compact（零 LLM 评估）
     ├─ action=idle → 静默退出（~90% 的评估不唤醒 LLM）
-    └─ action=send → node scripts/agent-run.mjs --prompt <决策 JSON>（AGENTRUN_SESSION=chiguo-send）
-        → pi 按 SUN2.md 生成 1-3 句
-        → curl --noproxy '*' -X POST <toml [host].wechat_bridge_url> {"to","text"} → bridge → bot.send()
+    └─ action=send → 发送侧 RPC 优先（v1.11 默认）：POST <bridge>/agent/prompt {text:决策 JSON, mode:send}
+        → 常驻 pi RPC 生成消息；RPC 失败自动回退 node scripts/agent-run.mjs --prompt <决策 JSON>（AGENTRUN_SESSION=chiguo-send）
+        → 回文本后 curl --noproxy '*' -X POST <toml [host].wechat_bridge_url> {"to","text"} → bridge → bot.send()
         → daemon --record-send <msg_id> --text <text> 回写（幂等）
 
 回复侧（bridge 内联，pi 单次调用完成分析+回复）：
@@ -88,10 +88,19 @@ bash scripts/install_agent.sh --yes
 # 回退 cron 形态：CHIGUO_DAEMON_LOOP=0 重跑 + systemctl disable --now chiguo-daemon.service
 ```
 
-环境变量（bridge 侧，wechat-bridge.sh write_env 生成）：
+环境变量（bridge 侧，wechat-bridge.sh write_env 生成；**回复链 RPC 默认启用**，无需 CHIGUO_DAEMON_LOOP）：
 ```
 WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs   # spawn 回退路径
 WECHAT_BRIDGE_AGENT_RPC=1                                     # 1=回复链 RPC 优先（失败自动回退 spawn）
+WECHAT_BRIDGE_TOKEN=<随机 hex>                                # /send 与 /agent/prompt 共享 token（wechat-bridge.sh 生成，幂等保留）
+```
+
+daemon `[loop]` 段（--loop 发送侧内聚用）：
+```
+[loop]
+bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 地址
+bridge_token = ""                       # 回退 token（env WECHAT_BRIDGE_TOKEN 优先，不进 git）
+agent_timeout_ms = 125000               # /agent/prompt 超时
 ```
 
 HTTP 契约（bridge，仅本地回环 + 共享 token）：
@@ -163,7 +172,7 @@ node scripts/agent-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + �
 - → `bot.reply(msg, reply)`
 - 环境变量：`WECHAT_BRIDGE_AGENT_RUN`（默认仓库内 agent-run.mjs）、`WECHAT_BRIDGE_DAEMON_PY`、
   `WECHAT_BRIDGE_DAEMON`、`WECHAT_BRIDGE_OWNER`、`WECHAT_BRIDGE_SEND_PORT`、`WECHAT_BRIDGE_STORAGE`
-- 测试：`node tests/test_bridge_askagent.mjs`（10 用例）、`node tests/test_bridge_cmd.mjs`（31 用例）
+- 测试：`node tests/test_agent_rpc.mjs`（7 用例）、`node tests/test_bridge_agent_http.mjs`（5 用例）、`node tests/test_bridge_askagent_rpc.mjs`（2 用例）、`node tests/test_bridge_askagent.mjs`（17 用例）、`node tests/test_bridge_cmd.mjs`（43 用例）
 
 ## 五、特殊命令（纪念日/假期，方案 A：bridge 规则化）
 
@@ -368,7 +377,7 @@ uv run python chiguo_daemon.py --break status
 uv run python chiguo_envcheck.py
 
 # 测试
-node tests/test_agent_run.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && \
+node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && \
 bash tests/test_install_agent.sh --dry-run && \
 bash tests/test_wechat_bridge.sh && uv run python tests/test_*.py   # 全量见 AGENTS.md
 ```

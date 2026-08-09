@@ -1085,12 +1085,12 @@ class DecisionEngine:
         spawn agent-run --send-mode → 再失败返回 generated=false（下轮重试）；
         ②POST /send 发送；③record_send_text 记账（发送失败 → record_send_result
         failed 回滚）。异常全部捕获返回结果 dict，不抛出（loop 循环不中断）。"""
-        import json as _json
         import urllib.request
 
         out: dict = {"generated": False, "sent": False}
         bridge_url = str(loop_cfg.get("bridge_url", "http://127.0.0.1:18790")).rstrip("/")
-        token = str(loop_cfg.get("bridge_token", "") or "")
+        # token：env 优先（wechat-bridge.sh 生成，不进 git），回退 toml [loop]（向后兼容）
+        token = os.environ.get("WECHAT_BRIDGE_TOKEN") or str(loop_cfg.get("bridge_token", "") or "")
         try:
             timeout = max(10.0, float(loop_cfg.get("agent_timeout_ms", 125000)) / 1000.0)
         except (TypeError, ValueError):
@@ -1100,21 +1100,21 @@ class DecisionEngine:
         intensity = decision.get("intensity")
 
         def _post(path: str, body: dict, t: float) -> dict:
-            data = _json.dumps(body).encode("utf-8")
+            data = json.dumps(body).encode("utf-8")
             req = urllib.request.Request(
                 f"{bridge_url}{path}", data=data,
                 headers={"Content-Type": "application/json"})
             if token:
                 req.add_header("X-Bridge-Token", token)
             with urllib.request.urlopen(req, timeout=t) as resp:
-                return _json.loads(resp.read().decode("utf-8"))
+                return json.loads(resp.read().decode("utf-8"))
 
         # ① 生成（RPC 优先 → spawn 回退，与 chiguo-tick.sh 同构）
         text = None
         gen_err = ""
         try:
             r = _post("/agent/prompt",
-                      {"text": _json.dumps(decision, ensure_ascii=False), "mode": "send"},
+                      {"text": json.dumps(decision, ensure_ascii=False), "mode": "send"},
                       timeout)
             if r.get("ok") and r.get("text"):
                 text = r["text"]
@@ -1130,9 +1130,9 @@ class DecisionEngine:
             try:
                 p = subprocess.run(
                     [node_bin, runner, "--prompt",
-                     _json.dumps(decision, ensure_ascii=False), "--send-mode"],
+                     json.dumps(decision, ensure_ascii=False), "--send-mode"],
                     capture_output=True, text=True, timeout=timeout)
-                parsed = _json.loads(p.stdout)
+                parsed = json.loads(p.stdout)
                 if parsed.get("ok") and parsed.get("text"):
                     text = parsed["text"]
                 else:

@@ -123,7 +123,15 @@ export class AgentRpc {
     await new Promise((resolve, reject) => {
       readyReject = reject
       const stateId = `ready-${Date.now()}`
-      const t = setTimeout(() => reject(new Error('agent rpc 启动超时')), 10_000)
+      const t = setTimeout(() => {
+        // #review: 超时只 reject 会留下未就绪进程，下轮 prompt 短路复用 → 每轮空耗
+        // 至 AGENT_TIMEOUT 才自愈。超时即杀进程 + 标记 dead + 清 pid，下轮自动重启。
+        try { proc.kill('SIGTERM') } catch {}
+        s.dead = true
+        this._cleanupPid(key)
+        proc.stdout.off('data', onLine)
+        reject(new Error('agent rpc 启动超时'))
+      }, 10_000)
       const onLine = (line) => {
         try {
           const ev = JSON.parse(line)
@@ -150,12 +158,11 @@ export class AgentRpc {
         p.reject(new Error(ev.error ?? 'prompt preflight 失败'))
         return
       }
-      if (ev.type === 'agent_settled' || ev.type === 'message_end') {
+      // 回合完成仅以 agent_settled 为准（message_end 单独出现不代表回合结束）
+      if (ev.type === 'agent_settled') {
         const p = s.pending
-        if (p && ev.type === 'agent_settled') {
-          s.pending = null
-          p.resolve()
-        }
+        s.pending = null
+        p.resolve()
       }
     } catch {}
   }

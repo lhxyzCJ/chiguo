@@ -174,6 +174,20 @@ if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
   fi
 else
 say "阶段 6: crontab 注册 chiguo-tick..."
+# loop→cron 反向切换：cron 模式检测已装的 chiguo-daemon.service 并停用（防双发）
+if [ -f "${CHIGUO_SYSTEMD_DIR:-/etc/systemd/system}/chiguo-daemon.service" ]; then
+  SYSTEMCTL="${CHIGUO_SYSTEMCTL:-systemctl}"
+  if [ "$DRY" = 1 ]; then
+    PENDING=1
+    echo "  [dry-run] 检测到 chiguo-daemon.service（loop 常驻）→ 将停用以切回 cron 形态"
+  elif confirm "停用 chiguo-daemon.service（切回 cron 形态，防双发）"; then
+    if "$SYSTEMCTL" disable --now chiguo-daemon.service 2>/dev/null; then
+      say "chiguo-daemon.service 已停用（cron 形态）"
+    else
+      PENDING=1; warn "停用失败（请手工执行: systemctl disable --now chiguo-daemon.service）"
+    fi
+  fi
+fi
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
 if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$CRON_LINE"; then
   say "crontab 已注册 chiguo-tick（$CRON_LINE）"
@@ -242,8 +256,8 @@ if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
   SYSTEMD_DIR="${CHIGUO_SYSTEMD_DIR:-/etc/systemd/system}"
   SYSTEMCTL="${CHIGUO_SYSTEMCTL:-systemctl}"
   DAEMON_UNIT="$SYSTEMD_DIR/chiguo-daemon.service"
-  PY="$(command -v python3 >/dev/null 2>&1 && command -v python3 || true)"
-  [ -n "$PY" ] && PY="$CHIGUO_REPO/.venv/bin/python"
+  PY="$CHIGUO_REPO/.venv/bin/python"  # .venv 由 deploy.sh 保证；缺失时 systemd 启动即失败，envcheck 会指出
+  [ -x "$PY" ] || warn "$PY 不存在（请先 bash deploy.sh 完成基础安装）"
   say "阶段 6c: 安装 systemd chiguo-daemon.service（--loop 900 --compact 常驻）..."
   if [ "$DRY" = 1 ]; then
     PENDING=1

@@ -292,12 +292,12 @@ export function clearClarify(repoRoot = REPO_ROOT) { rmSync(scheduleClarifyPath(
 export function exitWordMatch(text) { return /^(?:算了|不要了|没事)/.test(text.trim()) }
 
 /** /send 来源校验:Host/Origin 必须本地回环(127.0.0.1/localhost/::1),容忍端口后缀。 */
-function isLocalHost(host) {
+export function isLocalHost(host) {
   if (!host) return false
   const h = String(host).toLowerCase().replace(/:\d+$/, '')
   return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]'
 }
-function isLocalOrigin(origin) {
+export function isLocalOrigin(origin) {
   if (!origin) return true  // curl 等无 Origin 客户端:靠 Host + token 把关
   try {
     const u = new URL(origin)
