@@ -256,9 +256,15 @@ class ChiguoState:
         )
 
         # 节假日判断器（优先级高于课表）
-        self.holiday_parser = HolidayParser(
-            data_path=str(self._anchored("holidays.json"))
-        )
+        try:
+            self.holiday_parser = HolidayParser(
+                data_path=str(self._anchored("holidays.json"))
+            )
+        except Exception as exc:
+            # 构造崩溃兜底(#83):内置数据/override 损坏时降级为无假日判定,
+            # 所有使用点均做 None 防护;配合 #82 的 holiday.py 修复。
+            print(f"[warn] HolidayParser 构造失败，节假日判断降级: {exc}", file=sys.stderr)
+            self.holiday_parser = None
 
         # 记忆后端（v1.8 解耦：memory/ 包工厂；v1.9 内置 mem0，可换自定义类路径）
         base_dir = str(self._anchored("."))
@@ -288,6 +294,8 @@ class ChiguoState:
 
     def _current_bucket(self, now: datetime) -> str:
         """v8: 按当前时刻判定作息桶（weekday/weekend），配合假日/调休。"""
+        if self.holiday_parser is None:   # 构造失败降级 → 纯周几启发式
+            return "weekday" if now.weekday() < 5 else "weekend"
         return bucket_for(now, self.holiday_parser.is_holiday,
                           self.holiday_parser.is_makeup_workday)
 
@@ -477,10 +485,12 @@ class ChiguoState:
                     dt = datetime.fromisoformat(str(d.get("date", "")))
                 except (ValueError, TypeError):
                     continue  # 解析失败 → 丢弃
-                # 调休优先 → 节假日 → 周几启发式(迁移时 holiday_parser 已就绪)
-                if self.holiday_parser.is_makeup_workday(dt):
+                # 调休优先 → 节假日 → 周几启发式(迁移时 holiday_parser 已就绪;
+                # 构造失败为 None → 直接启发式)
+                hp = self.holiday_parser
+                if hp is not None and hp.is_makeup_workday(dt):
                     d["bucket"] = "weekday"
-                elif self.holiday_parser.is_holiday(dt):
+                elif hp is not None and hp.is_holiday(dt):
                     d["bucket"] = "weekend"
                 else:
                     d["bucket"] = "weekday" if dt.weekday() < 5 else "weekend"
@@ -887,7 +897,7 @@ class ChiguoState:
 
     def schedule_status(self, now: datetime) -> dict | None:
         """窄原语 + resolved_classes 组装;None 语义保持(课表不可用);键形状双向兼容(§5.1)。"""
-        from schedule.day_plan import resolve_classes, _on_break, current_period
+        from schedule.day_plan import resolve_classes, _on_break, current_period, _PERIOD_START
         from schedule.sources import load_sources
         from schedule.query import PERIOD_TIMES
         src, rc = self._resolved_for(now)
@@ -938,10 +948,13 @@ class ChiguoState:
                                         "minutes_remaining": max(0, (end_time - now).total_seconds() / 60)}
         else:
             result["current_course"] = None
-        nxt = next((active[p] for p in sorted(active) if p > (cp or 0)), None)
+        # 深夜修复(#83):cp=None 时 `p > (cp or 0)` 会把已结束课程算入 →
+        # 追加 `_PERIOD_START[p] > now.time()`(与 day_plan.py 同模式)
+        future = [p for p in sorted(active) if p > (cp or 0) and _PERIOD_START[p] > now.time()]
+        nxt = next((active[p] for p in future), None)
         if nxt is not None:
-            result["next_course"] = {**nxt, "period": [p for p in sorted(active) if p > (cp or 0)][0],
-                                     "time": PERIOD_TIMES[[p for p in sorted(active) if p > (cp or 0)][0]]}
+            result["next_course"] = {**nxt, "period": future[0],
+                                     "time": PERIOD_TIMES[future[0]]}
         else:
             result["next_course"] = None
         total = len(active)
@@ -954,7 +967,7 @@ class ChiguoState:
         else:
             load = "heavy"
         result["class_load"] = load
-        result["remaining_classes"] = len([p for p in active if p > (cp or 0)])
+        result["remaining_classes"] = len(future)
         result["total_classes"] = total
         result["periods_today"] = [dict(c) for c in rc.values()]   # 同形:period 字段在条目内
         if hq["is_makeup_workday"]:
@@ -967,8 +980,14 @@ class ChiguoState:
         toml 已废弃。引擎层经此,不直触 schedule 模块。"""
         today = now.date() if isinstance(now, datetime) else now
         for it in self.override_store.intervals():
-            s = date_type.fromisoformat(it["date"])
-            e = date_type.fromisoformat(it.get("end_date") or it["date"])
+            d = it.get("date")
+            if not isinstance(d, str):   # 缺字段/类型非法条目跳过(消费侧防御,#83)
+                continue
+            try:
+                s = date_type.fromisoformat(d)
+                e = date_type.fromisoformat(it.get("end_date") or d)
+            except (ValueError, TypeError):
+                continue
             if s <= today <= e:
                 return True
         return False
@@ -986,21 +1005,30 @@ class ChiguoState:
         plan = self.plan_store.load()
         if plan:
             for mod in plan.get("modifiers", []):
+                if not isinstance(mod, dict):
+                    print(f"[schedule_plan] 非法 modifier(非 dict)已跳过: {mod!r}", file=sys.stderr)
+                    continue
                 ref = mod.get("ref", "")
                 ts = mod.get("trigger_scale", {})
                 if not isinstance(ts, dict):
                     continue
                 if ref.startswith("fact:"):
                     item = self.override_store.by_id(ref[5:])
-                    if item is None or item["kind"] != "exam_week":
+                    d = item.get("date") if item else None
+                    if item is None or item.get("kind") != "exam_week" or not isinstance(d, str):
                         print(f"[schedule_plan] dangling ref: {ref}", file=sys.stderr)
                         continue
-                    s = date_type.fromisoformat(item["date"])
-                    e = date_type.fromisoformat(item.get("end_date") or item["date"])
+                    try:
+                        s = date_type.fromisoformat(d)
+                        e = date_type.fromisoformat(item.get("end_date") or d)
+                    except (ValueError, TypeError):
+                        print(f"[schedule_plan] dangling ref: {ref}", file=sys.stderr)
+                        continue
                     if not (s <= today <= e):
                         continue
                 elif ref.startswith("holiday:"):
-                    r = self.holiday_parser.range_of(ref[len("holiday:"):])
+                    r = (self.holiday_parser.range_of(ref[len("holiday:"):])
+                         if self.holiday_parser else None)
                     if r is None:
                         print(f"[schedule_plan] dangling ref: {ref}", file=sys.stderr)
                         continue
@@ -1038,10 +1066,10 @@ class ChiguoState:
         # ── 不安值: 向 100 靠拢。知道主人在上课时焦虑减速 ──
         old_anx = self.emotion.anxiety
         anx_hl = cfg.get("anxiety_gain_half_life", 30.0)
-        # 节假日/周末：主人休息，焦虑极慢
-        if self.holiday_parser.is_holiday(now):
+        # 节假日/周末：主人休息，焦虑极慢（构造失败 None → 走课表调节分支）
+        if self.holiday_parser is not None and self.holiday_parser.is_holiday(now):
             anx_hl *= 2.5  # 放假，完全放松
-        elif not self.holiday_parser.is_school_day(now):
+        elif self.holiday_parser is not None and not self.holiday_parser.is_school_day(now):
             anx_hl *= 2.0  # 普通周末，焦虑减速
         else:
             # 课表调节:主人在上课/今天满课 → 焦虑涨得慢（已知原因,不那么慌）
@@ -1115,9 +1143,10 @@ class ChiguoState:
     def resolve_pending_topic(self, topic: str | None, now: datetime):
         """topic_resolved=true → 移除对应话题。未指定 topic → 移除最旧一条。"""
         if isinstance(topic, str) and topic.strip():
+            topic = topic.strip()[:50]   # 与 add_pending_topic 的截断一致(#83)
             self.pending_topics = [
                 t for t in self.pending_topics
-                if not (isinstance(t, dict) and t.get("topic") == topic.strip())
+                if not (isinstance(t, dict) and t.get("topic") == topic)
             ]
         elif self.pending_topics:
             self.pending_topics.pop(0)
@@ -1180,7 +1209,7 @@ class ChiguoState:
         if self.cooldown.last_message_at:
             try:
                 last_send = datetime.fromisoformat(self.cooldown.last_message_at)
-                latency_h = (now - last_send).total_seconds() / 3600
+                latency_h = max(0.0, (now - last_send).total_seconds() / 3600)   # 负延迟钳 0(#83)
                 self.cooldown.reply_latencies.append(latency_h)
                 if len(self.cooldown.reply_latencies) > 20:
                     self.cooldown.reply_latencies = self.cooldown.reply_latencies[-20:]
@@ -1599,7 +1628,8 @@ class ChiguoState:
         - held_count/accumulated_lambda 不回滚（每次发送都会清零，重累积即可）。
         - loneliness 缓降不回滚（决策本身已产生释压感，语义合理）。
         - v6: 提供 msg_id 时按 msg_id 精确移除对应 Hawkes 事件（乱序回传不弹错）；
-          未提供或未匹配到 → 回退移除最后一条（旧行为，向后兼容）。
+          未提供 → 回退移除最后一条（旧行为，向后兼容）；
+          提供但未匹配 → 不删任何事件，仅 stderr 告警（防误删，#83）。
         - last_message_at 不还原（设计取舍，保持现状）。"""
         cfg = self.config.get("emotion", {})
         cost = cfg.get("energy_cost_per_message", 20.0)
@@ -1616,7 +1646,8 @@ class ChiguoState:
                         del self.cooldown.event_timestamps[i]
                         break
                 else:
-                    self.cooldown.event_timestamps.pop()  # 未匹配 → 回退旧行为
+                    # 未匹配到该 msg_id → 不误删其他事件记录(#83)
+                    print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
             else:
                 self.cooldown.event_timestamps.pop()
         self.cooldown.last_longing_break_at = None
@@ -1737,7 +1768,7 @@ class ChiguoState:
 
     def snapshot(self, now: datetime, user_state: dict = None) -> dict:
         sch = self.schedule_status(now)
-        hq = self.holiday_parser.query(now)
+        hq = self.holiday_parser.query(now) if self.holiday_parser else None
 
         # ── v4: Bayesian 用户状态推断 ──
         if user_state is None:
@@ -1753,10 +1784,10 @@ class ChiguoState:
             "poisson_lambda": round(self.current_lambda(now), 4),
             "availability": round(self.availability(now, user_state), 2),
             "holiday": {
-                "is_holiday": hq["is_holiday"],
-                "name": hq["holiday_name"],
-                "is_weekend": hq["is_weekend"],
-                "is_makeup_workday": hq["is_makeup_workday"],
+                "is_holiday": bool(hq and hq["is_holiday"]),
+                "name": (hq or {}).get("holiday_name"),
+                "is_weekend": bool(hq and hq["is_weekend"]),
+                "is_makeup_workday": bool(hq and hq["is_makeup_workday"]),
             },
             "schedule": {
                 "in_class": sch["in_class"] if sch else None,
