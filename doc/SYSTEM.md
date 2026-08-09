@@ -40,6 +40,14 @@
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+**v1.11 RPC 常驻形态（可选；默认仍为上方 cron 形态）**：`CHIGUO_DAEMON_LOOP=1` 部署时，
+发送侧由 systemd `chiguo-daemon.service`（`--loop 900 --compact`）常驻：`_loop_send` 内聚
+「生成→发送→记账」——经 bridge `POST /agent/prompt {mode:send}` 转发常驻 pi RPC
+（`agent-rpc.mjs` 双会话：analysis `chiguo-main` / send `chiguo-send`）→ `POST /send` →
+`record_send_text`；RPC 失败自动回退 spawn（不变式）。cron 仅剩 replan（判脏轮询）。
+与 cron tick **互斥**（install_agent.sh 阶段 6：loop 模式移除 tick 条目防双发）。
+详见 doc/AGENT_INTEGRATION.md §架构总览 与 doc/DEPLOYMENT.md §部署形态。
+
 ### 模块依赖
 
 ```
