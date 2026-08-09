@@ -12,8 +12,8 @@ if ! flock -n 9; then
 fi
 REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
 PY="$REPO/.venv/bin/python"
-# memory-lancedb-pro 扩展的 smart extraction 需要 key（cron 环境无该变量）;来源单一 = scripts/pi-auth.sh
-source "$(dirname "$(readlink -f "$0")")/pi-auth.sh"
+# memory-lancedb-pro 扩展的 smart extraction 需要 key（cron 环境无该变量）;来源单一 = scripts/agent-auth.sh
+source "$(dirname "$(readlink -f "$0")")/agent-auth.sh"
 OUT="$("$PY" "$REPO/chiguo_daemon.py" --compact 2>/dev/null || true)"
 ACTION="$(printf '%s' "$OUT" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("action",""))
@@ -38,11 +38,11 @@ TOKEN_HDR=()
 # 决策 JSON 自足，无需对话连续性；值从 toml [host].send_session_id 读，缺省回退 chiguo-send）
 SEND_SESSION="$(grep -oP '(?<=send_session_id = ")[^"]+' "$REPO/chiguo_proactive.toml" | head -1 || true)"
 [ -n "$SEND_SESSION" ] || SEND_SESSION="chiguo-send"
-# pi 假死记账：成败记入 pi_health 状态机，transition 时经 /send 发告警/恢复（零额外 pi 调用）
-# 注：toml 缺 wechat_recipient 时（上方提前 exit）pi 未跑 → 该次不记账
+# agent 假死记账：成败记入 agent_health 状态机，transition 时经 /send 发告警/恢复（零额外 agent 调用）
+# 注：toml 缺 wechat_recipient 时（上方提前 exit）agent 未跑 → 该次不记账
 record_health() {
   local out trans msg body
-  out="$("$PY" "$REPO/scripts/pi_health.py" record --outcome "$1" --reason "${2:-}" 2>/dev/null || true)"
+  out="$("$PY" "$REPO/scripts/agent_health.py" record --outcome "$1" --reason "${2:-}" 2>/dev/null || true)"
   IFS='|' read -r trans msg <<< "$(printf '%s' "$out" | python3 -c 'import json,sys
 try:
     d = json.load(sys.stdin)
@@ -57,20 +57,20 @@ except: print("|")' 2>/dev/null || true)"
 }
 # node 缺失（cron PATH 不完整时兜底）：显式记账 fail + 告警，而非静默降级
 if ! command -v node >/dev/null 2>&1; then
-  echo "[chiguo-tick] node 缺失（pi-run 无法执行），记录 health fail" >&2
+  echo "[chiguo-tick] node 缺失（agent-run 无法执行），记录 health fail" >&2
   record_health fail "tick node 缺失"
   exit 1
 fi
-RES="$(CHIGUO_REPO="$REPO" PIRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/pi-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
+RES="$(CHIGUO_REPO="$REPO" AGENTRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/agent-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
 TEXT="$(printf '%s' "$RES" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("text",""))
 except: print("")' 2>/dev/null || true)"
 # ── A8: 生成失败确定性回退 ──
-# pi 失败 → composer 模板池兜底（零 LLM）：decision JSON 落盘传给
+# agent 失败 → composer 模板池兜底（零 LLM）：decision JSON 落盘传给
 # chiguo_composer.py CLI，成功则照常发送（health 记 success + record-send 打 fallback 标记）；
 # composer 也失败才 record_health fail + exit 1。
 if [ -z "$TEXT" ]; then
-  echo "[chiguo-tick] pi-run 未生成消息: $(printf '%s' "$RES" | head -c 300)" >&2
+  echo "[chiguo-tick] agent-run 未生成消息: $(printf '%s' "$RES" | head -c 300)" >&2
   DECISION_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-fallback-XXXXXX.json")"
   printf '%s' "$OUT" > "$DECISION_FILE"
   FALLBACK_TEXT="$("$PY" "$REPO/chiguo_composer.py" "$DECISION_FILE" 2>/dev/null || true)"
@@ -78,18 +78,18 @@ if [ -z "$TEXT" ]; then
   if [ -n "$FALLBACK_TEXT" ]; then
     TEXT="$FALLBACK_TEXT"
     COMPOSER_FALLBACK=1
-    echo "[chiguo-tick] pi 失败,composer 兜底生成消息" >&2
+    echo "[chiguo-tick] agent 失败,composer 兜底生成消息" >&2
   fi
 fi
 if [ -z "$TEXT" ]; then
   FAIL_REASON="$(printf '%s' "$RES" | python3 -c 'import json,sys
 try: print((json.load(sys.stdin).get("error") or "")[:100])
 except: print("")' 2>/dev/null || true)"
-  [ -n "$FAIL_REASON" ] || FAIL_REASON="tick pi-run 未生成消息"
+  [ -n "$FAIL_REASON" ] || FAIL_REASON="tick agent-run 未生成消息"
   record_health fail "$FAIL_REASON"
   exit 1
 fi
-# 消息已产出（pi 或 composer 兜底）→ 先记 success（发送失败不丢成功信号）；再发送
+# 消息已产出（agent 或 composer 兜底）→ 先记 success（发送失败不丢成功信号）；再发送
 record_health success
 BODY="$(python3 -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$TEXT")"
 MSG_ID="$(printf '%s' "$OUT" | python3 -c 'import json,sys
