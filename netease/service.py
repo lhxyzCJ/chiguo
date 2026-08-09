@@ -143,12 +143,14 @@ class NeteaseService:
 
     def _consume_music(self, now):
         self._roll_quota(now)
-        self._health["quota_music_used"] += 1
+        self._health["quota_music_used"] = min(self.daily_quota,
+                                                self._health["quota_music_used"] + 1)
         self._save_health()
 
     def _consume_fault(self, now):
         self._roll_quota(now)
-        self._health["quota_fault_used"] += 1
+        self._health["quota_fault_used"] = min(self.fault_quota,
+                                                 self._health["quota_fault_used"] + 1)
         self._save_health()
 
     # ── 健康刷新(单一入口:判定 faulty 与原因) ──
@@ -166,7 +168,9 @@ class NeteaseService:
         elif not h.get("logged_in"):
             self._health["api_alive"] = True
             self._health["logged_in"] = False
-            self._set_faulty("login_expired", now)
+            # code!=200 等 API 异常（api_error 非空）≠ 登录失效，避免误报 login_expired
+            reason = "api_error" if h.get("api_error") is not None else "login_expired"
+            self._set_faulty(reason, now)
         else:
             self._health["api_alive"] = True
             self._health["logged_in"] = True
@@ -286,7 +290,7 @@ class NeteaseService:
                 "tone": "casual",
                 "data": {"source": "daily", "name": song["name"], "artist": song["artists"]},
             }
-        plays = self.bridge.fetch_recent_play(limit=20, ttl_minutes=15, now=now)
+        plays = self.bridge.fetch_recent_play(limit=20, ttl_minutes=self.play_cache_ttl_minutes, now=now)
         if not plays:
             return None
         newest = max(plays, key=lambda p: p.get("playTime", 0))
