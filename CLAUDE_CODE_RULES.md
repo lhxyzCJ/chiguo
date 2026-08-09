@@ -11,7 +11,7 @@
 # Run ALL tests: 36 py + 10 script runners (every runner exits non-zero on failure)
 node tests/test_pi_run.mjs && node tests/test_bridge_askpi.mjs && node tests/test_bridge_cmd.mjs && \
 node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
-bash tests/test_install_pi.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
+bash tests/test_install_agent.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
 bash tests/test_tick_health.sh && \
 uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
 uv run python tests/test_schedule_parser.py && \
@@ -25,7 +25,7 @@ uv run python tests/test_circadian.py && uv run python tests/test_followup.py &&
 uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
 uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
 uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
-uv run python tests/test_adapt_personality.py && uv run python tests/test_pi_health.py && \
+uv run python tests/test_adapt_personality.py && uv run python tests/test_agent_health.py && \
 uv run python tests/test_anniversary.py && uv run python tests/test_schedule_override.py && \
 uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
 uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
@@ -291,23 +291,23 @@ Intent × Cue × Vibe three-layer system:
 ## 11. LLM Host Integration (Phase 4 — pi-agent)
 
 > Current architecture: system crontab `chiguo-tick.sh` (send side, session `chiguo-send`) + wechat-bridge
-> `askPi` (reply side, session `chiguo-main`) + `scripts/pi-run.mjs` + `scripts/install_pi.sh`.
-> See `doc/PI_INTEGRATION.md`.
+> `askPi` (reply side, session `chiguo-main`) + `scripts/agent-run.mjs` + `scripts/install_agent.sh`.
+> See `doc/AGENT_INTEGRATION.md`.
 >
-> v1.8 agent runner abstraction: `[host].runner` = `pi` (default, pi binary) or `command` (any CLI agent
-> via `[host].agent_command` array). In command mode pi-run.mjs executes
+> v1.8 agent runner abstraction: `[host].runner` = `agent` (default, pi binary) or `command` (any CLI agent
+> via `[host].agent_command` array). In command mode agent-run.mjs executes
 > `<agent_command> --prompt <full prompt> --mode <analysis|send|extract|verify|recall|replan>` and parses
-> stdout JSON `{ok,text,analysis?,parsed?,raw?}` (NDJSON compatible); prompts are built from pi-run.mjs
-> per-mode templates. The RPC persistent mode stays pi-only (`WECHAT_BRIDGE_PI_RPC=1`).
+> stdout JSON `{ok,text,analysis?,parsed?,raw?}` (NDJSON compatible); prompts are built from agent-run.mjs
+> per-mode templates. The RPC persistent mode stays agent-only (`WECHAT_BRIDGE_PI_RPC=1`).
 
 ### Send side — trigger-script gate (zero model calls on idle)
-1. **Cron**: system crontab `*/15 * * * *` runs `scripts/chiguo-tick.sh` (send side, session `chiguo-send`; registered by `scripts/install_pi.sh`)
+1. **Cron**: system crontab `*/15 * * * *` runs `scripts/chiguo-tick.sh` (send side, session `chiguo-send`; registered by `scripts/install_agent.sh`)
 2. Trigger script runs `<repo>/.venv/bin/python chiguo_daemon.py --compact` with no model execution
 3. `action: "idle"` → `{fire: false}` (~90% of evaluations never wake the agent)
 4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `curl --noproxy '*' -X POST http://127.0.0.1:18790/send` (wechat-bridge) → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
 
 ### Reply side — bridge askPi
-1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askPi` (`pi-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
+1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askPi` (`agent-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
 3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askPi `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 600s → analysis-only upgrade, no double counting)
 
@@ -325,7 +325,7 @@ Intent × Cue × Vibe three-layer system:
 - **Self-check**: 15-item role consistency checklist
 
 ### Skill files (allowed security boundary)
-- **Repo**（Phase 4 起唯一权威）：`personality/SUN2.md`、`personality/迟菓语言技巧指南.md`（随仓库部署，pi-run 注入）
+- **Repo**（Phase 4 起唯一权威）：`personality/SUN2.md`、`personality/迟菓语言技巧指南.md`（随仓库部署，agent-run 注入）
 
 Note: v4 residue `scripts/on-user-msg.sh` and `.claude/settings.json` UserPromptSubmit hooks have been removed (backed up to `.bak`).
 
