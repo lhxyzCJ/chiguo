@@ -164,8 +164,15 @@ class HolidayParser:
         return None
 
     def range_of(self, name: str) -> tuple[date, date] | None:
-        """按名称查区间;未知名称返回 None。供 replan ref 校验 / resolve_scale / T2 文案同源。"""
-        return self._holidays.get(name)
+        """按名称查区间;未知名称返回 None。供 replan ref 校验 / resolve_scale / T2 文案同源。
+        跨年归组键（name@year）按原名匹配最近年份区间——先精确匹配，再回退同名前缀。"""
+        hit = self._holidays.get(name)
+        if hit is not None:
+            return hit
+        for key, (s, e) in self._holidays.items():
+            if key.split("@", 1)[0] == name:
+                return (s, e)
+        return None
 
     def all_ranges(self) -> dict[str, tuple[date, date]]:
         """合并后全部区间副本(内嵌 + json override)。"""
