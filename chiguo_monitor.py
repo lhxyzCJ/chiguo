@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import statistics
+import sys
 import tomllib
 from collections import Counter
 from datetime import datetime, timezone, timedelta, date
@@ -315,7 +316,8 @@ class ChiguoMonitor:
         # 时间跨度
         span_days = 0.0
         if first_time and last_time:
-            span_days = max(0.01, (last_time - first_time).total_seconds() / 86400)
+            # 下限 1 天：不足 1 天的窗口按 1 天计，避免 0.01 放大日均发送量失真
+            span_days = max(1.0, (last_time - first_time).total_seconds() / 86400)
         sends_per_day = total_sends / span_days if span_days > 0 else 0.0
 
         # 情绪趋势
@@ -475,6 +477,8 @@ class ChiguoMonitor:
         if last_tick_str:
             try:
                 last_tick = datetime.fromisoformat(last_tick_str)
+                if last_tick.tzinfo is None:
+                    last_tick = last_tick.replace(tzinfo=CST)  # naive → 视为 CST
                 gap_h = (now - last_tick).total_seconds() / 3600
                 if gap_h > 6:
                     results.append({
@@ -679,6 +683,8 @@ class ChiguoMonitor:
         if last_tick:
             try:
                 lt = datetime.fromisoformat(last_tick)
+                if lt.tzinfo is None:
+                    lt = lt.replace(tzinfo=CST)  # naive → 视为 CST
                 hours_ago = (now - lt).total_seconds() / 3600
                 if hours_ago > 6:
                     healthy = False
@@ -757,25 +763,46 @@ class ChiguoMonitor:
         except OSError:
             pass
 
-        # 8. 进程内存
+        # 8. 进程内存：优先 daemon（chiguo_loop.pid 记录的 PID）查 /proc/<pid>/status 的 VmRSS；
+        #    pid 文件存在但进程不可读 → null 不报错；pid 文件不存在 → 回退当前进程（独立 CLI 场景）
         rss_mb = None
-        try:
-            with open("/proc/self/status", encoding="utf-8") as f:
-                for line in f:
-                    if line.startswith("VmRSS:"):
-                        rss_kb = int(line.split()[1])
-                        rss_mb = round(rss_kb / 1024, 1)
-                        break
-            if rss_mb is not None:
-                critical = self._monitor_config.get("memory_critical_mb", 1000)
-                warn = self._monitor_config.get("memory_warn_mb", 500)
-                if rss_mb > critical:
-                    healthy = False
-                    issues.append(f"process memory {rss_mb:.0f}MB > {critical}MB (critical)")
-                elif rss_mb > warn:
-                    issues.append(f"process memory {rss_mb:.0f}MB > {warn}MB (warn)")
-        except Exception:
-            pass
+        daemon_pid = None
+        pid_file = Path("chiguo_loop.pid")
+        pid_candidates = [pid_file]
+        if not pid_file.is_absolute():
+            pid_candidates.append(Path(__file__).resolve().parent / pid_file)
+        for cand in pid_candidates:
+            if cand.is_file():
+                try:
+                    daemon_pid = int(cand.read_text(encoding="utf-8").strip())
+                except (OSError, ValueError):
+                    daemon_pid = None
+                break
+        status_paths = []
+        if daemon_pid:
+            status_paths.append(f"/proc/{daemon_pid}/status")
+        if not daemon_pid:
+            status_paths.append("/proc/self/status")
+        for status_path in status_paths:
+            try:
+                with open(status_path, encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("VmRSS:"):
+                            rss_kb = int(line.split()[1])
+                            rss_mb = round(rss_kb / 1024, 1)
+                            break
+                if rss_mb is not None:
+                    break
+            except OSError:
+                continue  # /proc/<pid> 不存在/不可读 → null，不报错
+        if rss_mb is not None:
+            critical = self._monitor_config.get("memory_critical_mb", 1000)
+            warn = self._monitor_config.get("memory_warn_mb", 500)
+            if rss_mb > critical:
+                healthy = False
+                issues.append(f"process memory {rss_mb:.0f}MB > {critical}MB (critical)")
+            elif rss_mb > warn:
+                issues.append(f"process memory {rss_mb:.0f}MB > {warn}MB (warn)")
 
         # 9. 记忆后端连通性直检（v1.9: 按 [memory].backend 分流；mem0 检查本地向量库目录，
         # 自定义类路径不直检（由后端自身降级），避免误报 mem0 状态）
@@ -910,11 +937,15 @@ class AlertManager:
         self._load()
 
     def _load(self):
-        """加载告警状态文件。缺失/损坏 → 空字典。"""
+        """加载告警状态文件。缺失/损坏/形状错误 → 空字典。"""
         try:
             if self.state_path.exists():
                 data = json.loads(self.state_path.read_text(encoding="utf-8"))
-                self._alerts = data.get("alerts", {})
+                if not isinstance(data, dict):
+                    self._alerts = {}  # 顶层非 dict（如列表/字符串）→ 回退空
+                    return
+                alerts = data.get("alerts", {})
+                self._alerts = alerts if isinstance(alerts, dict) else {}
         except json.JSONDecodeError, OSError:
             self._alerts = {}
 
@@ -955,7 +986,11 @@ class AlertManager:
             if alert_id in self._alerts:
                 existing = self._alerts[alert_id]
                 existing["last_seen"] = now.isoformat()
-                existing["count"] = existing.get("count", 1) + 1
+                prev_count = existing.get("count")
+                # count 非数值（损坏文件）→ 重置为 1 再自增，避免 TypeError
+                if not isinstance(prev_count, (int, float)) or isinstance(prev_count, bool):
+                    prev_count = 1
+                existing["count"] = prev_count + 1
                 # 如果之前已 resolved，重新触发
                 if existing.get("status") == "resolved":
                     existing["status"] = "active"
@@ -1010,4 +1045,67 @@ class AlertManager:
 # ═══════════════════════════════════════════════════════════
 # CLI
 # ═══════════════════════════════════════════════════════════
+
+def main() -> int:
+    """独立 CLI 入口：JSON → stdout，诊断 → stderr。
+
+    用法（与文件头注释及 doc/SYSTEM.md 一致）：
+        python3 chiguo_monitor.py [--days 7] [--alerts] [--alerts-all] [--ack ALERT_ID]
+        python3 chiguo_monitor.py --health
+        python3 chiguo_monitor.py --report
+    默认（无动作参数）输出 stats JSON；退出码 0=成功，1=--ack 未找到。
+    """
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="chiguo_monitor.py",
+        description="迟菓主动消息 结构化监控（统计/告警/健康，JSON → stdout）")
+    parser.add_argument("--days", type=int, default=7, metavar="N",
+                        help="统计窗口天数（默认 7，0=全部历史）")
+    parser.add_argument("--alerts", action="store_true",
+                        help="异常告警（含持久化 ingest；配合 --alerts-all/--ack）")
+    parser.add_argument("--alerts-all", action="store_true",
+                        help="显示所有告警（含已解决，配合 --alerts）")
+    parser.add_argument("--health", action="store_true",
+                        help="增强版健康检查（JSON）")
+    parser.add_argument("--report", action="store_true",
+                        help="完整报告（stats + alerts + health，JSON）")
+    parser.add_argument("--ack", type=str, default=None, metavar="ALERT_ID",
+                        help="确认告警 (配合 --alerts)")
+    args = parser.parse_args()
+
+    # --ack 是告警确认参数，自动联动开启 alerts 处理（与 daemon 一致）
+    if args.ack and not args.alerts:
+        print("[chiguo_monitor] --ack 需要 --alerts，已自动联动开启", file=sys.stderr)
+        args.alerts = True
+
+    mon = ChiguoMonitor()
+
+    if args.health:
+        print(json.dumps(mon.health(), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.alerts:
+        am = AlertManager()
+        if args.ack:
+            ok = am.acknowledge(args.ack)
+            print(json.dumps({"action": "ack", "alert_id": args.ack, "ok": ok},
+                             ensure_ascii=False))
+            return 0 if ok else 1
+        fresh = mon.alerts()
+        am.ingest(fresh)
+        result = am.list_all() if args.alerts_all else am.list_active()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.report:
+        print(json.dumps(mon.report(days=args.days), ensure_ascii=False, indent=2))
+        return 0
+
+    # 默认：结构化统计
+    print(json.dumps(mon.stats(days=args.days), ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 
