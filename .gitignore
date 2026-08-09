@@ -34,8 +34,8 @@ wechat-bridge/npm-debug.log*
 # tick cron 运行日志（运行时产物，不跟踪）
 logs/
 
-# pi 假死状态机（pi_health.json 本体默认跟踪；崩溃残留 tmp 忽略）
-pi_health.json.tmp
+# agent 假死状态机（agent_health.json 本体默认跟踪；崩溃残留 tmp 忽略）
+agent_health.json.tmp
 
 # AI 工具个人配置（开发机本地，不进仓库）
 .claude/

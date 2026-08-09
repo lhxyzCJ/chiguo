@@ -1,6 +1,6 @@
 # 迟菓系统部署指南
 
-> 面向从零部署；本文是操作手册不是教程。系统文档见 [SYSTEM.md](SYSTEM.md)；pi 集成细节见 [PI_INTEGRATION.md](PI_INTEGRATION.md)。
+> 面向从零部署；本文是操作手册不是教程。系统文档见 [SYSTEM.md](SYSTEM.md)；pi 集成细节见 [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md)。
 > 仓库公开，任何人都可为自己部署；系统只与一个用户聊天（下文称「哥哥」，人格设定的一部分）。
 
 ## 一、这是什么
@@ -14,7 +14,7 @@
 | 仓库 | 用途 | 落点 | 由谁安装 |
 |------|------|------|----------|
 | github.com/lhxyzCJ/wechatbot（wechatbot iLink SDK 的个人 fork） | 微信登录/收发 SDK | `$HOME/wechatbot` | `wechat-bridge.sh install` 自动 clone + npm 安装 |
-| github.com/lhxyzCJ/TestForPi-memory-lancedb-pro（pi 记忆扩展 fork，仅 pi 宿主侧；chiguo 记忆已迁 mem0） | 对话记忆自动沉淀/召回（autoCapture/autoRecall） | `~/.pi-agent/TestForPi-memory-lancedb-pro` | `scripts/install_pi.sh` 阶段 1 |
+| github.com/lhxyzCJ/TestForPi-memory-lancedb-pro（pi 记忆扩展 fork，仅 pi 宿主侧；chiguo 记忆已迁 mem0） | 对话记忆自动沉淀/召回（autoCapture/autoRecall） | `~/.pi-agent/TestForPi-memory-lancedb-pro` | `scripts/install_agent.sh` 阶段 1 |
 | github.com/NeteaseCloudMusicApiEnhanced/api-enhanced（锁 v4.39.0 tag） | 网易云数据源（可选） | `/opt/netease-api` | `scripts/netease-api.sh install` |
 
 前两个是必需，第三个可选跳过（`--skip-netease`）。
@@ -23,7 +23,7 @@
 
 - Debian Linux + systemd（root 或可 sudo——微信桥自启与网易云服务要写 systemd）
 - git / curl（deploy.sh 自装 uv 需要 curl）/ Node.js + npm（wechatbot SDK 与记忆扩展都要构建）
-- 模型 API key（`export PI_API_KEY=...` 再跑部署）
+- 模型 API key（`export AGENT_API_KEY=...` 再跑部署）
 - 可选：ollama（`qwen3-embedding:0.6b` 嵌入模型，记忆扩展用；缺则记忆降级，不影响主链路）
 - 默认端口：18790（微信桥 /send）/ 3000（网易云 API）/ 11434（ollama）
 
@@ -31,11 +31,11 @@
 
 | 档位 | 内容 | 命令 |
 |------|------|------|
-| T0 纯本地（无模型无微信） | 决策引擎 CLI 全功能 | `bash deploy.sh --skip-pi --skip-bridge --skip-netease` |
+| T0 纯本地（无模型无微信） | 决策引擎 CLI 全功能 | `bash deploy.sh --skip-agent --skip-bridge --skip-netease` |
 | T1 加模型后端 | +消息生成（pi-agent） | `bash deploy.sh --skip-bridge --skip-netease` |
 | T2 完整系统 | 全部（微信/记忆/网易云/crontab） | `bash deploy.sh` |
 
-低档位可事后补装：`bash scripts/install_pi.sh --yes` / `bash scripts/wechat-bridge.sh install`；T0 也完全可玩：见 README 快速开始。
+低档位可事后补装：`bash scripts/install_agent.sh --yes` / `bash scripts/wechat-bridge.sh install`；T0 也完全可玩：见 README 快速开始。
 
 ## 五、完整部署六步（T2）
 
@@ -51,7 +51,7 @@
 
 ### 3. 环境检查
 
-`uv run python chiguo_envcheck.py`：exit 0=就绪 / 1=警告可运行 / 2=严重先修复。可 `--skip-pi` 跳过 pi 检查。
+`uv run python chiguo_envcheck.py`：exit 0=就绪 / 1=警告可运行 / 2=严重先修复。可 `--skip-agent` 跳过 pi 检查。
 
 ### 4. 微信桥
 
@@ -59,7 +59,7 @@
 
 ### 5. pi 环境
 
-`bash scripts/install_pi.sh`（七阶段：探测 → 记忆扩展 clone+build → settings.json → json5 配置 → ollama 检查 → auth.json 写 key → crontab 注册 + 冒烟）。先 `export PI_API_KEY=...`；可 `--skip-pi`；`bash scripts/install_pi.sh --dry-run` 只扫描不修改。
+`bash scripts/install_agent.sh`（七阶段：探测 → 记忆扩展 clone+build → settings.json → json5 配置 → ollama 检查 → auth.json 写 key → crontab 注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。
 
 ### 6. 网易云 API 服务（可选）
 
@@ -80,13 +80,13 @@
 | `~/.pi/agent/`（`auth.json` / `models.json`） | pi 配置与 key（含 mem0 LLM key 来源） | 否 | 拷贝 |
 | `/opt/netease-api` | 网易云 API 服务 | 否 | 重装 |
 | systemd：`chiguo-bridge.service` / `netease-api.service` | 常驻服务 | - | 部署时注册 |
-| crontab 2 条 | tick + replan-tick | - | install_pi.sh 注册 |
+| crontab 2 条 | tick + replan-tick | - | install_agent.sh 注册 |
 
 ## 七、首次配置
 
 1. 微信扫码：`bash scripts/wechat-bridge.sh login`（二维码打印在桥日志）
 2. 网易云扫码（可选）：`uv run python -m netease.bridge --login`
-3. pi key：install_pi.sh 阶段 5 已写 `~/.pi/agent/auth.json`；换 key 重跑 `bash scripts/install_pi.sh --yes`
+3. pi key：install_agent.sh 阶段 5 已写 `~/.pi/agent/auth.json`；换 key 重跑 `bash scripts/install_agent.sh --yes`
 4. 检查 toml `[host]` 的 provider/model（`chiguo_proactive.toml`）；`[wechat].wechat_recipient` 为占位符，登录后自动注入真实 openid，无需手改
 
 ## 八、验证清单
@@ -109,7 +109,7 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 
 - 微信桥装好了但收不到消息？（看桥日志 `logs/wechat-bridge.log`，路径见 `bash scripts/wechat-bridge.sh start` 输出；扫码态失效 → `bash scripts/wechat-bridge.sh login` 重登）
 - tick 跑过没消息？（看 `logs/cron-tick.log`；决策门控正常——深夜/静默窗口不发）
-- pi 报 No API key / 401？（install_pi.sh 阶段 5 重写 key；`uv run python chiguo_envcheck.py` 复核）
+- pi 报 No API key / 401？（install_agent.sh 阶段 5 重写 key；`uv run python chiguo_envcheck.py` 复核）
 - 网易云服务起不来？（`bash scripts/netease-api.sh status`；可选组件可跳过）
 
-更多故障现象 → 处理见 [PI_INTEGRATION.md 九、故障排查](PI_INTEGRATION.md#九故障排查)（本处不重复）。
+更多故障现象 → 处理见 [AGENT_INTEGRATION.md 九、故障排查](AGENT_INTEGRATION.md#九故障排查)（本处不重复）。

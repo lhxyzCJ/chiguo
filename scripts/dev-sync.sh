@@ -23,9 +23,9 @@ echo "==> 3/5 chiguo_state.json"
 scp -q "$HOST":~/chiguo/chiguo_state.json "$REPO/chiguo_state.json"
 echo "    ok"
 
-echo "==> 4/5 日志(cron + pi-run 遥测)"
+echo "==> 4/5 日志(cron + agent-run 遥测)"
 mkdir -p "$REPO/logs"
-scp -q "$HOST":~/chiguo/logs/pi-run.log "$REPO/logs/pi-run.log" 2>/dev/null || echo "    (埋埋暂无 pi-run.log)"
+scp -q "$HOST":~/chiguo/logs/agent-run.log "$REPO/logs/agent-run.log" 2>/dev/null || echo "    (埋埋暂无 agent-run.log)"
 scp -q "$HOST":~/chiguo/logs/cron-tick.log "$REPO/logs/cron-tick.log" 2>/dev/null || true
 scp -q "$HOST":~/chiguo/logs/cron-replan.log "$REPO/logs/cron-replan.log" 2>/dev/null || true
 echo "    ok"

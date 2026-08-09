@@ -124,12 +124,12 @@ def _lock(base_dir: str) -> bool:
 def replan_env(base: dict | None = None) -> dict:
     """replan 的 pi 子进程环境:注入独立 thinking 档位与超时,避免 [host].thinking_level=max
     拖垮调用(埋埋实机 2 核 VPS 实测 max 单次 ~115s+,120s 必超时)。
-    优先级:CHIGUO_REPLAN_THINKING(专用) > 环境 PIRUN_THINKING(显式) > 默认 high;
-    PIRUN_TIMEOUT 与 replan_timeout() 同步(pi-run.mjs 内层超时读该变量)。"""
+    优先级:CHIGUO_REPLAN_THINKING(专用) > 环境 AGENTRUN_THINKING(显式) > 默认 high;
+    AGENTRUN_TIMEOUT 与 replan_timeout() 同步(agent-run.mjs 内层超时读该变量)。"""
     env = dict(os.environ if base is None else base)
-    env["PIRUN_THINKING"] = (env.get("CHIGUO_REPLAN_THINKING")
-                             or env.get("PIRUN_THINKING") or "high")
-    env["PIRUN_TIMEOUT"] = str(replan_timeout(env))
+    env["AGENTRUN_THINKING"] = (env.get("CHIGUO_REPLAN_THINKING")
+                             or env.get("AGENTRUN_THINKING") or "high")
+    env["AGENTRUN_TIMEOUT"] = str(replan_timeout(env))
     return env
 
 
@@ -162,7 +162,7 @@ def _run_replan(base_dir: str, config: dict, sources) -> dict | None:
     env = replan_env()
     try:
         res = subprocess.run(
-            ["node", f"{repo}/scripts/pi-run.mjs", "--prompt", prompt, "--schedule-replan"],
+            ["node", f"{repo}/scripts/agent-run.mjs", "--prompt", prompt, "--schedule-replan"],
             capture_output=True, text=True, timeout=replan_timeout(env), env=env)
     except subprocess.TimeoutExpired:
         print("[schedule.replan] pi 超时 → 按失败处理,下轮重试", file=sys.stderr)
@@ -174,7 +174,7 @@ def _run_replan(base_dir: str, config: dict, sources) -> dict | None:
     if not out.get("ok"):
         print(f"[schedule.replan] pi 失败: {out.get('error', '')[:200]}", file=sys.stderr)
         return None
-    # pi-run.mjs replan 分支返回 {ok, parsed, raw}:parsed = <<REPLAN>> 块内容(plan dict)
+    # agent-run.mjs replan 分支返回 {ok, parsed, raw}:parsed = <<REPLAN>> 块内容(plan dict)
     return out.get("parsed")
 
 

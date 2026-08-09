@@ -101,11 +101,11 @@
 
 系统由两条消息链路组成，全部本地运行，模型 API 与本地自建的网易云 API 服务是仅有的外部调用。
 
-**主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh` → 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/pi-run.mjs --send-mode`（agent 抽象，默认 pi-agent）让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）；pi 生成失败时由 `chiguo_composer.py` 模板池兜底直出文本（零 LLM，v1.10 A8：成功照常发送 + fallback 标记，composer 也失败才 fail）。
+**主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh` → 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/agent-run.mjs --send-mode`（agent 抽象，默认 pi-agent）让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）；pi 生成失败时由 `chiguo_composer.py` 模板池兜底直出文本（零 LLM，v1.10 A8：成功照常发送 + fallback 标记，composer 也失败才 fail）。
 
-**被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假/开学）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `pi-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `pi-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
+**被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假/开学）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `agent-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `agent-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
 
-**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 默认 mem0，可切自定义类）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 pi 调用成败都记入 `pi_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
+**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 默认 mem0，可切自定义类）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 pi 调用成败都记入 `agent_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 60, "curve": "basis", "fontSize": 18}}}%%
@@ -114,10 +114,10 @@ flowchart LR
         CRON[系统 crontab<br/>每 15 分钟] --> TICK[chiguo-tick.sh]
         TICK --> DC[daemon --compact<br/>零 LLM 决策门控]
         DC -->|action≠send| X1((本轮不发))
-        DC -->|action=send| PI[pi-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
-        PI --> SEND[POST /send<br/>127.0.0.1:18790]
+        DC -->|action=send| AGENT[agent-run.mjs --send-mode<br/>LLM 生成消息<br/>会话 chiguo-send]
+        AGENT --> SEND[POST /send<br/>127.0.0.1:18790]
         SEND --> WX[(微信)]
-        PI -. 发送结果回传 .-> DC
+        AGENT -. 发送结果回传 .-> DC
     end
     subgraph 被动回复链
         WX -->|新消息| BR[bridge 收消息<br/>OWNER_ID 门<br/>TurnQueue 串行]
@@ -127,7 +127,7 @@ flowchart LR
         SP -->|停课/调课/考试周/提醒…| SX[extract/verify 双 agent<br/>追问循环 clarify]
         SX -->|--schedule-change 原子写| SC
         SP -->|普通消息| AT[--attention 注入<br/>T1/T2/T3]
-        AT --> AP[pi-run.mjs --analysis-mode<br/>情绪分析 + 回复]
+        AT --> AP[agent-run.mjs --analysis-mode<br/>情绪分析 + 回复]
         AP --> RC{recall 信号?}
         RC -->|有| R2[第二趟 pi<br/>按登记事实回答]
         RC -->|无| UA[daemon --analysis<br/>去重升级]
@@ -143,7 +143,7 @@ flowchart LR
         DC <-->|音乐话题| NE[(网易云)]
         MON[monitor] -. 巡检 .-> ST
     end
-    PI -. 成败记账 .-> PH[pi_health.py 假死状态机]
+    AGENT -. 成败记账 .-> PH[agent_health.py 假死状态机]
     AP -. 成败记账 .-> PH
     PH -. 告警/恢复 .-> WX
 
@@ -198,11 +198,11 @@ flowchart LR
 
 | 档位 | 内容 | 命令 |
 |------|------|------|
-| **T0 纯本地** | 决策引擎 CLI 全功能，无模型无微信 | `bash deploy.sh --skip-pi --skip-bridge --skip-netease` |
+| **T0 纯本地** | 决策引擎 CLI 全功能，无模型无微信 | `bash deploy.sh --skip-agent --skip-bridge --skip-netease` |
 | **T1 加模型** | + 消息生成（pi-agent + API key） | `bash deploy.sh --skip-bridge --skip-netease` |
 | **T2 完整** | 微信收发 + 记忆 + 网易云 + crontab 全自动 | `bash deploy.sh` |
 
-低档位可事后补装：`bash scripts/install_pi.sh --yes`（模型）、`bash scripts/wechat-bridge.sh install`（微信）。完整部署指南见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
+低档位可事后补装：`bash scripts/install_agent.sh --yes`（模型）、`bash scripts/wechat-bridge.sh install`（微信）。完整部署指南见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 
 ```bash
 git clone https://github.com/lhxyzCJ/chiguo.git && cd chiguo   # 仓库公开，https/ssh 均可（ssh: git@github.com:lhxyzCJ/chiguo.git）
@@ -236,7 +236,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 **作用**：agent 后端抽象——所有 LLM 能力都从这里来：主动消息的生成、回复时的情绪分析与回复文本。默认经 pi-agent 调用模型 API，支持任意 provider（OpenAI / DeepSeek / Anthropic / 自建网关…），由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定；`[host].runner = command` 时可替换为任意 CLI agent（`[host].agent_command` 指定，统一契约 `--prompt <完整提示词> --mode <mode>`，stdout 输出 JSON 或 NDJSON）。
 
-**安装/配置**：默认 pi 模式：`export PI_API_KEY=... && bash scripts/install_pi.sh --yes`，或 `pi` 交互式 `/login <provider>`；command 模式只需任意可执行 agent。详见 [🧠 接入模型后端](#-接入模型后端) 与 [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md)。
+**安装/配置**：默认 pi 模式：`export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`，或 `pi` 交互式 `/login <provider>`；command 模式只需任意可执行 agent。详见 [🧠 接入模型后端](#-接入模型后端) 与 [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)。
 
 **缺失影响**：消息无法生成——决策引擎照常评估"该不该发"，但没有 LLM 就没有话可说。
 
@@ -280,7 +280,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 **作用**：全部时间安排的唯一事实源——课表、节假日、寒暑假、临时例外（停课/调课/加课）、考试周、纪念日、提醒日统一收敛到 `schedule/` 包，分文件存储（`holiday.py`/`anniversary.py`/`override_store.py`/`plan_store.py`）。检索层（`day_plan.py`）输出多日纯事实窗口；引擎按事实直算 availability——考试周自动降到 0.5、上课中分层降频、例外取消即时生效；纪念日/提醒日按"还有几天"注入上下文（T1），节假日/考试周等区间事实注入 T2，本周课表注入 T3。微信侧写命令（"明天停课""下周三开始考试周""8月20号交材料"）经提取→校验→追问循环**确定性写入**，确认文案带星期+日期；来源变化时 crontab 触发重分析（`schedule/replan.py`）离线让 LLM 只调各触发类型权重（`schedule_plan.json`）。
 
-**安装/配置**：随仓库部署，零安装。运行时文件（`schedule_overrides.json`/`schedule_plan.json`/`schedule_clarify.json`/`anniversaries.json`）自动生成于仓库根，0600 权限，不进 git。重分析 crontab 由 `scripts/install_pi.sh` 注册（`scripts/replan-tick.sh`）。
+**安装/配置**：随仓库部署，零安装。运行时文件（`schedule_overrides.json`/`schedule_plan.json`/`schedule_clarify.json`/`anniversaries.json`）自动生成于仓库根，0600 权限，不进 git。重分析 crontab 由 `scripts/install_agent.sh` 注册（`scripts/replan-tick.sh`）。
 
 **缺失影响**：无——它是内置模块；缺课表 xlsx 只退回"按空闲处理"。
 
@@ -290,9 +290,9 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 消息生成与情绪分析走 **agent 后端**（默认 pi-agent），provider 由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定（缺省示例 opencode-go，可换任意 pi 支持的接入方式）；`[host].runner = command` 时替换为任意 CLI agent（`[host].agent_command`，契约 `--prompt` + `--mode`，stdout JSON/NDJSON）：
 
-- **内置 provider**：`pi` 交互式 `/login <provider>` 写入 auth.json，或 `export PI_API_KEY=... && bash scripts/install_pi.sh --yes`
+- **内置 provider**：`pi` 交互式 `/login <provider>` 写入 auth.json，或 `export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`
 - **自定义 OpenAI 兼容端点**：写 `~/.pi/agent/models.json`（pi 官方机制，支持 ollama/vLLM/自建网关）
-- **任意 CLI agent**：`[host].runner = "command"` + `[host].agent_command = [...]`（RPC 常驻仅 pi 模式）
+- **任意 CLI agent**：`[host].runner = "command"` + `[host].agent_command = [...]`（RPC 常驻仅 agent 模式）
 
 ```toml
 [host]
@@ -300,7 +300,7 @@ provider = "openai"     # 或 deepseek / anthropic / google / 自定义端点名
 model = "gpt-5"
 ```
 
-详细步骤见 [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md) 七、接入任意模型 API。
+详细步骤见 [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) 七、接入任意模型 API。
 
 ---
 
@@ -322,7 +322,7 @@ personality/
 
 ## 🛠 部署与运维
 
-**前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export PI_API_KEY=...`）；ollama 可选（记忆嵌入）。
+**前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export AGENT_API_KEY=...`）；ollama 可选（记忆嵌入）。
 
 **分级部署**：三档路径见 [🚀 快速开始](#-快速开始)；完整指南（六步详解/落点地图/迁移/验证）见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 
@@ -356,7 +356,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 |------|------|
 | [doc/SYSTEM.md](doc/SYSTEM.md) | 完整系统文档（架构、业务逻辑、配置参考、CLI、文件清单） |
 | [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | 完整部署指南（分级路径/前提条件/落点地图/迁移/验证） |
-| [doc/PI_INTEGRATION.md](doc/PI_INTEGRATION.md) | pi-agent 集成指南（模型后端、微信桥、部署） |
+| [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) | pi-agent 集成指南（模型后端、微信桥、部署） |
 | [doc/日光雨.md](doc/日光雨.md) | 官方续作《三色绘恋S》剧本全文（人格设定基准） |
 | [AGENTS.md](AGENTS.md) | AI 开发助手约定（含完整测试链） |
 
@@ -382,7 +382,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 迟菓的人格是固定的（系统围绕单一角色设计），不可替换角色。想调整行为？改 `chiguo_proactive.toml` 的参数即可——`SUN2.md` 是唯一权威设定，语感在《迟菓语言技巧指南》。
 
 **换模型要改代码吗？**
-不用。改 `chiguo_proactive.toml` 的 `[host].provider/model` + 配 key 即可；自定义 OpenAI 兼容端点见 [PI_INTEGRATION.md](doc/PI_INTEGRATION.md)。
+不用。改 `chiguo_proactive.toml` 的 `[host].provider/model` + 配 key 即可；自定义 OpenAI 兼容端点见 [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)。
 
 **数据存在哪里？**
 决策/对话 JSONL 与系统状态仅保存在本机（不进 git）+ mem0 记忆库（`data/mem0/`，qdrant 嵌入式 + history.db，均 gitignore）。全部本地计算。
@@ -409,11 +409,11 @@ chiguo_composer.py       # Intent×Cue×Vibe 消息组合 + 兜底 CLI（A8 生�
 memory/                  # 记忆后端抽象（base/mem0_backend/factory；memory_bridge.py 兼容门面）
 schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan）
-scripts/                 # tick/replan crontab 入口 + agent runner 抽象（pi-run.mjs，默认 pi）
-                         #   + 环境安装 + 假死检测（pi_health.py）
+scripts/                 # tick/replan crontab 入口 + agent runner 抽象（agent-run.mjs，默认 agent）
+                         #   + 环境安装 + 假死检测（agent_health.py）
 wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs）
 personality/             # 人格设定（SUN2.md + 语言指南 + 措辞素材 toml）
-doc/                     # 系统文档（SYSTEM.md / PI_INTEGRATION.md / 日光雨剧本）
+doc/                     # 系统文档（SYSTEM.md / AGENT_INTEGRATION.md / 日光雨剧本）
 tests/                   # 测试（独立 runner）
 data/                    # 数据文件（课表/手动记忆/网易云二维码，不进 git）
 ```

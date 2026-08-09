@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# test_pi_health.py — pi_health.py 状态机独立 runner 测试（TDD: 先红后绿）
-# 用法: uv run python test_pi_health.py（退出码 0=全过，1=有失败）
-# 隔离: 全部用 temp dir 的 --state/--config，绝不碰真实 pi_health.json。
+# test_agent_health.py — agent_health.py 状态机独立 runner 测试（TDD: 先红后绿）
+# 用法: uv run python test_agent_health.py（退出码 0=全过，1=有失败）
+# 隔离: 全部用 temp dir 的 --state/--config，绝不碰真实 agent_health.json。
 
 import json
 import os
@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PI_HEALTH = ROOT / "scripts" / "pi_health.py"
+AGENT_HEALTH = ROOT / "scripts" / "agent_health.py"
 
 passed = 0
 failed = 0
@@ -29,8 +29,8 @@ def t(name, fn):
 
 
 def run(outcome, state, config, reason=None):
-    """调用 pi_health.py record，返回解析后的 stdout JSON。"""
-    cmd = [sys.executable, str(PI_HEALTH), "record", "--outcome", outcome,
+    """调用 agent_health.py record，返回解析后的 stdout JSON。"""
+    cmd = [sys.executable, str(AGENT_HEALTH), "record", "--outcome", outcome,
            "--state", str(state), "--config", str(config)]
     if reason:
         cmd += ["--reason", reason]
@@ -50,7 +50,7 @@ def no_tmp_leftover(state_path):
 def test_matrix():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        state = td / "pi_health.json"
+        state = td / "agent_health.json"
         cfg = td / "health.toml"
         cfg.write_text("[health]\nfail_threshold = 3\n")
 
@@ -93,7 +93,7 @@ def test_matrix():
 def test_reason_preserved_from_first_failure():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        state = td / "pi_health.json"
+        state = td / "agent_health.json"
         cfg = td / "health.toml"
         cfg.write_text("[health]\nfail_threshold = 3\n")
         run("fail", state, cfg, "原因A")
@@ -108,7 +108,7 @@ def test_reason_preserved_from_first_failure():
 def test_threshold_from_toml():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        state = td / "pi_health.json"
+        state = td / "agent_health.json"
         cfg = td / "health.toml"
         cfg.write_text("[health]\nfail_threshold = 2\n")
         r1 = run("fail", state, cfg, "x")
@@ -122,7 +122,7 @@ def test_threshold_from_toml():
 def test_threshold_fallback_without_toml():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        state = td / "pi_health.json"
+        state = td / "agent_health.json"
         missing_cfg = td / "does-not-exist.toml"
         r2 = run("fail", state, missing_cfg, "x")
         r3 = run("fail", state, missing_cfg, "x")
@@ -136,7 +136,7 @@ def test_threshold_invalid_values_fallback():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         for bad in (0, -1, 1.5, "abc"):
-            state = td / f"pi_health_{str(bad).replace('.', '_').replace('-', 'm')}.json"
+            state = td / f"agent_health_{str(bad).replace('.', '_').replace('-', 'm')}.json"
             cfg = td / f"health_{str(bad).replace('.', '_').replace('-', 'm')}.toml"
             cfg.write_text(f"[health]\nfail_threshold = {bad}\n")
             r2 = run("fail", state, cfg, "x")
@@ -149,7 +149,7 @@ def test_threshold_invalid_values_fallback():
 def test_reason_recaptured_after_recovery():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        state = td / "pi_health.json"
+        state = td / "agent_health.json"
         cfg = td / "health.toml"
         cfg.write_text("[health]\nfail_threshold = 2\n")
         run("fail", state, cfg, "第一波A")
@@ -168,7 +168,7 @@ def test_reason_recaptured_after_recovery():
 def test_state_file_integrity():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        state = td / "pi_health.json"
+        state = td / "agent_health.json"
         cfg = td / "health.toml"
         cfg.write_text("[health]\nfail_threshold = 3\n")
         for i in range(5):
@@ -181,10 +181,10 @@ def test_state_file_integrity():
 
 
 def test_help_and_bad_args():
-    p = subprocess.run([sys.executable, str(PI_HEALTH), "--help"],
+    p = subprocess.run([sys.executable, str(AGENT_HEALTH), "--help"],
                        capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
-    p2 = subprocess.run([sys.executable, str(PI_HEALTH), "record", "--outcome", "bogus"],
+    p2 = subprocess.run([sys.executable, str(AGENT_HEALTH), "record", "--outcome", "bogus"],
                         capture_output=True, text=True)
     assert p2.returncode != 0, "非法 outcome 应失败"
 

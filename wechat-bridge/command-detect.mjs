@@ -234,7 +234,7 @@ export function encodeSessionDir(cwd) {
   return '--' + cwd.replace(/^\//, '').replaceAll('/', '-') + '--'
 }
 
-/** 备份并移走最近一个 chiguo-main 会话文件(与 PIRUN_NEW_SESSION 共享逻辑)。返回备份路径或 null。 */
+/** 备份并移走最近一个 chiguo-main 会话文件(与 AGENTRUN_NEW_SESSION 共享逻辑)。返回备份路径或 null。 */
 export function backupSessionFile(cwd, backupsDir) {
   const dir = join(homedir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
   let files = []
@@ -296,7 +296,7 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
       try {
         let tele = null
         try {
-          const lines = readFileSync(join(repo, 'logs', 'pi-run.log'), 'utf8').trim().split('\n')
+          const lines = readFileSync(join(repo, 'logs', 'agent-run.log'), 'utf8').trim().split('\n')
           if (lines.length) tele = JSON.parse(lines[lines.length - 1])
         } catch {}
         const usage = tele?.usage ?? {}

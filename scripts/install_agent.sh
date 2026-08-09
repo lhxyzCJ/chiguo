@@ -21,13 +21,13 @@ for a in "$@"; do
   case "$a" in
     --dry-run) MODE=dry-run ;;
     --yes) MODE=yes ;;
-    --skip-pi) exit 0 ;;   # deploy.sh 传参时静默跳过
+    --skip-agent) exit 0 ;;   # deploy.sh 传参时静默跳过
   esac
 done
 
-say() { printf '\033[1;32m[chiguo-pi]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[chiguo-pi]\033[0m %s\n' "$*"; }
-fail() { printf '\033[1;31m[chiguo-pi]\033[0m %s\n' "$*"; exit 2; }
+say() { printf '\033[1;32m[chiguo-agent]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[chiguo-agent]\033[0m %s\n' "$*"; }
+fail() { printf '\033[1;31m[chiguo-agent]\033[0m %s\n' "$*"; exit 2; }
 DRY=0; [ "$MODE" = dry-run ] && DRY=1
 PENDING=0    # 1 = 有待办/残留（dry-run 报告；yes/ask 完成后仍存在则退出 1）
 PY="$(command -v python3 || echo "$REPO_DIR/.venv/bin/python")"   # JSON 编辑（stdlib 即可）
@@ -36,9 +36,9 @@ PY="$(command -v python3 || echo "$REPO_DIR/.venv/bin/python")"   # JSON 编辑�
 # 支持 pi 全部内置 provider 与 models.json 注册的自定义 provider；缺省回退 opencode-go）
 PROVIDER="$(sed -n 's/^provider *= *"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1 || true)"
 [ -n "$PROVIDER" ] || PROVIDER=opencode-go
-# key 来源：PI_API_KEY（通用名）优先，OPENCODE_API_KEY 兼容回退
-if [ -n "${PI_API_KEY:-}" ]; then
-  KEY_VAR=PI_API_KEY; KEY_VAL="$PI_API_KEY"
+# key 来源：AGENT_API_KEY（通用名）优先，OPENCODE_API_KEY 兼容回退
+if [ -n "${AGENT_API_KEY:-}" ]; then
+  KEY_VAR=AGENT_API_KEY; KEY_VAL="$AGENT_API_KEY"
 elif [ -n "${OPENCODE_API_KEY:-}" ]; then
   KEY_VAR=OPENCODE_API_KEY; KEY_VAL="$OPENCODE_API_KEY"
 else
@@ -71,7 +71,7 @@ PYC
 }
 
 # ── 固定路径 ───────────────────────────────────────────────
-PI_BIN="$(command -v pi || true)"
+AGENT_BIN="$(command -v pi || true)"
 EXT_DIR="$HOME/.pi-agent"
 CLONE="$EXT_DIR/TestForPi-memory-lancedb-pro"
 EXT_JS="$CLONE/dist/pi-adapter/index.js"
@@ -83,7 +83,7 @@ CRON_LINE="*/15 * * * * $TICK >> $CHIGUO_REPO/logs/cron-tick.log 2>&1"
 OLLAMA_BASE="${OLLAMA_BASE:-http://localhost:11434}"
 
 # ── 阶段 0: 环境探测 ───────────────────────────────────────
-if [ -z "$PI_BIN" ]; then
+if [ -z "$AGENT_BIN" ]; then
   fail "未检测到 pi → 请先安装 pi-agent（本脚本只配置不安装 pi 本体；Phase 4 消息生成端缺失）"
 fi
 say "pi $(pi --version 2>&1 | head -1)"
@@ -206,9 +206,9 @@ else
     [ -f "$JSON5" ] && cp -a "$JSON5" "$JSON5.bak"
     cat > "$JSON5" <<'EOJ'
 {
-  // memory-lancedb-pro configuration for the pi coding agent (install_pi.sh 生成)
+  // memory-lancedb-pro configuration for the pi coding agent (install_agent.sh 生成)
   // embedding: local Ollama (qwen3-embedding:0.6b, 1024 dims)
-  // llm: smart extraction / upgrades 端点（install_pi.sh 按 CHIGUO_MEMORY_LLM_* 生成）
+  // llm: smart extraction / upgrades 端点（install_agent.sh 按 CHIGUO_MEMORY_LLM_* 生成）
   "dbPath": "~/.pi-agent/memory/lancedb-pro",
   "embedding": {
     "provider": "openai-compatible",
@@ -271,10 +271,10 @@ elif confirm "ollama pull qwen3-embedding:0.6b（约 600MB）"; then
 fi
 
 # ── 阶段 5: auth.json $PROVIDER 条目（key 从环境变量读，不落盘明文）──
-# 集中认证迁移源：~/.chiguo/auth/pi-auth.json → ~/.pi/agent/auth.json（目标已有则不动，本地为准）
-if [ ! -f "$AUTH" ] && [ -f "$HOME/.chiguo/auth/pi-auth.json" ]; then
-  cp -a "$HOME/.chiguo/auth/pi-auth.json" "$AUTH" && chmod 600 "$AUTH" \
-    && say "已从 ~/.chiguo/auth/pi-auth.json 导入认证（集中认证目录迁移）"
+# 集中认证迁移源：~/.chiguo/auth/agent-auth.json → ~/.pi/agent/auth.json（目标已有则不动，本地为准）
+if [ ! -f "$AUTH" ] && [ -f "$HOME/.chiguo/auth/agent-auth.json" ]; then
+  cp -a "$HOME/.chiguo/auth/agent-auth.json" "$AUTH" && chmod 600 "$AUTH" \
+    && say "已从 ~/.chiguo/auth/agent-auth.json 导入认证（集中认证目录迁移）"
 fi
 say "阶段 5: ~/.pi/agent/auth.json $PROVIDER 条目..."
 if auth_has_key; then
@@ -406,7 +406,7 @@ else
   if auth_has_key; then
     MODEL="$(sed -n 's/^model *= *"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" | head -1)"
     [ -n "$MODEL" ] || MODEL=deepseek-v4-flash
-    if SMOKE_OUT="$(timeout 120 "$PI_BIN" -p --provider "$PROVIDER" --model "$MODEL" \
+    if SMOKE_OUT="$(timeout 120 "$AGENT_BIN" -p --provider "$PROVIDER" --model "$MODEL" \
         --session-id chiguo-install-smoke --no-context-files \
         --thinking high --mode json '回复:ok' 2>&1)" \
        && printf '%s' "$SMOKE_OUT" | grep -q 'message_end'; then
@@ -427,5 +427,5 @@ if [ "$DRY" = 1 ]; then
   exit 0
 fi
 [ "$PENDING" = 1 ] && { warn "存在待办/残留未处理"; exit 1; }
-say "pi 环境安装完成 ✓"
+say "agent 后端安装完成 ✓"
 exit 0
