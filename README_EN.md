@@ -57,7 +57,7 @@ A role-play AI that proactively messages her user — a zero-LLM math decision e
 The system serves one user only: 哥哥 (gēge, her in-character name for the user). To get it running you'll need:
 
 - **A Linux machine** (Debian + systemd is best — the WeChat bridge autostart needs it)
-- **A model API key** (message generation and mood analysis go through the agent backend — pi-agent by default; any OpenAI-compatible backend works, or swap in any CLI agent via `[host].runner = command`)
+- **A model API key** (message generation and mood analysis go through the agent backend — the default agent backend; any OpenAI-compatible backend works, or swap in any CLI agent via `[host].runner = command`)
 - **Optional**: a WeChat account (bot send/receive), ollama (memory embeddings), a schedule Excel, a NetEase account
 
 > WeChat delivery uses the official iLink Bot channel (upstream [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin), open source); QR login via the official API. Login state and conversation data stay on your machine — nothing goes into git.
@@ -84,7 +84,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 | 🫂 User mood sensing | LLM senses the user's mood (low/distressed/happy/angry) → comfort trigger + gentler tone note (off by default, grayscale) |
 | 🌊 Emotional fluctuation | OU noise simulates unexplained mood swings (off by default, grayscale) |
 | 🌱 Relationship dynamics | Long-term interactions slowly shift the emotional equilibrium (baseline drift, off by default, grayscale) |
-| 🛡 Deterministic fallback | pi failure → composer template fallback (zero LLM) + content-level anti-repetition |
+| 🛡 Deterministic fallback | agent failure → composer template fallback (zero LLM) + content-level anti-repetition |
 
 ### v1.11 Changelog (4 emotion-engine improvements, 2026-08)
 
@@ -92,7 +92,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 2. **A12 User mood sensing**: analysis gains `user_mood`/`user_mood_intensity`; sensed mood → emotion deltas + `comfort` trigger + gentler tone note (`[emotion].user_mood_*`/`[trigger].comfort_*` off by default) → §2.3, §5.1
 3. **A13 Emotional fluctuation**: OU noise inside tick() mimics natural mood swings (σ√Δt + dynamic cap, dedicated RNG; `[emotion].noise_*` off by default) → §2.3
 4. **A14 Emotion baseline drift**: long-term interactions slowly move the convergence targets (bounded ±20 + 30-day forgetting; `[emotion].baseline_*` off by default) → §2.3
-5. **Agent RPC resident**: the pi binary stays resident in `--mode rpc` (reply chain enabled by default, auto-fallback to spawn on failure) + dual sessions (chiguo-main/chiguo-send) + bridge `/agent/prompt` endpoint + with `CHIGUO_DAEMON_LOOP=1` the daemon stays resident via `--loop` with send-side cohesion (cron tick removed as mutually exclusive, only replan remains) → [AGENT_INTEGRATION.md §架构总览](doc/AGENT_INTEGRATION.md)
+5. **Agent RPC resident**: the agent binary stays resident in `--mode rpc` (reply chain enabled by default, auto-fallback to spawn on failure) + dual sessions (chiguo-main/chiguo-send) + bridge `/agent/prompt` endpoint + with `CHIGUO_DAEMON_LOOP=1` the daemon stays resident via `--loop` with send-side cohesion (cron tick removed as mutually exclusive, only replan remains) → [AGENT_INTEGRATION.md §架构总览](doc/AGENT_INTEGRATION.md)
 
 ### v1.10 Changelog (9 external-comparison optimizations, 2026-08)
 
@@ -103,7 +103,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 5. **A4 Three-stage activation**: emotional weight sum < 0.08 → silent, ≥ 0.75 → must-send (must_send lands in the decision JSON) → §2.6
 6. **A6 Generalized repeat damping**: all trigger types decay by history count (×0.6^min(n,3)) → §2.6
 7. **A5 Unreplied backoff state machine**: graded suppression after consecutive unreplied messages (3-4 → emotional blocked, ≥5 → all blocked; escape valve exempt) → §2.6
-8. **A8 Deterministic generation fallback**: pi failure → composer template fallback outputs the message (`_FALLBACK_LINES` last resort) → §5.7 & CLI reference
+8. **A8 Deterministic generation fallback**: agent failure → composer template fallback outputs the message (`_FALLBACK_LINES` last resort) → §5.7 & CLI reference
 9. **A9 Content-level anti-repetition**: topic candidates with 3-gram Jaccard ≥ 0.6 vs recent sends are dropped → §4.1
 
 ---
@@ -112,11 +112,11 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 
 The system is two message pipelines, all running locally — the model API and the self-hosted NetEase API service are the only external calls.
 
-**Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes (or resident with `CHIGUO_DAEMON_LOOP=1`, see [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)) → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/agent-run.mjs --send-mode` (agent abstraction, pi by default) turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`); if pi generation fails, `chiguo_composer.py` falls back to the template pool and outputs the text directly (zero LLM, v1.10 A8: still sends with a fallback flag; only if composer also fails does the tick fail).
+**Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes (or resident with `CHIGUO_DAEMON_LOOP=1`, see [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)) → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/agent-run.mjs --send-mode` (agent abstraction, the agent backend by default) turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`); if agent generation fails, `chiguo_composer.py` falls back to the template pool and outputs the text directly (zero LLM, v1.10 A8: still sends with a fallback flag; only if composer also fails does the tick fail).
 
-**Passive replying**: a WeChat message enters the bridge → an **OWNER_ID gate** (non-owners only get a plain chat reply — no accounting, no command/recall paths) → `chiguo_daemon.py --user-msg` records it **deterministically** (real-time emotion response, recv_dedup against double-counting) → `command-detect.mjs` rules check first: **special commands** (anniversaries / holidays / break on-off) are executed and answered directly, **no LLM**; **schedule write-commands** (cancel / move / add / exam week / reminder / remove) go through `agent-run.mjs --schedule-extract` extraction → `--schedule-verify` verification (dual agents, separate sessions; if info is missing they return a question into the clarify loop, records valid 6h) → daemon `--schedule-change` atomic write (confirmation text carries weekday + date); ordinary messages first fetch a lightweight `--attention` injection (today's important days / active range facts / this week's schedule), then run `agent-run.mjs --analysis-mode`, producing "mood analysis JSON + reply text" in one call — if the analysis carries a recall signal (registered facts / past dates), the bridge queries the facts and answers via a second pi pass → the analysis is merged back into the daemon via `--analysis` (dedup upgrade) → the reply is sent back to WeChat. The reply side runs as a resident serial process (TurnQueue, session `chiguo-main`), zero session sharing with proactive sending.
+**Passive replying**: a WeChat message enters the bridge → an **OWNER_ID gate** (non-owners only get a plain chat reply — no accounting, no command/recall paths) → `chiguo_daemon.py --user-msg` records it **deterministically** (real-time emotion response, recv_dedup against double-counting) → `command-detect.mjs` rules check first: **special commands** (anniversaries / holidays / break on-off) are executed and answered directly, **no LLM**; **schedule write-commands** (cancel / move / add / exam week / reminder / remove) go through `agent-run.mjs --schedule-extract` extraction → `--schedule-verify` verification (dual agents, separate sessions; if info is missing they return a question into the clarify loop, records valid 6h) → daemon `--schedule-change` atomic write (confirmation text carries weekday + date); ordinary messages first fetch a lightweight `--attention` injection (today's important days / active range facts / this week's schedule), then run `agent-run.mjs --analysis-mode`, producing "mood analysis JSON + reply text" in one call — if the analysis carries a recall signal (registered facts / past dates), the bridge queries the facts and answers via a second agent pass → the analysis is merged back into the daemon via `--analysis` (dedup upgrade) → the reply is sent back to WeChat. The reply side runs as a resident serial process (TurnQueue, session `chiguo-main`), zero session sharing with proactive sending.
 
-**Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (`[memory].backend`, mem0 by default, switchable to a custom class) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` patrols independently. Both pipelines record pi-call outcomes into the `agent_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
+**Shared & alerting**: daemon state is written atomically to `chiguo_state.json` (tmp→os.replace + checksum), decisions appended to `chiguo_decisions.jsonl`; memory (`[memory].backend`, mem0 by default, switchable to a custom class) and the NetEase Music bridge feed topic inputs; `chiguo_monitor.py` patrols independently. Both pipelines record agent-call outcomes into the `agent_health.py` liveness state machine — when consecutive failures cross the threshold, it alerts via the WeChat bridge automatically, and notifies on recovery (zero extra LLM calls).
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 60, "curve": "basis", "fontSize": 18}}}%%
@@ -140,7 +140,7 @@ flowchart LR
         SP -->|普通消息| AT[--attention 注入<br/>T1/T2/T3]
         AT --> AP[agent-run.mjs --analysis-mode<br/>情绪分析 + 回复]
         AP --> RC{recall 信号?}
-        RC -->|有| R2[第二趟 pi<br/>按登记事实回答]
+        RC -->|有| R2[第二趟 agent<br/>按登记事实回答]
         RC -->|无| UA[daemon --analysis<br/>去重升级]
         R2 -->|回复文本| WX
         SC -->|回复文本| WX
@@ -210,7 +210,7 @@ Deployment comes in three tiers — pick what you need:
 | Tier | Contents | Command |
 |------|----------|---------|
 | **T0 pure local** | Full decision-engine CLI, no model, no WeChat | `bash deploy.sh --skip-agent --skip-bridge --skip-netease` |
-| **T1 + model** | + message generation (pi-agent + API key) | `bash deploy.sh --skip-bridge --skip-netease` |
+| **T1 + model** | + message generation (agent backend + API key) | `bash deploy.sh --skip-bridge --skip-netease` |
 | **T2 full** | WeChat send/receive + memory + NetEase + crontab, fully automatic | `bash deploy.sh` |
 
 Lower tiers can be upgraded later: `bash scripts/install_agent.sh --yes` (model), `bash scripts/wechat-bridge.sh install` (WeChat). Full deployment guide: [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
@@ -243,11 +243,11 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 **Missing**: nothing runs — it is the only truly required piece.
 
-### pi-agent (model backend)
+### agent backend (model backend)
 
-**Role**: the agent backend abstraction — all LLM capabilities come from here: proactive message generation, and reply mood analysis + reply text. By default they go through pi-agent, which supports any provider (OpenAI / DeepSeek / Anthropic / self-hosted gateways…), decided by the single source `[host].provider` in `chiguo_proactive.toml`; with `[host].runner = command` you can swap in any CLI agent instead (`[host].agent_command`, unified contract `--prompt <full prompt> --mode <mode>`, JSON or NDJSON on stdout).
+**Role**: the agent backend abstraction — all LLM capabilities come from here: proactive message generation, and reply mood analysis + reply text. By default they go through the agent backend, which supports any provider (OpenAI / DeepSeek / Anthropic / self-hosted gateways…), decided by the single source `[host].provider` in `chiguo_proactive.toml`; with `[host].runner = command` you can swap in any CLI agent instead (`[host].agent_command`, unified contract `--prompt <full prompt> --mode <mode>`, JSON or NDJSON on stdout).
 
-**Setup**: default pi mode: `export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`, or `pi` interactive `/login <provider>`; command mode just needs any executable agent. See [🧠 Bring Your Own Model](#-bring-your-own-model) and [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md).
+**Setup**: default agent mode: `export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`, or `pi` interactive `/login <provider>`; command mode just needs any executable agent. See [🧠 Bring Your Own Model](#-bring-your-own-model) and [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md).
 
 **Missing**: no messages can be generated — the decision engine still evaluates *whether* to send, but there is no LLM to produce the words.
 
@@ -299,10 +299,10 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ## 🧠 Bring Your Own Model
 
-All message generation and mood analysis go through the **agent backend** (pi-agent by default); the provider is decided by a single source — `[host].provider` in `chiguo_proactive.toml` (default example: opencode-go; any provider supported by pi works). With `[host].runner = command` you can swap in any CLI agent (`[host].agent_command`, contract `--prompt` + `--mode`, JSON/NDJSON on stdout):
+All message generation and mood analysis go through the **agent backend** (the agent backend by default); the provider is decided by a single source — `[host].provider` in `chiguo_proactive.toml` (default example: opencode-go; any provider supported by the agent works). With `[host].runner = command` you can swap in any CLI agent (`[host].agent_command`, contract `--prompt` + `--mode`, JSON/NDJSON on stdout):
 
 - **Built-in providers**: run `pi` interactively and `/login <provider>` to store the key in auth.json, or `export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`
-- **Custom OpenAI-compatible endpoints**: write `~/.pi/agent/models.json` (pi's official mechanism — works with ollama / vLLM / self-hosted gateways)
+- **Custom OpenAI-compatible endpoints**: write `~/.pi/agent/models.json` (the agent's official mechanism — works with ollama / vLLM / self-hosted gateways)
 - **Any CLI agent**: `[host].runner = "command"` + `[host].agent_command = [...]` (RPC resident mode is agent-only)
 
 ```toml
@@ -338,10 +338,10 @@ Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (3
 **Tiered deployment**: the three tiers are in [🚀 Quick Start](#-quick-start); the full guide (six steps in detail / landing map / migration / verification) is [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
 
 ```bash
-bash deploy.sh   # install uv/Python 3.14 → create venv → full test → env check → pi env + wechat-bridge + cron
+bash deploy.sh   # install uv/Python 3.14 → create venv → full test → env check → agent env + wechat-bridge + cron
 ```
 
-**Auth migration**: credentials live in `~/.chiguo/auth/` (WeChat login state / NetEase cookie / pi keys, mode 700, outside the repo). Moving to a new machine: copy that directory → run `deploy.sh` and everything hooks up automatically. pi keys migrate 100%; WeChat/NetEase web sessions may trigger an automatic re-login (QR scan) on a different device. In practice the migrated WeChat session is usually reusable: if the first **proactive send** fails with `prepare failed` (stale context_token), send one message from WeChat to the bot to refresh the token — no re-scan needed.
+**Auth migration**: credentials live in `~/.chiguo/auth/` (WeChat login state / NetEase cookie / agent keys, mode 700, outside the repo). Moving to a new machine: copy that directory → run `deploy.sh` and everything hooks up automatically. agent keys migrate 100%; WeChat/NetEase web sessions may trigger an automatic re-login (QR scan) on a different device. In practice the migrated WeChat session is usually reusable: if the first **proactive send** fails with `prepare failed` (stale context_token), send one message from WeChat to the bot to refresh the token — no re-scan needed.
 
 **NetEase API service** (optional): managed by systemd (`systemctl status netease-api`); health check `uv run python -m netease.bridge --test`; management via `bash scripts/netease-api.sh status`.
 
@@ -367,7 +367,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 |-----|-------------|
 | [doc/SYSTEM.md](doc/SYSTEM.md) | Full system documentation: architecture, business logic, config reference, CLI, file list (Chinese) |
 | [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | Full deployment guide: tiered paths / prerequisites / landing map / migration / verification |
-| [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) | pi-agent integration guide: model backend, WeChat bridge, deployment (Chinese) |
+| [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) | agent backend integration guide: model backend, WeChat bridge, deployment (Chinese) |
 | [doc/日光雨.md](doc/日光雨.md) | The official sequel script (persona reference) (Chinese) |
 | [AGENTS.md](AGENTS.md) | AI-assistant conventions, including the full test suite (Chinese) |
 

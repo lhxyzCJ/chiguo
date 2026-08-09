@@ -30,7 +30,7 @@
                              │ stdout JSON
                              ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│        pi-agent（消息生成 + 发送，Phase 4 寄主）                     ││
+│        agent 后端（消息生成 + 发送，Phase 4 寄主）                     ││
 │                                                                    │
 │  发送侧: 系统 crontab chiguo-tick.sh(15分钟,零模型门控) 读 daemon 输出 │
 │  → action=send → agent-run.mjs (SUN2.md) 生成消息                     │
@@ -42,7 +42,7 @@
 
 **v1.11 RPC 常驻形态（可选；默认仍为上方 cron 形态）**：`CHIGUO_DAEMON_LOOP=1` 部署时，
 发送侧由 systemd `chiguo-daemon.service`（`--loop 900 --compact`）常驻：`_loop_send` 内聚
-「生成→发送→记账」——经 bridge `POST /agent/prompt {mode:send}` 转发常驻 pi RPC
+「生成→发送→记账」——经 bridge `POST /agent/prompt {mode:send}` 转发常驻 agent RPC
 （`agent-rpc.mjs` 双会话：analysis `chiguo-main` / send `chiguo-send`）→ `POST /send` →
 `record_send_text`；RPC 失败自动回退 spawn（不变式）。cron 仅剩 replan（判脏轮询）。
 与 cron tick **互斥**（install_agent.sh 阶段 6：loop 模式移除 tick 条目防双发）。
@@ -635,7 +635,7 @@ bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / 
 
 ## 五、LLM 内容分析
 
-用户回复时，pi-agent（Phase 4 迁移后）调用 LLM 分析消息内容，产出 `--analysis` 参数实现差异化情绪变化。所有 LLM 调用统一走 `scripts/agent-run.mjs`（发送侧生成 + 回复侧分析）。
+用户回复时，agent 后端（Phase 4 迁移后）调用 LLM 分析消息内容，产出 `--analysis` 参数实现差异化情绪变化。所有 LLM 调用统一走 `scripts/agent-run.mjs`（发送侧生成 + 回复侧分析）。
 
 ### 5.1 分析维度
 
@@ -692,9 +692,9 @@ python3 chiguo_daemon.py --user-msg "任意消息"
 
 ### 5.5 忙碌抑制
 
-用户表达忙碌/结束对话时，pi-agent 通过 `--analysis` 回传 `suppress_hours` 字段，daemon 在抑制期内 `can_send()` 返回 False。
+用户表达忙碌/结束对话时，agent 后端通过 `--analysis` 回传 `suppress_hours` 字段，daemon 在抑制期内 `can_send()` 返回 False。
 
-**原理**：daemon 不做语义理解（保持零 LLM 数学引擎的纯净性）。忙碌检测完全交给 pi-agent（回复侧 bridge askAgent 的分析 JSON）。
+**原理**：daemon 不做语义理解（保持零 LLM 数学引擎的纯净性）。忙碌检测完全交给 agent 后端（回复侧 bridge askAgent 的分析 JSON）。
 
 ```bash
 # LLM 分析消息 → 设置 suppress_hours
@@ -707,7 +707,7 @@ python3 chiguo_daemon.py --user-msg "开会去了回头聊" \
 - `can_send()` 检查 `is_busy_suppressed()` → True 时禁止触发
 - 若已有抑制期 → 取两者中较晚的截止时间
 
-pi 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准：
+agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准：
 - 表达忙碌/有事（"在忙""开会""有事""上课"）→ `suppress_hours: 2-4`
 - 表达结束对话（"晚安""睡了""bye""先这样"）→ `suppress_hours: 8`
 - 表达暂时离开（"回头聊""等一下""等会"）→ `suppress_hours: 1-2`
@@ -733,7 +733,7 @@ pi 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准：
 
 Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 层（Intent × Cue × Vibe）30%。
 
-**A8 生成失败确定性回退（v1.10）**：`chiguo_composer.py` 新增 `__main__` CLI——传入 daemon decision JSON 文件路径（或 `--trigger` 触发类型），从模板池直出可发送文本（cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败时固定文案池 `_FALLBACK_LINES` 兜底），退出码 0=成功（文本已输出）/非零=失败；`scripts/chiguo-tick.sh` 在 pi 生成失败时调用它兜底（成功 → 照常发送 + health 记 success + `--record-send` 打 fallback 标记；composer 也失败才记 fail + exit 1）。见「七、CLI 参考 → chiguo_composer.py」。
+**A8 生成失败确定性回退（v1.10）**：`chiguo_composer.py` 新增 `__main__` CLI——传入 daemon decision JSON 文件路径（或 `--trigger` 触发类型），从模板池直出可发送文本（cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败时固定文案池 `_FALLBACK_LINES` 兜底），退出码 0=成功（文本已输出）/非零=失败；`scripts/chiguo-tick.sh` 在 agent 生成失败时调用它兜底（成功 → 照常发送 + health 记 success + `--record-send` 打 fallback 标记；composer 也失败才记 fail + exit 1）。见「七、CLI 参考 → chiguo_composer.py」。
 
 ---
 
@@ -757,7 +757,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `memory/` 包 | **记忆后端抽象（v1.8 解耦，任意替换）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）/ `mem0_backend.py` Mem0Backend（mem0ai：LLM 事实提取 + ollama 向量 + qdrant 嵌入式）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=Mem0Backend 别名 + CLI） | mem0ai+ollama（必需依赖；无 key/ollama 未启动 → available=False 优雅降级） |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
-| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-agent` 时 pi 缺失降为 warn（deploy.sh `--skip-agent` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_agent.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
+| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、agent 后端、agent 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-agent` 时 agent 缺失降为 warn（deploy.sh `--skip-agent` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_agent.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
 | `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.10"`，规则: MINOR+1（1.9→1.10→1.11,非十进制加法）;daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
@@ -807,9 +807,9 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_isolation.py` | 引擎隔离测试（2 用例：engine 不 import schedule/state 仅桥接） | chiguo_daemon |
 | `tests/test_schedule_plan.py` | 复盘计划测试（2 用例：dirty 矩阵/skip 与校验） | schedule.replan, schedule.plan_store |
 | `tests/test_schedule_cli.py` | 安排 CLI 测试（3 用例：--schedule-change 成功与形状/--schedule-recall 形状） | chiguo_daemon, schedule.api |
-| `scripts/agent-run.mjs` | **agent 调用统一封装**（Phase 4，v1.8 runner 抽象）：runner=agent（默认，pi-agent 二进制）/ runner=command（任意 CLI agent，`<agent_command> --prompt <完整提示词> --mode <mode>` 统一契约，stdout JSON/NDJSON 兼容）；生成/分析/安排多模式，`[host]` 配置 + AGENTRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage；导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand | node |
+| `scripts/agent-run.mjs` | **agent 调用统一封装**（Phase 4，v1.8 runner 抽象）：runner=agent（默认，agent 后端二进制）/ runner=command（任意 CLI agent，`<agent_command> --prompt <完整提示词> --mode <mode>` 统一契约，stdout JSON/NDJSON 兼容）；生成/分析/安排多模式，`[host]` 配置 + AGENTRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage；导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand | node |
 | `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → agent-run（AGENTRUN_SESSION=chiguo-send）→ bridge /send → --record-send；agent 失败 → chiguo_composer.py 模板池兜底（v1.10 A8，成功发送 + fallback 标记，composer 也失败才 exit 1） | bash, node, curl |
-| `scripts/install_agent.sh` | **pi 环境安装器**（Phase 4）：ollama/auth/crontab/冒烟（三模式幂等） | bash |
+| `scripts/install_agent.sh` | **agent 环境安装器**（Phase 4）：ollama/auth/crontab/冒烟（三模式幂等） | bash |
 | `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askAgent 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
 | `wechat-bridge/command-detect.mjs` | **特殊命令检测/执行**（Phase 4）：纪念日/假期规则化（方案 A），daemon JSON → 迟菓风确认 | node |
 | `scripts/agent_health.py` | **agent 假死状态机**：askAgent/tick 成败记账（flock+原子写 `agent_health.json`），transition=down/up 产出告警/恢复文案；bridge（bot.send）与 tick（curl /send）只负责投递 | python, stdlib |
@@ -820,14 +820,14 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_agent_run.mjs` | agent-run 封装测试（31 用例：readToml/NDJSON/<<ANALYSIS>> 提取/runPiBin） | agent-run.mjs |
 | `tests/test_bridge_askagent.mjs` | bridge 回复链路测试（17 用例） | bridge.mjs |
 | `tests/test_bridge_schedule.mjs` | schedule 澄清链路测试（17 用例：detectScheduleIntent/readClarify/writeClarify/exitWord） | command-detect, agent-run.mjs |
-| `tests/test_install_agent.sh` | pi 环境安装器测试（14 用例：假 pi/curl/crontab + 临时 HOME） | install_agent.sh |
+| `tests/test_install_agent.sh` | agent 环境安装器测试（14 用例：假 agent/curl/crontab + 临时 HOME） | install_agent.sh |
 | `tests/test_wechat_bridge.sh` | 微信桥管理脚本测试（假 bridge 桩） | wechat-bridge.sh |
 | `tests/test_netease_api.sh` | 网易云 API 服务脚本测试（假 systemd/curl 桩） | netease-api.sh |
 | `tests/test_service.sh` | 服务管理脚本测试（13 用例：dry-run 只读/unit 模板/autostart 调用链/幂等/杀 temp 残留/temp 互斥接管+pidfile/temp 幂等/ollama 降级 warn/status 三态/stop 双侧/uninstall 保登录态/缺 node→2/缺 .env→1/非 root→2） | service.sh |
-| `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-agent` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、mem0 缺失 info、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
+| `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、agent 缺失 critical/`--skip-agent` 降 warn/agent 桩正常、agent 扩展缺失/Windows 残留 warn/正常、agent 认证缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、mem0 缺失 info、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_agent）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 | `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟用户消息/`s` 刷新状态 | 无 |
-| `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → pi 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
+| `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → agent 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
 | `scripts/wechat-bridge.sh` | 微信桥管理脚本：install/start/stop/status/login（新设备扫码兜底） | bash |
 | `scripts/service.sh` | 服务统一管理（ollama + wechat-bridge）：`autostart`（systemd 开机自启，写 `/etc/systemd/system/chiguo-bridge.service` + `enable --now`）/ `temp`（临时启动，nohup 后台 + pidfile `~/.chiguo/run/bridge-temp.pid`，不注册自启）/ `status` / `stop` / `uninstall`；两模式互斥接管（启动前停对方实例，避免 18790 端口冲突）；全子命令支持 `--dry-run`；测试注入 `CHIGUO_REPO_OVERRIDE/CHIGUO_SYSTEMD_DIR/CHIGUO_SYSTEMCTL/CHIGUO_PID_DIR/CHIGUO_NODE` | bash, systemd |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
@@ -1088,9 +1088,9 @@ idle reason 枚举：
 wechat_recipient = "owner@im.wechat"     # 发送目标占位符：登录后自动注入真实 openid；也可手动配真实值（tick/bridge 管理脚本按 key 名读取）
 
 [host]       # agent 调用配置（Phase 4；scripts/agent-run.mjs 读取；AGENTRUN_* 环境变量可覆盖）
-provider = "opencode-go"                 # pi provider（= auth.json 键名；支持任意 pi provider，见 AGENT_INTEGRATION.md 七）
+provider = "opencode-go"                 # agent provider（= auth.json 键名；支持任意 agent provider，见 AGENT_INTEGRATION.md 七）
 model = "deepseek-v4-flash"
-runner = "agent"                            # v1.8 agent runner 抽象：agent（默认，pi-agent 二进制）/ command（任意 CLI agent）
+runner = "agent"                            # v1.8 agent runner 抽象：agent（默认，agent 后端二进制）/ command（任意 CLI agent）
 agent_command = ["node", "/path/to/agent.mjs"]  # runner=command 必填（数组：命令+固定参数）；agent 模式忽略；AGENTRUN_RUNNER/AGENTRUN_AGENT_COMMAND 覆盖
 thinking_level = "high"                  # off/minimal/low/medium/high/xhigh/max
 session_id = "chiguo-main"               # 回复侧会话（bridge askAgent）
@@ -1492,7 +1492,7 @@ v5 新增完整的对话日志、归档、轮转、告警持久化和索引查�
 | `user_emotion_analysis` | object or null | LLM 分析结果（仅 in 方向有 --analysis 时） |
 
 写入时机：
-- **out 方向**：pi/tick 生成并发送消息后，通过 `--record-send` CLI 写入
+- **out 方向**：agent/tick 生成并发送消息后，通过 `--record-send` CLI 写入
 - **in 方向**：daemon 收到 `--user-msg` 时写入
 
 #### 10.7.3 日志轮转
@@ -1674,10 +1674,10 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 详见 `AGENT_INTEGRATION.md`（当前架构）。关键链路：
 
 v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runner（toml `[host].runner`，默认 `agent`）：
-- `runner = "agent"`（默认）：pi-agent 二进制，provider/model/session 见 `[host]` 与 AGENT_INTEGRATION.md 七
+- `runner = "agent"`（默认）：agent 后端二进制，provider/model/session 见 `[host]` 与 AGENT_INTEGRATION.md 七
 - `runner = "command"`：任意 CLI agent —— agent-run.mjs 按统一契约执行
   `<agent_command> --prompt <完整提示词> --mode <analysis|send|extract|verify|recall|replan>`，
-  stdout 期望 JSON `{ok,text,analysis?,parsed?,raw?}`（兼容 NDJSON）；提示词由 agent-run.mjs 按模式模板构造，语义与 pi 一致
+  stdout 期望 JSON `{ok,text,analysis?,parsed?,raw?}`（兼容 NDJSON）；提示词由 agent-run.mjs 按模式模板构造，语义与 agent 一致
 - bridge 的 RPC 常驻模式仅 `runner=agent` 且 `WECHAT_BRIDGE_AGENT_RPC=1` 时启用；`chiguo_envcheck.py` 的 check_agent
   支持 runner/agent_command 参数按 runner 检查
 
@@ -1686,7 +1686,7 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 
 ### 11.1 特殊命令（纪念日/假期，bridge 规则化）
 
-纪念日/假期指令由 `wechat-bridge/command-detect.mjs` 确定性接管（pi 纯文本调用无工具权限）：
+纪念日/假期指令由 `wechat-bridge/command-detect.mjs` 确定性接管（agent 纯文本调用无工具权限）：
 
 | 哥哥说 | 执行 |
 |--------|------|
@@ -1696,15 +1696,15 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 | 放假了 / 放暑假了 / 我放假了 | `--break on`（**无限期** manual_override，误触发 `--break off` 关闭） |
 | 开学了 / 我开学了 | `--break off` |
 
-防误伤约束：消息 ≤40 字、非问句（末尾 吗/？/? 不拦截）、非 `你/您` 开头、`今天放假了` 等一天性陈述不拦截（交 pi 自然回复）；列表两分支均锚定开头（"今天是纪念日列表" 不命中）。执行后回迟菓风确认文案（daemon JSON 驱动，add/list 输出 shape 经真实 daemon 实测固化）。
+防误伤约束：消息 ≤40 字、非问句（末尾 吗/？/? 不拦截）、非 `你/您` 开头、`今天放假了` 等一天性陈述不拦截（交 agent 自然回复）；列表两分支均锚定开头（"今天是纪念日列表" 不命中）。执行后回迟菓风确认文案（daemon JSON 驱动，add/list 输出 shape 经真实 daemon 实测固化）。
 
 ### 11.2 会话与并发模型
 
-- `chiguo-main`：回复侧会话（bridge 进程内 `TurnQueue` 串行 pi 调用，防同会话交错）
+- `chiguo-main`：回复侧会话（bridge 进程内 `TurnQueue` 串行 agent 调用，防同会话交错）
 - `chiguo-send`：主动发送会话（tick 经 `AGENTRUN_SESSION` 注入；决策 JSON 自足，无需对话连续性）
-- 两条链路**永不共享会话** → 消除跨进程并发 turn 风险（同会话并发在 pi 侧可能交错/上下文竞争）
+- 两条链路**永不共享会话** → 消除跨进程并发 turn 风险（同会话并发在 agent 侧可能交错/上下文竞争）
 
-pi 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
+agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
 
 ---
 
@@ -1784,7 +1784,7 @@ rm <仓库根目录>/chiguo_state.json
 4. **优雅降级** — mem0 不可用（未安装/无 key/ollama 未启动，`memory.mem0_backend.Mem0Backend` 惰性导入 + 60s 节流重试）→ 自动跳过，记忆话题源减少；课表不可用 → 默认开放
 5. **确定性优先** — 课表/节假日用确定性解析，不靠 LLM
 6. **平滑概率** — sigmoid 替代硬阈值，Hawkes 自激过程替代固定间隔，半衰期替代线性增减
-7. **决策/生成分离** — daemon 只输出结构化 JSON，消息生成由 pi-agent 完成（Phase 4）
+7. **决策/生成分离** — daemon 只输出结构化 JSON，消息生成由 agent 后端完成（Phase 4）
 8. **模块正交** — 情绪（快变量）、人格（慢变量）、Bayesian（用户推断）三者正交但互相调制
 
 ---
@@ -1826,8 +1826,8 @@ rm <仓库根目录>/chiguo_state.json
 | `state.py` | v1 状态引擎 | `chiguo_state.py` |
 | `daemon.py` | v1 决策引擎 | `chiguo_daemon.py` |
 | `triggers.py` | v1 触发器 | `chiguo_trigger.py` |
-| `generator.py` | v1 消息生成 | `chiguo_generator.py`（v2+ 曾沿用，2026-08-01 删除——消息生成移交 pi-agent，daemon 只输出 JSON） |
-| `sender.py` | v1 发送器 | `chiguo_sender.py`（v2+ 曾沿用，2026-08-01 删除——发送移交 pi-agent） |
+| `generator.py` | v1 消息生成 | `chiguo_generator.py`（v2+ 曾沿用，2026-08-01 删除——消息生成移交 agent 后端，daemon 只输出 JSON） |
+| `sender.py` | v1 发送器 | `chiguo_sender.py`（v2+ 曾沿用，2026-08-01 删除——发送移交 agent 后端） |
 | `proactive.toml` | v1 配置 | `chiguo_proactive.toml` |
 | `memories.json` | v1 记忆 | `chiguo_memories.json` |
 | `demo_scenario.py` | v1 场景测试 | `chiguo_demo.py` |
@@ -1941,7 +1941,7 @@ cron tick / bridge 停止时 daemon 不执行。恢复后：
 2. **日期计数重置**：`_check_daily_reset()` 按 `current_date != today` 比较，跨多天自动归零
 3. **状态恢复**：`_load()` 优先读主文件→.tmp 恢复→.bak 恢复→删除损坏文件→默认值
 4. **崩溃循环防护**：safety_level 2 时所有触发降级为温和模式
-5. **生成失败确定性回退**：pi 生成失败 → `chiguo_composer.py` 模板池兜底直出文本（成功发送 + fallback 标记），composer 也失败才 fail（v1.10 A8）
+5. **生成失败确定性回退**：agent 生成失败 → `chiguo_composer.py` 模板池兜底直出文本（成功发送 + fallback 标记），composer 也失败才 fail（v1.10 A8）
 
 ### 状态持久化保证
 
@@ -1967,4 +1967,4 @@ cron tick / bridge 停止时 daemon 不执行。恢复后：
 - 音乐话题源依赖网易云登录态与 API：未登录/API 不可用 → 策略层降级为故障话题（日配额 1）或静默跳过；登录失效后最长 `reprobe_minutes`（30）重探间隔内不出网络请求
 - 网易云每日推荐需登录 cookie（MUSIC_U），匿名账号无每日推荐权限；红心歌单/听歌情绪分析 YAGNI 暂缓（需 LLM，违背零 LLM 铁律）
 - 热重载非法 `retry_count` 会抛异常（Minor）—— **已解决（重构后由 `_cfg_int`/`_cfg_float` 兜底）**：非法数值 → 默认，负值 → 0（`NeteaseService` 构造即生效，仅配置错误时触发）
-- 接话茬素材依赖 bridge/pi 传入 `--analysis` 的 topic 字段；未传 topic 时仅剩记忆兜底路径
+- 接话茬素材依赖 bridge/agent 传入 `--analysis` 的 topic 字段；未传 topic 时仅剩记忆兜底路径

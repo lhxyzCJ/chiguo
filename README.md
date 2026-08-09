@@ -57,7 +57,7 @@
 系统为「哥哥」（角色设定中的称呼，也是唯一用户）一人服务。要跑起来你需要准备：
 
 - **一台 Linux 机器**（Debian + systemd 最佳——微信桥自启需要）
-- **一个模型 API key**（消息生成与情绪分析走 agent 后端——默认 pi-agent，支持任意 OpenAI 兼容后端；也可用 `[host].runner = command` 换成任意 CLI agent）
+- **一个模型 API key**（消息生成与情绪分析走 agent 后端——默认 agent 后端，支持任意 OpenAI 兼容后端；也可用 `[host].runner = command` 换成任意 CLI agent）
 - **可选**：一个微信账号（bot 收发）、ollama（记忆嵌入）、课表 Excel、网易云账号
 
 > 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API；登录态与对话数据仅存本机，不进 git。
@@ -84,7 +84,7 @@
 | 🫂 用户情绪感知 | LLM 感知主人情绪（低落/崩溃/开心/生气）→ 安慰触发 + 温柔语气注解（默认关闭可灰度） |
 | 🌊 情绪自然波动 | OU 噪声模拟说不清道不明的情绪起伏（默认关闭可灰度） |
 | 🌱 关系动力学 | 长期互动缓慢改变情绪平衡点（基线漂移，默认关闭可灰度） |
-| 🛡 确定性兜底 | pi 失败 → composer 模板池直出消息（零 LLM）+ 内容级防复读 |
+| 🛡 确定性兜底 | agent 失败 → composer 模板池直出消息（零 LLM）+ 内容级防复读 |
 
 ### v1.11 变更点（情绪引擎四项改进，2026-08）
 
@@ -92,7 +92,7 @@
 2. **A12 用户情绪感知**：analysis 新增 `user_mood`/`user_mood_intensity`，感知主人情绪 → 情绪微调 + `comfort` 安慰触发 + 温柔语气注解（`[emotion].user_mood_*`/`[trigger].comfort_*` 默认关闭）→ §2.3、§5.1
 3. **A13 情绪自然波动**：tick 内 OU 噪声模拟情绪起伏（σ√Δt + 动态上限，独立 RNG，`[emotion].noise_*` 默认关闭）→ §2.3
 4. **A14 情绪基线长期漂移**：长期互动缓慢移动情绪收敛目标（±20 有界 + 30 天淡忘，`[emotion].baseline_*` 默认关闭）→ §2.3
-5. **Agent RPC 常驻**：pi 二进制 `--mode rpc` 常驻（回复链默认启用，失败自动回退 spawn）+ 双会话（chiguo-main/chiguo-send）+ bridge `/agent/prompt` 端点 + `CHIGUO_DAEMON_LOOP=1` 时 daemon `--loop` 常驻发送侧内聚（cron tick 互斥移除，仅剩 replan）→ [AGENT_INTEGRATION.md §架构总览](doc/AGENT_INTEGRATION.md)
+5. **Agent RPC 常驻**：agent 二进制 `--mode rpc` 常驻（回复链默认启用，失败自动回退 spawn）+ 双会话（chiguo-main/chiguo-send）+ bridge `/agent/prompt` 端点 + `CHIGUO_DAEMON_LOOP=1` 时 daemon `--loop` 常驻发送侧内聚（cron tick 互斥移除，仅剩 replan）→ [AGENT_INTEGRATION.md §架构总览](doc/AGENT_INTEGRATION.md)
 
 ### v1.10 变更点（外部对比优化 9 项，2026-08）
 
@@ -103,7 +103,7 @@
 5. **A4 三段激活**：情绪类权重和 < 0.08 沉默、≥ 0.75 必发（must_send 进决策 JSON）→ §2.6
 6. **A6 repeat 阻尼泛化**：全类型触发按历史计数衰减（×0.6^min(n,3)）→ §2.6
 7. **A5 未回复退场状态机**：连续未回复分级禁发（3-4 条禁情绪类 / ≥5 条全禁发，escape_valve 破防豁免）→ §2.6
-8. **A8 生成失败确定性回退**：pi 失败 → composer 模板池兜底直出消息（`_FALLBACK_LINES` 兜底）→ §5.7、七、CLI 参考
+8. **A8 生成失败确定性回退**：agent 失败 → composer 模板池兜底直出消息（`_FALLBACK_LINES` 兜底）→ §5.7、七、CLI 参考
 9. **A9 内容级防复读**：话题候选与最近已发消息 3-gram Jaccard ≥0.6 弃用 → §4.1
 
 ---
@@ -112,11 +112,11 @@
 
 系统由两条消息链路组成，全部本地运行，模型 API 与本地自建的网易云 API 服务是仅有的外部调用。
 
-**主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh`（或 `CHIGUO_DAEMON_LOOP=1` 常驻，见 [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)）→ 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/agent-run.mjs --send-mode`（agent 抽象，默认 pi-agent）让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）；pi 生成失败时由 `chiguo_composer.py` 模板池兜底直出文本（零 LLM，v1.10 A8：成功照常发送 + fallback 标记，composer 也失败才 fail）。
+**主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh`（或 `CHIGUO_DAEMON_LOOP=1` 常驻，见 [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)）→ 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/agent-run.mjs --send-mode`（agent 抽象，默认 agent 后端）让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）；agent 生成失败时由 `chiguo_composer.py` 模板池兜底直出文本（零 LLM，v1.10 A8：成功照常发送 + fallback 标记，composer 也失败才 fail）。
 
 **被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假/开学）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `agent-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `agent-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
 
-**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 默认 mem0，可切自定义类）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 pi 调用成败都记入 `agent_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
+**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 默认 mem0，可切自定义类）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 agent 调用成败都记入 `agent_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 60, "curve": "basis", "fontSize": 18}}}%%
@@ -140,7 +140,7 @@ flowchart LR
         SP -->|普通消息| AT[--attention 注入<br/>T1/T2/T3]
         AT --> AP[agent-run.mjs --analysis-mode<br/>情绪分析 + 回复]
         AP --> RC{recall 信号?}
-        RC -->|有| R2[第二趟 pi<br/>按登记事实回答]
+        RC -->|有| R2[第二趟 agent<br/>按登记事实回答]
         RC -->|无| UA[daemon --analysis<br/>去重升级]
         R2 -->|回复文本| WX
         SC -->|回复文本| WX
@@ -210,7 +210,7 @@ flowchart LR
 | 档位 | 内容 | 命令 |
 |------|------|------|
 | **T0 纯本地** | 决策引擎 CLI 全功能，无模型无微信 | `bash deploy.sh --skip-agent --skip-bridge --skip-netease` |
-| **T1 加模型** | + 消息生成（pi-agent + API key） | `bash deploy.sh --skip-bridge --skip-netease` |
+| **T1 加模型** | + 消息生成（agent 后端 + API key） | `bash deploy.sh --skip-bridge --skip-netease` |
 | **T2 完整** | 微信收发 + 记忆 + 网易云 + crontab 全自动 | `bash deploy.sh` |
 
 低档位可事后补装：`bash scripts/install_agent.sh --yes`（模型）、`bash scripts/wechat-bridge.sh install`（微信）。完整部署指南见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
@@ -243,11 +243,11 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 **缺失影响**：直接跑不起来——它是唯一必需项。
 
-### pi-agent（模型后端）
+### agent 后端（模型后端）
 
-**作用**：agent 后端抽象——所有 LLM 能力都从这里来：主动消息的生成、回复时的情绪分析与回复文本。默认经 pi-agent 调用模型 API，支持任意 provider（OpenAI / DeepSeek / Anthropic / 自建网关…），由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定；`[host].runner = command` 时可替换为任意 CLI agent（`[host].agent_command` 指定，统一契约 `--prompt <完整提示词> --mode <mode>`，stdout 输出 JSON 或 NDJSON）。
+**作用**：agent 后端抽象——所有 LLM 能力都从这里来：主动消息的生成、回复时的情绪分析与回复文本。默认经 agent 后端调用模型 API，支持任意 provider（OpenAI / DeepSeek / Anthropic / 自建网关…），由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定；`[host].runner = command` 时可替换为任意 CLI agent（`[host].agent_command` 指定，统一契约 `--prompt <完整提示词> --mode <mode>`，stdout 输出 JSON 或 NDJSON）。
 
-**安装/配置**：默认 pi 模式：`export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`，或 `pi` 交互式 `/login <provider>`；command 模式只需任意可执行 agent。详见 [🧠 接入模型后端](#-接入模型后端) 与 [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)。
+**安装/配置**：默认 agent 模式：`export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`，或 `pi` 交互式 `/login <provider>`；command 模式只需任意可执行 agent。详见 [🧠 接入模型后端](#-接入模型后端) 与 [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)。
 
 **缺失影响**：消息无法生成——决策引擎照常评估"该不该发"，但没有 LLM 就没有话可说。
 
@@ -299,10 +299,10 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 ## 🧠 接入模型后端
 
-消息生成与情绪分析走 **agent 后端**（默认 pi-agent），provider 由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定（缺省示例 opencode-go，可换任意 pi 支持的接入方式）；`[host].runner = command` 时替换为任意 CLI agent（`[host].agent_command`，契约 `--prompt` + `--mode`，stdout JSON/NDJSON）：
+消息生成与情绪分析走 **agent 后端**（默认 agent 后端），provider 由 `chiguo_proactive.toml` 的 `[host].provider` 单一来源决定（缺省示例 opencode-go，可换任意 agent 支持的接入方式）；`[host].runner = command` 时替换为任意 CLI agent（`[host].agent_command`，契约 `--prompt` + `--mode`，stdout JSON/NDJSON）：
 
 - **内置 provider**：`pi` 交互式 `/login <provider>` 写入 auth.json，或 `export AGENT_API_KEY=... && bash scripts/install_agent.sh --yes`
-- **自定义 OpenAI 兼容端点**：写 `~/.pi/agent/models.json`（pi 官方机制，支持 ollama/vLLM/自建网关）
+- **自定义 OpenAI 兼容端点**：写 `~/.pi/agent/models.json`（agent 官方机制，支持 ollama/vLLM/自建网关）
 - **任意 CLI agent**：`[host].runner = "command"` + `[host].agent_command = [...]`（RPC 常驻仅 agent 模式）
 
 ```toml
@@ -338,10 +338,10 @@ personality/
 **分级部署**：三档路径见 [🚀 快速开始](#-快速开始)；完整指南（六步详解/落点地图/迁移/验证）见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 
 ```bash
-bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境检查 → pi 环境 + wechat-bridge + cron
+bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境检查 → agent 环境 + wechat-bridge + cron
 ```
 
-**认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态/网易云 cookie/pi key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。pi key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。微信登录态跨设备通常可直接复用：若首次**主动发送**报 `prepare failed`（context_token 过期），从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
+**认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态/网易云 cookie/agent key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。agent key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。微信登录态跨设备通常可直接复用：若首次**主动发送**报 `prepare failed`（context_token 过期），从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
 
 **网易云 API 服务**（可选来源）：systemd 托管（`systemctl status netease-api`），健康检查 `uv run python -m netease.bridge --test`；管理脚本 `bash scripts/netease-api.sh status`。
 
@@ -367,7 +367,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 |------|------|
 | [doc/SYSTEM.md](doc/SYSTEM.md) | 完整系统文档（架构、业务逻辑、配置参考、CLI、文件清单） |
 | [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | 完整部署指南（分级路径/前提条件/落点地图/迁移/验证） |
-| [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) | pi-agent 集成指南（模型后端、微信桥、部署） |
+| [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) | agent 后端集成指南（模型后端、微信桥、部署） |
 | [doc/日光雨.md](doc/日光雨.md) | 官方续作《三色绘恋S》剧本全文（人格设定基准） |
 | [AGENTS.md](AGENTS.md) | AI 开发助手约定（含完整测试链） |
 

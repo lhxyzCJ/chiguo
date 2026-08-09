@@ -1,11 +1,11 @@
 # 迟菓系统部署指南
 
-> 面向从零部署；本文是操作手册不是教程。系统文档见 [SYSTEM.md](SYSTEM.md)；pi 集成细节见 [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md)。
+> 面向从零部署；本文是操作手册不是教程。系统文档见 [SYSTEM.md](SYSTEM.md)；agent 集成细节见 [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md)。
 > 仓库公开，任何人都可为自己部署；系统只与一个用户聊天（下文称「哥哥」，人格设定的一部分）。
 
 ## 一、这是什么
 
-一个零 LLM 的数学决策引擎（`chiguo_daemon.py`）决定何时、以什么心情主动发消息，pi-agent（LLM）按人格生成微信消息，wechat-bridge 负责收发；全部计算在本机完成。默认由 crontab 每 15 分钟评估一次，需要时才调模型；也可切换为 `CHIGUO_DAEMON_LOOP=1` 常驻形态（决策引擎 `--loop` 常驻 + agent RPC 常驻，见 §部署形态）。
+一个零 LLM 的数学决策引擎（`chiguo_daemon.py`）决定何时、以什么心情主动发消息，agent 后端（LLM）按人格生成微信消息，wechat-bridge 负责收发；全部计算在本机完成。默认由 crontab 每 15 分钟评估一次，需要时才调模型；也可切换为 `CHIGUO_DAEMON_LOOP=1` 常驻形态（决策引擎 `--loop` 常驻 + agent RPC 常驻，见 §部署形态）。
 
 > 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API，无封号风险；隐私数据（登录态/对话/状态）仅存本机，不进 git。
 
@@ -31,7 +31,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 | 档位 | 内容 | 命令 |
 |------|------|------|
 | T0 纯本地（无模型无微信） | 决策引擎 CLI 全功能 | `bash deploy.sh --skip-agent --skip-bridge --skip-netease` |
-| T1 加模型后端 | +消息生成（pi-agent） | `bash deploy.sh --skip-bridge --skip-netease` |
+| T1 加模型后端 | +消息生成（agent 后端） | `bash deploy.sh --skip-bridge --skip-netease` |
 | T2 完整系统 | 全部（微信/记忆/网易云/crontab） | `bash deploy.sh` |
 
 低档位可事后补装：`bash scripts/install_agent.sh --yes` / `bash scripts/wechat-bridge.sh install`；T0 也完全可玩：见 README 快速开始。
@@ -50,13 +50,13 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 ### 3. 环境检查
 
-`uv run python chiguo_envcheck.py`：exit 0=就绪 / 1=警告可运行 / 2=严重先修复。可 `--skip-agent` 跳过 pi 检查。
+`uv run python chiguo_envcheck.py`：exit 0=就绪 / 1=警告可运行 / 2=严重先修复。可 `--skip-agent` 跳过 agent 检查。
 
 ### 4. 微信桥
 
 `bash scripts/wechat-bridge.sh install` + `bash scripts/service.sh autostart` → systemd `chiguo-bridge.service`（同时注册 ollama 自启）。随后扫码登录：`bash scripts/wechat-bridge.sh login`。可 `--skip-bridge`。
 
-### 5. pi 环境
+### 5. agent 环境
 
 `bash scripts/install_agent.sh`（七阶段：探测 → 记忆扩展 clone+build → settings.json → json5 配置 → ollama 检查 → auth.json 写 key → crontab 注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。**切换 loop 常驻**：`CHIGUO_DAEMON_LOOP=1 bash scripts/install_agent.sh --yes` → 移除 chiguo-tick crontab（防与常驻双发）+ 安装 systemd `chiguo-daemon.service`（`--loop 900 --compact`）。
 
@@ -73,9 +73,9 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 | 仓库根（clone 位置） | 系统本体 | 是 | git clone |
 | `$HOME/wechatbot` | wechatbot SDK（iLink） | 否 | 重装自动 clone |
 | 仓库内 `wechat-bridge/node_modules` + `.env` | bridge 依赖与运行环境 | 否 | install 重建 |
-| `~/.chiguo/auth/`（`wechat/credentials.json`、`netease_cookie.txt`、`pi-auth.json`） | 微信登录态/网易云 cookie/pi key 迁移源 | 否 | 拷贝即用（微信/网易云跨设备可能自动重登一次） |
+| `~/.chiguo/auth/`（`wechat/credentials.json`、`netease_cookie.txt`、`pi-auth.json`） | 微信登录态/网易云 cookie/agent key 迁移源 | 否 | 拷贝即用（微信/网易云跨设备可能自动重登一次） |
 | `data/mem0/`（qdrant 嵌入式向量库 + history.db，gitignore） | mem0 记忆层 | 否 | 拷贝 |
-| `~/.pi/agent/`（`auth.json` / `models.json`） | pi 配置与 key（含 mem0 LLM key 来源） | 否 | 拷贝 |
+| `~/.pi/agent/`（`auth.json` / `models.json`） | agent 配置与 key（含 mem0 LLM key 来源） | 否 | 拷贝 |
 | `/opt/netease-api` | 网易云 API 服务 | 否 | 重装 |
 | systemd：`chiguo-bridge.service` / `netease-api.service` / `chiguo-daemon.service`（loop 形态） | 常驻服务 | - | 部署时注册 |
 | crontab 2 条（loop 形态 1 条） | tick + replan-tick（loop 仅 replan） | - | install_agent.sh 注册 |
@@ -87,7 +87,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 | | 默认（cron） | loop 常驻（`CHIGUO_DAEMON_LOOP=1`） |
 |---|---|---|
 | 决策评估 | crontab `*/15` tick.sh 冷启动 | systemd `chiguo-daemon.service`（`--loop 900` 动态休眠，PID 锁 + 配置热重载） |
-| agent 调用 | tick 冷启动 spawn agent-run；回复链 spawn（`WECHAT_BRIDGE_AGENT_RPC=1` 时回复链 RPC 优先） | 发送侧 `_loop_send` 经 bridge `/agent/prompt` 转发常驻 pi RPC；回复链同样 RPC 优先 |
+| agent 调用 | tick 冷启动 spawn agent-run；回复链 spawn（`WECHAT_BRIDGE_AGENT_RPC=1` 时回复链 RPC 优先） | 发送侧 `_loop_send` 经 bridge `/agent/prompt` 转发常驻 agent RPC；回复链同样 RPC 优先 |
 | 失败回退 | spawn（既有链） | RPC 失败自动回退 spawn（不变式） |
 | 回退 cron | - | `systemctl disable --now chiguo-daemon.service` + `CHIGUO_DAEMON_LOOP=0` 重跑 install_agent.sh |
 
@@ -95,7 +95,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 1. 微信扫码：`bash scripts/wechat-bridge.sh login`（二维码打印在桥日志）
 2. 网易云扫码（可选）：`uv run python -m netease.bridge --login`
-3. pi key：install_agent.sh 阶段 5 已写 `~/.pi/agent/auth.json`；换 key 重跑 `bash scripts/install_agent.sh --yes`
+3. agent key：install_agent.sh 阶段 5 已写 `~/.pi/agent/auth.json`；换 key 重跑 `bash scripts/install_agent.sh --yes`
 4. 检查 toml `[host]` 的 provider/model（`chiguo_proactive.toml`）；`[wechat].wechat_recipient` 为占位符，登录后自动注入真实 openid，无需手改
 
 ## 八、验证清单
@@ -111,14 +111,14 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 ## 九、迁移与备份
 
 - 备份/迁移清单：`~/.chiguo/auth/`、`~/.pi-agent/`、`~/.pi/`、仓库内运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`schedule_overrides.json`、`schedule_plan.json`、`schedule_clarify.json`、`anniversaries.json`、`break_state.json`）、`data/`（课表/手动记忆）
-- 新机器：clone → 拷贝上述 → `bash deploy.sh`（自动接入；pi key 100% 迁移可用；微信/网易云跨设备自动重登兜底）
+- 新机器：clone → 拷贝上述 → `bash deploy.sh`（自动接入；agent key 100% 迁移可用；微信/网易云跨设备自动重登兜底）
 - 微信登录态跨设备实测可复用：迁移后轮询正常，但首次**主动发送**可能被服务端拒（`[send error] prepare failed`，context_token 过期）——从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
 
 ## 十、常见问题
 
 - 微信桥装好了但收不到消息？（看桥日志 `logs/wechat-bridge.log`，路径见 `bash scripts/wechat-bridge.sh start` 输出；扫码态失效 → `bash scripts/wechat-bridge.sh login` 重登）
 - tick 跑过没消息？（看 `logs/cron-tick.log`；决策门控正常——深夜/静默窗口不发）
-- pi 报 No API key / 401？（install_agent.sh 阶段 5 重写 key；`uv run python chiguo_envcheck.py` 复核）
+- agent 报 No API key / 401？（install_agent.sh 阶段 5 重写 key；`uv run python chiguo_envcheck.py` 复核）
 - 网易云服务起不来？（`bash scripts/netease-api.sh status`；可选组件可跳过）
 
 更多故障现象 → 处理见 [AGENT_INTEGRATION.md 九、故障排查](AGENT_INTEGRATION.md#九故障排查)（本处不重复）。

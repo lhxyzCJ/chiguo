@@ -51,7 +51,7 @@ set -e
 case $EC in
     0) say "环境就绪 ✓" ;;
     1) warn "环境存在警告(见上方 JSON,系统可运行但部分降级)" ;;
-    2) fail "环境存在严重问题(见上方 JSON),请先修复再继续(若为 agent 后端缺失: 请先安装 agent 后端（pi-agent）,或 --skip-agent 跳过 agent 后端)" ;;
+    2) fail "环境存在严重问题(见上方 JSON),请先修复再继续(若为 agent 后端缺失: 请先安装 agent 后端,或 --skip-agent 跳过 agent 后端)" ;;
 esac
 
 # ── 5 微信桥 wechat-bridge 安装+自启（可跳过: bash deploy.sh --skip-bridge）──
@@ -91,7 +91,7 @@ if [[ "$*" != *--skip-agent* ]]; then
     case $PC in
         0) say "agent 后端安装完成 ✓" ;;
         1) warn "agent 后端有警告/残留未处理（见上方输出），消息生成可能受影响" ;;
-        2) fail "agent 后端严重问题（pi-agent 未安装?），请先修复后重试（或 --skip-agent 跳过）" ;;
+        2) fail "agent 后端严重问题（未安装?），请先修复后重试（或 --skip-agent 跳过）" ;;
     esac
 fi
 
@@ -112,9 +112,9 @@ fi
 
 # ── 6. 迁移提示 ─────────────────────────────────────────────
 # 6.5 集中认证目录（可迁移：拷贝 ~/.chiguo/auth/ 到新机器即自动接入；
-#      微信/网易云登录态跨设备可能失效 → 自动重登兜底；pi key 100% 可用）
+#      微信/网易云登录态跨设备可能失效 → 自动重登兜底；agent key 100% 可用）
 if [ -d "$HOME/.chiguo/auth" ]; then
-    say "检测到集中认证目录 ~/.chiguo/auth/ → 微信登录态/网易云 cookie/pi key 自动接入"
+    say "检测到集中认证目录 ~/.chiguo/auth/ → 微信登录态/网易云 cookie/agent key 自动接入"
 else
     warn "未检测到 ~/.chiguo/auth/ 集中认证目录 → 登录需手动（bash scripts/wechat-bridge.sh login / uv run python -m netease.bridge --login / install_agent.sh 阶段 5；网易云 API 服务: bash scripts/netease-api.sh install）"
 fi
