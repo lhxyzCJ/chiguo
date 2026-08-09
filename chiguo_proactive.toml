@@ -153,11 +153,13 @@ follow_up_min_weight = 0.03     # 低于此权重不成为候选
 # A3 日程乘数：情绪类候选权重 × base × uniform(0.8,1.2) 抖动（仪式类豁免）。
 #   上课中 ×0.3；空闲（节假日/周末/课间）× free_multiplier；半忙 ×0.6。
 free_multiplier = 1.2           # 空闲时情绪类候选乘数（建议 1.0~1.4）
-# A4 三段激活阈值：activation = 情绪类候选权重之和。
+# A4 三段激活阈值：activation = 情绪类候选权重之和（softmax 归一化后 0~1 量级）。
 #   < min_activation → 情绪类不参与竞争（低能量沉默，仪式类照发）；
 #   >= must_send_activation → 情绪类加权随机必选（仪式类退让），decision 标记 must_send。
+# #79: 0.5→0.75 —— 原 0.5 与 softmax 量级不匹配，孤独≥36 即常态触发 must_send，
+#       follow_up 永远进不了高段；0.75 后中段（孤独≤35/焦虑≤57 空闲常态）不触发。
 min_activation = 0.08           # 低能量沉默阈值
-must_send_activation = 0.5      # 情绪类必发阈值
+must_send_activation = 0.75     # 情绪类必发阈值
 # A6 统一 repeat 阻尼：trigger_history 按 type 计数 n，候选 weight ×= repeat_decay ** min(n, cap)。
 # 对所有 trigger 类型统一生效（替代旧 lonely_high 专属 0.3^n）。
 repeat_decay = 0.6              # 每重复一次同类型触发，权重衰减系数
