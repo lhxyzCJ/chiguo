@@ -12,6 +12,7 @@ update_holidays.py — 节假日数据更新脚本
 """
 
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -131,6 +132,9 @@ def get_holidays_for(year: int) -> dict:
         return dict(ESTIMATED_2027)
     # 通用估算：使用 2027 日期模板。固定日期假期（元旦/劳动节/国庆/清明）准确；
     # 农历假期（春节/端午/中秋）每年偏移约 11 天，需等国务院通知更新 KNOWN_HOLIDAYS。
+    print(f"⚠️ [update_holidays] 警告: {year} 年假期数据为通用估算值"
+          f"(仅 2026/2027 有精确或专用估算),农历假期按每年约 11 天偏移推算,"
+          f"请以国务院通知为准!", file=sys.stderr)
     from datetime import timedelta
     LUNAR = {"春节", "端午节", "中秋节"}
     offset = (year - 2027) * 11  # ~11 days/year lunar drift
@@ -194,9 +198,9 @@ def generate(year: int, force: bool = False, with_solar: bool = False):
     if holidays_path.exists() and not force:
         print(f"❌ {holidays_path} 已存在。用 --force 覆盖。")
     else:
-        holidays_path.write_text(
-            json.dumps(holiday_data, indent=2, ensure_ascii=False) + "\n"
-        )
+        tmp = Path(str(holidays_path) + ".tmp")
+        tmp.write_text(json.dumps(holiday_data, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp, holidays_path)
         tag = "⚠ 估算" if is_estimated else "✅ 精确"
         print(f"{tag} {holidays_path} 已生成 ({year} 年, {len(holidays)} 个假期)")
 
