@@ -348,7 +348,7 @@ def test_recv_dedup_dup_analysis_not_double_applied():
 
 
 def test_recv_dedup_different_text_full_record():
-    """v9: 窗口内不同文本 → 正常完整记录（不误杀真实新消息）"""
+    """v9: 窗口内不同文本 → 正常完整记录（不误杀真实新消息）；A10: 同窗口第 2 次回复加成 ×0.5"""
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
         st = engine.state
@@ -359,7 +359,9 @@ def test_recv_dedup_different_text_full_record():
         st.emotion.energy = 50.0  # 留出 +10 空间（能量有 100 上限）
         e1 = st.emotion.energy
         engine.record_user_message("哥哥在忙吗")  # 不同文本 → 完整效果
-        assert st.emotion.energy - e1 > 9.9, "不同文本应再次完整记录"
+        # A10: 两条消息在同一 30 分钟阻尼窗口内 → 第 2 次同向加成 ×0.5 → energy +5（而非 +10）
+        assert st.emotion.energy - e1 > 4.9, "不同文本应再次完整记录（阻尼后仍 +5）"
+        assert st.emotion.energy - e1 < 5.1, f"damp=0.5 应给 +5, got {st.emotion.energy - e1}"
     print("  OK test_recv_dedup_different_text_full_record")
 
 
