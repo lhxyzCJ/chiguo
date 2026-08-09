@@ -5,10 +5,23 @@
  */
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { rmSync } from 'node:fs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 process.chdir(root)
 process.env.AGENTRUN_TELEMETRY = '0'
+
+// 干净 HOME 注入：agent-rpc 的 PID_DIR 在模块顶层经 homedir() 求值（须在 import 前设置）。
+// 复刻 CI 场景（runner HOME 无 ~/.pi/agent）→ 本地同样覆盖"目录不存在需自建"路径（#108 回归防护）。
+const prevHome = process.env.HOME
+const cleanHome = join(tmpdir(), `chiguo-agent-rpc-test-${process.pid}`)
+process.env.HOME = cleanHome
+process.on('exit', () => {
+  if (prevHome === undefined) delete process.env.HOME
+  else process.env.HOME = prevHome
+  rmSync(cleanHome, { recursive: true, force: true })
+})
 
 const { AgentRpc } = await import('../wechat-bridge/agent-rpc.mjs')
 const FAKE = join(root, 'tests', 'fake-agent-rpc.mjs')

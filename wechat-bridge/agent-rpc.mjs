@@ -18,7 +18,7 @@
  * 进程崩溃 → 下一轮 prompt 自动重启;bridge 退出 → 子进程随 stdin EOF 退出。
  */
 import { spawn } from 'node:child_process'
-import { writeFileSync, readFileSync, existsSync, unlinkSync, readdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import {
@@ -34,6 +34,9 @@ export class AgentRpc {
     this.bin = bin
     this.args = args
     this.sessions = new Map()  // key `${mode}|${sessionId}` → {proc, buffer, pending, dead}
+    // 干净 HOME（CI/新机器）无 ~/.pi/agent → 先建目录再写 pidfile，否则 writeFileSync ENOENT
+    // mode 0o700：防宽松 umask 下他人可写目录 + _killStale 按 pid 杀进程的本地 DoS（security review）
+    mkdirSync(PID_DIR, { recursive: true, mode: 0o700 })
     this._killStale()
   }
 
