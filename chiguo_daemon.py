@@ -40,7 +40,7 @@ from chiguo_topics import TopicPicker
 from netease.service import NeteaseService
 from chiguo_composer import MessageComposer
 from chiguo_version import VERSION
-from chiguo_math import in_quiet_window, longing_accumulate
+from chiguo_math import in_quiet_window, longing_accumulate, mood_fresh, user_mood_note
 from chiguo_circadian import bucket_for
 
 CST = timezone(timedelta(hours=8))
@@ -329,7 +329,7 @@ class DecisionEngine:
                     self.state.cooldown.trigger_history[-history_max:]
 
             # 4. 构建上下文（给 pi-agent 生成消息用）
-            context = self._build_context(trigger, now)
+            context = self._build_context(trigger, now, user_state)
             # v10 (#73 A4): trigger 层高段激活的 must_send 标记写入 context（情绪类必发）
             if trigger.data.get("must_send"):
                 context["must_send"] = True
@@ -668,8 +668,9 @@ class DecisionEngine:
 
         return None
 
-    def _build_context(self, trigger, now: datetime) -> dict:
-        """构建给 pi-agent 生成消息的上下文。v4: 使用 MessageComposer + 人格注入。"""
+    def _build_context(self, trigger, now: datetime, user_state: dict | None = None) -> dict:
+        """构建给 pi-agent 生成消息的上下文。v4: 使用 MessageComposer + 人格注入。
+        v1.11 ①: user_state 可选传入（Bayesian 推断），用于 needs_care 语气注解。"""
         emo = self.state.emotion
         silent_h = self.state.cooldown.silent_hours(now)
         # v14: 人格目录以 [host].personality_dir 为准（随仓库部署）
@@ -739,7 +740,17 @@ class DecisionEngine:
                 "不要再次崩溃。可以先聊聊别的。"
             )
 
-        guidance = layer_guidance.get(emo.dominant_layer, "") + energy_note + rate_urgency_note + personality_note + safety_note
+        # ── v1.11 ①: 用户情绪感知语气注解（mood_note；无感知 → 空串）──
+        # 对标 ESConv：感知到低落 → 语气更温柔克制；仅叠加注解，不改变人格铁律。
+        mood_note = ""
+        mood = self.state.cooldown.user_mood
+        trg_cfg = self.config.get("trigger", {})
+        if mood and mood_fresh(mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0)):
+            mood_note = user_mood_note(mood["mood"], mood["intensity"])
+            if user_state and user_state.get("most_likely") == "needs_care":
+                mood_note += "\n（哥哥可能需要关心（Bayesian 推断））"
+
+        guidance = layer_guidance.get(emo.dominant_layer, "") + energy_note + rate_urgency_note + personality_note + safety_note + mood_note
 
         # ── v7: 接话茬提示 ──
         if trigger.type == "follow_up":

@@ -98,6 +98,71 @@ def apply_interaction_matrix(emotion: dict, cfg: dict) -> dict:
     return out
 
 
+# ── ① 用户情绪感知（user_mood） ────────────────────────────
+# 对标 thu-coai/Emotional-Support-Conversation（ACL 2021）：共情先感知
+# 求助者情绪类型+强度。LLM 只报 mood/intensity，幅度由系数表决定（决策零 LLM）。
+
+# 基础方向表（× intensity × cfg 系数；系数默认 0 = 关闭灰度）
+MOOD_DELTA = {
+    "low":        {"anxiety": +2.0, "affection": +0.5},   # 心疼 → 不安略升、想靠近
+    "distressed": {"anxiety": +3.0, "affection": +1.0},   # 更强烈
+    "happy":      {"energy": +2.0,  "affection": +1.0},   # 被感染 → 元气回升
+    "angry":      {"anxiety": +2.0, "affection": -1.0},   # 不安升、好感微降（克制）
+}
+
+MOOD_NOTE = {
+    "low":        "（哥哥似乎心情低落（强度 {i:.1f}），语气比平时更温柔克制，少一点嘴硬，主动关心一句就好，不过度怜悯、不质问）",
+    "distressed": "（哥哥情绪很低落（强度 {i:.1f}），放下嘴硬，认真陪他说话，语气温柔坚定，给安全感，不卖惨不质问）",
+    "happy":      "（哥哥今天心情很好（强度 {i:.1f}），气氛轻松，可以更活泼一点接梗）",
+    "angry":      "（哥哥在生气（强度 {i:.1f}），语气放软、不顶嘴、给台阶下，先顺毛再说话）",
+}
+
+
+def user_mood_impact(mood: str, intensity: float, cfg: dict) -> dict:
+    """
+    user_mood → 情绪 delta。纯函数，可精确断言。
+    delta = MOOD_DELTA[mood][dim] × intensity × cfg["user_mood_<mood>_<dim>_factor"]
+    - calm / intensity<=0 / 系数 0 → {}（零效果）
+    - 未知 mood（调用方已归一化，防御性返回 {}）
+    """
+    if mood not in MOOD_DELTA or intensity <= 0:
+        return {}
+    out = {}
+    for dim, base in MOOD_DELTA[mood].items():
+        try:
+            k = float(cfg.get(f"user_mood_{mood}_{dim}_factor", 0.0))
+        except (TypeError, ValueError):
+            k = 0.0
+        if k != 0.0:
+            out[dim] = base * intensity * k
+    return out
+
+
+def user_mood_note(kind: str, intensity: float) -> str:
+    """user_mood → 语气注解（注入 _build_context guidance）。calm/未知 → 空串。"""
+    tpl = MOOD_NOTE.get(kind)
+    if not tpl or intensity <= 0:
+        return ""
+    return tpl.format(i=intensity)
+
+
+def mood_fresh(mood: dict | None, now, ttl_minutes: float = 360.0) -> bool:
+    """
+    user_mood 感知是否仍在有效窗口内（TTL 默认 6h）。
+    mood 为 None / 缺 at / 坏时间戳 → False（不感知）。
+    """
+    if not isinstance(mood, dict) or not mood.get("at"):
+        return False
+    try:
+        at = _dt.fromisoformat(mood["at"])
+    except (ValueError, TypeError):
+        return False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=_CST)
+    age_minutes = (now - at).total_seconds() / 60.0
+    return 0 <= age_minutes <= ttl_minutes
+
+
 # ── ③ 回复影响惯性阻尼 ──────────────────────────────────
 # 单条 analysis delta 幅度压缩（默认 inertia=0 → 恒等，可灰度）。
 # 对标 lacuna_core InertiaFilter：负向权重更高（inertia_neg 独立键）。

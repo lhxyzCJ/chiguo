@@ -26,6 +26,7 @@ from chiguo_math import (
     dynamic_lambda, hawkes_intensity, longing_decay,
     in_quiet_window,
     apply_interaction_matrix, drop_damp, impact_inertia,
+    user_mood_impact, MOOD_DELTA,
 )
 from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
@@ -101,6 +102,7 @@ class CooldownState:
     last_longing_break_at: str | None = None  # v6: 上次逃生阀破防时间 ISO（冷却用）
     recv_dedup: dict | None = None  # v9: 最近一次用户消息去重标记 {"text_sha","at","analysis"}（bridge 确定性记录 + standing order 升级共用）
     drop_events: list[dict] = field(default_factory=list)  # A10: 回复饱和阻尼事件 [{time: iso, direction: str}]（30 分钟窗口滚动）
+    user_mood: dict | None = None  # v1.11 ①: 最近一次用户情绪感知 {"mood","intensity","at"}（TTL 由读取端 mood_fresh 判定，旧状态缺省自动补 None）
 
     def __post_init__(self):
         # v6: 睡眠窗口来源配置（非 dataclass 字段，不序列化）。ChiguoState 负责注入。
@@ -1208,9 +1210,20 @@ class ChiguoState:
     def _apply_analysis_impact(self, analysis: dict, now: datetime | None = None):
         """v9: LLM 分析微调独立应用（情绪影响 + 接话茬话题摄入）。
         供 on_user_message（首次记录）与 recv_dedup 升级路径（bridge 已记录后
-        standing order 补分析）共用——只叠加分析维度，不重复基础回复效果。"""
+        standing order 补分析）共用——只叠加分析维度，不重复基础回复效果。
+        v1.11 ①: 额外消费 user_mood（用户情绪感知）——写入 cooldown.user_mood
+        并叠加情绪 delta（系数默认 0 关闭）。"""
         self._anxiety_before_analysis = self.emotion.anxiety
         self._apply_emotion_impact(analysis, now)
+
+        # ── v1.11 ①: 用户情绪感知 ──
+        self._consume_user_mood(analysis, now or datetime.now(CST))
+        cfg = self.config.get("emotion", {})
+        for dim, d in user_mood_impact(
+                (self.cooldown.user_mood or {}).get("mood", "calm"),
+                (self.cooldown.user_mood or {}).get("intensity", 0.0),
+                cfg).items():
+            setattr(self.emotion, dim, getattr(self.emotion, dim) + d)
 
         # ── v7: 接话茬话题摄入 ──
         topic = analysis.get("topic")
@@ -1218,6 +1231,26 @@ class ChiguoState:
             self.resolve_pending_topic(topic, now)
         elif topic:
             self.add_pending_topic(topic, now)
+
+    def _consume_user_mood(self, analysis: dict, now: datetime):
+        """v1.11 ①: 解析 analysis 的 user_mood/user_mood_intensity → cooldown.user_mood。
+        5 层容错降级：缺键/非法枚举/非数值强度 → 按 calm 清空（旧 analysis 天然兼容）。"""
+        try:
+            mood = str(analysis.get("user_mood", "calm")).strip().lower()
+        except (TypeError, ValueError):
+            mood = "calm"
+        if mood not in MOOD_DELTA:
+            mood = "calm"
+        try:
+            intensity = float(analysis.get("user_mood_intensity", 0.0))
+        except (TypeError, ValueError):
+            intensity = 0.0
+        intensity = max(0.0, min(1.0, intensity))
+        if mood == "calm" or intensity <= 0:
+            self.cooldown.user_mood = None  # 平静/缺失 → 清空，等价"无感知"
+        else:
+            self.cooldown.user_mood = {
+                "mood": mood, "intensity": intensity, "at": now.isoformat()}
 
     def on_user_message(self, now: datetime, msg_length: int = 10,
                          analysis: dict | None = None):

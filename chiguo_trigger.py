@@ -9,7 +9,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 
 from chiguo_state import CST, ChiguoState
-from chiguo_math import weighted_trigger_choice, in_quiet_window
+from chiguo_math import weighted_trigger_choice, in_quiet_window, mood_fresh
 
 
 @dataclass
@@ -23,7 +23,7 @@ class Trigger:
 # A5 未回复退场（backing_off）时该集合禁发。仪式类（special/morning/night/meal/memory/follow_up）豁免。
 EMOTION_TRIGGERS = frozenset({
     "lonely_low", "lonely_mid", "lonely_high",
-    "anxiety", "playful", "reflect", "longing",
+    "anxiety", "playful", "reflect", "longing", "comfort",
 })
 
 
@@ -232,12 +232,49 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     anx_baseline = trg_cfg.get("anxiety_baseline", 0.5)
     anx_min_weight = trg_cfg.get("anxiety_min_weight", 0.3)
     raw_anx = state.trigger_weight("anxiety")
+
+    # ── v1.11 ①: 用户情绪感知（user_mood） ──
+    # 新鲜窗口内（默认 6h）低落/崩溃 → comfort 安慰触发 + anxiety 权重加成。
+    # 全部参数默认 0/关闭 → 行为恒等（灰度先例）。
+    mood = state.cooldown.user_mood
+    mood_fresh_flag = bool(mood and mood_fresh(
+        mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0)))
+    if mood_fresh_flag:
+        # 低落时 anxiety 触发小幅加成（user_mood_anxiety_bonus 默认 0）
+        anx_bonus = trg_cfg.get("user_mood_anxiety_bonus", 0.0)
+        try:
+            anx_bonus = max(0.0, float(anx_bonus))
+        except (TypeError, ValueError):
+            anx_bonus = 0.0
+        if anx_bonus > 0:
+            raw_anx = raw_anx * (1.0 + anx_bonus * mood["intensity"])
+
     w_anx = raw_anx / (raw_anx + anx_baseline) if raw_anx + anx_baseline > 0 else 0.0
     if w_anx > anx_min_weight:
         weighted_candidates.append({
             "trigger": Trigger(type="anxiety", intensity="medium"),
             "weight": w_anx,
         })
+
+    # comfort 安慰触发（对标 ESConv：感知到低落 → 更主动安慰）
+    comfort_base = trg_cfg.get("comfort_weight_base", 0.0)
+    try:
+        comfort_base = float(comfort_base)
+    except (TypeError, ValueError):
+        comfort_base = 0.0
+    if mood_fresh_flag and comfort_base > 0 and mood["mood"] in ("low", "distressed"):
+        # 强度 × 好感调制（高好感更想哄）；softmax 归一化防恒候选（同 anxiety 模式）
+        raw_cf = comfort_base * mood["intensity"] * (1 + (emo.affection - 50) / 100)
+        cf_baseline = trg_cfg.get("comfort_baseline", 0.5)
+        cf_min = trg_cfg.get("comfort_min_weight", 0.03)
+        w_cf = raw_cf / (raw_cf + cf_baseline) if raw_cf + cf_baseline > 0 else 0.0
+        if w_cf > cf_min:
+            weighted_candidates.append({
+                "trigger": Trigger("comfort", "soft",
+                                   data={"user_mood": mood["mood"],
+                                         "intensity": mood["intensity"]}),
+                "weight": w_cf,
+            })
 
     # 好感度调制：高好感 → 甜蜜触发权重上升
     aff_factor = 1 + (emo.affection - 50) / 100  # 0.5~1.5
