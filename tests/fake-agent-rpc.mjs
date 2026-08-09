@@ -17,7 +17,11 @@ rl.on('line', (line) => {
     // preflight 即回（与真实 pi 一致：response 在 preflight 即回，回合完成以 agent_settled 为准）
     process.stdout.write(JSON.stringify({ type: 'response', id: cmd.id, command: 'prompt', success: true }) + '\n')
     setTimeout(() => {
-      const text = '<<ANALYSIS>>{"warmth":0.5,"effort":0.6,"attention":0.7}<<END>> 测试回复'
+      // 带模板 marker 的回复（fake 通过 cmd.message 判断收到了哪个模板，供测试断言分派）
+      const isSend = cmd.message.includes('主动消息决策结果')
+      const text = isSend
+        ? '<<ANALYSIS>>{"warmth":0.5,"effort":0.6,"attention":0.7}<<END>> 测试回复(send模板)'
+        : '<<ANALYSIS>>{"warmth":0.5,"effort":0.6,"attention":0.7}<<END>> 测试回复(analysis模板)'
       process.stdout.write(JSON.stringify({
         type: 'message_end',
         message: { content: [{ type: 'text', text }], usage: { prompt_tokens: 10, completion_tokens: 5 } },

@@ -225,6 +225,11 @@ export function buildBaseAgentArgs({ analysisMode = false, sessionId = SESSION_I
     '--thinking', analysisMode ? REPLY_THINKING : THINKING]
 }
 
+/** send-mode 主动消息模板（print 与 RPC 共用）。 */
+export function buildSendPrompt(decisionJson) {
+  return `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${decisionJson}`
+}
+
 /** analysis-mode 用户消息模板(print 与 RPC 共用)。 */
 export function buildAnalysisPrompt(message) {
   return `你是迟菓。以下是当前收到的一条微信消息。先输出 JSON 情绪分析：{"warmth":-1~1,"effort":0~1,"attention":0~1,"topic":"可选","suppress_hours":"可选","recall":"可选(涉及登记事实/过去日期时给检索词,否则省略)","user_mood":"可选(calm|low|distressed|happy|angry)","user_mood_intensity":"可选(0~1)"}，用 <<ANALYSIS>>{...}<<END>> 包裹。然后以迟菓人格自然回复哥哥。\n\n消息：${message}`
@@ -235,7 +240,7 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
   if (analysisMode) {
     sysPrompt = buildAnalysisPrompt(prompt)
   } else if (sendMode) {
-    sysPrompt = `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${prompt}`
+    sysPrompt = buildSendPrompt(prompt)
   }
   const mode = analysisMode ? 'analysis' : sendMode ? 'send' : 'other'
   const custom = runnerCommand(mode, sysPrompt)
