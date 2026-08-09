@@ -101,7 +101,7 @@ cp "$REPO_ROOT/scripts/agent_health.py" "$REPO/scripts/agent_health.py"
 export FAKE_AGENT_MODE_FILE="$TMP/pi_mode"
 echo fail > "$FAKE_AGENT_MODE_FILE"
 
-STATE="$REPO/pi_health.json"  # agent_health.py record 默认状态文件（内容重命名前仍为 pi_health.json，跟随默认）
+STATE="$REPO/agent_health.json"  # agent_health.py record 默认状态文件（#99：agent_health.json）
 post_count() { [ -f "$POST_LOG" ] && wc -l < "$POST_LOG" || echo 0; }
 state_field() { python3 -c "import json; print(json.load(open('$STATE')).get('$1',''))" 2>/dev/null || echo ''; }
 post_texts() { python3 -c "

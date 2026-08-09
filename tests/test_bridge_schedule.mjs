@@ -8,14 +8,14 @@ import { mkdtempSync, writeFileSync, readFileSync, cpSync, rmSync, existsSync } 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { detectScheduleIntent } from '../wechat-bridge/command-detect.mjs'
-import { extractBlock, resolveRepo } from '../scripts/pi-run.mjs'
+import { extractBlock, resolveRepo } from '../scripts/agent-run.mjs'
 
-// 隔离: handleMessage 成功路径会记 pi 假死账 — 复制真 pi_health.py 到 temp,绝不碰真实 pi_health.json。
+// 隔离: handleMessage 成功路径会记 agent 假死账 — 复制真 agent_health.py 到 temp,绝不碰真实 agent_health.json。
 // 注意: env 必须在动态 import bridge.mjs 之前设置(模块级 const 读取),故 bridge 符号全部走动态导入。
 const tmp = mkdtempSync(join(tmpdir(), 'bridge-schedule-'))
-const PH_SCRIPT = join(tmp, 'pi_health.py')
-cpSync(new URL('../scripts/pi_health.py', import.meta.url).pathname, PH_SCRIPT)
-process.env.WECHAT_BRIDGE_PI_HEALTH = PH_SCRIPT
+const PH_SCRIPT = join(tmp, 'agent_health.py')
+cpSync(new URL('../scripts/agent_health.py', import.meta.url).pathname, PH_SCRIPT)
+process.env.WECHAT_BRIDGE_AGENT_HEALTH = PH_SCRIPT
 const { scheduleClarifyPath, readClarify, writeClarify, clearClarify, exitWordMatch, handleMessage } =
   await import('../wechat-bridge/bridge.mjs')
 
@@ -44,14 +44,14 @@ function depsWith(script, repoRoot = null) {
   const call = (v) => (typeof v === 'function' ? v : async () => v)
   return {
     repoRoot,
-    extractPi: async (original) => script.extract
+    extractAgent: async (original) => script.extract
       ? await call(script.extract)(original)
       : { ok: false, not_command: true },
-    verifyPi: async (item, original) => script.verify
+    verifyAgent: async (item, original) => script.verify
       ? await call(script.verify)(item, original)
       : { ok: true },
     runDaemon: async (item) => script.daemon ? script.daemon(item) : { ok: true, text: '好,记下了。' },
-    askPi: async () => ({ text: '聊' }),
+    askAgent: async () => ({ text: '聊' }),
     now: () => script.now ? script.now() : new Date(),
   }
 }
@@ -258,7 +258,7 @@ t('鉴权:非 OWNER_ID 不进命令/回忆/追问路径,仅 askPi 回复,不 rec
   const bot = { reply: async (m, t) => replies.push(t), sendTyping: async () => {} }
   const r = await handleMessage('停课', { userId: 'stranger@im.wechat' }, bot, queue,
     { ...deps, recordUserMsg: async () => calls.push('record') })
-  assert.strictEqual(r, 'pi', '非本人走聊天链')
+  assert.strictEqual(r, 'agent', '非本人走聊天链')
   assert.ok(!calls.includes('record'), '不 recordUserMsg/状态零写入')
   assert.ok(!existsSync(scheduleClarifyPath(repo)), '不写澄清记录')
   assert.ok(replies.includes('聊'), '仅 askPi 回复(聊天链)')

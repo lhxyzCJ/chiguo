@@ -3,7 +3,7 @@
 // 隔离: temp dir 内 fake agent-run（响应文件切换成败）+ 真 agent_health.py 拷贝（状态落 tmp）
 // + stub bot（记录 reply/send）；绝不碰真实 agent_health.json。
 import assert from 'node:assert'
-import { writeFileSync, mkdtempSync, readFileSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, readFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -20,7 +20,8 @@ import { readFileSync } from 'node:fs'
 process.stdout.write(readFileSync(process.env.FAKE_AGENT_RESPONSE, 'utf8'))
 `)
 writeFileSync(FAKE_DAEMON, 'import sys\nsys.exit(0)\n')
-// #99 同步：agent_health.py 默认状态文件名常量仍为 pi_health.json → 副本内替换，与实际写入路径（PH_STATE）一致
+// #99 同步：agent_health.py 默认状态文件名常量已为 agent_health.json（C 路），直接拷贝
+mkdirSync(PH_DIR, { recursive: true })
 const PH_SRC = readFileSync(new URL('../scripts/agent_health.py', import.meta.url).pathname, 'utf8')
 writeFileSync(PH_SCRIPT, PH_SRC.replaceAll('pi_health.json', 'agent_health.json'))
 const PH_REAL_CONTENT = readFileSync(PH_SCRIPT, 'utf8')
