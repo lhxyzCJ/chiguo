@@ -79,6 +79,21 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 | 🗓 Schedule center | Unified management of schedule / holidays / breaks / exceptions / exam weeks / anniversaries / reminders; exam weeks auto-lower send rate; register an arrangement with one WeChat message |
 | 📊 Structured monitoring | stats / alerts / health |
 | 💗 Backend liveness detection | Real-traffic accounting + WeChat alert/recovery notices (zero extra calls) |
+| ⚖️ Elastic emotion engine | Elastic decay (rebounds faster the farther from equilibrium) + emotion interaction matrix + reply saturation damping |
+| 🚦 Smart trigger layer | Three-stage activation + schedule multiplier + repeat damping + unreplied backoff state machine |
+| 🛡 Deterministic fallback | pi failure → composer template fallback (zero LLM) + content-level anti-repetition |
+
+### v2.0 Changelog (9 external-comparison optimizations, 2026-08)
+
+1. **Elastic decay**: recovery half-life adapts to deviation (`effective_hl = half_life / (1 + |gap| / baseline)`, `[emotion].elastic_baseline`) → [SYSTEM.md §2.3](doc/SYSTEM.md)
+2. **Emotion interaction matrix**: cross-dimension coupling after each tick (affection→anxiety, energy→loneliness, anxiety→energy; `[emotion].interaction_*` off by default) → §2.3
+3. **Reply saturation damping**: more same-direction replies in a 30-minute window → weaker mood boost (×0.5^min(n,3)) → §2.4
+4. **Schedule multiplier + jitter**: emotional trigger weights scaled by in-class 0.3 / free 1.2 / half-busy 0.6 × uniform(0.8,1.2); ritual triggers exempt → §2.6
+5. **Three-stage activation**: emotional weight sum < 0.08 → silent, ≥ 0.5 → must-send (must_send lands in the decision JSON) → §2.6
+6. **Generalized repeat damping**: all trigger types decay by history count (×0.6^min(n,3)) → §2.6
+7. **Unreplied backoff state machine**: graded suppression after consecutive unreplied messages (3-4 → emotional blocked, ≥5 → all blocked; escape valve exempt) → §2.6
+8. **Deterministic generation fallback**: pi failure → composer template fallback outputs the message (`_FALLBACK_LINES` last resort) → §5.7 & CLI reference
+9. **Content-level anti-repetition**: topic candidates with 3-gram Jaccard ≥ 0.6 vs recent sends are dropped → §4.1
 
 ---
 
@@ -86,7 +101,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 
 The system is two message pipelines, all running locally — the model API and the self-hosted NetEase API service are the only external calls.
 
-**Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/pi-run.mjs --send-mode` (agent abstraction, pi by default) turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`).
+**Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/pi-run.mjs --send-mode` (agent abstraction, pi by default) turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`); if pi generation fails, `chiguo_composer.py` falls back to the template pool and outputs the text directly (zero LLM, v2.0 A8: still sends with a fallback flag; only if composer also fails does the tick fail).
 
 **Passive replying**: a WeChat message enters the bridge → an **OWNER_ID gate** (non-owners only get a plain chat reply — no accounting, no command/recall paths) → `chiguo_daemon.py --user-msg` records it **deterministically** (real-time emotion response, recv_dedup against double-counting) → `command-detect.mjs` rules check first: **special commands** (anniversaries / holidays / break on-off) are executed and answered directly, **no LLM**; **schedule write-commands** (cancel / move / add / exam week / reminder / remove) go through `pi-run.mjs --schedule-extract` extraction → `--schedule-verify` verification (dual agents, separate sessions; if info is missing they return a question into the clarify loop, records valid 6h) → daemon `--schedule-change` atomic write (confirmation text carries weekday + date); ordinary messages first fetch a lightweight `--attention` injection (today's important days / active range facts / this week's schedule), then run `pi-run.mjs --analysis-mode`, producing "mood analysis JSON + reply text" in one call — if the analysis carries a recall signal (registered facts / past dates), the bridge queries the facts and answers via a second pi pass → the analysis is merged back into the daemon via `--analysis` (dedup upgrade) → the reply is sent back to WeChat. The reply side runs as a resident serial process (TurnQueue, session `chiguo-main`), zero session sharing with proactive sending.
 
