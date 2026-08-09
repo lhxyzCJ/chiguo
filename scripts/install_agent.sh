@@ -153,7 +153,41 @@ PYJ
 fi
 
 # ── 阶段 6: crontab 注册 chiguo-tick ───────────────────────
+# v1.11 C: CHIGUO_DAEMON_LOOP=1 → 决策引擎改 systemd 常驻（--loop，发送侧内聚），
+# 跳过 tick 条目（cron tick 与 loop 并存会双发消息，必须互斥）。
+if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
+  say "CHIGUO_DAEMON_LOOP=1 → 跳过 chiguo-tick crontab（决策引擎改由 chiguo-daemon.service 常驻）"
+  CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
+  if printf '%s\n' "$CURRENT_CRON" | grep -q 'chiguo-tick'; then
+    if [ "$DRY" = 1 ]; then
+      PENDING=1
+      echo "  [dry-run] 将移除旧 chiguo-tick crontab 条目（防与 loop 常驻双发）"
+    elif confirm "移除旧 chiguo-tick crontab 条目（已切换 loop 常驻）"; then
+      if printf '%s\n' "$CURRENT_CRON" | grep -v 'chiguo-tick' | crontab -; then
+        say "crontab 旧 chiguo-tick 条目已移除"
+      else
+        PENDING=1; warn "crontab 移除失败（请手工执行: crontab -l | grep -v chiguo-tick | crontab -）"
+      fi
+    fi
+  else
+    say "crontab 无 chiguo-tick 条目（loop 模式预期）"
+  fi
+else
 say "阶段 6: crontab 注册 chiguo-tick..."
+# loop→cron 反向切换：cron 模式检测已装的 chiguo-daemon.service 并停用（防双发）
+if [ -f "${CHIGUO_SYSTEMD_DIR:-/etc/systemd/system}/chiguo-daemon.service" ]; then
+  SYSTEMCTL="${CHIGUO_SYSTEMCTL:-systemctl}"
+  if [ "$DRY" = 1 ]; then
+    PENDING=1
+    echo "  [dry-run] 检测到 chiguo-daemon.service（loop 常驻）→ 将停用以切回 cron 形态"
+  elif confirm "停用 chiguo-daemon.service（切回 cron 形态，防双发）"; then
+    if "$SYSTEMCTL" disable --now chiguo-daemon.service 2>/dev/null; then
+      say "chiguo-daemon.service 已停用（cron 形态）"
+    else
+      PENDING=1; warn "停用失败（请手工执行: systemctl disable --now chiguo-daemon.service）"
+    fi
+  fi
+fi
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
 if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$CRON_LINE"; then
   say "crontab 已注册 chiguo-tick（$CRON_LINE）"
@@ -182,6 +216,7 @@ else
       PENDING=1; warn "crontab 注册失败（请手工执行: (crontab -l; echo '$CRON_LINE') | crontab -）"
     fi
   fi
+fi
 fi
 
 # ── 阶段 6b: crontab 注册 replan-tick（幂等,与 tick 条目同款逻辑）──
@@ -212,6 +247,39 @@ else
       say "crontab 已注册 replan-tick"
     else
       PENDING=1; warn "crontab replan 注册失败（请手工执行: (crontab -l; echo '$REPLAN_LINE') | crontab -）"
+    fi
+  fi
+fi
+
+# ── 阶段 6c: systemd chiguo-daemon.service（CHIGUO_DAEMON_LOOP=1 时安装）──
+if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
+  SYSTEMD_DIR="${CHIGUO_SYSTEMD_DIR:-/etc/systemd/system}"
+  SYSTEMCTL="${CHIGUO_SYSTEMCTL:-systemctl}"
+  DAEMON_UNIT="$SYSTEMD_DIR/chiguo-daemon.service"
+  PY="$CHIGUO_REPO/.venv/bin/python"  # .venv 由 deploy.sh 保证；缺失时 systemd 启动即失败，envcheck 会指出
+  [ -x "$PY" ] || warn "$PY 不存在（请先 bash deploy.sh 完成基础安装）"
+  say "阶段 6c: 安装 systemd chiguo-daemon.service（--loop 900 --compact 常驻）..."
+  if [ "$DRY" = 1 ]; then
+    PENDING=1
+    echo "  [dry-run] 将写入 $DAEMON_UNIT（ExecStart=$PY $CHIGUO_REPO/chiguo_daemon.py --loop 900 --compact）"
+  else
+    TMP_UNIT="$(mktemp "${TMPDIR:-/tmp}/chiguo-daemon-XXXXXX.service")"
+    # unit 模板始终取自脚本所在仓库（CHIGUO_REPO 可能被测试 override）
+    sed -e "s|__PY__|$PY|g" -e "s|__REPO__|$CHIGUO_REPO|g" \
+      "$REPO_DIR/scripts/chiguo-daemon.service" > "$TMP_UNIT"
+    if [ -f "$DAEMON_UNIT" ] && cmp -s "$TMP_UNIT" "$DAEMON_UNIT"; then
+      say "chiguo-daemon.service 已是最新（跳过写入）"
+      rm -f "$TMP_UNIT"
+    elif confirm "写入 $DAEMON_UNIT 并启用 chiguo-daemon.service（loop 常驻）"; then
+      mkdir -p "$SYSTEMD_DIR"
+      mv "$TMP_UNIT" "$DAEMON_UNIT"
+      if "$SYSTEMCTL" daemon-reload && "$SYSTEMCTL" enable --now chiguo-daemon.service; then
+        say "chiguo-daemon.service 已启用并启动（loop 常驻；cron tick 已互斥跳过）"
+      else
+        PENDING=1; warn "systemctl 启用失败（请手工执行: systemctl daemon-reload && systemctl enable --now chiguo-daemon.service）"
+      fi
+    else
+      rm -f "$TMP_UNIT"
     fi
   fi
 fi

@@ -5,7 +5,7 @@
 
 ## 一、这是什么
 
-一个零 LLM 的数学决策引擎（`chiguo_daemon.py`）决定何时、以什么心情主动发消息，pi-agent（LLM）按人格生成微信消息，wechat-bridge 负责收发；全部计算在本机完成。默认由 crontab 每 15 分钟评估一次，需要时才调模型。
+一个零 LLM 的数学决策引擎（`chiguo_daemon.py`）决定何时、以什么心情主动发消息，pi-agent（LLM）按人格生成微信消息，wechat-bridge 负责收发；全部计算在本机完成。默认由 crontab 每 15 分钟评估一次，需要时才调模型；也可切换为 `CHIGUO_DAEMON_LOOP=1` 常驻形态（决策引擎 `--loop` 常驻 + agent RPC 常驻，见 §部署形态）。
 
 > 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API，无封号风险；隐私数据（登录态/对话/状态）仅存本机，不进 git。
 
@@ -58,13 +58,13 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 ### 5. pi 环境
 
-`bash scripts/install_agent.sh`（七阶段：探测 → 记忆扩展 clone+build → settings.json → json5 配置 → ollama 检查 → auth.json 写 key → crontab 注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。
+`bash scripts/install_agent.sh`（七阶段：探测 → 记忆扩展 clone+build → settings.json → json5 配置 → ollama 检查 → auth.json 写 key → crontab 注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。**切换 loop 常驻**：`CHIGUO_DAEMON_LOOP=1 bash scripts/install_agent.sh --yes` → 移除 chiguo-tick crontab（防与常驻双发）+ 安装 systemd `chiguo-daemon.service`（`--loop 900 --compact`）。
 
 ### 6. 网易云 API 服务（可选）
 
 `bash scripts/netease-api.sh install` → systemd `netease-api.service`（需 root）；扫码登录 `uv run python -m netease.bridge --login`。可 `--skip-netease`。
 
-部署完成后 crontab 有两条：`*/15 chiguo-tick.sh` → `logs/cron-tick.log`、`*/15 replan-tick.sh` → `logs/cron-replan.log`。
+部署完成后 crontab 有两条：`*/15 chiguo-tick.sh` → `logs/cron-tick.log`、`*/15 replan-tick.sh` → `logs/cron-replan.log`。**loop 常驻形态下** crontab 仅剩 replan-tick（tick 条目互斥移除）。
 
 ## 六、机器落点地图
 
@@ -77,8 +77,19 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 | `data/mem0/`（qdrant 嵌入式向量库 + history.db，gitignore） | mem0 记忆层 | 否 | 拷贝 |
 | `~/.pi/agent/`（`auth.json` / `models.json`） | pi 配置与 key（含 mem0 LLM key 来源） | 否 | 拷贝 |
 | `/opt/netease-api` | 网易云 API 服务 | 否 | 重装 |
-| systemd：`chiguo-bridge.service` / `netease-api.service` | 常驻服务 | - | 部署时注册 |
-| crontab 2 条 | tick + replan-tick | - | install_agent.sh 注册 |
+| systemd：`chiguo-bridge.service` / `netease-api.service` / `chiguo-daemon.service`（loop 形态） | 常驻服务 | - | 部署时注册 |
+| crontab 2 条（loop 形态 1 条） | tick + replan-tick（loop 仅 replan） | - | install_agent.sh 注册 |
+
+## 部署形态（默认 cron / 可选 loop 常驻）
+
+两种形态**互斥**（install_agent.sh 阶段 6 处理，防双发消息）：
+
+| | 默认（cron） | loop 常驻（`CHIGUO_DAEMON_LOOP=1`） |
+|---|---|---|
+| 决策评估 | crontab `*/15` tick.sh 冷启动 | systemd `chiguo-daemon.service`（`--loop 900` 动态休眠，PID 锁 + 配置热重载） |
+| agent 调用 | tick 冷启动 spawn agent-run；回复链 spawn（`WECHAT_BRIDGE_AGENT_RPC=1` 时回复链 RPC 优先） | 发送侧 `_loop_send` 经 bridge `/agent/prompt` 转发常驻 pi RPC；回复链同样 RPC 优先 |
+| 失败回退 | spawn（既有链） | RPC 失败自动回退 spawn（不变式） |
+| 回退 cron | - | `systemctl disable --now chiguo-daemon.service` + `CHIGUO_DAEMON_LOOP=0` 重跑 install_agent.sh |
 
 ## 七、首次配置
 

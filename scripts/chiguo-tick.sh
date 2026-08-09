@@ -32,7 +32,9 @@ fi
 BRIDGE_URL="$(grep -oP '(?<=wechat_bridge_url = ")[^"]+' "$REPO/chiguo_proactive.toml" | head -1 || true)"
 [ -n "$BRIDGE_URL" ] || BRIDGE_URL="http://127.0.0.1:18790/send"
 # #84 共享 token:bridge 配置了 WECHAT_BRIDGE_TOKEN 时同源传入,未配置时零 header(向后兼容)
+# cron 环境无 .env → 从 wechat-bridge/.env 读（wechat-bridge.sh write_env 生成随机 token）
 TOKEN_HDR=()
+[ -n "${WECHAT_BRIDGE_TOKEN:-}" ] || WECHAT_BRIDGE_TOKEN="$(grep -oP '(?<=^WECHAT_BRIDGE_TOKEN=).*' "$REPO/wechat-bridge/.env" 2>/dev/null | head -1 || true)"
 [ -n "${WECHAT_BRIDGE_TOKEN:-}" ] && TOKEN_HDR=(-H "X-Bridge-Token: $WECHAT_BRIDGE_TOKEN")
 # 生成消息（主动发送用独立会话 chiguo-send，与回复侧 chiguo-main 分离 → 跨进程零并发 turn；
 # 决策 JSON 自足，无需对话连续性；值从 toml [host].send_session_id 读，缺省回退 chiguo-send）
@@ -61,7 +63,30 @@ if ! command -v node >/dev/null 2>&1; then
   record_health fail "tick node 缺失"
   exit 1
 fi
-RES="$(CHIGUO_REPO="$REPO" AGENTRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/agent-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
+# ── v1.11 B1: 发送侧 RPC 优先（经 bridge /agent/prompt 转发常驻 AgentRpc），失败回退 spawn ──
+# 决策 JSON 自足（chiguo-send 会话）→ RPC 生成消息；RPC 不可用/超时/空回复 → 回退
+# node agent-run.mjs --send-mode（既有路径），A8 composer 兜底链保持不变。
+RES=""
+if [ -n "$BRIDGE_URL" ]; then
+  RPC_URL="${BRIDGE_URL%/send}/agent/prompt"
+  PROMPT_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-rpc-prompt-XXXXXX.json")"
+  printf '%s' "$OUT" > "$PROMPT_FILE"
+  RPC_BODY="$(python3 -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read(), "mode": "send"}))' "$PROMPT_FILE" 2>/dev/null || true)"
+  rm -f "$PROMPT_FILE"
+  if [ -n "$RPC_BODY" ]; then
+    RPC_RES="$(curl --max-time 125 --connect-timeout 5 --noproxy '*' -s -X POST "$RPC_URL" \
+      -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$RPC_BODY" 2>/dev/null || true)"
+    RES="$(printf '%s' "$RPC_RES" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    print(json.dumps({"ok": True, "text": d["text"]}) if d.get("ok") and d.get("text") else "")
+except: print("")' 2>/dev/null || true)"
+  fi
+fi
+if [ -z "$RES" ]; then
+  echo "[chiguo-tick] RPC 未产出,回退 spawn agent-run: $(printf '%s' "${RPC_RES:-}" | head -c 200)" >&2
+  RES="$(CHIGUO_REPO="$REPO" AGENTRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/agent-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
+fi
 TEXT="$(printf '%s' "$RES" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("text",""))
 except: print("")' 2>/dev/null || true)"

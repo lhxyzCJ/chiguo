@@ -74,6 +74,16 @@ echo "node $*" >> "$CALLS_LOG"
 STUB
 for t in git npm node; do chmod +x "$TMP/bin-ok/$t"; done
 
+# ── 假 systemctl（用例 15/16）：记录调用不落真实 systemd；CHIGUO_SYSTEMCTL 注入 ──
+cat > "$TMP/bin-ok/systemctl" <<'STUB'
+#!/usr/bin/env bash
+echo "systemctl $*" >> "$CALLS_LOG"
+exit 0
+STUB
+chmod +x "$TMP/bin-ok/systemctl"
+export CHIGUO_SYSTEMD_DIR="$TMP/systemd"
+export CHIGUO_SYSTEMCTL="$TMP/bin-ok/systemctl"
+
 # ── noagent 目录：无 agent 的隔离工具集（用例 1）──
 for t in bash printf command grep awk sed cat cp mkdir mv rm python3 head tail timeout tr dirname; do
   ln -sf "$(command -v "$t")" "$TMP/noagent/$t" 2>/dev/null || true
@@ -198,6 +208,24 @@ set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --
 [ ! -f "$HOME/.pi/agent/auth.json.bak.bak" ] || fail ".bak 被重复备份"
 unset OPENCODE_API_KEY AGENT_API_KEY
 pass "auth.json 合并写入（保留旧条目 + chmod 600）+ .bak 不重复"
+
+# ── 用例 15: CHIGUO_DAEMON_LOOP=1 → 跳过 tick 注册 + 移除旧 tick 条目（防双发）──
+setup_ready
+set +e; OUT=$(CHIGUO_DAEMON_LOOP=1 PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "loop 模式期望 0 实得 $RC"
+grep -q 'chiguo-tick' "$CRON_STATE" && fail "loop 模式不应注册/保留 chiguo-tick" || true
+grep -q 'replan-tick' "$CRON_STATE" || fail "loop 模式应保留 replan-tick"
+echo "$OUT" | grep -q "chiguo-tick crontab" || fail "loop 模式应有移除提示"
+grep -q -- "--loop 900" "$TMP/systemd/chiguo-daemon.service" \
+  || fail "loop unit 应写入 CHIGUO_SYSTEMD_DIR 且含 --loop 900: $(cat "$TMP/systemd/chiguo-daemon.service" 2>/dev/null)"
+pass "CHIGUO_DAEMON_LOOP=1 → 移除 tick 条目、保留 replan（防双发）"
+
+# ── 用例 16: loop 模式 dry-run → 待办含 daemon unit 提示且零写入 ──
+clean_home
+set +e; OUT=$(CHIGUO_DAEMON_LOOP=1 bash scripts/install_agent.sh --dry-run 2>&1); RC=$?; set -e
+echo "$OUT" | grep -q "chiguo-daemon.service" || fail "loop dry-run 应提示 daemon unit: $(echo "$OUT" | head -5)"
+[ ! -f "$CRON_STATE" ] || fail "loop dry-run 不应写 crontab"
+pass "loop 模式 dry-run → 待办含 chiguo-daemon.service 且零写入"
 
 # ── 用例 14: --yes 两遍幂等（crontab 单行 / 零 .bak）──
 clean_home

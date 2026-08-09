@@ -44,9 +44,9 @@
 crontab */15 * * * * scripts/chiguo-tick.sh
   → .venv/bin/python chiguo_daemon.py --compact（零 LLM 评估）
     ├─ action=idle → 静默退出（~90% 的评估不唤醒 LLM）
-    └─ action=send → node scripts/agent-run.mjs --prompt <决策 JSON>（AGENTRUN_SESSION=chiguo-send）
-        → pi 按 SUN2.md 生成 1-3 句
-        → curl --noproxy '*' -X POST <toml [host].wechat_bridge_url> {"to","text"} → bridge → bot.send()
+    └─ action=send → 发送侧 RPC 优先（v1.11 默认）：POST <bridge>/agent/prompt {text:决策 JSON, mode:send}
+        → 常驻 pi RPC 生成消息；RPC 失败自动回退 node scripts/agent-run.mjs --prompt <决策 JSON>（AGENTRUN_SESSION=chiguo-send）
+        → 回文本后 curl --noproxy '*' -X POST <toml [host].wechat_bridge_url> {"to","text"} → bridge → bot.send()
         → daemon --record-send <msg_id> --text <text> 回写（幂等）
 
 回复侧（bridge 内联，pi 单次调用完成分析+回复）：
@@ -60,6 +60,54 @@ crontab */15 * * * * scripts/chiguo-tick.sh
   chiguo-main  = 回复侧（bridge 进程内 TurnQueue 串行）
   chiguo-send  = 主动发送（chiguo-tick.sh 经 AGENTRUN_SESSION 注入）
   两进程不同会话 → 无跨进程并发 turn；bridge 进程内 TurnQueue 兜底回复侧自身串行
+```
+
+### v1.11 RPC 常驻（可选项，默认 cron tick；互斥切换）
+
+```
+形态 A（默认，保持上节）：cron tick 每次冷启动 spawn agent-run → pi（每消息/每 tick 全量初始化）
+
+形态 B（RPC 常驻，CHIGUO_DAEMON_LOOP=1 部署）：
+  systemd 常驻 3 进程：
+    chiguo-bridge.service    —— 常驻 bridge（HTTP /send + /agent/prompt 端点）
+    chiguo-daemon.service    —— .venv/bin/python chiguo_daemon.py --loop 900 --compact
+                                （决策引擎常驻 + 发送侧内聚 _loop_send：生成→发送→记账）
+    pi --mode rpc（双会话）  —— 由 bridge 进程持有（agent-rpc.mjs 管理）
+                                analysis 会话 chiguo-main / send 会话 chiguo-send
+  回复链：bridge askAgent → AgentRpc.prompt(mode=analysis) → pi RPC（零 spawn）
+  发送链：daemon --loop 内 _loop_send → POST /agent/prompt {mode:send} → bridge → AgentRpc
+    → pi RPC → 回文本 → POST /send → bot.send() → record_send_text
+  cron 仅剩 replan-tick（判脏轮询，几乎零成本）
+  RPC 失败（任意环节）→ 自动回退 spawn（bridge askAgent 回退 agent-run；_loop_send 回退 spawn）
+```
+
+切换命令（防双发：cron tick 与 loop 常驻**必须互斥**，install_agent.sh 阶段 6 处理）：
+```bash
+export CHIGUO_DAEMON_LOOP=1   # install_agent.sh 将：移除旧 tick crontab + 安装 chiguo-daemon.service
+bash scripts/install_agent.sh --yes
+# 回退 cron 形态：CHIGUO_DAEMON_LOOP=0 重跑 + systemctl disable --now chiguo-daemon.service
+```
+
+环境变量（bridge 侧，wechat-bridge.sh write_env 生成；**回复链 RPC 默认启用**，无需 CHIGUO_DAEMON_LOOP）：
+```
+WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs   # spawn 回退路径
+WECHAT_BRIDGE_AGENT_RPC=1                                     # 1=回复链 RPC 优先（失败自动回退 spawn）
+WECHAT_BRIDGE_TOKEN=<随机 hex>                                # /send 与 /agent/prompt 共享 token（wechat-bridge.sh 生成，幂等保留）
+```
+
+daemon `[loop]` 段（--loop 发送侧内聚用）：
+```
+[loop]
+bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 地址
+bridge_token = ""                       # 回退 token（env WECHAT_BRIDGE_TOKEN 优先，不进 git）
+agent_timeout_ms = 125000               # /agent/prompt 超时
+```
+
+HTTP 契约（bridge，仅本地回环 + 共享 token）：
+```
+POST /send           {"to","text"}                        → {"ok":true}（bot.send）
+POST /agent/prompt   {"text","mode":"analysis|send"}      → {"ok":true,"text","analysis"?}
+                     失败 → 503 {"ok":false,"error"}（调用方回退 spawn）
 ```
 
 ## 一、安装（install_agent.sh）
@@ -124,7 +172,7 @@ node scripts/agent-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + �
 - → `bot.reply(msg, reply)`
 - 环境变量：`WECHAT_BRIDGE_AGENT_RUN`（默认仓库内 agent-run.mjs）、`WECHAT_BRIDGE_DAEMON_PY`、
   `WECHAT_BRIDGE_DAEMON`、`WECHAT_BRIDGE_OWNER`、`WECHAT_BRIDGE_SEND_PORT`、`WECHAT_BRIDGE_STORAGE`
-- 测试：`node tests/test_bridge_askagent.mjs`（10 用例）、`node tests/test_bridge_cmd.mjs`（31 用例）
+- 测试：`node tests/test_agent_rpc.mjs`（7 用例）、`node tests/test_bridge_agent_http.mjs`（5 用例）、`node tests/test_bridge_askagent_rpc.mjs`（2 用例）、`node tests/test_bridge_askagent.mjs`（17 用例）、`node tests/test_bridge_cmd.mjs`（43 用例）
 
 ## 五、特殊命令（纪念日/假期，方案 A：bridge 规则化）
 
@@ -329,7 +377,7 @@ uv run python chiguo_daemon.py --break status
 uv run python chiguo_envcheck.py
 
 # 测试
-node tests/test_agent_run.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && \
+node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && \
 bash tests/test_install_agent.sh --dry-run && \
 bash tests/test_wechat_bridge.sh && uv run python tests/test_*.py   # 全量见 AGENTS.md
 ```

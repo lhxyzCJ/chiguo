@@ -35,6 +35,13 @@ fail() { printf '\033[1;31m[wechat-bridge]\033[0m %s\n' "$*"; exit 2; }
 
 has_credentials() { [ -f "$WX_STORAGE/credentials.json" ]; }
 
+# #review: 默认生成随机共享 token（同机任意进程也能打 /agent/prompt 消耗 LLM 配额）。
+# 幂等：已配置的 token 保留（重跑 install 不覆盖）。调用方：tick.sh 读 .env、daemon _loop_send 读 env。
+BRIDGE_TOKEN="$(grep -oP '(?<=^WECHAT_BRIDGE_TOKEN=).*' "$ENV_FILE" 2>/dev/null | head -1 || true)"
+if [ -z "$BRIDGE_TOKEN" ]; then
+  BRIDGE_TOKEN="$(openssl rand -hex 16 2>/dev/null || date +%s%N | md5sum | head -c 32)"
+fi
+
 write_env() {
     mkdir -p "$BRIDGE_DIR"
     # pi 生成需要 LLM key：~/.pi/agent/auth.json——优先 opencode-go 条目
@@ -55,6 +62,8 @@ WECHAT_BRIDGE_OWNER=$OWNER_ID
 WECHAT_BRIDGE_DAEMON_PY=$PROJECT_DIR/.venv/bin/python
 WECHAT_BRIDGE_DAEMON=$PROJECT_DIR/chiguo_daemon.py
 WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs
+WECHAT_BRIDGE_AGENT_RPC=1
+WECHAT_BRIDGE_TOKEN=$BRIDGE_TOKEN
 WECHAT_BRIDGE_STORAGE=$WX_STORAGE
 OPENCODE_API_KEY=$AGENT_KEY
 EOF
