@@ -28,36 +28,36 @@ def test_check_env():
     print("  OK test_check_env")
 
 
-def test_check_pi_missing_critical():
-    r = ec.check_pi(pi_bin="/nonexistent/pi")
+def test_check_agent_missing_critical():
+    r = ec.check_agent(agent_bin="/nonexistent/pi")
     assert r["severity"] == "critical" and not r["ok"]
     assert "未安装" in r["detail"]
-    print("  OK test_check_pi_missing_critical")
+    print("  OK test_check_agent_missing_critical")
 
 
-def test_check_pi_skip_warn():
-    """--skip-pi 下 pi 缺失 → warn（不阻塞部署，如实报告降级），非 critical。"""
-    r = ec.check_pi(pi_bin="/nonexistent/pi", skip_pi=True)
+def test_check_agent_skip_warn():
+    """--skip-agent 下 agent 缺失 → warn（不阻塞部署，如实报告降级），非 critical。"""
+    r = ec.check_agent(agent_bin="/nonexistent/pi", skip_agent=True)
     assert r["severity"] == "warn" and not r["ok"]
-    assert "skip-pi" in r["detail"]
-    print("  OK test_check_pi_skip_warn")
+    assert "skip-agent" in r["detail"]
+    print("  OK test_check_agent_skip_warn")
 
 
-def test_check_pi_ok():
+def test_check_agent_ok():
     with tempfile.TemporaryDirectory() as td:
         _mk(Path(td), {"bin/pi": "#!/bin/sh\necho 0.83.0-test\n"})
         os.chmod(Path(td) / "bin/pi", 0o755)
-        r = ec.check_pi(pi_bin=str(Path(td) / "bin" / "pi"))
+        r = ec.check_agent(agent_bin=str(Path(td) / "bin" / "pi"))
         assert r["severity"] == "ok" and r["ok"]
         assert "0.83.0-test" in r["detail"]
-    print("  OK test_check_pi_ok")
+    print("  OK test_check_agent_ok")
 
 
 def test_check_pi_ext_missing_warn():
     with tempfile.TemporaryDirectory() as td:
         r = ec.check_pi_ext(Path(td) / "settings.json", Path(td) / "ext" / "index.js")
         assert r["severity"] == "warn" and not r["ok"]
-        assert "install_pi.sh" in r["detail"]
+        assert "install_agent.sh" in r["detail"]
     print("  OK test_check_pi_ext_missing_warn")
 
 
@@ -87,7 +87,7 @@ def test_check_pi_auth_missing_warn():
     with tempfile.TemporaryDirectory() as td:
         r = ec.check_pi_auth(Path(td) / "auth.json")
         assert r["severity"] == "warn" and not r["ok"]
-        assert "PI_API_KEY" in r["detail"]
+        assert "AGENT_API_KEY" in r["detail"]
     print("  OK test_check_pi_auth_missing_warn")
 
 
@@ -252,12 +252,14 @@ def test_run_checks_never_crashes():
         cfg.write_text(re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
                               f'mem0_qdrant_path = "{td / "no_qdrant"}"',
                               cfg.read_text()))
+        # #99: runner 值 pi→agent（契约），真实 toml 副本同步替换以保持 8 项检查路径
+        cfg.write_text(re.sub(r"(?m)^runner\s*=.*$", 'runner = "agent"', cfg.read_text()))
         report = ec.run_checks(base_dir=td)
         assert len(report["checks"]) == 8
         assert report["summary"]["ok"] + report["summary"]["info"] + report["summary"]["warn"] + report["summary"]["critical"] == 8
         # netease/ollama 检查会尝试连 localhost —— 只要求不崩(超时 5s 内失败 → warn)
         json.dumps(report)
-        report2 = ec.run_checks(base_dir=td, skip_pi=True)
+        report2 = ec.run_checks(base_dir=td, skip_agent=True)
         assert len(report2["checks"]) == 8
     print("  OK test_run_checks_never_crashes")
 
@@ -279,7 +281,7 @@ def test_run_checks_custom_backend_skips_mem0():
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         _mk(td, {"chiguo_proactive.toml": '[memory]\nbackend = "mymodule.MyBackend"\n'})
-        report = ec.run_checks(base_dir=td, skip_pi=True)
+        report = ec.run_checks(base_dir=td, skip_agent=True)
         names = [c["name"] for c in report["checks"]]
         assert "mem0" not in names, names
         assert "memory_backend" in names, names
@@ -291,9 +293,9 @@ def test_run_checks_custom_backend_skips_mem0():
 
 if __name__ == "__main__":
     test_check_env()
-    test_check_pi_missing_critical()
-    test_check_pi_skip_warn()
-    test_check_pi_ok()
+    test_check_agent_missing_critical()
+    test_check_agent_skip_warn()
+    test_check_agent_ok()
     test_check_pi_ext_missing_warn()
     test_check_pi_ext_windows_warn()
     test_check_pi_ext_ok()

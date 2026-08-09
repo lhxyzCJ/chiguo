@@ -33,10 +33,10 @@
 │        pi-agent（消息生成 + 发送，Phase 4 寄主）                     ││
 │                                                                    │
 │  发送侧: 系统 crontab chiguo-tick.sh(15分钟,零模型门控) 读 daemon 输出 │
-│  → action=send → pi-run.mjs (SUN2.md) 生成消息                     │
+│  → action=send → agent-run.mjs (SUN2.md) 生成消息                     │
 │  → curl POST wechat-bridge /send (127.0.0.1:18790) 发送           │
 │  → daemon.py --record-send 回传发送结果（v6 反馈闭环）              │
-│  回复侧: bridge askPi（分析+回复）→ daemon --user-msg/--analysis    │
+│  回复侧: bridge askAgent（分析+回复）→ daemon --user-msg/--analysis    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -613,13 +613,13 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 CLI CRUD：`--anniversary "add anniversary 11-03 用户生日"` 等。
 
-bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / X月X日要XX / 有哪些纪念日"→ 自动调用 CLI 记录并回复确认（Phase 4 起不经 pi；详见 PI_INTEGRATION.md §五）。
+bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / X月X日要XX / 有哪些纪念日"→ 自动调用 CLI 记录并回复确认（Phase 4 起不经 agent；详见 AGENT_INTEGRATION.md §五）。
 
 ---
 
 ## 五、LLM 内容分析
 
-用户回复时，pi-agent（Phase 4 迁移后）调用 LLM 分析消息内容，产出 `--analysis` 参数实现差异化情绪变化。所有 LLM 调用统一走 `scripts/pi-run.mjs`（发送侧生成 + 回复侧分析）。
+用户回复时，pi-agent（Phase 4 迁移后）调用 LLM 分析消息内容，产出 `--analysis` 参数实现差异化情绪变化。所有 LLM 调用统一走 `scripts/agent-run.mjs`（发送侧生成 + 回复侧分析）。
 
 ### 5.1 分析维度
 
@@ -673,7 +673,7 @@ python3 chiguo_daemon.py --user-msg "任意消息"
 
 用户表达忙碌/结束对话时，pi-agent 通过 `--analysis` 回传 `suppress_hours` 字段，daemon 在抑制期内 `can_send()` 返回 False。
 
-**原理**：daemon 不做语义理解（保持零 LLM 数学引擎的纯净性）。忙碌检测完全交给 pi-agent（回复侧 bridge askPi 的分析 JSON）。
+**原理**：daemon 不做语义理解（保持零 LLM 数学引擎的纯净性）。忙碌检测完全交给 pi-agent（回复侧 bridge askAgent 的分析 JSON）。
 
 ```bash
 # LLM 分析消息 → 设置 suppress_hours
@@ -686,7 +686,7 @@ python3 chiguo_daemon.py --user-msg "开会去了回头聊" \
 - `can_send()` 检查 `is_busy_suppressed()` → True 时禁止触发
 - 若已有抑制期 → 取两者中较晚的截止时间
 
-pi 分析 prompt（pi-run.mjs --analysis-mode）建议判断标准：
+pi 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准：
 - 表达忙碌/有事（"在忙""开会""有事""上课"）→ `suppress_hours: 2-4`
 - 表达结束对话（"晚安""睡了""bye""先这样"）→ `suppress_hours: 8`
 - 表达暂时离开（"回头聊""等一下""等会"）→ `suppress_hours: 1-2`
@@ -736,7 +736,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `memory/` 包 | **记忆后端抽象（v1.8 解耦，任意替换）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）/ `mem0_backend.py` Mem0Backend（mem0ai：LLM 事实提取 + ollama 向量 + qdrant 嵌入式）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=Mem0Backend 别名 + CLI） | mem0ai+ollama（必需依赖；无 key/ollama 未启动 → available=False 优雅降级） |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
-| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-pi` 时 pi 缺失降为 warn（deploy.sh `--skip-pi` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_pi.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
+| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、pi-agent、pi 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-agent` 时 pi 缺失降为 warn（deploy.sh `--skip-agent` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_agent.sh 一致）；测试 `tests/test_envcheck.py` | 无 |
 | `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.10"`，规则: MINOR+1（1.9→1.10→1.11,非十进制加法）;daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
@@ -786,24 +786,24 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_isolation.py` | 引擎隔离测试（2 用例：engine 不 import schedule/state 仅桥接） | chiguo_daemon |
 | `tests/test_schedule_plan.py` | 复盘计划测试（2 用例：dirty 矩阵/skip 与校验） | schedule.replan, schedule.plan_store |
 | `tests/test_schedule_cli.py` | 安排 CLI 测试（3 用例：--schedule-change 成功与形状/--schedule-recall 形状） | chiguo_daemon, schedule.api |
-| `scripts/pi-run.mjs` | **agent 调用统一封装**（Phase 4，v1.8 runner 抽象）：runner=pi（默认，pi-agent 二进制）/ runner=command（任意 CLI agent，`<agent_command> --prompt <完整提示词> --mode <mode>` 统一契约，stdout JSON/NDJSON 兼容）；生成/分析/安排多模式，`[host]` 配置 + PIRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage；导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand | node |
-| `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → pi-run（PIRUN_SESSION=chiguo-send）→ bridge /send → --record-send；pi 失败 → chiguo_composer.py 模板池兜底（v1.10 A8，成功发送 + fallback 标记，composer 也失败才 exit 1） | bash, node, curl |
-| `scripts/install_pi.sh` | **pi 环境安装器**（Phase 4）：memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟（三模式幂等） | bash |
-| `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askPi 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
+| `scripts/agent-run.mjs` | **agent 调用统一封装**（Phase 4，v1.8 runner 抽象）：runner=agent（默认，pi-agent 二进制）/ runner=command（任意 CLI agent，`<agent_command> --prompt <完整提示词> --mode <mode>` 统一契约，stdout JSON/NDJSON 兼容）；生成/分析/安排多模式，`[host]` 配置 + AGENTRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage；导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand | node |
+| `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → agent-run（AGENTRUN_SESSION=chiguo-send）→ bridge /send → --record-send；agent 失败 → chiguo_composer.py 模板池兜底（v1.10 A8，成功发送 + fallback 标记，composer 也失败才 exit 1） | bash, node, curl |
+| `scripts/install_agent.sh` | **pi 环境安装器**（Phase 4）：memory-lancedb-pro/settings/json5/ollama/auth/crontab/冒烟（三模式幂等） | bash |
+| `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askAgent 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
 | `wechat-bridge/command-detect.mjs` | **特殊命令检测/执行**（Phase 4）：纪念日/假期规则化（方案 A），daemon JSON → 迟菓风确认 | node |
-| `scripts/pi_health.py` | **pi 假死状态机**：askPi/tick 成败记账（flock+原子写 `pi_health.json`），transition=down/up 产出告警/恢复文案；bridge（bot.send）与 tick（curl /send）只负责投递 | python, stdlib |
-| `tests/test_pi_health.py` | pi_health 状态机测试（8 用例：阈值/去重/恢复/原因保留/toml 读取/无效阈值回退/恢复后原因重捕获/原子写） | pi_health |
+| `scripts/agent_health.py` | **agent 假死状态机**：askAgent/tick 成败记账（flock+原子写 `agent_health.json`），transition=down/up 产出告警/恢复文案；bridge（bot.send）与 tick（curl /send）只负责投递 | python, stdlib |
+| `tests/test_agent_health.py` | agent_health 状态机测试（8 用例：阈值/去重/恢复/原因保留/toml 读取/无效阈值回退/恢复后原因重捕获/原子写） | agent_health |
 | `tests/test_bridge_health.mjs` | bridge 记账+告警链路测试（6 用例：特殊命令不记账/去重/恢复/零告警/记账崩溃不阻塞/reply 失败不误记） | bridge.mjs |
 | `tests/test_tick_health.sh` | tick 记账+告警链路测试（4 用例：temp repo + recorder 服务） | chiguo-tick.sh |
 | `tests/test_bridge_cmd.mjs` | 特殊命令测试（43 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
-| `tests/test_pi_run.mjs` | pi-run 封装测试（31 用例：readToml/NDJSON/<<ANALYSIS>> 提取/runPiBin） | pi-run.mjs |
-| `tests/test_bridge_askpi.mjs` | bridge 回复链路测试（17 用例） | bridge.mjs |
-| `tests/test_bridge_schedule.mjs` | schedule 澄清链路测试（17 用例：detectScheduleIntent/readClarify/writeClarify/exitWord） | command-detect, pi-run.mjs |
-| `tests/test_install_pi.sh` | pi 环境安装器测试（14 用例：假 pi/curl/crontab + 临时 HOME） | install_pi.sh |
+| `tests/test_agent_run.mjs` | agent-run 封装测试（31 用例：readToml/NDJSON/<<ANALYSIS>> 提取/runPiBin） | agent-run.mjs |
+| `tests/test_bridge_askagent.mjs` | bridge 回复链路测试（17 用例） | bridge.mjs |
+| `tests/test_bridge_schedule.mjs` | schedule 澄清链路测试（17 用例：detectScheduleIntent/readClarify/writeClarify/exitWord） | command-detect, agent-run.mjs |
+| `tests/test_install_agent.sh` | pi 环境安装器测试（14 用例：假 pi/curl/crontab + 临时 HOME） | install_agent.sh |
 | `tests/test_wechat_bridge.sh` | 微信桥管理脚本测试（假 bridge 桩） | wechat-bridge.sh |
 | `tests/test_netease_api.sh` | 网易云 API 服务脚本测试（假 systemd/curl 桩） | netease-api.sh |
 | `tests/test_service.sh` | 服务管理脚本测试（13 用例：dry-run 只读/unit 模板/autostart 调用链/幂等/杀 temp 残留/temp 互斥接管+pidfile/temp 幂等/ollama 降级 warn/status 三态/stop 双侧/uninstall 保登录态/缺 node→2/缺 .env→1/非 root→2） | service.sh |
-| `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-pi` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、mem0 缺失 info、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
+| `tests/test_envcheck.py` | 环境检查单元测试（17 用例：env 版本/uv、pi 缺失 critical/`--skip-agent` 降 warn/pi 桩正常、pi_ext 缺失/Windows 残留 warn/正常、pi_auth 缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、mem0 缺失 info、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_pi）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 | `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟用户消息/`s` 刷新状态 | 无 |
 | `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → pi 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
@@ -811,7 +811,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `scripts/service.sh` | 服务统一管理（ollama + wechat-bridge）：`autostart`（systemd 开机自启，写 `/etc/systemd/system/chiguo-bridge.service` + `enable --now`）/ `temp`（临时启动，nohup 后台 + pidfile `~/.chiguo/run/bridge-temp.pid`，不注册自启）/ `status` / `stop` / `uninstall`；两模式互斥接管（启动前停对方实例，避免 18790 端口冲突）；全子命令支持 `--dry-run`；测试注入 `CHIGUO_REPO_OVERRIDE/CHIGUO_SYSTEMD_DIR/CHIGUO_SYSTEMCTL/CHIGUO_PID_DIR/CHIGUO_NODE` | bash, systemd |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
 
-共计 **600+** 个测试用例（38 个 py 测试文件 + 10 个脚本测试；另含 node 侧 test_pi_run.mjs 31 用例 + test_bridge_askpi.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_pi.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
+共计 **600+** 个测试用例（38 个 py 测试文件 + 10 个脚本测试；另含 node 侧 test_agent_run.mjs 31 用例 + test_bridge_askagent.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_agent.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `tests/test_holiday_parser.py` 9/9 用例通过。
@@ -1066,13 +1066,13 @@ idle reason 枚举：
 [wechat]     # 微信发送目标（chiguo-tick.sh / wechat-bridge.sh 按 key 名读取发送目标）
 wechat_recipient = "owner@im.wechat"     # 发送目标占位符：登录后自动注入真实 openid；也可手动配真实值（tick/bridge 管理脚本按 key 名读取）
 
-[host]       # agent 调用配置（Phase 4；scripts/pi-run.mjs 读取；PIRUN_* 环境变量可覆盖）
-provider = "opencode-go"                 # pi provider（= auth.json 键名；支持任意 pi provider，见 PI_INTEGRATION.md 七）
+[host]       # agent 调用配置（Phase 4；scripts/agent-run.mjs 读取；AGENTRUN_* 环境变量可覆盖）
+provider = "opencode-go"                 # pi provider（= auth.json 键名；支持任意 pi provider，见 AGENT_INTEGRATION.md 七）
 model = "deepseek-v4-flash"
-runner = "pi"                            # v1.8 agent runner 抽象：pi（默认，pi-agent 二进制）/ command（任意 CLI agent）
-agent_command = ["node", "/path/to/agent.mjs"]  # runner=command 必填（数组：命令+固定参数）；pi 模式忽略；PIRUN_RUNNER/PIRUN_AGENT_COMMAND 覆盖
+runner = "agent"                            # v1.8 agent runner 抽象：agent（默认，pi-agent 二进制）/ command（任意 CLI agent）
+agent_command = ["node", "/path/to/agent.mjs"]  # runner=command 必填（数组：命令+固定参数）；agent 模式忽略；AGENTRUN_RUNNER/AGENTRUN_AGENT_COMMAND 覆盖
 thinking_level = "high"                  # off/minimal/low/medium/high/xhigh/max
-session_id = "chiguo-main"               # 回复侧会话（bridge askPi）
+session_id = "chiguo-main"               # 回复侧会话（bridge askAgent）
 send_session_id = "chiguo-send"          # 主动发送会话（chiguo-tick.sh）——与回复会话分离，消除跨进程并发 turn
 wechat_bridge_url = "http://127.0.0.1:18790/send"  # 主动发送端点（tick curl 目标，--noproxy '*'）
 
@@ -1650,18 +1650,18 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 
 ## 十一、LLM 集成（agent 后端抽象，Phase 4）
 
-详见 `PI_INTEGRATION.md`（当前架构）。关键链路：
+详见 `AGENT_INTEGRATION.md`（当前架构）。关键链路：
 
-v1.8 起 agent 模块可任意替换：`scripts/pi-run.mjs` 抽象 agent runner（toml `[host].runner`，默认 `pi`）：
-- `runner = "pi"`（默认）：pi-agent 二进制，provider/model/session 见 `[host]` 与 PI_INTEGRATION.md 七
-- `runner = "command"`：任意 CLI agent —— pi-run.mjs 按统一契约执行
+v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runner（toml `[host].runner`，默认 `agent`）：
+- `runner = "agent"`（默认）：pi-agent 二进制，provider/model/session 见 `[host]` 与 AGENT_INTEGRATION.md 七
+- `runner = "command"`：任意 CLI agent —— agent-run.mjs 按统一契约执行
   `<agent_command> --prompt <完整提示词> --mode <analysis|send|extract|verify|recall|replan>`，
-  stdout 期望 JSON `{ok,text,analysis?,parsed?,raw?}`（兼容 NDJSON）；提示词由 pi-run.mjs 按模式模板构造，语义与 pi 一致
-- bridge 的 RPC 常驻模式仅 `runner=pi` 且 `WECHAT_BRIDGE_PI_RPC=1` 时启用；`chiguo_envcheck.py` 的 check_pi
+  stdout 期望 JSON `{ok,text,analysis?,parsed?,raw?}`（兼容 NDJSON）；提示词由 agent-run.mjs 按模式模板构造，语义与 pi 一致
+- bridge 的 RPC 常驻模式仅 `runner=agent` 且 `WECHAT_BRIDGE_AGENT_RPC=1` 时启用；`chiguo_envcheck.py` 的 check_pi
   支持 runner/agent_command 参数按 runner 检查
 
-1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_pi.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/pi-run.mjs`（`PIRUN_SESSION=chiguo-send`）按 SUN2.md 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
-2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/pi-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，600s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
+1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_agent.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/agent-run.mjs`（`AGENTRUN_SESSION=chiguo-send`）按 SUN2.md 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
+2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，600s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
 
 ### 11.1 特殊命令（纪念日/假期，bridge 规则化）
 
@@ -1680,10 +1680,10 @@ v1.8 起 agent 模块可任意替换：`scripts/pi-run.mjs` 抽象 agent runner�
 ### 11.2 会话与并发模型
 
 - `chiguo-main`：回复侧会话（bridge 进程内 `TurnQueue` 串行 pi 调用，防同会话交错）
-- `chiguo-send`：主动发送会话（tick 经 `PIRUN_SESSION` 注入；决策 JSON 自足，无需对话连续性）
+- `chiguo-send`：主动发送会话（tick 经 `AGENTRUN_SESSION` 注入；决策 JSON 自足，无需对话连续性）
 - 两条链路**永不共享会话** → 消除跨进程并发 turn 风险（同会话并发在 pi 侧可能交错/上下文竞争）
 
-pi 环境（memory-lancedb-pro 扩展 clone+build、`~/.pi/agent/settings.json` extensions、`memory-lancedb-pro.json5`（dbPath 沿用历史库 + ollama embedding）、auth.json [host].provider 条目（key 从 `PI_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_pi.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-pi` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
+pi 环境（memory-lancedb-pro 扩展 clone+build、`~/.pi/agent/settings.json` extensions、`memory-lancedb-pro.json5`（dbPath 沿用历史库 + ollama embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
 
 ---
 
@@ -1815,7 +1815,7 @@ rm <仓库根目录>/chiguo_state.json
 
 | 版本 | 日期 | 变更 |
 |:----:|:----:|------|
-| **v1.10** | **2026-08-09** | **外部对比优化 9 项（v1.9→v1.10，simplify/72-74 行为层；STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移）**：A1 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+\|gap\|/baseline)，loneliness/anxiety/affection/energy 四处推进改调，`[emotion].elastic_baseline=100`）+ A2 情绪交互矩阵（tick 后 `apply_interaction_matrix`，3 条跨维度规则，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ A3 日程乘数×抖动（情绪类 × 上课 0.3/空闲 free_multiplier 1.2/半忙 0.6 × uniform(0.8,1.2) 一次采样，仪式类豁免）+ A4 三段激活（activation=情绪类权重和：<min_activation 0.08 沉默 / ≥must_send_activation 0.5 必选，must_send 进 decision JSON，escape_valve 豁免）+ A5 未回复退场状态机（backoff_level：<backoff_start 3 正常 / 3-4 backing_off 情绪类禁发 / ≥backoff_silent 5 silent 全禁发，escape_valve longing 破防豁免；λ×0.7^n 保留）+ A6 repeat 阻尼泛化（全类型 × repeat_decay 0.6^min(n,3)，删 lonely_high 专属 0.3^n）+ A8 生成失败确定性回退（chiguo_composer `__main__` CLI：decision JSON 或 --trigger 模板池直出 + `_FALLBACK_LINES` 兜底；chiguo-tick.sh pi 失败时调用，成功发送+fallback 标记）+ A9 内容级防复读（TopicPicker 候选与最近已发 5 条 3-gram Jaccard ≥0.6 弃用，全弃用空注入，`[topic_picker] repeat_jaccard_threshold/repeat_history_n`）+ A10 回复饱和阻尼（`CooldownState.drop_events` 30 分钟窗口同向计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）；测试 38 py + 10 script（新增 test_emotion_dynamics / test_composer_fallback） |
+| **v1.10** | **2026-08-09** | **外部对比优化 9 项（v1.9→v1.10，simplify/72-74 行为层；STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移）**：A1 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+\|gap\|/baseline)，loneliness/anxiety/affection/energy 四处推进改调，`[emotion].elastic_baseline=100`）+ A2 情绪交互矩阵（tick 后 `apply_interaction_matrix`，3 条跨维度规则，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ A3 日程乘数×抖动（情绪类 × 上课 0.3/空闲 free_multiplier 1.2/半忙 0.6 × uniform(0.8,1.2) 一次采样，仪式类豁免）+ A4 三段激活（activation=情绪类权重和：<min_activation 0.08 沉默 / ≥must_send_activation 0.5 必选，must_send 进 decision JSON，escape_valve 豁免）+ A5 未回复退场状态机（backoff_level：<backoff_start 3 正常 / 3-4 backing_off 情绪类禁发 / ≥backoff_silent 5 silent 全禁发，escape_valve longing 破防豁免；λ×0.7^n 保留）+ A6 repeat 阻尼泛化（全类型 × repeat_decay 0.6^min(n,3)，删 lonely_high 专属 0.3^n）+ A8 生成失败确定性回退（chiguo_composer `__main__` CLI：decision JSON 或 --trigger 模板池直出 + `_FALLBACK_LINES` 兜底；chiguo-tick.sh agent 失败时调用，成功发送+fallback 标记）+ A9 内容级防复读（TopicPicker 候选与最近已发 5 条 3-gram Jaccard ≥0.6 弃用，全弃用空注入，`[topic_picker] repeat_jaccard_threshold/repeat_history_n`）+ A10 回复饱和阻尼（`CooldownState.drop_events` 30 分钟窗口同向计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）；测试 38 py + 10 script（新增 test_emotion_dynamics / test_composer_fallback） |
 | v1 | 2025-12 | 初始版本。线性情绪 + 硬阈值触发 |
 | v2 | 2026-01 | sigmoid 概率替代硬阈值，Poisson 过程，半衰期情绪模型 |
 | v3 | 2026-03 | Hawkes 自激过程，话题注入，LLM 分析接口，忙碌抑制 |
@@ -1827,11 +1827,11 @@ rm <仓库根目录>/chiguo_state.json
 | **v9** | **2026-07-31** | **网易云音乐渠道增强：对话内容源 + 鲁棒性 —— TopicPicker 第 8 源 netease（netease_weight=0.12）+ 网易云策略层 chiguo_netease（健康探针/登录失效检测/降级链/共享日配额 2/随机选源/peek-consume 两阶段，netease_health.json；STATE_VERSION 不变，无状态迁移）** |
 | **v10** | **2026-08-02** | **人格基线回归 + personality_history（STATE_VERSION 9→10）**：`PersonalityTraits.regress_to_baseline()` 每步 `v += (baseline - v) * regress_rate` 向构造时初始值软回归（基线随状态持久化 `personality_baseline`，旧状态回退 toml `[personality]` 初始值；速率 `regress_rate` 默认 0.01，0=关闭）——修复热情回复甜妹化/持续沉默极端化两类人格漂移；`adapt_personality` 每次追加 `{ts, dims}` 到 `personality_history`（滚动 200 条持久化） |
 | **v1.9** | **2026-08-09** | **记忆后端替换为 mem0**：新增 `memory/mem0_backend.py`（Mem0Backend：mem0ai LLM 事实提取写入 + ollama 本地向量 + qdrant 嵌入式 `data/mem0/`；四原语 + add_messages + 60s 节流探测 + CHIGUO_MEM0_DISABLED 测试隔离），`memory/lancedb.py` 与 `memory/json.py` 删除（不保留兼容层）；daemon 对话后自动写入（`_mem0_autowrite`，<8 字跳过、失败静默）；factory 默认 backend=mem0；toml `[memory]` 段迁移为 `mem0_*` 键；mem0ai+ollama 升为必需依赖；envcheck check_mem0 / monitor mem0_direct 检查；测试 36 py + 10 script 全绿 |
-| **v1.8** | **2026-08-09** | **后端解耦：agent 与记忆模块可任意替换**：新增 `memory/` 包——base.py（MemoryBackend 抽象基类：available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）、lancedb.py（LanceDbBackend，原 memory_bridge.py 实现迁移）、json.py（JsonMemoryBackend 零依赖兜底）、factory.py（create_backend 工厂），chiguo_state.py 改经 `create_backend(mem_cfg, base_dir)` 接入；memory_bridge.py 降为兼容门面（MemoryBridge=LanceDbBackend 别名 + CLI 保留）；toml 新增 `[memory].backend`（auto/lancedb/json/module.path.ClassName，默认 auto）与 `[host].runner`（pi/command，默认 pi）+ `[host].agent_command`（数组）；pi-run.mjs 抽象 agent runner（runner=command 时按 `<cmd> --prompt <完整提示词> --mode <mode>` 统一契约调用任意 CLI agent，stdout JSON/NDJSON 兼容，导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand，readToml 支持数组解析）；bridge RPC 仅 runner=pi 且 WECHAT_BRIDGE_PI_RPC=1 启用；envcheck check_pi 支持 runner/agent_command、新增 check_json_memory、run_checks 按 backend 分流；monitor health 第 9 项按 backend 分流；测试计数 36 py + 10 script（新增 tests/test_memory_backends.py） |
+| **v1.8** | **2026-08-09** | **后端解耦：agent 与记忆模块可任意替换**：新增 `memory/` 包——base.py（MemoryBackend 抽象基类：available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）、lancedb.py（LanceDbBackend，原 memory_bridge.py 实现迁移）、json.py（JsonMemoryBackend 零依赖兜底）、factory.py（create_backend 工厂），chiguo_state.py 改经 `create_backend(mem_cfg, base_dir)` 接入；memory_bridge.py 降为兼容门面（MemoryBridge=LanceDbBackend 别名 + CLI 保留）；toml 新增 `[memory].backend`（auto/lancedb/json/module.path.ClassName，默认 auto）与 `[host].runner`（agent/command，默认 agent）+ `[host].agent_command`（数组）；agent-run.mjs 抽象 agent runner（runner=command 时按 `<cmd> --prompt <完整提示词> --mode <mode>` 统一契约调用任意 CLI agent，stdout JSON/NDJSON 兼容，导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand，readToml 支持数组解析）；bridge RPC 仅 runner=agent 且 WECHAT_BRIDGE_AGENT_RPC=1 启用；envcheck check_pi 支持 runner/agent_command、新增 check_json_memory、run_checks 按 backend 分流；monitor health 第 9 项按 backend 分流；测试计数 36 py + 10 script（新增 tests/test_memory_backends.py） |
 | **v1.7** | **2026-08-02** | **README 开源化重构 + 项目整洁化**：README 重写为面向开发者的开源项目文档（中文为主 + 每节英文精炼段 + 双语 TOC；定位边界/组件依赖表/迟菓由来（三色绘恋系列官方角色，合规声明：非官方二次演绎、版权归绘恋企划屋/山百合、异议即移除）/公开前清理警示（登录态与对话随 git 跟踪）/mermaid 双链路架构图/脱敏示例（赛博生命口径：纯消息域无现实互动）/快速开始（uv sync）/接入任意模型/配置/自定义人格/FAQ/贡献）；新增 `pyproject.toml`（核心零依赖 + optional extras：memory=lancedb、schedule=openpyxl）；spec/plan 归档迁移至项目外 `~/chiguo-meta/`（AGENTS.md 约定）；清理 `.superpowers/` 台账、`archive/` 归档、`.claude/` 移出 git；doc/README.md 收敛运维速查；SYSTEM.md 模块表修正 pandas 幽灵依赖；生产 venv 升级为 `uv sync --all-extras`（记忆启用） |
-| **v1.6** | **2026-08-02** | **后端 provider 去绑定（接入任意模型 API）**：表述全部改为「pi-agent 后端、provider 可配、opencode-go 为默认示例」；`chiguo_envcheck.py` check_pi_auth 随 toml [host].provider（新增 home 注入参数）；`install_pi.sh` 阶段 0/5/7 provider 化（key 环境变量通用名 `PI_API_KEY`，兼容回退 `OPENCODE_API_KEY`）；`chiguo-tick.sh`/`wechat-bridge.sh` 的 OPENCODE_API_KEY 注入优先 opencode-go 条目（memory 扩展端点固定）、无则回退 [host].provider 条目；`doc/PI_INTEGRATION.md` 新增「七、接入任意模型 API」（内置 provider 切换 + `~/.pi/agent/models.json` 自定义 OpenAI 兼容端点，完全依赖 pi 官方机制） |
-| **v1.5** | **2026-08-02** | **pi 假死检测与微信告警**：新增 `scripts/pi_health.py` 状态机（flock+原子写 `pi_health.json`，[health].fail_threshold=3，transition 去重，首次失败原因保留）；bridge 的 askPi 成败记账（transition 时 bot.send 告警/恢复，记账崩溃不阻塞回复流）；chiguo-tick.sh pi-run 成败记账（transition 时 curl /send 告警/恢复，原因取 pi-run error 字段）；零新增 pi 调用（复用真实流量记账）、pi-run.mjs/pi 二进制零改动；空闲期假死盲区接受（延迟到下次真实交互，设计文档 ~/chiguo-meta/specs/2026-08-02-pi-health-alert-design.md（项目外归档）） |
-| **v1.4** | **2026-08-02** | **寄主迁移收尾（Phase 4 Task 14）**：toml 配置段重组：发送目标归 `[wechat]`、pi 调用归 `[host]`（+wechat_bridge_url/send_session_id，opencode-go provider/model/thinking/session/personality_dir）；特殊命令（纪念日/假期）由 bridge 规则化确定性接管（`wechat-bridge/command-detect.mjs`，方案 A：检测→daemon CLI→迟菓风确认，不经 pi）；会话并发模型：回复=chiguo-main（TurnQueue 串行）/主动发送=chiguo-send（PIRUN_SESSION 注入）分离消除跨进程并发 turn；兜底默认值 45/70/70→60/65/75（state/composer/trigger 与 dataclass 对齐）；daemon 人格目录改读 `[host].personality_dir`；新增 `doc/PI_INTEGRATION.md`；旧 cron 检查已停用（gateway 停用留用户最终确认） |
+| **v1.6** | **2026-08-02** | **后端 provider 去绑定（接入任意模型 API）**：表述全部改为「pi-agent 后端、provider 可配、opencode-go 为默认示例」；`chiguo_envcheck.py` check_pi_auth 随 toml [host].provider（新增 home 注入参数）；`install_agent.sh` 阶段 0/5/7 provider 化（key 环境变量通用名 `AGENT_API_KEY`，兼容回退 `OPENCODE_API_KEY`）；`chiguo-tick.sh`/`wechat-bridge.sh` 的 OPENCODE_API_KEY 注入优先 opencode-go 条目（memory 扩展端点固定）、无则回退 [host].provider 条目；`doc/AGENT_INTEGRATION.md` 新增「七、接入任意模型 API」（内置 provider 切换 + `~/.pi/agent/models.json` 自定义 OpenAI 兼容端点，完全依赖 pi 官方机制） |
+| **v1.5** | **2026-08-02** | **pi 假死检测与微信告警**：新增 `scripts/agent_health.py` 状态机（flock+原子写 `agent_health.json`，[health].fail_threshold=3，transition 去重，首次失败原因保留）；bridge 的 askAgent 成败记账（transition 时 bot.send 告警/恢复，记账崩溃不阻塞回复流）；chiguo-tick.sh agent-run 成败记账（transition 时 curl /send 告警/恢复，原因取 agent-run error 字段）；零新增 pi 调用（复用真实流量记账）、agent-run.mjs/pi 二进制零改动；空闲期假死盲区接受（延迟到下次真实交互，设计文档 ~/chiguo-meta/specs/2026-08-02-pi-health-alert-design.md（项目外归档）） |
+| **v1.4** | **2026-08-02** | **寄主迁移收尾（Phase 4 Task 14）**：toml 配置段重组：发送目标归 `[wechat]`、pi 调用归 `[host]`（+wechat_bridge_url/send_session_id，opencode-go provider/model/thinking/session/personality_dir）；特殊命令（纪念日/假期）由 bridge 规则化确定性接管（`wechat-bridge/command-detect.mjs`，方案 A：检测→daemon CLI→迟菓风确认，不经 agent）；会话并发模型：回复=chiguo-main（TurnQueue 串行）/主动发送=chiguo-send（AGENTRUN_SESSION 注入）分离消除跨进程并发 turn；兜底默认值 45/70/70→60/65/75（state/composer/trigger 与 dataclass 对齐）；daemon 人格目录改读 `[host].personality_dir`；新增 `doc/AGENT_INTEGRATION.md`；旧 cron 检查已停用（gateway 停用留用户最终确认） |
 
 ### v3→v4 迁移
 

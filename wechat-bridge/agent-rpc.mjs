@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * pi-rpc.mjs — 常驻 pi 进程(RPC 模式)客户端,供 bridge 回复链复用
+ * agent-rpc.mjs — 常驻 agent 进程(RPC 模式)客户端,供 bridge 回复链复用,供 bridge 回复链复用
  *
  * 架构动机(对比 OpenClaw 常驻 gateway):每次消息 spawn 新 pi 进程会重复
  * 扩展初始化(LanceDB 打开/FTS/健康检查)。RPC 常驻让 pi + 记忆扩展只初始化一次,
@@ -19,13 +19,13 @@ import { writeFileSync, readFileSync, existsSync, unlinkSync, readdirSync } from
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import {
-  buildBasePiArgs, buildAnalysisPrompt, parseNdjson, extractAnalysis, parseUsage, appendTelemetry, PI_TIMEOUT,
-} from '../scripts/pi-run.mjs'
+  buildBasePiArgs, buildAnalysisPrompt, parseNdjson, extractAnalysis, parseUsage, appendTelemetry, AGENT_TIMEOUT,
+} from '../scripts/agent-run.mjs'
 
-const PID_FILE = join(homedir(), '.pi', 'agent', 'pi-rpc.pid')
+const PID_FILE = join(homedir(), '.pi', 'agent', 'agent-rpc.pid')
 
-export class PiRpc {
-  constructor({ bin = process.env.PI_BIN ?? 'pi' } = {}) {
+export class AgentRpc {
+  constructor({ bin = process.env.AGENT_BIN ?? 'pi' } = {}) {
     this.bin = bin
     this.proc = null
     this.buffer = []
@@ -82,13 +82,13 @@ export class PiRpc {
       this._cleanupPid()
       const p = this.pending
       this.pending = null
-      if (p) p.reject(new Error('pi rpc 进程退出'))
+      if (p) p.reject(new Error('agent rpc 进程退出'))
     })
     // 等待 RPC 就绪:发 get_state 命令,收到 response 即确认(stdin/stdout 通路 + 会话已绑定)
     await new Promise((resolve, reject) => {
       readyReject = reject
       const stateId = `ready-${Date.now()}`
-      const t = setTimeout(() => reject(new Error('pi rpc 启动超时')), 10_000)
+      const t = setTimeout(() => reject(new Error('agent rpc 启动超时')), 10_000)
       const onLine = (line) => {
         try {
           const ev = JSON.parse(line)
@@ -141,8 +141,8 @@ export class PiRpc {
       timedOut = true
       const p = this.pending
       this.pending = null
-      if (p) p.reject(new Error(`pi rpc 超时(${PI_TIMEOUT}ms)`))
-    }, PI_TIMEOUT)
+      if (p) p.reject(new Error(`agent rpc 超时(${AGENT_TIMEOUT}ms)`))
+    }, AGENT_TIMEOUT)
     try {
       await done
       const slice = this.buffer.slice(bufStart)
@@ -169,7 +169,7 @@ export class PiRpc {
     this.dead = true
     const p = this.pending
     this.pending = null
-    if (p) p.reject(new Error('pi rpc restart'))
+    if (p) p.reject(new Error('agent rpc restart'))
   }
 
   dispose() {
@@ -177,4 +177,4 @@ export class PiRpc {
   }
 }
 
-export default PiRpc
+export default AgentRpc

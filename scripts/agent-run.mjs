@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * pi-run — chiguo 的 pi-agent 调用统一封装。
- * 用法: node pi-run.mjs --prompt <文本> [--analysis-mode]
- * 配置: 环境变量或 toml [host] 段（PIRUN_* 覆盖）
+ * agent-run — chiguo 的 pi-agent 调用统一封装。
+ * 用法: node agent-run.mjs --prompt <文本> [--analysis-mode]
+ * 配置: 环境变量或 toml [host] 段（AGENTRUN_* 覆盖）
  * 输出: {ok:true, text, analysis?} 或 {ok:false, error}
  */
 import { spawn } from 'node:child_process'
@@ -20,30 +20,30 @@ export function resolveRepo(fileURL, env = process.env) {
 
 const REPO = resolveRepo(import.meta.url)
 const HOST = readToml(`${REPO}/chiguo_proactive.toml`)?.host ?? {}
-// v1.8 agent 后端抽象：runner=pi（默认，pi-agent 二进制）| command（任意 CLI agent，
-// 经 [host].agent_command 指定，契约见 doc/PI_INTEGRATION.md「接入自定义 agent」）。
-// PIRUN_RUNNER/PIRUN_AGENT_COMMAND 环境变量可覆盖（AGENT_COMMAND 为 JSON 数组字符串）。
-export const RUNNER = process.env.PIRUN_RUNNER ?? HOST.runner ?? 'pi'
+// v1.8 agent 后端抽象：runner=agent（默认，pi-agent 二进制）| command（任意 CLI agent，
+// 经 [host].agent_command 指定，契约见 doc/AGENT_INTEGRATION.md「接入自定义 agent」）。
+// AGENTRUN_RUNNER/AGENTRUN_AGENT_COMMAND 环境变量可覆盖（AGENT_COMMAND 为 JSON 数组字符串）。
+export const RUNNER = process.env.AGENTRUN_RUNNER ?? HOST.runner ?? 'agent'
 export const AGENT_COMMAND = (() => {
-  if (process.env.PIRUN_AGENT_COMMAND) {
-    try { return JSON.parse(process.env.PIRUN_AGENT_COMMAND) } catch { return [] }
+  if (process.env.AGENTRUN_AGENT_COMMAND) {
+    try { return JSON.parse(process.env.AGENTRUN_AGENT_COMMAND) } catch { return [] }
   }
   return Array.isArray(HOST.agent_command) ? HOST.agent_command : []
 })()
-const PI_BIN = process.env.PI_BIN ?? 'pi'
-const PROVIDER = process.env.PIRUN_PROVIDER ?? HOST.provider ?? 'opencode-go'  // provider 可配：pi --provider 名（内置或 models.json 自定义）
-const MODEL = process.env.PIRUN_MODEL ?? HOST.model ?? 'deepseek-v4-flash'
-const THINKING = process.env.PIRUN_THINKING ?? HOST.thinking_level ?? 'high'
-// 回复侧独立档位(交互路径要快):env PIRUN_REPLY_THINKING ?? toml reply_thinking_level ?? 回退 THINKING。
+const AGENT_BIN = process.env.AGENT_BIN ?? 'pi'
+const PROVIDER = process.env.AGENTRUN_PROVIDER ?? HOST.provider ?? 'opencode-go'  // provider 可配：pi --provider 名（内置或 models.json 自定义）
+const MODEL = process.env.AGENTRUN_MODEL ?? HOST.model ?? 'deepseek-v4-flash'
+const THINKING = process.env.AGENTRUN_THINKING ?? HOST.thinking_level ?? 'high'
+// 回复侧独立档位(交互路径要快):env AGENTRUN_REPLY_THINKING ?? toml reply_thinking_level ?? 回退 THINKING。
 // 主动发送(send-mode)与命令/重分析路径保持 thinking_level,互不拖累(埋埋实机:max 单次 63s+,回复体验差)
-const REPLY_THINKING = process.env.PIRUN_REPLY_THINKING ?? HOST.reply_thinking_level ?? THINKING
-// pi 调用超时(ms):默认 120s;replan 等长任务经 PIRUN_TIMEOUT 覆盖(replan.py replan_env 注入)
-export const PI_TIMEOUT = Number(process.env.PIRUN_TIMEOUT ?? 120_000)
-const SESSION_ID = process.env.PIRUN_SESSION ?? HOST.session_id ?? 'chiguo-main'
+const REPLY_THINKING = process.env.AGENTRUN_REPLY_THINKING ?? HOST.reply_thinking_level ?? THINKING
+// agent 调用超时(ms):默认 120s;replan 等长任务经 AGENTRUN_TIMEOUT 覆盖(replan.py replan_env 注入)
+export const AGENT_TIMEOUT = Number(process.env.AGENTRUN_TIMEOUT ?? 120_000)
+const SESSION_ID = process.env.AGENTRUN_SESSION ?? HOST.session_id ?? 'chiguo-main'
 
-// PIRUN_NEW_SESSION=1:执行前把当前 chiguo-main 会话移入备份(与微信 /new 共享逻辑),
-// 本次调用从全新会话开始。仅对默认回复会话生效(PIRUN_SESSION 显式指定时不移)。
-if (process.env.PIRUN_NEW_SESSION === '1' && !process.env.PIRUN_SESSION) {
+// AGENTRUN_NEW_SESSION=1:执行前把当前 chiguo-main 会话移入备份(与微信 /new 共享逻辑),
+// 本次调用从全新会话开始。仅对默认回复会话生效(AGENTRUN_SESSION 显式指定时不移)。
+if (process.env.AGENTRUN_NEW_SESSION === '1' && !process.env.AGENTRUN_SESSION) {
   try {
     const { backupSessionFile } = await import(pathToFileURL(join(REPO, 'wechat-bridge', 'command-detect.mjs')))
     const { homedir } = await import('node:os')
@@ -54,9 +54,9 @@ if (process.env.PIRUN_NEW_SESSION === '1' && !process.env.PIRUN_SESSION) {
   }
 }
 const PERSONALITY_DIR = HOST.personality_dir ?? `${REPO}/personality`
-const PERSONALITY = process.env.PIRUN_PERSONALITY ?? `${PERSONALITY_DIR}/迟菓人格-精简版.md`
-const GUIDE = process.env.PIRUN_GUIDE ?? `${PERSONALITY_DIR}/记忆用法.md`
-const TOOLS = process.env.PIRUN_TOOLS ?? `${PERSONALITY_DIR}/工具用法.md`
+const PERSONALITY = process.env.AGENTRUN_PERSONALITY ?? `${PERSONALITY_DIR}/迟菓人格-精简版.md`
+const GUIDE = process.env.AGENTRUN_GUIDE ?? `${PERSONALITY_DIR}/记忆用法.md`
+const TOOLS = process.env.AGENTRUN_TOOLS ?? `${PERSONALITY_DIR}/工具用法.md`
 
 export function readToml(p) {
   const out = {}
@@ -119,14 +119,14 @@ export function parseUsage(stdout) {
   return usage
 }
 
-/** 遥测:一行一轮,追加写 {REPO}/logs/pi-run.log(gitignore)。/status 与验收依赖此文件。
- *  PIRUN_TELEMETRY=0 时跳过(测试环境)。 */
+/** 遥测:一行一轮,追加写 {REPO}/logs/agent-run.log(gitignore)。/status 与验收依赖此文件。
+ *  AGENTRUN_TELEMETRY=0 时跳过(测试环境)。 */
 export function appendTelemetry(entry, repo = REPO) {
   try {
-    if (process.env.PIRUN_TELEMETRY === '0') return
+    if (process.env.AGENTRUN_TELEMETRY === '0') return
     const dir = `${repo}/logs`
     mkdirSync(dir, { recursive: true })
-    appendFileSync(`${dir}/pi-run.log`, `${JSON.stringify(entry)}\n`)
+    appendFileSync(`${dir}/agent-run.log`, `${JSON.stringify(entry)}\n`)
   } catch {}
 }
 
@@ -164,7 +164,7 @@ export function extractBlock(text, marker) {
 }
 
 /** 用 spawn 收集 stdout（execFile 在 pi 下会挂起：pi 等 stdin EOF，execFile 管道不关） */
-export function runPiBin(bin, args, opts) {
+export function runAgentBin(bin, args, opts) {
   return new Promise((resolve, reject) => {
     const c = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts })
     let stdout = ''
@@ -194,15 +194,24 @@ export function parseAgentOutput(stdout) {
   return null
 }
 
-/** v1.8: 按 runner 构造子进程命令。pi → null（调用方走 piArgs）；command → {bin, args}。
+/** v1.8: 按 runner 构造子进程命令。agent → null（调用方走默认参数路径）；command → {bin, args}。
  *  契约：<agent_command> --prompt <完整提示词> --mode <mode>，stdout 输出
  *  {"ok":true,"text":...,"analysis"?:...,"parsed"?:...,"raw"?:...}（或 NDJSON 兼容）。
- *  mode: analysis|send|other（run）/ extract|verify|recall|replan（runSchedule）。 */
+ *  mode: analysis|send|other（run）/ extract|verify|recall|replan（runSchedule）。
+ *  #99：command 分支自动拼接 PERSONALITY/GUIDE/TOOLS 三段内容进 --prompt，
+ *  与 agent 模式（--append-system-prompt 三段）行为一致，保证换后端不丢人格。 */
 export function runnerCommand(mode, sysPrompt) {
   if (RUNNER !== 'command' || !AGENT_COMMAND.length) return null
+  let prompt = sysPrompt
+  if (RUNNER === 'command') {
+    const parts = [PERSONALITY, GUIDE, TOOLS].map((p) => {
+      try { return readFileSync(p, 'utf8') } catch { return '' }
+    }).filter(Boolean)
+    if (parts.length) prompt = `${parts.join('\n\n')}\n\n${sysPrompt}`
+  }
   return {
     bin: AGENT_COMMAND[0],
-    args: [...AGENT_COMMAND.slice(1), '--prompt', sysPrompt, '--mode', mode],
+    args: [...AGENT_COMMAND.slice(1), '--prompt', prompt, '--mode', mode],
   }
 }
 
@@ -230,7 +239,7 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
   }
   const mode = analysisMode ? 'analysis' : sendMode ? 'send' : 'other'
   const custom = runnerCommand(mode, sysPrompt)
-  const bin = custom ? custom.bin : PI_BIN
+  const bin = custom ? custom.bin : AGENT_BIN
   const args = custom ? custom.args
     : ['-p', ...buildBasePiArgs({ analysisMode }), '--mode', 'json', sysPrompt]
   const t0 = Date.now()
@@ -240,7 +249,7 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
     usage: usage ?? null, error: error?.slice(0, 200) ?? null,
   })
   try {
-    const { stdout } = await exec(bin, args, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
+    const { stdout } = await exec(bin, args, { timeout: AGENT_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
     let text = ''
     let analysis = null
     let usage = null
@@ -277,6 +286,13 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
   }
 }
 
+/** #99: agent 后端统一入口（bridge 只依赖本函数 + runSchedule，不 import 内部解析函数）。
+ *  一次调用完成「情绪分析 JSON + 回复」（= run analysisMode 便捷封装）。
+ *  exec 可注入（测试）；默认 runAgentBin。返回 {ok, text, analysis?} 或 {ok:false, error}。 */
+export async function askAgent(exec = runAgentBin, prompt) {
+  return run(exec, { prompt, analysisMode: true })
+}
+
 /** 写/回忆命令链路新模式:独立会话,知识边界(与聊天会话零共享)。提取/校验块解析,C7。 */
 export async function runSchedule(exec, { mode, prompt, extra = {} }) {
   // 独立会话:extract/verify/recall/replan(与聊天会话零共享,知识边界)
@@ -301,7 +317,7 @@ period?, to_period?, to_date?, course?, label?, match?}。
     sysPrompt = `你是迟菓。依据检索事实回答哥哥的问题。只依据事实回答,禁止编造;检索无结果时反问用户('哥哥,那是什么时候呀?我帮你记上')。\n\n检索事实：${extra.facts}\n\n消息：${prompt}`
   }
   const custom = runnerCommand(mode, sysPrompt)
-  const bin = custom ? custom.bin : PI_BIN
+  const bin = custom ? custom.bin : AGENT_BIN
   const args = custom ? custom.args
     : ['-p', '--provider', PROVIDER, '--model', MODEL,
       '--session-id', SESSIONS[mode] || SESSION_ID, '--no-context-files',
@@ -309,7 +325,7 @@ period?, to_period?, to_date?, course?, label?, match?}。
       '--append-system-prompt', TOOLS,
       '--thinking', THINKING, '--mode', 'json', sysPrompt]
   try {
-    const { stdout } = await exec(bin, args, { timeout: PI_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
+    const { stdout } = await exec(bin, args, { timeout: AGENT_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
     let text = ''
     const agentJson = custom ? parseAgentOutput(stdout) : null
     if (agentJson) {
@@ -342,7 +358,7 @@ period?, to_period?, to_date?, course?, label?, match?}。
 async function main() {
   const args = process.argv.slice(2)
   const promptIdx = args.indexOf('--prompt')
-  if (promptIdx < 0) { console.error('usage: pi-run.mjs --prompt <text> [--analysis-mode|--send-mode|--schedule-extract|--schedule-verify|--schedule-recall|--schedule-replan]'); process.exit(2) }
+  if (promptIdx < 0) { console.error('usage: agent-run.mjs --prompt <text> [--analysis-mode|--send-mode|--schedule-extract|--schedule-verify|--schedule-recall|--schedule-replan]'); process.exit(2) }
   const prompt = args[promptIdx + 1]
   if (args.includes('--schedule-extract')) {
     const attIdx = args.indexOf('--attention')
@@ -351,29 +367,29 @@ async function main() {
     const wnIdx = args.indexOf('--week-num')
     const weekNum = wnIdx >= 0 ? args[wnIdx + 1] : String(attention.week_num ?? 1)
     const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10)  // CST 日期
-    console.log(JSON.stringify(await runSchedule(runPiBin, { mode: 'extract', prompt,
+    console.log(JSON.stringify(await runSchedule(runAgentBin, { mode: 'extract', prompt,
       extra: { today, attention: JSON.stringify(attention), week_num: weekNum } })))
     return
   }
   if (args.includes('--schedule-verify')) {
     const itemIdx = args.indexOf('--item')
     const item = itemIdx >= 0 ? args[itemIdx + 1] : '{}'
-    console.log(JSON.stringify(await runSchedule(runPiBin, { mode: 'verify', prompt, extra: { item } })))
+    console.log(JSON.stringify(await runSchedule(runAgentBin, { mode: 'verify', prompt, extra: { item } })))
     return
   }
   if (args.includes('--schedule-recall')) {
     const factsIdx = args.indexOf('--facts')
     const facts = factsIdx >= 0 ? args[factsIdx + 1] : '[]'
-    console.log(JSON.stringify(await runSchedule(runPiBin, { mode: 'recall', prompt, extra: { facts } })))
+    console.log(JSON.stringify(await runSchedule(runAgentBin, { mode: 'recall', prompt, extra: { facts } })))
     return
   }
   if (args.includes('--schedule-replan')) {
-    console.log(JSON.stringify(await runSchedule(runPiBin, { mode: 'replan', prompt })))
+    console.log(JSON.stringify(await runSchedule(runAgentBin, { mode: 'replan', prompt })))
     return
   }
   const analysisMode = args.includes('--analysis-mode')
   const sendMode = args.includes('--send-mode')
-  console.log(JSON.stringify(await run(runPiBin, { prompt, analysisMode, sendMode })))
+  console.log(JSON.stringify(await run(runAgentBin, { prompt, analysisMode, sendMode })))
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main()

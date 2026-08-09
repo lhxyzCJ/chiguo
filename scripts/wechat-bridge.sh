@@ -38,14 +38,14 @@ has_credentials() { [ -f "$WX_STORAGE/credentials.json" ]; }
 write_env() {
     mkdir -p "$BRIDGE_DIR"
     # memory-lancedb-pro smart extraction 的 key：~/.pi/agent/auth.json——优先 opencode-go 条目
-    # （扩展 json5 llm 端点固定 opencode 网关），无则回退 [host].provider 条目（install_pi.sh 写入）
-    PI_FALLBACK_PROVIDER="$(sed -n 's/^[[:space:]]*provider *= *"\([^"]*\)".*/\1/p' "$PROJECT_DIR/chiguo_proactive.toml" | head -1 || true)"
-    [ -n "$PI_FALLBACK_PROVIDER" ] || PI_FALLBACK_PROVIDER=opencode-go
-    PI_KEY="$(PI_FALLBACK_PROVIDER="$PI_FALLBACK_PROVIDER" python3 -c "
+    # （扩展 json5 llm 端点固定 opencode 网关），无则回退 [host].provider 条目（install_agent.sh 写入）
+    AGENT_FALLBACK_PROVIDER="$(sed -n 's/^[[:space:]]*provider *= *"\([^"]*\)".*/\1/p' "$PROJECT_DIR/chiguo_proactive.toml" | head -1 || true)"
+    [ -n "$AGENT_FALLBACK_PROVIDER" ] || AGENT_FALLBACK_PROVIDER=opencode-go
+    AGENT_KEY="$(AGENT_FALLBACK_PROVIDER="$AGENT_FALLBACK_PROVIDER" python3 -c "
 import json,os
 try:
     d=json.load(open(os.path.expanduser('~/.pi/agent/auth.json')))
-    key = (d.get('opencode-go') or {}).get('key') or (d.get(os.environ.get('PI_FALLBACK_PROVIDER','opencode-go')) or {}).get('key','')
+    key = (d.get('opencode-go') or {}).get('key') or (d.get(os.environ.get('AGENT_FALLBACK_PROVIDER','opencode-go')) or {}).get('key','')
     print(key or '')
 except Exception: print('')
 " 2>/dev/null || true)"
@@ -54,9 +54,9 @@ WECHAT_BRIDGE_SEND_PORT=$SEND_PORT
 WECHAT_BRIDGE_OWNER=$OWNER_ID
 WECHAT_BRIDGE_DAEMON_PY=$PROJECT_DIR/.venv/bin/python
 WECHAT_BRIDGE_DAEMON=$PROJECT_DIR/chiguo_daemon.py
-WECHAT_BRIDGE_PI_RUN=$PROJECT_DIR/scripts/pi-run.mjs
+WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs
 WECHAT_BRIDGE_STORAGE=$WX_STORAGE
-OPENCODE_API_KEY=$PI_KEY
+OPENCODE_API_KEY=$AGENT_KEY
 EOF
     chmod 600 "$ENV_FILE"
 }
@@ -76,7 +76,7 @@ do_install() {
         fail "wechatbot 仓库缺少 nodejs/ SDK 目录，无法安装"
     fi
     # SDK 是 TS 源码：dist 被上游 gitignore，npm install file: 只拷源码不构建 →
-    # 缺 dist/index.js 时 bridge.mjs 顶层 import 必挂（干净部署实测）。与 install_pi.sh
+    # 缺 dist/index.js 时 bridge.mjs 顶层 import 必挂（干净部署实测）。与 install_agent.sh
     # 对 memory-lancedb-pro 的 clone+build 同款处理；幂等：dist 已存在跳过。
     if [ ! -f "$WECHATBOT_DIR/nodejs/dist/index.js" ]; then
         say "SDK 未构建（dist 缺失），执行 npm install && npm run build ..."

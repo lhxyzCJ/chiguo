@@ -4,7 +4,7 @@
 #
 # 只做一件事：评估状态 → 输出触发决策（JSON）。
 # 不生成消息，不调用 LLM，不发送。
-# 消息生成和发送由 pi-agent（scripts/pi-run.mjs）完成。
+# 消息生成和发送由 agent 后端（scripts/agent-run.mjs）完成。
 #
 # 用法：
 #   python3 chiguo_daemon.py              # 检查并输出决策 JSON
