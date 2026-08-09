@@ -608,6 +608,10 @@ class ChiguoState:
         v6: fcntl.flock 跨进程写锁（写-写竞争防护；读加载不持锁，
         读-写竞争窗口窄且由原子 replace 兜底）。锁可重入：save 在
         state_lock 内被调用时复用同一 fd，不阻塞。
+        v11 (#75): ① tick_seq 写盘前对磁盘值做 CAS——磁盘领先则内存
+        跳到磁盘值+1，保证跨进程单调；② 返回 bool（成功 True/失败
+        False），失败不再静默吞掉（调用方检测 False 输出告警）。
+        返回 False 不抛异常，旧调用点保持兼容。
         """
         p = self.state_path
         tmp_path = Path(str(p) + ".tmp")
@@ -628,6 +632,19 @@ class ChiguoState:
                     pass
 
             if _increment_tick:
+                # ── v11 (#75): tick_seq 单调 CAS——写盘前读磁盘当前值，
+                # 若磁盘领先（其他进程已写入）则内存值跳至磁盘值+1，
+                # 至少保证全局单调不回退。读盘失败（不存在/损坏）→ 以内存值为准。
+                disk_seq = None
+                try:
+                    with open(p, "r", encoding="utf-8") as _f:
+                        _disk_seq = json.load(_f).get("tick_seq")
+                    if isinstance(_disk_seq, int):
+                        disk_seq = _disk_seq
+                except Exception:
+                    pass
+                if disk_seq is not None and disk_seq > self.tick_seq:
+                    self.tick_seq = disk_seq + 1
                 self.tick_seq += 1
 
             # 构建数据（不含 _checksum，先算哈希再添加）
@@ -670,16 +687,18 @@ class ChiguoState:
                     tmp_path.unlink(missing_ok=True)
                 except OSError:
                     pass
-                return  # 跳过本次 save，不替换好状态
+                return False  # 跳过本次 save，不替换好状态
 
             os.replace(tmp_path, self.state_path)
 
         except OSError as e:
-            # ── v5: 磁盘满/Permission denied → 不崩溃 ──
+            # ── v5: 磁盘满/Permission denied → 不崩溃（v11: 返回 False 供告警）──
             print(f"[chiguo_state] save failed: {e}", file=sys.stderr)
+            return False
         finally:
             if lock_acquired:
                 self._lock_release(lock_path)
+        return True
 
     # ── v4：Bayesian 用户状态推断器（延迟初始化）────────────
 
