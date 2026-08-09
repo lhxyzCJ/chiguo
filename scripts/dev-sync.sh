@@ -10,10 +10,12 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SESSION_DIR="$HOME/.pi/agent/sessions/--root-chiguo-wechat-bridge--"
 
 echo "==> 1/5 会话 jsonl(chiguo-main/extract)"
+mkdir -p "$SESSION_DIR"
 ssh "$HOST" "tar cf - -C ~/.pi/agent/sessions/--root-chiguo-wechat-bridge-- ." | tar xf - -C "$SESSION_DIR"
 echo "    ok: $(ls "$SESSION_DIR" | wc -l) 个文件"
 
 echo "==> 2/5 mem0 记忆库 data/mem0(qdrant,排除锁)"
+mkdir -p "$REPO/data/mem0"
 ssh "$HOST" "tar cf - --exclude='*.lock' -C ~/chiguo/data/mem0 ." | tar xf - -C "$REPO/data/mem0"
 echo "    ok: $(du -sh "$REPO/data/mem0" | cut -f1)"
 

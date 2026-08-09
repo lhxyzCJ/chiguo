@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # chiguo-tick — 系统 crontab 入口
 set -euo pipefail
+# cron 环境 PATH 精简，补齐 node/python3 常用安装目录
+# （issue #85: crontab 缺 /usr/local/bin、/opt/homebrew/bin 时裸 node/python3 找不到）
+export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin"
+# 并发锁：上一 tick 未结束时跳过（cron 重入防护，拿不到锁即退出 0）
+exec 9>"/tmp/chiguo-tick.lock"
+if ! flock -n 9; then
+    echo "[chiguo-tick] 已有实例运行，跳过本 tick" >&2
+    exit 0
+fi
 REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
 PY="$REPO/.venv/bin/python"
 # memory-lancedb-pro 扩展的 smart extraction 需要 key（cron 环境无该变量）;来源单一 = scripts/pi-auth.sh
@@ -29,10 +38,6 @@ TOKEN_HDR=()
 # 决策 JSON 自足，无需对话连续性；值从 toml [host].send_session_id 读，缺省回退 chiguo-send）
 SEND_SESSION="$(grep -oP '(?<=send_session_id = ")[^"]+' "$REPO/chiguo_proactive.toml" | head -1 || true)"
 [ -n "$SEND_SESSION" ] || SEND_SESSION="chiguo-send"
-RES="$(CHIGUO_REPO="$REPO" PIRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/pi-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
-TEXT="$(printf '%s' "$RES" | python3 -c 'import json,sys
-try: print(json.load(sys.stdin).get("text",""))
-except: print("")' 2>/dev/null || true)"
 # pi 假死记账：成败记入 pi_health 状态机，transition 时经 /send 发告警/恢复（零额外 pi 调用）
 # 注：toml 缺 wechat_recipient 时（上方提前 exit）pi 未跑 → 该次不记账
 record_health() {
@@ -45,11 +50,21 @@ try:
 except: print("|")' 2>/dev/null || true)"
   if [ -n "$trans" ] && [ "$trans" != "none" ] && [ -n "$msg" ]; then
     body="$(python3 -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$msg")"
-    curl -sf --noproxy '*' -X POST "$BRIDGE_URL" \
+    curl -sf --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
       -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$body" >/dev/null 2>&1 \
       || echo "[chiguo-tick] 告警/恢复发送失败（transition=$trans），下个 tick 不再重发" >&2
   fi
 }
+# node 缺失（cron PATH 不完整时兜底）：显式记账 fail + 告警，而非静默降级
+if ! command -v node >/dev/null 2>&1; then
+  echo "[chiguo-tick] node 缺失（pi-run 无法执行），记录 health fail" >&2
+  record_health fail "tick node 缺失"
+  exit 1
+fi
+RES="$(CHIGUO_REPO="$REPO" PIRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/pi-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
+TEXT="$(printf '%s' "$RES" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("text",""))
+except: print("")' 2>/dev/null || true)"
 # ── A8: 生成失败确定性回退 ──
 # pi 失败 → composer 模板池兜底（零 LLM）：decision JSON 落盘传给
 # chiguo_composer.py CLI，成功则照常发送（health 记 success + record-send 打 fallback 标记）；
@@ -80,7 +95,7 @@ BODY="$(python3 -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text"
 MSG_ID="$(printf '%s' "$OUT" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("msg_id",""))
 except: print("")' 2>/dev/null || true)"
-if ! curl -sf --noproxy '*' -X POST "$BRIDGE_URL" \
+if ! curl -sf --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
   -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$BODY" >/dev/null 2>&1; then
   echo "[chiguo-tick] bridge 发送失败，下个 tick 重试" >&2
   # 回传失败 → daemon 侧 refund_send（energy/quota 回滚 + Hawkes 事件剔除），反馈闭环不静默断
@@ -88,7 +103,7 @@ if ! curl -sf --noproxy '*' -X POST "$BRIDGE_URL" \
     "$PY" "$REPO/chiguo_daemon.py" --send-result "$MSG_ID" --send-status failed --error "bridge unreachable" >/dev/null 2>&1 \
       || echo "[chiguo-tick] send-result(failed) 回传失败 msg_id=$MSG_ID" >&2
   fi
-  exit 0
+  exit 1
 fi
 # 回传发送结果（A8: composer 兜底时额外打 fallback 标记，health 已记 success）
 if [ -n "$MSG_ID" ]; then

@@ -51,6 +51,8 @@ Type=simple
 WorkingDirectory=$NETEASE_API_DIR
 ExecStart=/usr/bin/env node app.js
 Environment=PORT=3000
+# issue #85: 仅回环监听，不对局域网暴露
+Environment=HOST=127.0.0.1
 Restart=always
 RestartSec=5
 
