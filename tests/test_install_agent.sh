@@ -82,7 +82,7 @@ echo "node $*" >> "$CALLS_LOG"
 STUB
 for t in git npm node; do chmod +x "$TMP/bin-ok/$t"; done
 
-# ── noagent 目录：无 pi 的隔离工具集（用例 1）──
+# ── noagent 目录：无 agent 的隔离工具集（用例 1）──
 for t in bash printf command grep awk sed cat cp mkdir mv rm python3 head tail timeout tr dirname; do
   ln -sf "$(command -v "$t")" "$TMP/noagent/$t" 2>/dev/null || true
 done

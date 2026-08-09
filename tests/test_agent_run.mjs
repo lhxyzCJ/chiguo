@@ -159,7 +159,7 @@ t('run: analysis-mode 用 reply_thinking_level（回复及时性,与主动发送
   }
 })
 
-// ── runAgentBin 真实 spawn（node -e 模拟 pi 退出码/stdout）──
+// ── runAgentBin 真实 spawn（node -e 模拟 agent 退出码/stdout）──
 const NDJSON_FULL = '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"完整回复"}]}}'
 t('runAgentBin: 非零退出但 stdout 含完整回复 → 不丢 stdout（salvage）', async () => {
   const code = `console.log(${JSON.stringify(NDJSON_FULL)});process.exit(3)`
