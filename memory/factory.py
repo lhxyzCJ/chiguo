@@ -61,6 +61,7 @@ def create_backend(config: dict | None = None, base_dir: str | Path | None = Non
         embedder_model=cfg.get("mem0_embedder_model"),
         embedder_base_url=cfg.get("mem0_embedder_base_url"),
         embedder_dims=cfg.get("mem0_embedder_dims"),
+        max_rows=cfg.get("mem0_max_rows"),
         strength=strength, min_weight=min_weight,
     )
 
