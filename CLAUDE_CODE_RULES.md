@@ -1,7 +1,7 @@
 # Claude Code Rules — Chiguo Proactive Message System
 
 > Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-09 (v1.11). 44 py + 13 script runners, zero framework, pure Python stdlib.
-> **Iron law**: decision/generation separation. Daemon outputs JSON. pi-agent generates messages (Phase 4).
+> **Iron law**: decision/generation separation. Daemon outputs JSON. agent backend generates messages (Phase 4).
 
 ---
 
@@ -84,7 +84,7 @@ chiguo_daemon.py (DecisionEngine — 1580 lines)
 Supporting (not imported by daemon):
 ├── chiguo_demo.py          Interactive terminal demo (template-only, no LLM) (191 lines)
 ├── chiguo_watchdog.py      Standalone health checks (cron/systemd timer)
-├── chiguo_envcheck.py      Read-only env readiness check (Python/pi/ollama/auth/mem0/netease/data, exit 0/1/2)
+├── chiguo_envcheck.py      Read-only env readiness check (Python/agent/ollama/auth/mem0/netease/data, exit 0/1/2)
 ├── netease/                Netease package: bridge.py (NeteaseBridge 数据面, upstream: api-enhanced v4.39.0, localhost:3000) + service.py (NeteaseService 策略层 DI) + 运行时文件(锚定 <base_dir>/netease/)
 ├── solar_terms.py          24 solar terms lookup (±1 day window) (85 lines)
 └── update_holidays.py      Generate holidays.json + solar_terms.json for any year
@@ -289,13 +289,13 @@ Intent × Cue × Vibe three-layer system:
 
 ---
 
-## 11. LLM Host Integration (Phase 4 — pi-agent)
+## 11. LLM Host Integration (Phase 4 — agent backend)
 
 > Current architecture: system crontab `chiguo-tick.sh` (send side, session `chiguo-send`) + wechat-bridge
 > `askAgent` (reply side, session `chiguo-main`) + `scripts/agent-run.mjs` + `scripts/install_agent.sh`.
 > See `doc/AGENT_INTEGRATION.md`.
 >
-> v1.8 agent runner abstraction: `[host].runner` = `agent` (default, pi binary) or `command` (any CLI agent
+> v1.8 agent runner abstraction: `[host].runner` = `agent` (default, agent backend binary) or `command` (any CLI agent
 > via `[host].agent_command` array). In command mode agent-run.mjs executes
 > `<agent_command> --prompt <full prompt> --mode <analysis|send|extract|verify|recall|replan>` and parses
 > stdout JSON `{ok,text,analysis?,parsed?,raw?}` (NDJSON compatible); prompts are built from agent-run.mjs
@@ -308,7 +308,7 @@ Intent × Cue × Vibe three-layer system:
 4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `curl --noproxy '*' -X POST http://127.0.0.1:18790/send` (wechat-bridge) → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
 
 ### Reply side — bridge askAgent
-1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no pi) → otherwise `askAgent` (`agent-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
+1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no agent) → otherwise `askAgent` (`agent-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
 3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askAgent `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 30s → analysis-only upgrade, no double counting)
 
