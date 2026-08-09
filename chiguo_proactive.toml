@@ -109,6 +109,14 @@ rate_energy_min = 5.0           # 最低允许元气值
 urgency_rate_threshold = 3.0    # 孤独变化率大于此 → _build_context 添加紧迫注解
 urgency_anx_threshold = 2.0     # 不安变化率大于此 → 添加紧迫注解
 
+# ── A1: 弹性衰减（偏离 target 越远回弹越快）──
+elastic_baseline = 100.0   # 弹性基准（情绪值域）；effective_hl = half_life / (1 + |gap|/baseline)
+
+# ── A2: 情绪交互矩阵（乘数=1.0 关闭 → 行为恒等，可安全灰度；>1.0 增强幅度）──
+interaction_affection_anxiety = 1.0   # affection>60 → anxiety 恢复加速（anxiety *= 1 - 0.02*k*affection/100）
+interaction_energy_loneliness = 1.0   # energy<30 → loneliness 恢复加速（loneliness *= 1 + 0.02*k*(30-energy)/30）
+interaction_anxiety_energy = 1.0      # anxiety>70 → energy 恢复减速（energy *= 1 - 0.01*k）
+
 [sigmoid]
 # ── 触发概率的 sigmoid 参数 ──
 # P(触发) = 1 / (1 + e^(-k * (loneliness - midpoint)))
@@ -236,6 +244,10 @@ longing_break_min_silence_hours = 72    # 高焦虑下沉默多久触发破防�
 longing_break_cooldown_days = 3         # 破防后冷却天数，防刷屏
 # 仪式触发权重缩放（特殊日期/早安/晚安/用餐/记忆等固定事件的权重乘数）
 ritual_weight_scale = 1.0               # 默认 1.0；调低可减少仪式触发对情绪触发的压制
+# ── A10: 回复饱和阻尼（30 分钟窗口内同向回复次数越多，情绪加成越小，防刷）──
+drop_damp_window_minutes = 30   # 同向计数窗口；<=0 关闭阻尼
+drop_damp_factor = 0.5          # 第 n 次同向回复 → 加成 × factor^n
+drop_damp_max = 3               # 计数上限（min(n, max) 饱和）
 
 # ── v4: 多维人格初始值 ──
 [personality]

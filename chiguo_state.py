@@ -22,9 +22,10 @@ from pathlib import Path
 from contextlib import contextmanager
 
 from chiguo_math import (
-    sigmoid, decay, recover,
+    sigmoid, decay, recover, elastic_recover,
     dynamic_lambda, hawkes_intensity, longing_decay,
     in_quiet_window,
+    apply_interaction_matrix, drop_damp,
 )
 from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
@@ -99,6 +100,7 @@ class CooldownState:
     crash_timestamps: list[str] = field(default_factory=list)  # v6: 崩溃触发时间戳列表（滑动窗口统计）
     last_longing_break_at: str | None = None  # v6: 上次逃生阀破防时间 ISO（冷却用）
     recv_dedup: dict | None = None  # v9: 最近一次用户消息去重标记 {"text_sha","at","analysis"}（bridge 确定性记录 + standing order 升级共用）
+    drop_events: list[dict] = field(default_factory=list)  # A10: 回复饱和阻尼事件 [{time: iso, direction: str}]（30 分钟窗口滚动）
 
     def __post_init__(self):
         # v6: 睡眠窗口来源配置（非 dataclass 字段，不序列化）。ChiguoState 负责注入。
@@ -1019,6 +1021,9 @@ class ChiguoState:
         """
         cfg = self.config.get("emotion", {})
         silent_h = self.cooldown.silent_hours(now)
+        # A1: 弹性衰减基准（偏离 target 越远回弹越快；默认 100 = 情绪值域）
+        # 注意：变量名避开下方 tsundere 人格回归的 baseline（tsundere_intensity）
+        elastic_baseline = cfg.get("elastic_baseline", 100.0)
 
         # ── 孤独值: 向 100 靠拢，半衰期控制速度 ──
         half_life = cfg.get("loneliness_gain_half_life", 40.0)
@@ -1026,8 +1031,8 @@ class ChiguoState:
         if silent_h > 24:
             half_life = half_life * 0.6
         old_lo = self.emotion.loneliness
-        self.emotion.loneliness = recover(
-            self.emotion.loneliness, 100.0, hours, half_life
+        self.emotion.loneliness = elastic_recover(
+            self.emotion.loneliness, 100.0, hours, half_life, elastic_baseline
         )
 
         # ── 不安值: 向 100 靠拢。知道主人在上课时焦虑减速 ──
@@ -1048,7 +1053,7 @@ class ChiguoState:
                     anx_hl *= 1.4  # 满课日 → 焦虑涨得慢
             except Exception:
                 pass
-        self.emotion.anxiety = recover(self.emotion.anxiety, 100.0, hours, anx_hl)
+        self.emotion.anxiety = elastic_recover(self.emotion.anxiety, 100.0, hours, anx_hl, elastic_baseline)
 
         # 记录变化率（urgency 感知：暴涨 vs 缓慢累积）
         if hours > 0.01:
@@ -1062,7 +1067,7 @@ class ChiguoState:
         # ── 好感值: 向 0 极慢靠拢 ──
         aff_hl = cfg.get("affection_loss_half_life", 500.0)
         if silent_h > 24:
-            self.emotion.affection = recover(self.emotion.affection, 0.0, hours, aff_hl)
+            self.emotion.affection = elastic_recover(self.emotion.affection, 0.0, hours, aff_hl, elastic_baseline)
 
         # ── 傲娇指数（快变量：情绪波动）──
         if self.emotion.affection > 65:
@@ -1078,7 +1083,12 @@ class ChiguoState:
 
         # ── 元气值: 向 100 恢复 ──
         energy_hl = cfg.get("energy_regen_half_life", 8.0)
-        self.emotion.energy = recover(self.emotion.energy, 100.0, hours, energy_hl)
+        self.emotion.energy = elastic_recover(self.emotion.energy, 100.0, hours, energy_hl, elastic_baseline)
+
+        # ── A2: 情绪交互矩阵（推进后调用一次；乘数=1.0 默认关闭 → 恒等）──
+        new_vals = apply_interaction_matrix(asdict(self.emotion), cfg)
+        for k, v in new_vals.items():
+            setattr(self.emotion, k, v)
 
         self._finalize(now)
 
@@ -1180,30 +1190,42 @@ class ChiguoState:
         # ── 回复速度倍率 ──
         lat_mult = self._latency_multiplier(latency_h) if latency_h is not None else {}
 
+        # ── A10: 回复饱和阻尼（同向加成防刷）──
+        # 30 分钟窗口内第 n 次同向回复事件 → 正向加成 × damp（decay 骤降同样按比例放缓）
+        cd_cfg = self.config.get("cooldown", {})
+        damp = self._reply_damp(
+            now,
+            window_minutes=cd_cfg.get("drop_damp_window_minutes", 30),
+            factor=cd_cfg.get("drop_damp_factor", 0.5),
+            cap=cd_cfg.get("drop_damp_max", 3),
+        )
+
         # 孤独骤降（半衰期 0.35h ≈ 21分钟减半）
         hl = cfg.get("loneliness_decay_on_reply", 0.35)
-        self.emotion.loneliness = decay(self.emotion.loneliness, 1.0, hl)
+        lo_decayed = decay(self.emotion.loneliness, 1.0, hl)
+        self.emotion.loneliness += (lo_decayed - self.emotion.loneliness) * damp
 
         # 不安骤降（半衰期 0.5h，很久才回时部分抵消）
         anx_hl = cfg.get("anxiety_decay_on_reply", 0.5)
-        self.emotion.anxiety = decay(self.emotion.anxiety, 1.0, anx_hl)
+        anx_decayed = decay(self.emotion.anxiety, 1.0, anx_hl)
+        self.emotion.anxiety += (anx_decayed - self.emotion.anxiety) * damp
         if lat_mult.get("anxiety_rebound", 0) > 0:
-            self.emotion.anxiety += lat_mult["anxiety_rebound"]
+            self.emotion.anxiety += lat_mult["anxiety_rebound"]  # 负向回升不 damp
 
         # 好感微增（基础值 × 回复速度倍率）
         gain = cfg.get("affection_gain_per_interaction", 0.8)
         if msg_length > 30:
             gain *= 1.5
         affection_mult = lat_mult.get("affection", 1.0)
-        self.emotion.affection += gain * affection_mult
+        self.emotion.affection += gain * affection_mult * damp
 
         # 元气奖励（基础值 + 秒回额外奖励）
         bonus = cfg.get("energy_bonus_on_reply", 10.0)
-        self.emotion.energy += bonus + lat_mult.get("energy_extra", 0)
+        self.emotion.energy += (bonus + lat_mult.get("energy_extra", 0)) * damp
 
         # 傲娇软化（基础值 + 秒回额外）
         tsun_drop = 1.5 + lat_mult.get("tsundere_extra_drop", 0)
-        self.emotion.tsundere_index -= tsun_drop
+        self.emotion.tsundere_index -= tsun_drop * damp
 
         # ── LLM 内容分析微调（叠加在基础上） ──
         if analysis is not None:
@@ -1212,6 +1234,12 @@ class ChiguoState:
         self.cooldown.last_user_message_at = now.isoformat()
         self.cooldown.last_user_msg_length = msg_length
         self.cooldown.messages_without_reply = 0
+
+        # ── A10: 记录本次同向回复事件（供下次回复的 damp 计数）──
+        # 记录本次回复事件（滚动窗口裁剪由 _reply_damp 负责；
+        # 窗口关闭（window_minutes<=0）→ 不记录，_reply_damp 已清空历史）
+        if cd_cfg.get("drop_damp_window_minutes", 30) > 0:
+            self.cooldown.drop_events.append({"time": now.isoformat(), "direction": "reply"})
 
         # ── v4: 概率累积重置 ──
         self.cooldown.held_count = 0
@@ -1273,6 +1301,33 @@ class ChiguoState:
         self._sync_quiet_window(now)
 
         self._finalize(now)
+
+    def _reply_damp(self, now: datetime, window_minutes: float = 30.0,
+                    factor: float = 0.5, cap: int = 3) -> float:
+        """A10: 30 分钟窗口内同向回复事件计数 → 饱和阻尼系数。
+        recents = 窗口内已有同向事件数（不含本次）→ drop_damp(recents, factor, cap)。
+        顺带清理窗口外事件（滚动窗口，防无限增长）；window_minutes <= 0 → 关闭（恒 1.0）。"""
+        if window_minutes <= 0:
+            # 关闭阻尼 → 事件无保留价值，清空防无限增长
+            self.cooldown.drop_events = []
+            return 1.0
+        cutoff = now - timedelta(minutes=window_minutes)
+        kept: list[dict] = []
+        recents = 0
+        for ev in self.cooldown.drop_events:
+            try:
+                t = datetime.fromisoformat(str(ev.get("time", "")))
+            except (ValueError, TypeError):
+                continue  # 坏时间戳丢弃，不影响其余
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=CST)
+            if t < cutoff:
+                continue  # 窗口外 → 丢弃
+            kept.append(ev)
+            if ev.get("direction") == "reply":
+                recents += 1
+        self.cooldown.drop_events = kept
+        return drop_damp(recents, factor, cap)
 
     def _latency_multiplier(self, latency_hours: float) -> dict:
         """

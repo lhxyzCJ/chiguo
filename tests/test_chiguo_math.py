@@ -7,8 +7,9 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from chiguo_math import (
-    sigmoid, decay, recover,
+    sigmoid, decay, recover, elastic_recover,
     dynamic_lambda, weighted_trigger_choice, hawkes_intensity,
+    drop_damp,
 )
 from datetime import datetime, timezone, timedelta
 
@@ -105,6 +106,71 @@ def test_recover_negative_half_life_guard():
     assert recover(30, 100, 10, -5) == 30
     assert recover(30, 100, 10, 0) == 30
     print("  OK test_recover_negative_half_life_guard")
+
+# ── elastic_recover（A1 弹性衰减） ─────────────────────
+
+def test_elastic_recover_far_gap_faster():
+    """远偏离 target → 有效半衰期缩短，回弹明显快于普通 recover"""
+    # gap=90, baseline=100 → effective_hl = 40/(1+0.9) ≈ 21.05
+    far = elastic_recover(10, 100, 40, 40, 100.0)
+    plain = recover(10, 100, 40, 40)  # hl=40 → 恰好半程
+    assert abs(plain - 55.0) < 0.01, f"sanity: plain recover should be 55, got {plain}"
+    assert far > 70, f"far-gap elastic should overshoot plain (55), got {far}"
+    # 精确公式校验：40/(1+90/100)=21.0526 → 10 + 90*(1-2^(-40/21.0526))
+    import math
+    expected = 10 + 90 * (1 - 2.0 ** (-40 / (40 / (1 + 90 / 100))))
+    assert abs(far - expected) < 1e-9, f"got {far}, expected {expected}"
+    print("  OK test_elastic_recover_far_gap_faster")
+
+def test_elastic_recover_near_target_approx_original():
+    """接近 target → 有效半衰期 ≈ 原半衰期（gap 小，弹性几乎不生效）"""
+    # gap=5 → effective_hl = 40/1.05 ≈ 38.1（vs 原 40）→ 与普通 recover 差异 <0.1
+    near = elastic_recover(95, 100, 40, 40, 100.0)
+    plain = recover(95, 100, 40, 40)
+    assert abs(near - plain) < 0.1, f"near-target should ≈ plain recover: {near} vs {plain}"
+    # 与 far-gap 对比：同 elapsed 下 near 比 far 回弹慢
+    far = elastic_recover(10, 100, 40, 40, 100.0)
+    assert near - 95 < far - 10, "near target should recover slower in absolute gap terms"
+    print("  OK test_elastic_recover_near_target_approx_original")
+
+def test_elastic_recover_baseline_parameterized():
+    """baseline 越大 → 弹性越弱（大 baseline 稀释偏离度）"""
+    small_b = elastic_recover(10, 100, 40, 40, baseline=50.0)   # gap/50=1.8 → hl=14.3
+    default_b = elastic_recover(10, 100, 40, 40, baseline=100.0)  # hl≈21.05
+    large_b = elastic_recover(10, 100, 40, 40, baseline=1000.0)   # hl≈36.7
+    plain = recover(10, 100, 40, 40)
+    assert small_b > default_b > large_b > plain, \
+        f"baseline ordering broken: {small_b} > {default_b} > {large_b} > {plain}"
+    print("  OK test_elastic_recover_baseline_parameterized")
+
+def test_elastic_recover_nonpositive_baseline_guard():
+    """baseline <= 0 → 退化为普通 recover（防除零，不崩）"""
+    for b in (0.0, -100.0):
+        assert elastic_recover(10, 100, 40, 40, b) == recover(10, 100, 40, 40), \
+            f"baseline={b} should degrade to plain recover"
+    # elapsed=0 / 负半衰期守卫同样传递
+    assert elastic_recover(30, 100, 0, 20, 100.0) == 30
+    assert elastic_recover(30, 100, 10, -5, 100.0) == 30
+    print("  OK test_elastic_recover_nonpositive_baseline_guard")
+
+# ── drop_damp（A10 回复饱和阻尼） ─────────────────────
+
+def test_drop_damp_progression():
+    """第 n 次同向事件 → factor^(n-1)；cap 饱和"""
+    assert drop_damp(0) == 1.0, "首次（无前置事件）应无阻尼"
+    assert abs(drop_damp(1) - 0.5) < 1e-12
+    assert abs(drop_damp(2) - 0.25) < 1e-12
+    assert abs(drop_damp(3) - 0.125) < 1e-12
+    assert abs(drop_damp(4) - 0.125) < 1e-12, "cap=3 后饱和"
+    print("  OK test_drop_damp_progression")
+
+def test_drop_damp_parameterized():
+    """factor/cap 参数化"""
+    assert abs(drop_damp(1, factor=0.7) - 0.7) < 1e-12
+    assert abs(drop_damp(2, factor=0.7) - 0.49) < 1e-12
+    assert abs(drop_damp(5, factor=0.5, cap=2) - 0.25) < 1e-12, "cap=2 → 0.5^2 饱和"
+    assert drop_damp(0, factor=0.3) == 1.0
+    print("  OK test_drop_damp_parameterized")
 
 # ── dynamic_lambda ───────────────────────────────────
 
@@ -253,6 +319,9 @@ if __name__ == "__main__":
         test_decay_negative_half_life_guard,
         test_recover_half_life, test_recover_zero_time, test_recover_full,
         test_recover_negative_half_life_guard,
+        test_elastic_recover_far_gap_faster, test_elastic_recover_near_target_approx_original,
+        test_elastic_recover_baseline_parameterized, test_elastic_recover_nonpositive_baseline_guard,
+        test_drop_damp_progression, test_drop_damp_parameterized,
         test_dynamic_lambda_bounds, test_dynamic_lambda_monotonic,
         test_weighted_choice_deterministic, test_weighted_choice_empty, test_weighted_choice_all_zero,
         test_weighted_choice_negative_weights,
