@@ -168,23 +168,34 @@ class NeteaseBridge:
         if not resp or resp.get("code") != 200:
             print("[error] 获取 QR key 失败", file=sys.stderr)
             return False
-        unikey = resp["data"]["unikey"]
+        key_data = resp.get("data")
+        if not isinstance(key_data, dict) or not isinstance(key_data.get("unikey"), str):
+            print("[error] 获取 QR key 失败: 响应结构异常", file=sys.stderr)
+            return False
+        unikey = key_data["unikey"]
         print(f"[1/3] QR key: {unikey}")
 
         resp = self._api_get(f"/login/qr/create?key={unikey}&qrimg=true")
         if not resp or resp.get("code") != 200:
             print("[error] 生成二维码失败", file=sys.stderr)
             return False
-        qr_data = resp["data"]["qrimg"]
+        create_data = resp.get("data")
+        if not isinstance(create_data, dict) or not isinstance(create_data.get("qrimg"), str):
+            print("[error] 生成二维码失败: 响应结构异常", file=sys.stderr)
+            return False
+        qr_data = create_data["qrimg"]
         print(f"[2/3] 二维码已生成")
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         if "," in qr_data:
             b64_data = qr_data.split(",", 1)[1]
-            with open(self.qr_path, "wb") as f:
-                f.write(base64.b64decode(b64_data))
-            print(f"      二维码图片: {self.qr_path}")
-            print(f"      (请用任意图片查看器打开，或 scp 到本地扫描)")
+            try:
+                with open(self.qr_path, "wb") as f:
+                    f.write(base64.b64decode(b64_data))
+                print(f"      二维码图片: {self.qr_path}")
+                print(f"      (请用任意图片查看器打开，或 scp 到本地扫描)")
+            except Exception as e:
+                print(f"[warn] 二维码图片保存失败: {e}", file=sys.stderr)
 
         try:
             self._print_qr_terminal(unikey)
@@ -198,7 +209,7 @@ class NeteaseBridge:
         last_status = None
         while waited < max_wait:
             resp = self._api_get(f"/login/qr/check?key={unikey}&timestamp={int(time.time()*1000)}")
-            if not resp:
+            if not isinstance(resp, dict):
                 time.sleep(interval)
                 waited += interval
                 continue
@@ -306,6 +317,13 @@ class NeteaseBridge:
             print("[error] 响应结构异常: resp 非 dict", file=sys.stderr)
             return {"api_alive": True, "logged_in": False, "profile": None}
 
+        code = status.get("code")
+        if code != 200:
+            print(f"[error] API 返回错误: code={code} message={status.get('message', '?')}", file=sys.stderr)
+            if code == 301:
+                print("[hint] 可能需要重新登录: uv run python -m netease.bridge --login", file=sys.stderr)
+            return {"api_alive": True, "logged_in": False, "profile": None, "api_error": code}
+
         data = status.get("data", {})
         if not isinstance(data, dict):
             print("[error] 响应结构异常: data 非 dict", file=sys.stderr)
@@ -333,9 +351,10 @@ class NeteaseBridge:
         """
         if not force_refresh:
             cached = self._load_cache()
-            if cached and cached.get("songs"):
-                print(f"[cache] 使用缓存 ({cached['date']}, {len(cached['songs'])} 首)", file=sys.stderr)
-                return cached["songs"]
+            if cached is not None:  # 缓存存在（含空 songs）即命中；None=无缓存才重新拉取
+                songs = cached.get("songs") or []
+                print(f"[cache] 使用缓存 ({cached.get('date', '?')}, {len(songs)} 首)", file=sys.stderr)
+                return songs
 
         cookie = self._load_cookie()
         if not cookie:
@@ -358,10 +377,14 @@ class NeteaseBridge:
                 print("[hint] 可能需要重新登录: uv run python -m netease.bridge --login", file=sys.stderr)
             return None
 
-        raw_songs = resp.get("data", {}).get("dailySongs", [])
-        if not raw_songs:
-            print("[warn] 每日推荐为空 (可能是新账号或非日推更新时间)", file=sys.stderr)
-            return []
+        data = resp.get("data")
+        if not isinstance(data, dict):
+            print("[error] 响应结构异常: data 非 dict", file=sys.stderr)
+            return None
+        raw_songs = data.get("dailySongs")
+        if not isinstance(raw_songs, list):
+            print("[error] 响应结构异常: data.dailySongs 缺失或非列表", file=sys.stderr)
+            return None
 
         songs = []
         for s in raw_songs[:limit]:
@@ -387,6 +410,9 @@ class NeteaseBridge:
                 "share_url": f"https://music.163.com/song?id={song_id}",
             }
             songs.append(song)
+
+        if not songs:
+            print("[warn] 每日推荐为空 (可能是新账号或非日推更新时间)", file=sys.stderr)
 
         self._save_cache(songs)
         return songs
