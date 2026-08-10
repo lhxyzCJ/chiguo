@@ -239,7 +239,7 @@ export async function recordUserMsg(text) {
 }
 
 /** 分析升级：askAgent 已产出情绪分析 JSON → daemon --user-msg --analysis。
- * recv_dedup 升级语义：同一原文（30s 窗口内，RECV_DEDUP_WINDOW_S）只补分析微调，不重复记账。失败不阻塞回复流。 */
+ * recv_dedup 升级语义：同一原文（窗口内，RECV_DEDUP_WINDOW_S=300s 覆盖 agent 分析往返）只补分析微调，不重复记账。失败不阻塞回复流。 */
 export async function upgradeAnalysis(text, analysis) {
   if (!analysis) return
   const analysisJson = typeof analysis === 'string' ? analysis : JSON.stringify(analysis)

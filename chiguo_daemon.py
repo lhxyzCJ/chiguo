@@ -898,7 +898,8 @@ class DecisionEngine:
             "instruction": instruction,
         }
 
-    RECV_DEDUP_WINDOW_S = 30  # v9: 补报升级判定的极短窗口（<30s 才视为 bridge 补报）
+    RECV_DEDUP_WINDOW_S = 300  # v9+R1: 补报升级判定窗口（须覆盖 bridge 两次 daemon 调用间的 agent 分析往返：
+                               #  askAgent 超时 180s + 余量；<30s 时 LLM 往返一超即误判为真实重发 → 情绪效果二次应用）
 
     def record_user_message(self, text: str, analysis_json: str | None = None):
         now = datetime.now(CST)
@@ -1730,6 +1731,13 @@ def main():
         engine.record_user_message(args.user_msg, args.analysis)
         # 用户刚发消息 → 立即评估一次（情绪最新，最佳联系窗口）
         decision = engine.evaluate()
+        # v1.11+R2 (review R2): --user-msg 由 bridge 在回复链中调用，其实际回复经 agent
+        # 另路生成并发送；此路径 evaluate() 若命中 send 分支，booking 的状态
+        # （能量/每日额度/未回复计数/Hawkes 事件）无人消费 → 幻影记账。
+        # 立即按"未送达"退款回滚（复用 v6 反馈闭环），等真实发送路径再记账。
+        if decision["action"] == "send":
+            engine.record_send_result(decision.get("msg_id", ""), "failed",
+                                      error="phantom_send_reply_path")
         if args.compact and decision["action"] == "idle":
             compact = {"action": "idle", "time": datetime.now(CST).isoformat()}
             if "next_evaluation_at" in decision:
