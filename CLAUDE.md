@@ -14,6 +14,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 7. 架构决策看长期，别用临时凑合用的过渡方案
 8. 参考成熟产品的验证方案，别从零发明
 9. **铁律：完成任务并报告之前，必须解决 todo list 与宿主的报错**——逐项 `complete_step` 签收任务（不留 incomplete 项）；报告前处理全部宿主报错（final-answer readiness 门禁：无未签收 todo、本轮有可观测工作、mutation 后运行验证并提交 reviewed_paths、prefer 能力调用或 `use_capability` 显式 decline），带着报错收尾视为未完成
+## 宿主收尾门禁（final-answer readiness）
+Reasonix 宿主在 final-answer 时检查四类验收项，报错模式固定，对策如下：
+1. **capability 门禁**：capability-route 中标 `require`/`prefer` 的 skill 必须**显式调用**（`read_skill`/`run_skill`/`use_capability`）或显式 decline（`use_capability` action=decline + reason）；「内容已常驻系统提示」不算调用痕迹
+2. **verification 门禁**：mutation 后必须跑**宿主白名单**验证命令，并在 `complete_step` evidence 的 `command` 字段引用：JS 改动 → `node --check <file>`；文档/纯文本改动 → `git diff --check`；标准测试 → `pytest`/`go test ./...`/`npm test`。**不算数**：`git status/log`、`gh run ...`、`bash scripts/ci-test.sh`（项目自定义 runner 照跑，但只能作补充信息）、`node -e`/`python -c` 内联解释器
+3. **review 门禁**：mutation 后跑 `review`/`security_review` 覆盖最新变更；按建议改码后必须重跑
+4. **todo 门禁**：逐项 `complete_step` 签收，不留 incomplete 项
+机械自检：`bash scripts/ci-test.sh`（项目全量测试链，与 GitHub Actions 同一入口）。
 ## Git 工作流（代码改动）
 - 代码改动（refactor:/fix:/feat:）一律走分支 + PR：分支名 `simplify/<issue-N>-<slug>`；每分支对应一个 GitHub Issue（`gh issue create`），PR 正文 `Closes #N`；出口条件 = CI 全链绿 + 子代理自审 + 用户批准 → squash merge。
 - docs:/chore: 小改动可直接 main（CI 仍自动验证）。
@@ -23,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required) — 44 py + 13 script tests
+# Run all tests (Python 3.14+ required) — 48 py + 13 script tests
 bash scripts/ci-test.sh   # 本地与 GitHub Actions ci.yml 同一入口
 ```
 
