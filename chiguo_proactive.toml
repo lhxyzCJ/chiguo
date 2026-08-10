@@ -36,6 +36,18 @@ ebbinghaus_min_weight = 0.1  # 最低权重（不会彻底遗忘）
 # ── B2: 情绪-记忆耦合（默认关闭恒等，可灰度）──
 emotion_tagging = false      # 写侧：daemon 对话写入 mem0 时把情绪快照打标进 metadata.emotion_tag（{loneliness/affection/anxiety/energy: low|mid|high + user_mood}）
 emotion_tag_weight = 0.0     # 读侧：检索时对情绪相近记忆的加权系数 ×(1+weight×sim)（0=关闭恒等）
+# ── C1: 空闲期确定性记忆巩固（对标 Letta dreaming / Deep Dream 无 LLM 版；默认关闭恒等）──
+consolidate_enabled = false            # 开启后 daemon 空闲静默路径自动触发 consolidate（也可手动 chiguo_daemon.py --consolidate 接入 cron）
+consolidate_sim_threshold = 0.85       # 记忆 text 的 jaccard_3gram 相似度阈值，≥ 视为近似重复 → 保留重要一条、另一条降权
+consolidate_min_importance = 0.3       # 低于此重要度且超龄 → 过期候选（删除）
+consolidate_max_age_hours = 720.0      # 低重要度记忆的超龄阈值（小时，720=30天）
+consolidate_idle_silent_hours = 24.0   # idle 且清醒沉默 ≥ 此小时数才触发巩固（防频繁打扰记忆库）
+consolidate_min_interval_hours = 168.0 # 两次巩固最小间隔（小时，防每 tick 重复）
+# ── C2: Ebbinghaus 复习强化（对标 FSRS；默认关闭恒等）──
+reinforce_enabled = false              # 记忆被召回（search_with_forgetting/random_memory_with_forgetting 返回）时记录 recall_count
+reinforce_bonus = 0.0                  # 每次召回 importance ×(1 + bonus×count)；0=关闭恒等
+# ── C4: 写全对话轮次（默认单条 user 写入恒等）──
+write_full_turns = false               # 写入 mem0 时带上最近一条 assistant 回复（user+assistant 两轮，LLM 提取上下文更全）
 
 [character]
 name = "迟菓"
@@ -404,6 +416,9 @@ disk_warn_mb = 500         # 磁盘剩余小于此值 → warn
 disk_critical_mb = 100     # 磁盘剩余小于此值 → critical
 memory_warn_mb = 500       # 进程 RSS 大于此值 → warn
 memory_critical_mb = 1000  # 进程 RSS 大于此值 → critical
+# ── D1: 主动消息效果评估（对标 ProactiveEval；默认关闭恒等，不新增输出键）──
+proactive_eval = false     # 开启后 stats()/report() 聚合输出 proactive_stats（按 trigger 分组的发送/回复统计 + overall）
+replied_within_hours = 24.0  # 发送后此小时数内收到首条 user-msg 视为已回复
 # mem0 记忆库路径由主配置 [memory] 段读取（mem0_qdrant_path/mem0_history_db），此处不重复定义
 
 # ── 日志轮转 & 对话存档 (v5) ──

@@ -63,6 +63,13 @@ def create_backend(config: dict | None = None, base_dir: str | Path | None = Non
         embedder_dims=cfg.get("mem0_embedder_dims"),
         max_rows=cfg.get("mem0_max_rows"),
         strength=strength, min_weight=min_weight,
+        # ── C1/C2: 记忆巩固 & 复习强化（默认关闭恒等）──
+        consolidate_enabled=cfg.get("consolidate_enabled", False),
+        consolidate_sim_threshold=cfg.get("consolidate_sim_threshold"),
+        consolidate_min_importance=cfg.get("consolidate_min_importance"),
+        consolidate_max_age_hours=cfg.get("consolidate_max_age_hours"),
+        reinforce_enabled=cfg.get("reinforce_enabled", False),
+        reinforce_bonus=cfg.get("reinforce_bonus"),
     )
 
 

@@ -265,11 +265,14 @@ class TopicPicker:
             )
         if not mem:
             return None
-        abstract = (mem.get("l0_abstract", "") or mem.get("text", "")).strip()
+        # C3: l0_abstract 已废弃（mem0 新版不再产出），text 兜底为准。
+        abstract = (mem.get("text", "") or mem.get("l0_abstract", "")).strip()
         if not abstract:
             return None
         truncated = abstract[:80]
-        cat = mem.get("memory_category", "?")
+        # C3: memory_category 死字段清理——优先现成 category 字段，fallback "?"。
+        # prefer_categories 匹配逻辑保留（不匹配即不优先，无害）。
+        cat = mem.get("category") or mem.get("memory_category") or "?"
         return {
             "type": "memory",
             "hint": f"想起相关记忆：{truncated}，从记忆中自然地找话头",
@@ -396,7 +399,8 @@ class TopicPicker:
         )
         if not mem:
             return None
-        text = (mem.get("l0_abstract", "") or mem.get("text", "")).strip()
+        # C3: l0_abstract 已废弃，text 兜底为准。
+        text = (mem.get("text", "") or mem.get("l0_abstract", "")).strip()
         if not text:
             return None
         truncated = text[:80]
