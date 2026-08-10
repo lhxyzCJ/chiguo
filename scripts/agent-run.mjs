@@ -163,16 +163,35 @@ export function extractBlock(text, marker) {
   return null  // 括号不平衡 → 畸形
 }
 
-/** 用 spawn 收集 stdout（execFile 在 agent 二进制下会挂起：其等 stdin EOF，execFile 管道不关） */
+/** 用 spawn 收集 stdout（execFile 在 agent 二进制下会挂起：其等 stdin EOF，execFile 管道不关）。
+ *  R19: spawn 忽略 maxBuffer（execFile 专属）→ 手动施加上限，超限即 kill + reject（防无界累积内存）。 */
 export function runAgentBin(bin, args, opts) {
   return new Promise((resolve, reject) => {
+    const maxBuffer = opts.maxBuffer ?? 16 * 1024 * 1024
     const c = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts })
     let stdout = ''
     let stderr = ''
-    c.stdout.on('data', (d) => { stdout += d })
-    c.stderr.on('data', (d) => { stderr += d })
-    c.on('error', (err) => reject(err))
+    let killed = false
+    const bail = (err) => {
+      if (killed) return
+      killed = true
+      try { c.kill('SIGKILL') } catch {}
+      reject(err)
+    }
+    c.stdout.on('data', (d) => {
+      stdout += d
+      if (Buffer.byteLength(stdout, 'utf8') > maxBuffer) {
+        bail(new Error(`${bin} stdout 超过 ${maxBuffer} 字节上限（输出无界，已终止）`))
+      }
+    })
+    c.stderr.on('data', (d) => {
+      stderr += d
+      // 防 stderr 无界：仅保留尾部（错误诊断信息一般较短，截断不影响退出码语义）
+      if (Buffer.byteLength(stderr, 'utf8') > 1024 * 1024) stderr = stderr.slice(-256 * 1024)
+    })
+    c.on('error', (err) => { if (!killed) reject(err) })
     c.on('close', (code, signal) => {
+      if (killed) return
       // 非零退出但 stdout 已含完整回复（如 teardown/session 保存失败）→ 不丢回复；
       // parseNdjson 取最后 message_end，无完整回复仍按失败处理
       if (code !== 0 && !parseNdjson(stdout) && !parseAgentOutput(stdout)) {

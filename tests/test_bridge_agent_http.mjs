@@ -48,7 +48,7 @@ rl.on('line', (line) => {
 })
 `)
 
-const { handleAgentPrompt, warnIfNoToken } = await import('../wechat-bridge/bridge.mjs')
+const { handleAgentPrompt, warnIfNoToken, TurnQueue } = await import('../wechat-bridge/bridge.mjs')
 const { AgentRpc } = await import('../wechat-bridge/agent-rpc.mjs')
 
 let passed = 0
@@ -99,6 +99,27 @@ t('handleAgentPrompt: RPC 抛错 → 503', async () => {
   assert(res.status === 503, `status=${res.status}`)
   assert(res.body.ok === false && String(res.body.error).includes('RPC down'))
   globalThis.__agentRpc = null
+})
+
+t('handleAgentPrompt: 并发经共享 TurnQueue 串行化（R20,同会话不并发 turn）', async () => {
+  const queue = new TurnQueue()
+  const active = { n: 0, max: 0 }
+  globalThis.__agentRpc = {
+    prompt: async () => {
+      active.n += 1
+      active.max = Math.max(active.max, active.n)
+      await new Promise((r) => setTimeout(r, 30))
+      active.n -= 1
+      return { text: 'r', analysis: null }
+    },
+  }
+  try {
+    await Promise.all([
+      handleAgentPrompt({ text: 'a', mode: 'analysis' }, resStub(), queue),
+      handleAgentPrompt({ text: 'b', mode: 'analysis' }, resStub(), queue),
+    ])
+    assert(active.max === 1, `并发 turn: max=${active.max}（应被队列串行化）`)
+  } finally { globalThis.__agentRpc = null }
 })
 
 t('HTTP 路由:POST /agent/prompt 经真实 server → 200 + 非回环 Host 拒绝', async () => {

@@ -319,9 +319,14 @@ export function isLocalOrigin(origin) {
   } catch { return false }
 }
 
+/** R20: /agent/prompt 与回复链共用同一 TurnQueue（同一 agent 会话禁止并发 turn）。
+ *  模块级兜底队列供独立调用/测试（正式入口经 startSendServer(bot, queue) 注入共享队列）。 */
+const fallbackTurnQueue = new TurnQueue()
+
 /** /agent/prompt 处理器（导出供测试）：经常驻 AgentRpc 生成回复。
- *  返回 {ok:true,text,analysis?}；失败抛 503（调用方回退 spawn）。 */
-export async function handleAgentPrompt(payload, res) {
+ *  返回 {ok:true,text,analysis?}；失败抛 503（调用方回退 spawn）。
+ *  R20: RPC 调用经 queue.run 串行化，防同会话（chiguo-main）并发 turn。 */
+export async function handleAgentPrompt(payload, res, queue = fallbackTurnQueue) {
   const deny = (status, error) => {
     res.writeHead(status, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: false, error }))
@@ -338,9 +343,11 @@ export async function handleAgentPrompt(payload, res) {
     return
   }
   try {
-    const { AgentRpc } = await import('./agent-rpc.mjs')
-    if (!globalThis.__agentRpc) globalThis.__agentRpc = new AgentRpc()
-    const r = await withTimeout(globalThis.__agentRpc.prompt(text, { mode: mode ?? 'analysis' }), 180_000)
+    const r = await queue.run(async () => {
+      const { AgentRpc } = await import('./agent-rpc.mjs')
+      if (!globalThis.__agentRpc) globalThis.__agentRpc = new AgentRpc()
+      return withTimeout(globalThis.__agentRpc.prompt(text, { mode: mode ?? 'analysis' }), 180_000)
+    })
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: true, text: r.text, analysis: r.analysis ?? null }))
   } catch (err) {
@@ -353,7 +360,7 @@ export async function handleAgentPrompt(payload, res) {
 
 /** 主动发送端点：POST /send {"to","text"} → bot.send()；POST /agent/prompt {"text","mode"} → AgentRpc。
  *  仅本地回环来源(#84 鉴权)+ 可选 token。 */
-function startSendServer(bot) {
+function startSendServer(bot, queue) {
   const server = createServer((req, res) => {
     const deny = (status, error) => {
       res.writeHead(status, { 'Content-Type': 'application/json' })
@@ -388,7 +395,7 @@ function startSendServer(bot) {
       let payload
       try { payload = JSON.parse(body || '{}') } catch { deny(400, 'invalid JSON'); return }
       if (req.url === '/agent/prompt') {
-        await handleAgentPrompt(payload, res)
+        await handleAgentPrompt(payload, res, queue)
         return
       }
       const { to, text } = payload
@@ -686,7 +693,7 @@ async function main() {
 
   await bot.login()
   // 该 fork 的 bot.start() 长轮询挂起不返回 → 主动发送端点必须先于 start 就绪
-  startSendServer(bot)
+  startSendServer(bot, queue)
   await bot.start()
   console.log('wechat-bridge 运行中（Ctrl+C 停止）')
 }
