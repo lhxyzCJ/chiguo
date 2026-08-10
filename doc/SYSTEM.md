@@ -168,7 +168,7 @@ new_value = target - (target - current) × 2^(-hours / effective_hl)
 
 **A11 回复影响惯性阻尼（v1.11）**：单条 analysis 微调 delta 经 `impact_inertia()`（`chiguo_math.py`）幅度压缩，防单条消息情绪跳变——`effective_delta = delta × (1 - inertia_eff)`，负向独立键可设更高（对标 lacuna_core InertiaFilter 负向权重更高）、`inertia_eff` 钳制 [0, 0.9] 永不反向/归零。`[emotion].impact_inertia_positive/negative/affection_mod` 默认 0 = 关闭恒等，可安全灰度；应用在 `_apply_emotion_impact` 各维度 delta，按**通道效价**分桶（anxiety 回升恒走 neg 键、tsundere 软化恒走 pos 键），先于人格 anxiety_sensitivity 调制（幅度上限语义）。
 
-**A12 用户情绪感知（v1.11）**：analysis 契约新增 `user_mood`（calm|low|distressed|happy|angry）+ `user_mood_intensity`（0~1），容错语义：缺键/非法枚举/非数值 → 本次零效果且保留旧感知（旧 analysis 天然兼容），仅显式 calm 或强度 ≤0 清空；感知写入 `CooldownState.user_mood`（TTL 6h 由 `mood_fresh` 判定）→ 三路消费：①情绪 delta（`user_mood_impact`，`[emotion].user_mood_*_factor` 默认 0）；②新增 `comfort` 安慰触发（入 EMOTION_TRIGGERS 自动继承 A3/A4/A5/A6，归一化（raw/(raw+baseline)）防恒候选，`[trigger].comfort_*` 默认关闭）+ 低落（low/distressed）时 anxiety 权重加成（`user_mood_anxiety_bonus`）；③`_build_context` 注入 mood_note 语气注解（`[trigger].user_mood_note_enabled=0` 默认关闭；开启后叠加在 layer_guidance 上，不改变傲娇铁律）+ Bayesian `needs_care` 推断提示。职责边界：λ/频率通道（`day_plan.py` needs_care ×1.2）与内容/语气通道（comfort）正交不相乘。对标 thu-coai/Emotional-Support-Conversation（ACL 2021）共情范式。
+**A12 用户情绪感知（v1.11）**：analysis 契约新增 `user_mood`（calm|low|distressed|happy|angry）+ `user_mood_intensity`（0~1），容错语义：缺键/非法枚举/非数值 → 本次零效果且保留旧感知（旧 analysis 天然兼容），仅显式 calm 或强度 ≤0 清空；感知写入 `CooldownState.user_mood`（TTL 6h 由 `mood_fresh` 判定）→ 三路消费：①情绪 delta（`user_mood_impact`，`[emotion].user_mood_*_factor` 默认 0；v1.11+R4' delta 应用同样过 `mood_fresh` TTL 门禁——analysis 无新感知而沿用旧感知时，过期低落 delta 不再随每条消息无限重放）；②新增 `comfort` 安慰触发（入 EMOTION_TRIGGERS 自动继承 A3/A4/A5/A6，归一化（raw/(raw+baseline)）防恒候选，`[trigger].comfort_*` 默认关闭）+ 低落（low/distressed）时 anxiety 权重加成（`user_mood_anxiety_bonus`）；③`_build_context` 注入 mood_note 语气注解（`[trigger].user_mood_note_enabled=0` 默认关闭；开启后叠加在 layer_guidance 上，不改变傲娇铁律）+ Bayesian `needs_care` 推断提示。职责边界：λ/频率通道（`day_plan.py` needs_care ×1.2）与内容/语气通道（comfort）正交不相乘。对标 thu-coai/Emotional-Support-Conversation（ACL 2021）共情范式。
 
 **A13 情绪自然波动（v1.11）**：tick() A2 之后对 loneliness/anxiety 叠加 OU 过程噪声（`ou_step`/`noise_cap`，`chiguo_math.py`）——带均值回归的小幅起伏消除"机械感"。`[emotion].noise_enabled=0` 关闭恒等；噪声幅度 σ√Δt 且受 `min(σ√Δt, 0.5×弹性步进)` 动态上限钳制（噪声<信号）；独立 `random.Random(noise_seed)` 不污染全局序列；瞬态不落盘。affection（长期存量）/tsundere（角色维度）/energy（资源+安全阀）不加噪声。对标 lacuna_core FluctuationEngine。
 
@@ -337,6 +337,9 @@ evaluate():
   ② Bayesian 用户状态推断（v4）
      ├─ 从可观测信号计算 P(state|obs)
      ├─ 加权效用 = Σ P(state) × utility(state)
+     ├─ 在线学习（BayesianLearner EMA 调优似然表）；v1.11+R3：似然缓存随 chiguo_state.json
+     │   持久化（save 仅在进程创建过 estimator 时写入 "bayesian" 字段），
+     │   跨进程还原 EMA 调优——修复前纯内存、每次 cron tick 即丢弃，在线学习在产线是死代码
      └─ sleeping 状态 confidence > min_confidence_for_block（v7: [bayesian] 段，默认 0.5，daemon 与 availability 同源）→ 强制阻塞
 
   ③ can_send(now)
@@ -390,8 +393,12 @@ on_user_message(now)
       （条目带 bucket 字段；同日不同桶 → 分开条目，如周五 20:00 前后跨桶）
   → circadian.recompute()：两桶独立聚合（aggregate_hours 按桶过滤）
       → 各自环形滑动窗口（宽度 ∈ [min_width=5, max_width=12]，(sum, width, start) 字典序，确定性）
-      → 置信度 confidence = 完整度(桶内 sample_days/history_days) × 安静度(1 - 窗口均回复/全天均回复)
+      → 置信度 confidence = 完整度(桶内 sample_days/该桶有效窗口天数) × 安静度(1 - 窗口均回复/全天均回复)
       → 写 weekday_*/weekend_* 两套独立字段；桶内数据不足 → 该桶不覆盖（保持当前值）
+      → v1.11+R5：周末桶样本门槛与完整度分母按周内占比 2/7 折算
+        （周末有效窗口 ≈ round(history_days×2/7)，门槛 ≈ max(1, round(min_sample_days×2/7))）
+        ——14 天窗口内周末最多 ~4-6 天，若不折算则 min_sample_days=7 与 完整度=days/14<0.5
+          双重否决，周末桶结构不可达、睡眠窗口对周末恒失效；工作日桶行为不变
   → _sync_quiet_window(now)：按当前时刻 bucket_for(now) 选桶，置信度 ≥ min_confidence(0.5)
       → 应用该桶学习窗口 {quiet_start, quiet_end}，并把兼容字段 quiet_start/quiet_end/confidence
         同步为当前生效桶快照（门禁经 CooldownState.quiet_window() 读取不变）
@@ -406,7 +413,7 @@ on_user_message(now)
 
 **降级语义**：
 
-- 数据不足（桶内 sample_days < min_sample_days=7 / 无数据 / 非法计数）→ 该桶不覆盖当前值，保持默认 0-8
+- 数据不足（桶内 sample_days < min_sample_days=7（周末桶按占比折算后 ≈2）/ 无数据 / 非法计数）→ 该桶不覆盖当前值，保持默认 0-8
 - 置信度 < 0.5 → 该桶学习窗口不生效，回退配置默认
 - 损坏记录（非法日期/缺 hours 键/越界小时/无 bucket 字段）→ 逐条防护不崩溃，非法条目丢弃
 - 窗口语义与 cooldown 一致：`quiet_end` 不含 end，`qe < qs` 表示跨午夜
