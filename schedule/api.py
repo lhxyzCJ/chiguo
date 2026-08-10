@@ -204,8 +204,6 @@ class ScheduleApi:
                 if set(when) == {"date", "end_date"}:
                     start, _ = resolve_when({"date": when["date"]}, today, semester_start)
                     end, _ = resolve_when({"date": when["end_date"]}, today, semester_start)
-                    if end < start:
-                        raise ApiRejection("invalid_value", "区间 end_date 早于 date,死区间拒绝")
                     entry["end_date"] = when["end_date"]   # 批 2b 旧协议区间(显式 end_date 保持)
                     is_interval = True
                 else:

@@ -479,7 +479,7 @@ evaluate(now)
 
 **配额**：
 - 音乐话题共享日配额 2（`netease_daily_quota`）：daily（每日推荐）与 recent（播放历史）两源共享、跨天重置；双源全挂 → None 不消费配额
-- 故障话题日配额 1（`netease_fault_daily_quota`）：faulty 期间跳过网络直出故障话题，**时段门禁前置——上课/睡眠窗口与正常话题同级静默（R13）**，窗口外照常产出；发送仍受 daemon 总体发送门控（can_send/日限额）约束
+- 故障话题日配额 1（`netease_fault_daily_quota`）：faulty 期间跳过网络直出故障话题，**时段门禁前置——上课/睡眠窗口与正常话题同级静默（R13）**，窗口外照常产出；发送仍受 daemon 总体发送门控（can_send/日限额）约束；门禁前置还意味着上课/睡眠窗口内 netease 健康重探（refresh_health）与故障话题产出被延后到窗口外，属有意语义
 
 **随机选源**：`netease_source_weights`（默认 [0.5, 0.5]）加权随机选 daily（每日推荐）/recent（最近播放，取 playTime 最大者）；选中源不可用自动换另一源；负权重钳制非负、两权全 0 回退 [0.5, 0.5]。
 

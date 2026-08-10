@@ -209,7 +209,7 @@ class Mem0Backend(MemoryBackend):
         for r in results:
             try:
                 row = self._row(r)
-            except Exception:
+            except (TypeError, ValueError, AttributeError):
                 continue  # 单条脏形状不拖垮整次检索(R14 形状防御)
             if row["importance"] < min_importance:
                 continue
@@ -307,7 +307,7 @@ class Mem0Backend(MemoryBackend):
         for r in results:
             try:
                 row = self._row(r)
-            except Exception:
+            except (TypeError, ValueError, AttributeError):
                 continue  # 单条脏形状不拖垮整次遍历(R14 形状防御)
             if row["importance"] < min_importance:
                 continue

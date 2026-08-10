@@ -61,19 +61,19 @@ class AnniversaryManager:
                 if not isinstance(data, dict):
                     self._corrupt = True
                     self._items = []
-                    return
-                anns = data.get("anniversaries", [])
-                # 白名单:type 仅 anniversary;countdown 条目读入即丢(M20/6c,
-                # 历史数据已由 api 迁移入口②直读原始文件迁为 reminder)
-                # 显式取值构造:未知键(extra 等历史脏键)忽略,不误判 corrupt
-                items = []
-                for a in anns:
-                    if not self._valid(a) or a.get("type") != "anniversary":
-                        continue
-                    items.append(Anniversary(
-                        id=a["id"], type=a["type"], name=a["name"], date=a["date"],
-                        note=a.get("note", ""), created_at=a.get("created_at", "")))
-                self._items = items
+                else:
+                    anns = data.get("anniversaries", [])
+                    # 白名单:type 仅 anniversary;countdown 条目读入即丢(M20/6c,
+                    # 历史数据已由 api 迁移入口②直读原始文件迁为 reminder)
+                    # 显式取值构造:未知键(extra 等历史脏键)忽略,不误判 corrupt
+                    items = []
+                    for a in anns:
+                        if not self._valid(a) or a.get("type") != "anniversary":
+                            continue
+                        items.append(Anniversary(
+                            id=a["id"], type=a["type"], name=a["name"], date=a["date"],
+                            note=a.get("note", ""), created_at=a.get("created_at", "")))
+                    self._items = items
             except (json.JSONDecodeError, TypeError, AttributeError):
                 self._corrupt = True
                 self._items = []
