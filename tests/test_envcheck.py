@@ -319,6 +319,35 @@ def test_run_checks_custom_backend_skips_mem0():
     print("  OK test_run_checks_custom_backend_skips_mem0")
 
 
+def test_sanitize_url_strips_credentials():
+    """R24: _sanitize_url 剥离 userinfo 与 query/fragment(token/key 防泄漏)"""
+    # query 带 token/key → 剥离 query(路径保留)
+    s = ec._sanitize_url("http://localhost:11434/?token=SECRET")
+    assert "token" not in s and "SECRET" not in s, s
+    assert s == "http://localhost:11434/", s
+    assert "SECRET" not in ec._sanitize_url("http://localhost:11434/v1?key=abc#frag")
+    # userinfo(user:pass@) → 剥离
+    s = ec._sanitize_url("http://user:pass@localhost:11434")
+    assert s == "http://localhost:11434", s
+    assert "pass" not in s
+    # 干净 URL / 无法解析输入 → 原样保留
+    assert ec._sanitize_url("http://localhost:11434") == "http://localhost:11434"
+    assert ec._sanitize_url("http://host/path") == "http://host/path"
+    print("  OK test_sanitize_url_strips_credentials")
+
+
+def test_sanitize_url_bad_port_and_ipv6():
+    """G8 自审: 非数字端口不崩 + IPv6 字面量重建保留方括号。"""
+    # 非数字端口(如 OLLAMA_BASE 误配为 http://host:abc?token=) → 不抛异常、不泄漏 SECRET
+    s = ec._sanitize_url("http://localhost:abc?token=SECRET")
+    assert "SECRET" not in s and "abc" not in s, s
+    assert s == "http://localhost", s
+    # IPv6 字面量 → 重建含方括号(hostname 去括号 ::1,urlunsplit 需 [::1])
+    s = ec._sanitize_url("http://[::1]:11434?token=x")
+    assert s == "http://[::1]:11434", s
+    print("  OK test_sanitize_url_bad_port_and_ipv6")
+
+
 if __name__ == "__main__":
     test_check_env()
     test_check_agent_missing_critical()
@@ -341,4 +370,6 @@ if __name__ == "__main__":
     test_run_checks_never_crashes()
     test_mem0_default_path_anchored()
     test_run_checks_custom_backend_skips_mem0()
-    print(f"test_envcheck.py: ALL {21} TESTS PASSED")
+    test_sanitize_url_strips_credentials()
+    test_sanitize_url_bad_port_and_ipv6()
+    print(f"test_envcheck.py: ALL {23} TESTS PASSED")

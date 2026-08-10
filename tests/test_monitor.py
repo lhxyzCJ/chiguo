@@ -1049,6 +1049,44 @@ def test_alert_acknowledge():
     print("  OK test_alert_acknowledge")
 
 
+def test_alert_load_unicode_decode_error():
+    """R21: alerts.json 含非法 UTF-8 字节 → _load 回退空字典,不崩溃且可继续写入"""
+    with tempfile.TemporaryDirectory() as td:
+        ap = Path(td) / "alerts.json"
+        # \xff\xfe 非法 UTF-8 → read_text(encoding="utf-8") 抛 UnicodeDecodeError
+        ap.write_bytes(b'{"alerts": {"x": "\xff\xfe"}}')
+
+        am = AlertManager(str(ap))
+        assert am._alerts == {}, "损坏文件应回退空,而非抛异常"
+
+        # 回退后仍可正常写入新告警
+        am.ingest([{"type": "crash_gap", "severity": "critical", "message": "daemon down"}])
+        active = am.list_active()
+        assert len(active) == 1
+        assert active[0]["type"] == "crash_gap"
+    print("  OK test_alert_load_unicode_decode_error")
+
+
+def test_health_disk_check_anchored_to_project():
+    """R23: health() 磁盘检查锚定项目目录(模块所在目录),而非依赖 cwd,防假阴性"""
+    import chiguo_monitor as cm
+
+    recorded = []
+    orig = cm.shutil.disk_usage
+    cm.shutil.disk_usage = lambda p: recorded.append(str(p)) or orig(p)
+    try:
+        mon = cm.ChiguoMonitor("/nonexistent/log.jsonl", "/nonexistent/state.json")
+        mon.health()
+    finally:
+        cm.shutil.disk_usage = orig
+
+    assert recorded, "health() 应调用 shutil.disk_usage"
+    project_dir = str(Path(cm.__file__).resolve().parent)
+    assert recorded[0] == project_dir, \
+        f"磁盘检查应锚定项目目录 {project_dir}, 实际 {recorded[0]}"
+    print("  OK test_health_disk_check_anchored_to_project")
+
+
 def test_sleep_hours_deduction():
     """silent_hours 正确扣除睡眠窗口 (0:00-8:00)"""
     from chiguo_state import CooldownState
@@ -1157,6 +1195,8 @@ if __name__ == "__main__":
         test_alert_dedup,
         test_alert_resolve,
         test_alert_acknowledge,
+        test_alert_load_unicode_decode_error,
+        test_health_disk_check_anchored_to_project,
         test_sleep_hours_deduction,
         test_reply_latency_stats,
     ]

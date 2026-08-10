@@ -196,6 +196,39 @@ def get_solar_terms_for(year: int) -> list:
     return terms
 
 
+def _file_covers_year(data, year: int) -> bool:
+    """holidays.json 是否已含 year 年数据:任一假期 start 落该年,或 _generated_for 匹配(R22)。"""
+    if not isinstance(data, dict):
+        return False
+    if str(data.get("_generated_for", "")) == str(year):
+        return True
+    for r in (data.get("holidays") or {}).values():
+        if isinstance(r, dict) and r.get("start"):
+            try:
+                if date.fromisoformat(str(r["start"])).year == year:
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
+def _merge_holidays(existing: dict, year: int, new_data: dict) -> dict:
+    """跨年合并(与 schedule/holiday.py _load_override 归组语义一致,R22):
+    同名同年 → 覆盖(更新精确数据);同名不同年 → 归组 name@year 键追加;新名 → 追加。"""
+    merged = dict(existing)
+    for name, item in new_data.items():
+        prev = merged.get(name)
+        if prev is None:
+            merged[name] = item
+            continue
+        try:
+            same_year = date.fromisoformat(prev["start"]).year == year
+        except (KeyError, ValueError, TypeError):
+            same_year = False
+        merged[name if same_year else f"{name}@{year}"] = item
+    return merged
+
+
 def generate(year: int, force: bool = False, with_solar: bool = False):
     """主入口：生成 JSON 文件（写到脚本所在目录，与 cwd 无关）。"""
     holidays_path = BASE_DIR / "holidays.json"
@@ -218,7 +251,30 @@ def generate(year: int, force: bool = False, with_solar: bool = False):
 
     # 写入 holidays.json
     if holidays_path.exists() and not force:
-        print(f"❌ {holidays_path} 已存在。用 --force 覆盖。")
+        try:
+            existing = json.loads(holidays_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            existing = None
+        if _file_covers_year(existing, year):
+            print(f"❌ {holidays_path} 已含 {year} 年数据。用 --force 覆盖。")
+        elif isinstance(existing, dict):
+            # 跨年自动合并:保留旧年份,追加新年份(loader 按 name@year 归组,R22)
+            merged = dict(existing)
+            merged["holidays"] = _merge_holidays(
+                existing.get("holidays") or {}, year, holiday_data["holidays"])
+            makeup = dict(existing.get("makeup_workdays") or {})
+            for d_str, reason in holiday_data["makeup_workdays"].items():
+                makeup.setdefault(d_str, reason)
+            merged["makeup_workdays"] = makeup
+            if is_estimated:
+                merged["_note"] = holiday_data.get("_note")
+                merged["_generated_for"] = str(year)
+            tmp = Path(str(holidays_path) + ".tmp")
+            tmp.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
+            os.replace(tmp, holidays_path)
+            print(f"✅ {holidays_path} 已跨年合并:追加 {year} 年数据(保留旧年份)")
+        else:
+            print(f"❌ {holidays_path} 已存在(不可解析)。用 --force 覆盖。")
     else:
         tmp = Path(str(holidays_path) + ".tmp")
         tmp.write_text(json.dumps(holiday_data, indent=2, ensure_ascii=False) + "\n")
