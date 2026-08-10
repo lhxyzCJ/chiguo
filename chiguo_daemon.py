@@ -521,6 +521,8 @@ class DecisionEngine:
 
     def _emit_idle(self, reason: str, now, user_state, data_warning: bool) -> dict:
         """idle 决策统一出口：概率累积（no_trigger/user_busy）+ 落盘。"""
+        # C1: 空闲静默路径确定性记忆巩固（config 门控默认关闭；失败不阻断主链路）
+        self._maybe_consolidate(now)
         if reason in ("no_trigger", "user_busy"):
             self.state.cooldown.held_count += 1
             cfg_cooldown = self.config.get("cooldown", {})
@@ -560,6 +562,45 @@ class DecisionEngine:
             }
         self._log(decision)
         return decision
+
+    def _maybe_consolidate(self, now: datetime):
+        """C1: 空闲静默路径的确定性记忆巩固（零 LLM；[memory].consolidate_enabled 默认关闭）。
+
+        门控：consolidate_enabled + 清醒沉默 ≥ consolidate_idle_silent_hours +
+        距上次巩固 ≥ consolidate_min_interval_hours（持久化 cooldown.consolidate_last_at）。
+        consolidate() 内部对不可用/无写能力的后端只出报告不写库，双保险不碰主链路。
+        也可手动 `chiguo_daemon.py --consolidate` 接入 cron（注释：每 N 天跑一次即可）。
+        """
+        mem_cfg = self.config.get("memory", {})
+        if not mem_cfg.get("consolidate_enabled", False):
+            return
+        try:
+            silent_h = self.state.cooldown.silent_hours(now)
+            if silent_h < float(mem_cfg.get("consolidate_idle_silent_hours", 24.0)):
+                return
+            last = self.state.cooldown.consolidate_last_at
+            if last:
+                last_dt = datetime.fromisoformat(last)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=CST)
+                min_iv = float(mem_cfg.get("consolidate_min_interval_hours", 168.0))
+                if (now - last_dt).total_seconds() / 3600.0 < min_iv:
+                    return
+            bridge = self.state.memory_bridge
+            if not getattr(bridge, "consolidate", None):
+                return  # 后端不支持巩固 → 静默跳过
+            report = bridge.consolidate()
+            self.state.cooldown.consolidate_last_at = now.isoformat()
+            if not self.state.save():
+                print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
+            n_demoted = len((report or {}).get("demoted", []))
+            n_expired = len((report or {}).get("expired", []))
+            if n_demoted or n_expired:
+                print(f"[chiguo_daemon] memory consolidate: demoted={n_demoted} "
+                      f"expired={n_expired}", file=sys.stderr)
+        except Exception as e:
+            # 巩固失败不影响 idle 主链路（记忆整理是锦上添花）
+            print(f"[chiguo_daemon] memory consolidate skipped: {e}", file=sys.stderr)
 
     def _idle_reason(self, now: datetime, user_state: dict = None) -> str:
         # ── v7: 忙碌抑制期（用户说"别烦我"）→ 独立 reason，抑制期不累积 longing ──
@@ -1040,10 +1081,15 @@ class DecisionEngine:
                 if isinstance(mood, dict) and str(mood.get("mood", "")).strip():
                     tag["user_mood"] = str(mood.get("mood"))
                 metadata["emotion_tag"] = tag
-            mem.add_messages(
-                [{"role": "user", "content": text}],
-                metadata=metadata,
-            )
+            # ── C4: 写全对话轮次（[memory].write_full_turns 默认 False 恒等）──
+            # 开启时带上最近一条 assistant 回复组成 user+assistant 两轮，
+            # mem0 据此提取"迟菓回应了什么"的上下文事实。默认单条 user 写入恒等。
+            messages = [{"role": "user", "content": text}]
+            if self.config.get("memory", {}).get("write_full_turns", False):
+                recent = self.recent_sent_texts(n=1)
+                if recent:
+                    messages.append({"role": "assistant", "content": recent[0]})
+            mem.add_messages(messages, metadata=metadata)
         except Exception:
             pass  # 记忆写入失败不影响主流程
 
@@ -1458,6 +1504,9 @@ def main():
                         help="异常检测告警")
     parser.add_argument("--monitor", action="store_true",
                         help="完整监控报告（stats + alerts + health）")
+    # ── C1: 确定性记忆巩固 ──
+    parser.add_argument("--consolidate", action="store_true",
+                        help="确定性记忆巩固（去重降权+过期；零 LLM；可接入 cron）")
     # ── v5: 对话日志 & 归档 ──
     parser.add_argument("--conversation", type=str, default=None,
                         metavar="DATE",
@@ -1645,6 +1694,24 @@ def main():
                 "hint": f"手动修改 chiguo_proactive.toml [poisson] base_lambda = {new_base:.3f}",
             }, ensure_ascii=False, indent=2))
         return
+
+    # ── C1: 确定性记忆巩固（零 LLM；[memory].consolidate_* 参数；可接入 cron）──
+    if args.consolidate:
+        engine = DecisionEngine()
+        mem_cfg = engine.config.get("memory", {})
+        bridge = engine.state.memory_bridge
+        if not getattr(bridge, "consolidate", None):
+            print(json.dumps({"action": "consolidate", "ok": False,
+                              "error": "记忆后端不支持 consolidate"}, ensure_ascii=False))
+            sys.exit(1)
+        report = bridge.consolidate(
+            sim_threshold=mem_cfg.get("consolidate_sim_threshold", 0.85),
+            min_importance=mem_cfg.get("consolidate_min_importance", 0.3),
+            max_age_hours=mem_cfg.get("consolidate_max_age_hours", 720.0),
+        )
+        print(json.dumps({"action": "consolidate", **report}, ensure_ascii=False,
+                         default=str))
+        sys.exit(0 if report.get("ok") else 1)
 
     # ── 监控系统（stats / alerts / monitor）（v10: 锚定 base_dir，从任意 cwd 运行都读写项目文件）──
     if args.stats is not None or args.alerts or args.monitor:

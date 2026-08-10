@@ -30,7 +30,7 @@ Reasonix 宿主在 final-answer 时检查四类验收项，报错模式固定，
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required) — 53 py + 13 script tests
+# Run all tests (Python 3.14+ required) — 58 py + 13 script tests
 bash scripts/ci-test.sh   # 本地与 GitHub Actions ci.yml 同一入口
 ```
 
@@ -72,7 +72,7 @@ No build step. Minimal dependencies beyond Python stdlib (plus `tomllib` for Pyt
 
 **v8 (2026-07-31)** adds: dual-schedule circadian learning (双作息 — weekday/weekend buckets with separate learned windows, `bucket_for()` handles 调休上班日→weekday / 节假日→weekend / Fri 20:00+ & Sat & Sun before 20:00→weekend; v7 state auto-migrates by backfilling buckets) and NetEase play proof (听歌双向联动 — `netease.bridge` 的 `NeteaseBridge.fetch_recent_play()` fetches recent plays only inside the active quiet window, play within the 2h proof window suppresses Bayesian sleeping confidence ×0.5 and records active times back into the circadian tracker). STATE_VERSION 7→8.
 
-**v1.11 (2026-08-09)** adds: 情绪引擎四项改进（STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移；全部默认关闭恒等可灰度）— A11 回复影响惯性阻尼（`impact_inertia` 压缩单条 analysis delta，负向独立键、按通道效价分桶、先于 anxiety_sensitivity，`[emotion].impact_inertia_*` 默认 0）+ A12 用户情绪感知（analysis 新增 `user_mood`/`user_mood_intensity`，5 层容错；`CooldownState.user_mood` TTL 6h；`comfort` 安慰触发入 EMOTION_TRIGGERS + 低落时 anxiety 权重加成 + mood_note 语气注解 + Bayesian needs_care 提示，`[emotion].user_mood_*`/`[trigger].comfort_*` 默认关闭）+ A13 情绪自然波动（tick 内 OU 噪声：σ√Δt + 动态上限、独立 RNG、瞬态不落盘，`[emotion].noise_*` 默认关闭）+ A14 情绪基线长期漂移（`ChiguoEmotion.baseline_*` 默认=原 target，事件驱动漂移 ±20 有界 + 720h 淡忘，tick 3 处 target 改用基线，`[emotion].baseline_*` 默认关闭）；测试 44 py + 13 script（新增 4 个 runner）；删除死测试 test_recv_dedup_dup_analysis_not_double_applied；修正 bridge.mjs 600s→30s 注释与 must_send 文档 0.5→0.75。
+**v1.11 (2026-08-09)** adds: 情绪引擎四项改进（STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移；全部默认关闭恒等可灰度）— A11 回复影响惯性阻尼（`impact_inertia` 压缩单条 analysis delta，负向独立键、按通道效价分桶、先于 anxiety_sensitivity，`[emotion].impact_inertia_*` 默认 0）+ A12 用户情绪感知（analysis 新增 `user_mood`/`user_mood_intensity`，5 层容错；`CooldownState.user_mood` TTL 6h；`comfort` 安慰触发入 EMOTION_TRIGGERS + 低落时 anxiety 权重加成 + mood_note 语气注解 + Bayesian needs_care 提示，`[emotion].user_mood_*`/`[trigger].comfort_*` 默认关闭）+ A13 情绪自然波动（tick 内 OU 噪声：σ√Δt + 动态上限、独立 RNG、瞬态不落盘，`[emotion].noise_*` 默认关闭）+ A14 情绪基线长期漂移（`ChiguoEmotion.baseline_*` 默认=原 target，事件驱动漂移 ±20 有界 + 720h 淡忘，tick 3 处 target 改用基线，`[emotion].baseline_*` 默认关闭）；测试 48 py + 13 script（新增 4 个 runner）；删除死测试 test_recv_dedup_dup_analysis_not_double_applied；修正 bridge.mjs 600s→30s 注释与 must_send 文档 0.5→0.75。
 
 ```
 chiguo_daemon.py (DecisionEngine)
@@ -137,7 +137,7 @@ All auto-generated at first run, all in `.gitignore`:
 - **Emotion trends**: first-half vs second-half mean comparison; no heavy regression needed.
 - **Reply rate estimation**: inferred from `messages_without_reply` deltas between consecutive sends (no explicit reply tracking in logs).
 - **Config hot-reload**: `_maybe_reload_config()` checks toml mtime before each `evaluate()` call. Only matters for `--loop` mode; cron spawns fresh processes.
-- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 44 py test runners (+ 13 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
+- **Test isolation**: all tests use `tempfile.TemporaryDirectory` for state/log/config files. No shared state between tests. `tests/test_integration.py` injects `_base_dir` into a temp dir so it never touches real runtime files (state/break/log). Note: all 58 py test runners (+ 13 script tests) exit non-zero on assertion failure (use `$?` or `&&` chaining to detect regressions).
 
 ## 安全边界
 

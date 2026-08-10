@@ -18,8 +18,17 @@ import json
 import os
 import random
 import time as _time_module
+from datetime import datetime, timezone, timedelta
 
-from memory.base import MemoryBackend
+CST = timezone(timedelta(hours=8))
+
+from memory.base import (
+    DEFAULT_CONSOLIDATE_MAX_AGE_HOURS,
+    DEFAULT_CONSOLIDATE_MIN_IMPORTANCE,
+    DEFAULT_CONSOLIDATE_SIM_THRESHOLD,
+    DEFAULT_REINFORCE_BONUS,
+    MemoryBackend,
+)
 
 # mem0 遥测默认关闭（posthog 后台上报，对自部署无意义）
 os.environ.setdefault("MEM0_TELEMETRY", "false")
@@ -60,7 +69,14 @@ class Mem0Backend(MemoryBackend):
                  embedder_model: str = None, embedder_base_url: str = None,
                  embedder_dims: int = None,
                  strength: float = None, min_weight: float = None,
-                 max_rows: int = None, **kwargs):
+                 max_rows: int = None,
+                 consolidate_enabled: bool = False,
+                 consolidate_sim_threshold: float = None,
+                 consolidate_min_importance: float = None,
+                 consolidate_max_age_hours: float = None,
+                 reinforce_enabled: bool = False,
+                 reinforce_bonus: float = None,
+                 **kwargs):
         self.user_id = str(user_id or "chiguo")
         self.collection_name = str(collection_name or "chiguo")
         self.qdrant_path = qdrant_path or _DEFAULT_QDRANT_PATH
@@ -74,6 +90,25 @@ class Mem0Backend(MemoryBackend):
         self._strength = strength or 168.0
         self._min_weight = min_weight or 0.1
         self.max_rows = int(max_rows or 1000)  # _all_rows get_all 的 top_k 上限
+        # ── C1/C2: 记忆巩固 & 复习强化配置（默认关闭恒等，可灰度）──
+        self._consolidate_enabled = bool(consolidate_enabled)
+        self._consolidate_sim_threshold = (
+            consolidate_sim_threshold
+            if consolidate_sim_threshold is not None
+            else DEFAULT_CONSOLIDATE_SIM_THRESHOLD)
+        self._consolidate_min_importance = (
+            consolidate_min_importance
+            if consolidate_min_importance is not None
+            else DEFAULT_CONSOLIDATE_MIN_IMPORTANCE)
+        self._consolidate_max_age_hours = (
+            consolidate_max_age_hours
+            if consolidate_max_age_hours is not None
+            else DEFAULT_CONSOLIDATE_MAX_AGE_HOURS)
+        self._reinforce_enabled = bool(reinforce_enabled)
+        self._reinforce_bonus = (float(reinforce_bonus)
+                                 if reinforce_bonus is not None
+                                 else DEFAULT_REINFORCE_BONUS)
+        self._recall_counts: dict[str, int] = {}
         self._m = None  # mem0 Memory 实例（惰性初始化）
         self._available: bool | None = None
         self._last_probe: float = 0.0
@@ -284,6 +319,83 @@ class Mem0Backend(MemoryBackend):
             self._available = False
             self._last_probe = _time_module.time()
             return False
+
+    # ── C1: 确定性记忆巩固（无 LLM 的 Letta dreaming 版；config 门控）──
+
+    def consolidate(self, now: datetime = None,
+                    sim_threshold: float = None,
+                    min_importance: float = None,
+                    max_age_hours: float = None,
+                    dry_run: bool = False,
+                    limit: int = None) -> dict:
+        """扫描全量记忆做确定性合并/降权/过期（零 LLM 调用，不换库）。
+
+        - 去重：text jaccard_3gram ≥ sim_threshold 的近似重复对 → 保留一条、
+          另一条 importance 减半 + `_consolidated` 标记。
+        - 过期：importance < min_importance 且年龄 > max_age_hours → 删除。
+        写回：
+        - 降权经 mem0 `update_memory` 写 metadata.importance（有该能力时；
+          mem0 无该 API → 静默跳过，仅报告）。
+        - 过期经 mem0 `delete` 删除（有该能力时；否则仅报告）。
+        dry_run=True → 只出计划不写库（配置检查/灰度用）。
+        不可用 → 空报告（不抛）。返回报告 dict。
+        """
+        if not self.available:
+            return {"available": False, "ok": False, "error": "backend unavailable",
+                    "demoted": [], "expired": [], "kept": [],
+                    "demoted_ids": [], "expired_ids": []}
+        if now is None:
+            now = datetime.now(CST)
+        rows = self._all_rows(min_importance=0.0, top_k=limit)
+        plan = self.consolidate_plan(
+            rows, now,
+            sim_threshold=(sim_threshold if sim_threshold is not None
+                           else self._consolidate_sim_threshold),
+            min_importance=(min_importance if min_importance is not None
+                            else self._consolidate_min_importance),
+            max_age_hours=(max_age_hours if max_age_hours is not None
+                           else self._consolidate_max_age_hours),
+        )
+        if not dry_run:
+            for r in plan["demoted"]:
+                try:
+                    upd = getattr(self._m, "update_memory", None)
+                    if upd is None:
+                        continue  # mem0 无 update_memory API → 仅报告降权计划
+                    upd(r["id"], {"metadata": {"importance": r["importance"]}})
+                except Exception as e:
+                    import logging
+                    logging.warning("mem0 consolidate demote failed: %r", e)
+            for r in plan["expired"]:
+                try:
+                    dele = getattr(self._m, "delete", None)
+                    if dele is None:
+                        continue  # mem0 无 delete API → 仅报告过期计划
+                    dele(r["id"])
+                except Exception as e:
+                    import logging
+                    logging.warning("mem0 consolidate expire failed: %r", e)
+        return {
+            "available": True,
+            "ok": True,
+            "dry_run": bool(dry_run),
+            "scanned": len(rows),
+            "demoted": plan["demoted"],
+            "expired": plan["expired"],
+            "kept": plan["kept"],
+            "demoted_ids": [r.get("id") for r in plan["demoted"]],
+            "expired_ids": [r.get("id") for r in plan["expired"]],
+        }
+
+    # ── C2: 复习强化写回（_persist_recall 钩子覆写）──
+
+    def _persist_recall(self, memory_id: str, count: int):
+        """召回次数持久化：mem0 有 update_memory 时写 metadata.recall_count；
+        无该 API → no-op（仅内存侧 recall_count）。"""
+        upd = getattr(self._m, "update_memory", None)
+        if upd is None:
+            return
+        upd(memory_id, {"metadata": {"recall_count": count}})
 
     # ── 内部 ──────────────────────────────────────────────
 

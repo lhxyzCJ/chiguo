@@ -186,6 +186,7 @@ class CooldownState:
     drop_events: list[dict] = field(default_factory=list)  # A10: 回复饱和阻尼事件 [{time: iso, direction: str}]（30 分钟窗口滚动）
     user_mood: dict | None = None  # v1.11 ①: 最近一次用户情绪感知 {"mood","intensity","at"}（TTL 由读取端 mood_fresh 判定，旧状态缺省自动补 None）
     reply_stats: dict = field(default_factory=dict)  # A2: 分类型回复率统计 {trigger_type: {"sent": n, "replied": m}}（触发权重反馈闭环，daemon 发送时 sent+1、--user-msg 回复时 replied+1）
+    consolidate_last_at: str | None = None  # C1: 上次记忆巩固时间 ISO（空闲静默路径防每 tick 重复）
 
     def __post_init__(self):
         # v6: 睡眠窗口来源配置（非 dataclass 字段，不序列化）。ChiguoState 负责注入。

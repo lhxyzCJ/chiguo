@@ -40,6 +40,13 @@ def _default_bridge():
     return create_backend(cfg.get("memory", {}), base_dir=repo)
 
 
+# ── C3: 展示用读——text 优先（l0_abstract 已废弃，仅作空值兜底）。──
+
+def fmt_search_row(m: dict) -> str:
+    """search 结果单行展示：text 优先，l0_abstract 兜底（不依赖死字段）。"""
+    return f"[{m.get('category', '')}] {(m.get('text') or m.get('l0_abstract') or '')[:80]}"
+
+
 if __name__ == "__main__":
     bridge = _default_bridge()
 
@@ -49,7 +56,7 @@ if __name__ == "__main__":
             query = sys.argv[2] if len(sys.argv) > 2 else "迟菓"
             results = bridge.search(query)
             for m in results:
-                print(f"[{m['category']}] {m['l0_abstract'] or m['text'][:80]}")
+                print(fmt_search_row(m))
         elif cmd == "--random":
             m = bridge.random_memory()
             if m:
