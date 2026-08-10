@@ -109,9 +109,9 @@ do_autostart() {
   if [ "$DRY" = 1 ]; then
     say "dry-run 计划:"
     say "  1) systemctl enable --now ollama"
+    say "  2) 清理残留 temp 进程（pidfile: $TEMP_PIDFILE）→ 释放 18790 端口"
     write_unit
-    say "  2) systemctl daemon-reload + enable --now chiguo-bridge"
-    say "  3) 清理残留 temp 进程（pidfile: $TEMP_PIDFILE）"
+    say "  3) systemctl daemon-reload + enable --now chiguo-bridge"
     return 0
   fi
   say "阶段 1: ollama 自启..."
@@ -122,18 +122,18 @@ do_autostart() {
   else
     warn "ollama 健康检查未通过（curl http://127.0.0.1:11434/api/tags 排查）"
   fi
-  say "阶段 2: wechat-bridge unit..."
-  write_unit
-  "$SYSTEMCTL" daemon-reload
-  "$SYSTEMCTL" enable --now chiguo-bridge 2>/dev/null \
-    || { warn "chiguo-bridge enable/start 失败（bash scripts/wechat-bridge.sh status 排查）"; exit 1; }
-  say "阶段 3: 清理 temp 残留..."
+  say "阶段 2: 互斥接管：清理 temp 残留（释放 18790 端口）..."
   if temp_running; then
     kill_temp
     say "已停止 temp 实例（互斥接管）"
   else
     say "无 temp 残留"
   fi
+  say "阶段 3: wechat-bridge unit..."
+  write_unit
+  "$SYSTEMCTL" daemon-reload
+  "$SYSTEMCTL" enable --now chiguo-bridge 2>/dev/null \
+    || { warn "chiguo-bridge enable/start 失败（bash scripts/wechat-bridge.sh status 排查）"; exit 1; }
   say "autostart 完成 ✓（开机自启: ollama + chiguo-bridge）"
 }
 

@@ -169,6 +169,13 @@ t('runAgentBin: 非零退出但 stdout 含完整回复 → 不丢 stdout（salva
 t('runAgentBin: 非零退出且无完整回复 → reject 含退出码', async () => {
   await assert.rejects(runAgentBin('node', ['-e', 'process.exit(3)'], {}), /exited 3/)
 })
+t('runAgentBin: stdout 超过 maxBuffer → reject（R19: spawn 忽略 maxBuffer,手动上限防无界累积）', async () => {
+  // 无限写 stdout 的子进程:超上限即 kill + reject,不挂死
+  await assert.rejects(
+    runAgentBin('node', ['-e', 'while(true) process.stdout.write("x".repeat(4096))'], { maxBuffer: 8 * 1024 }),
+    /stdout 超过 8192 字节上限/
+  )
+})
 t('run: runAgentBin salvage 场景 → ok:true 且 text 保留', async () => {
   const code = `console.log(${JSON.stringify(NDJSON_FULL)});process.exit(3)`
   const r = await run((_bin, _args, opts) => runAgentBin('node', ['-e', code], opts), { prompt: 'hi', analysisMode: false })

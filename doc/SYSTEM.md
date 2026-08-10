@@ -817,32 +817,32 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_isolation.py` | 引擎隔离测试（2 用例：engine 不 import schedule/state 仅桥接） | chiguo_daemon |
 | `tests/test_schedule_plan.py` | 复盘计划测试（2 用例：dirty 矩阵/skip 与校验） | schedule.replan, schedule.plan_store |
 | `tests/test_schedule_cli.py` | 安排 CLI 测试（3 用例：--schedule-change 成功与形状/--schedule-recall 形状） | chiguo_daemon, schedule.api |
-| `scripts/agent-run.mjs` | **agent 调用统一封装**（Phase 4，v1.8 runner 抽象）：runner=agent（默认，agent 后端二进制）/ runner=command（任意 CLI agent，`<agent_command> --prompt <完整提示词> --mode <mode>` 统一契约，stdout JSON/NDJSON 兼容）；生成/分析/安排多模式，`[host]` 配置 + AGENTRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage；导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand | node |
-| `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → agent-run（AGENTRUN_SESSION=chiguo-send）→ bridge /send → --record-send；agent 失败 → chiguo_composer.py 模板池兜底（v1.10 A8，成功发送 + fallback 标记，composer 也失败才 exit 1） | bash, node, curl |
-| `scripts/install_agent.sh` | **agent 环境安装器**（Phase 4）：ollama/auth/crontab/冒烟（三模式幂等） | bash |
-| `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askAgent 回复链路 + /send 端点 + TurnQueue + 特殊命令分发 | node, wechatbot SDK |
+| `scripts/agent-run.mjs` | **agent 调用统一封装**（Phase 4，v1.8 runner 抽象）：runner=agent（默认，agent 后端二进制）/ runner=command（任意 CLI agent，`<agent_command> --prompt <完整提示词> --mode <mode>` 统一契约，stdout JSON/NDJSON 兼容）；生成/分析/安排多模式，`[host]` 配置 + AGENTRUN_* 覆盖，NDJSON 解析 + <<ANALYSIS>> 提取 + 非零退出 salvage；stdout 字节上限（R19：Node `spawn` 忽略 maxBuffer，手动 `opts.maxBuffer ?? 16MB` 超出即 SIGKILL + reject，stderr 截断保留末 256KB，防无界输出累积拖垮 tick/bridge）；导出 RUNNER/AGENT_COMMAND/parseAgentOutput/runnerCommand | node |
+| `scripts/chiguo-tick.sh` | **系统 crontab 入口**（Phase 4）：`--compact` 零模型门控 → agent-run（AGENTRUN_SESSION=chiguo-send）→ bridge /send → --record-send；agent 失败 → chiguo_composer.py 模板池兜底（v1.10 A8，成功发送 + fallback 标记，composer 也失败才 exit 1）；并发锁移入专用 run 目录（R16：`CHIGUO_LOCK_DIR`（默认 `~/.chiguo/run`）下 flock，弃用 /tmp 直写锁，收敛符号链接任意文件截断攻击面） | bash, node, curl |
+| `scripts/install_agent.sh` | **agent 环境安装器**（Phase 4）：ollama/auth/crontab/冒烟（三模式幂等）；`CHIGUO_DAEMON_LOOP=1` 生成 loop unit 注入 `EnvironmentFile=-wechat-bridge/.env`（R17：loop 常驻 daemon `_loop_send` 读 `WECHAT_BRIDGE_TOKEN` 共享鉴权，防 /send 403） | bash |
+| `wechat-bridge/bridge.mjs` | **微信桥**（Phase 4）：askAgent 回复链路 + /send 端点 + TurnQueue + 特殊命令分发；`/agent/prompt` 端点经共享 `TurnQueue` 串行化（R20：原直接调 `__agentRpc.prompt()` 绕过回复链队列，并发 HTTP turn 可交错同会话 RPC 调用，现与 askAgent 共用同一队列） | node, wechatbot SDK |
 | `wechat-bridge/command-detect.mjs` | **特殊命令检测/执行**（Phase 4）：纪念日/假期规则化（方案 A），daemon JSON → 迟菓风确认 | node |
 | `scripts/agent_health.py` | **agent 假死状态机**：askAgent/tick 成败记账（flock+原子写 `agent_health.json`），transition=down/up 产出告警/恢复文案；bridge（bot.send）与 tick（curl /send）只负责投递 | python, stdlib |
 | `tests/test_agent_health.py` | agent_health 状态机测试（8 用例：阈值/去重/恢复/原因保留/toml 读取/无效阈值回退/恢复后原因重捕获/原子写） | agent_health |
 | `tests/test_bridge_health.mjs` | bridge 记账+告警链路测试（6 用例：特殊命令不记账/去重/恢复/零告警/记账崩溃不阻塞/reply 失败不误记） | bridge.mjs |
-| `tests/test_tick_health.sh` | tick 记账+告警链路测试（4 用例：temp repo + recorder 服务） | chiguo-tick.sh |
+| `tests/test_tick_health.sh` | tick 记账+告警链路测试（18 用例：agent-auth 注入/失败退出/告警去重恢复/composer 兜底/OPENCODE_API_KEY 注入/收件人注入/RPC 成功失败回退 spawn/回传 failed/replan lockfile 超时接管/锁目录（R16）/PATH 补齐（R18），temp repo + recorder 服务） | chiguo-tick.sh |
 | `tests/test_bridge_cmd.mjs` | 特殊命令测试（43 用例：detect 防误伤/inferYear/buildReply/executeSpecialCommand） | command-detect |
-| `tests/test_agent_run.mjs` | agent-run 封装测试（31 用例：readToml/NDJSON/<<ANALYSIS>> 提取/runPiBin） | agent-run.mjs |
+| `tests/test_agent_run.mjs` | agent-run 封装测试（49 用例：readToml/NDJSON/<<ANALYSIS>> 提取/runPiBin/stdout 超 maxBuffer 拒绝（R19）） | agent-run.mjs |
 | `tests/test_bridge_askagent.mjs` | bridge 回复链路测试（17 用例） | bridge.mjs |
 | `tests/test_bridge_schedule.mjs` | schedule 澄清链路测试（17 用例：detectScheduleIntent/readClarify/writeClarify/exitWord） | command-detect, agent-run.mjs |
-| `tests/test_install_agent.sh` | agent 环境安装器测试（14 用例：假 agent/curl/crontab + 临时 HOME） | install_agent.sh |
+| `tests/test_install_agent.sh` | agent 环境安装器测试（17 用例：假 agent/curl/crontab + 临时 HOME；loop unit EnvironmentFile 注入（R17）） | install_agent.sh |
 | `tests/test_wechat_bridge.sh` | 微信桥管理脚本测试（假 bridge 桩） | wechat-bridge.sh |
 | `tests/test_netease_api.sh` | 网易云 API 服务脚本测试（假 systemd/curl 桩） | netease-api.sh |
-| `tests/test_service.sh` | 服务管理脚本测试（13 用例：dry-run 只读/unit 模板/autostart 调用链/幂等/杀 temp 残留/temp 互斥接管+pidfile/temp 幂等/ollama 降级 warn/status 三态/stop 双侧/uninstall 保登录态/缺 node→2/缺 .env→1/非 root→2） | service.sh |
+| `tests/test_service.sh` | 服务管理脚本测试（16 用例：dry-run 只读/unit 模板/autostart 调用链/幂等/杀 temp 残留/kill_temp 前置（R15，enable 前 temp 必死防 18790 死锁）/temp 互斥接管+pidfile/temp 幂等/ollama 降级 warn/status 三态/stop 双侧/uninstall 保登录态/缺 node→2/缺 .env→1/非 root→2） | service.sh |
 | `tests/test_envcheck.py` | 环境检查单元测试（23 用例：env 版本/uv、agent 缺失 critical/`--skip-agent` 降 warn/agent 桩正常、agent 扩展缺失/Windows 残留 warn/正常、agent 认证缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、mem0 缺失 info、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_agent）、`_sanitize_url` 脱敏（R24：剥离 query token/user:pass，干净 URL 原样；G8 自审：非数字端口退化为纯 hostname 不崩、IPv6 字面量重建保留方括号）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 | `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟用户消息/`s` 刷新状态 | 无 |
 | `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → agent 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
 | `scripts/wechat-bridge.sh` | 微信桥管理脚本：install/start/stop/status/login（新设备扫码兜底） | bash |
-| `scripts/service.sh` | 服务统一管理（ollama + wechat-bridge）：`autostart`（systemd 开机自启，写 `/etc/systemd/system/chiguo-bridge.service` + `enable --now`）/ `temp`（临时启动，nohup 后台 + pidfile `~/.chiguo/run/bridge-temp.pid`，不注册自启）/ `status` / `stop` / `uninstall`；两模式互斥接管（启动前停对方实例，避免 18790 端口冲突）；全子命令支持 `--dry-run`；测试注入 `CHIGUO_REPO_OVERRIDE/CHIGUO_SYSTEMD_DIR/CHIGUO_SYSTEMCTL/CHIGUO_PID_DIR/CHIGUO_NODE` | bash, systemd |
+| `scripts/service.sh` | 服务统一管理（ollama + wechat-bridge）：`autostart`（systemd 开机自启，写 `/etc/systemd/system/chiguo-bridge.service` + `enable --now`）/ `temp`（临时启动，nohup 后台 + pidfile `~/.chiguo/run/bridge-temp.pid`，不注册自启）/ `status` / `stop` / `uninstall`；两模式互斥接管（启动前停对方实例，避免 18790 端口冲突）；`autostart` 先 `kill_temp` 清残留再 `enable --now`（R15：修复 temp 存活时 systemd 实例 18790 端口死锁）；全子命令支持 `--dry-run`；测试注入 `CHIGUO_REPO_OVERRIDE/CHIGUO_SYSTEMD_DIR/CHIGUO_SYSTEMCTL/CHIGUO_PID_DIR/CHIGUO_NODE` | bash, systemd |
 | `personality/` | 人格设定目录：`SUN2.md`（唯一权威设定）+ 迟菓语言技巧指南.md + tsundere.toml/deredere.toml（档位） | 无 |
 
-共计 **600+** 个测试用例（44 个 py 测试文件 + 13 个脚本测试（8 mjs + 5 sh）；另含 node 侧 test_agent_run.mjs 31 用例 + test_agent_rpc.mjs 7 用例 + test_bridge_agent_http.mjs 5 用例 + test_bridge_askagent_rpc.mjs 2 用例 + test_bridge_askagent.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_agent.sh（14 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（4 用例）/ test_service.sh（13 用例），见 doc/README.md）。
+共计 **650+** 个测试用例（44 个 py 测试文件 + 13 个脚本测试（8 mjs + 5 sh）；另含 node 侧 test_agent_run.mjs 49 用例 + test_agent_rpc.mjs 7 用例 + test_bridge_agent_http.mjs 8 用例 + test_bridge_askagent_rpc.mjs 2 用例 + test_bridge_askagent.mjs 17 用例 + test_bridge_cmd.mjs 43 用例 + test_bridge_health.mjs 6 用例 + test_bridge_schedule.mjs 17 用例、bash 侧 test_install_agent.sh（17 用例）/ test_wechat_bridge.sh / test_netease_api.sh / test_tick_health.sh（18 用例）/ test_service.sh（16 用例），见 doc/README.md）。
 
 > 已修复：`holidays.json` 已重新生成为 2026 国务院官方数据（`update_holidays.py`，`_generated_for=2026`），
 > `tests/test_holiday_parser.py` 9/9 用例通过。
@@ -1715,6 +1715,7 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 
 - `chiguo-main`：回复侧会话（bridge 进程内 `TurnQueue` 串行 agent 调用，防同会话交错）
 - `chiguo-send`：主动发送会话（tick 经 `AGENTRUN_SESSION` 注入；决策 JSON 自足，无需对话连续性）
+- `/agent/prompt` 发送侧端点（R20）：与 askAgent 共用同一 `TurnQueue` 串行化 —— 原实现直接调 `__agentRpc.prompt()` 绕过队列，并发 HTTP turn 会交错同一会话的 RPC 调用，现由 `startSendServer(bot, queue)` 透传队列统一约束
 - 两条链路**永不共享会话** → 消除跨进程并发 turn 风险（同会话并发在 agent 侧可能交错/上下文竞争）
 
 agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。

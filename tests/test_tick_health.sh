@@ -300,4 +300,26 @@ test_replan_lock() {
 }
 test_replan_lock
 
+# ── R16: 并发锁移入专用 run 目录（不再用 /tmp/chiguo-tick.lock,防符号链接任意文件截断）──
+test_tick_lock_dir() {
+  local LOCK_DIR="$TMP/lockdir"
+  CHIGUO_LOCK_DIR="$LOCK_DIR" HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1 || true
+  # 运行时：锁文件落在 CHIGUO_LOCK_DIR 下（而非 /tmp）
+  [ -f "$LOCK_DIR/chiguo-tick.lock" ] || fail "tick 锁应写在 CHIGUO_LOCK_DIR($LOCK_DIR) 下"
+  # 源码层面：锁路径经 LOCK_FILE 变量 + exec 9>，不硬编码 /tmp
+  grep -q 'LOCK_FILE="\$LOCK_DIR/chiguo-tick.lock"' "$REAL_TICK" \
+    || fail "tick 锁未定义 LOCK_FILE=.../chiguo-tick.lock"
+  grep -q 'exec 9>"\$LOCK_FILE"' "$REAL_TICK" || fail "tick 锁未经 exec 9>\"\$LOCK_FILE\""
+  pass "R16: tick 锁移入 run 目录（$LOCK_DIR/chiguo-tick.lock）"
+}
+test_tick_lock_dir
+
+# ── R18: replan-tick.sh 补 PATH export（cron 精简 PATH 下 node 可解析）──
+test_replan_tick_path() {
+  grep -q 'export PATH="\$PATH:/usr/local/bin:/opt/homebrew/bin"' "$REPO_ROOT/scripts/replan-tick.sh" \
+    || fail "replan-tick.sh 缺 PATH 补齐 export（R18）"
+  pass "R18: replan-tick.sh 含 PATH 补齐 export"
+}
+test_replan_tick_path
+
 echo "test_tick_health: 全部通过"
