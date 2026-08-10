@@ -95,6 +95,21 @@ def test_row_defaults():
     print("  OK test_row_defaults")
 
 
+def test_row_non_string_created_at():
+    """R14: 非字符串 created_at(数字)→ _row 不抛 AttributeError,ts 落 0.0;检索整链不炸。"""
+    b = Mem0Backend()
+    r = b._row({"id": "m1", "memory": "数字时间戳", "metadata": {}, "created_at": 1720000000})
+    assert r["timestamp"] == 0.0, "非字符串 created_at → 解析失败落 0.0"
+    with tempfile.TemporaryDirectory() as td:
+        b2 = _fake_backend([
+            {"id": "n", "memory": "数字戳", "metadata": {"importance": 0.9}, "created_at": 1720000000},
+            _mem0_row(),
+        ], Path(td))
+        out = b2.search("x", limit=5)
+        assert len(out) == 2, f"非字符串 created_at 行应正常返回, got {out}"
+    print("  OK test_row_non_string_created_at")
+
+
 # ── 查询 ──────────────────────────────────────────────────
 
 def test_search_basic():
@@ -289,6 +304,7 @@ def test_available_throttle_retry():
 if __name__ == "__main__":
     test_row_contract()
     test_row_defaults()
+    test_row_non_string_created_at()
     test_search_basic()
     test_search_unavailable()
     test_random_memory_weighted()

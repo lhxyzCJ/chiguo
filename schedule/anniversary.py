@@ -57,6 +57,11 @@ class AnniversaryManager:
         if self._path.exists():
             try:
                 data = json.loads(self._path.read_text())
+                # 顶层非 dict(list 等历史脏形状)→ 视同损坏:合并默认、不崩 daemon 启动(R12)
+                if not isinstance(data, dict):
+                    self._corrupt = True
+                    self._items = []
+                    return
                 anns = data.get("anniversaries", [])
                 # 白名单:type 仅 anniversary;countdown 条目读入即丢(M20/6c,
                 # 历史数据已由 api 迁移入口②直读原始文件迁为 reminder)
@@ -69,7 +74,7 @@ class AnniversaryManager:
                         id=a["id"], type=a["type"], name=a["name"], date=a["date"],
                         note=a.get("note", ""), created_at=a.get("created_at", "")))
                 self._items = items
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError, AttributeError):
                 self._corrupt = True
                 self._items = []
 

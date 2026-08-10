@@ -54,6 +54,17 @@ def test_default_merge_missing_or_corrupt():
     print("  OK test_default_merge_missing_or_corrupt")
 
 
+def test_top_level_list_shaped_file_no_crash():
+    """R12: anniversaries.json 顶层 list(脏形状)→ 不崩,视同损坏合并默认生日,置 corrupt"""
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "anniversaries.json").write_text(json.dumps([{"id": "x", "type": "anniversary"}]))
+        mgr = AnniversaryManager(td)
+        names = {a["name"] for a in mgr.visible_items()}
+        assert "迟菓生日" in names, "顶层 list 视同损坏,默认生日必须可见"
+        assert mgr._corrupt, "顶层 list 属损坏形状,应置 corrupt"
+    print("  OK test_top_level_list_shaped_file_no_crash")
+
+
 def test_mmdd_to_date():
     assert mmdd_to_date("02-29", 2026) == date(2026, 2, 28), "非闰年兜底"
     assert mmdd_to_date("02-29", 2028) == date(2028, 2, 29), "闰年保留"
@@ -128,6 +139,7 @@ def test_special_dates_merge_kept_behavior():
 if __name__ == "__main__":
     print("test_anniversary.py\n")
     tests = [test_crud_and_list, test_default_merge_missing_or_corrupt,
+             test_top_level_list_shaped_file_no_crash,
              test_mmdd_to_date, test_get_today_upcoming_kept,
              test_countdown_removed_and_migration_activated,
              test_special_dates_merge_kept_behavior]

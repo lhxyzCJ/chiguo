@@ -202,7 +202,10 @@ class ScheduleApi:
                 raise ApiRejection("invalid_value", "when 非 dict")
             try:
                 if set(when) == {"date", "end_date"}:
-                    start, end = resolve_when({"date": when["date"]}, today, semester_start)
+                    start, _ = resolve_when({"date": when["date"]}, today, semester_start)
+                    end, _ = resolve_when({"date": when["end_date"]}, today, semester_start)
+                    if end < start:
+                        raise ApiRejection("invalid_value", "区间 end_date 早于 date,死区间拒绝")
                     entry["end_date"] = when["end_date"]   # 批 2b 旧协议区间(显式 end_date 保持)
                     is_interval = True
                 else:
@@ -231,6 +234,16 @@ class ScheduleApi:
                     entry["end_date"] = end.isoformat()   # 单日 → 退化 date=end_date(F-D)
             else:  # reminder / move
                 entry["date"] = start.isoformat()
+            # ── 区间顺序不变量(R11):entry 同含 date/end_date → end_date 不得早于 date ──
+            # 统一兜底 when={"date","end_date"} 与顶层 end_date 双路径,防死 override 落盘;
+            # 经 resolve_when 解析(兼容 ISO/MM-DD 双格式,与 date 解析一致)
+            if entry.get("end_date") is not None:
+                try:
+                    _d1, _ = resolve_when({"date": entry["end_date"]}, today, semester_start)
+                except ResolveReject as e:
+                    raise ApiRejection(e.category, str(e))
+                if _d1 < start:
+                    raise ApiRejection("invalid_value", "区间 end_date 早于 date,死区间拒绝")
             # ── 过去日期分端点校验(L2/C3/F1):课程例外与区间事实查 end;单日查 date ──
             # 迁移写(_from_migration)豁免:一次性迁移含历史条目(如已结束学期的考试周),
             # 校验/清理在迁移后的常规写调用点照常执行

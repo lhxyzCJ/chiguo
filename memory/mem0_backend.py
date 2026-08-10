@@ -158,9 +158,11 @@ class Mem0Backend(MemoryBackend):
         text = str(r.get("memory") or r.get("text") or "")
         ts = 0.0
         created = r.get("created_at") or ""
+        if not isinstance(created, str):
+            created = str(created)  # 非字符串(数字等)→ 转串走解析,非法落 0.0,防 .replace AttributeError(R14)
         try:
             ts = _parse_iso_ts(created)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError):
             ts = 0.0
         importance = self.clean_importance(meta) or 0.5
         if importance <= 0:
@@ -205,7 +207,10 @@ class Mem0Backend(MemoryBackend):
             return []
         out = []
         for r in results:
-            row = self._row(r)
+            try:
+                row = self._row(r)
+            except Exception:
+                continue  # 单条脏形状不拖垮整次检索(R14 形状防御)
             if row["importance"] < min_importance:
                 continue
             out.append(row)
@@ -300,7 +305,10 @@ class Mem0Backend(MemoryBackend):
             return []
         out = []
         for r in results:
-            row = self._row(r)
+            try:
+                row = self._row(r)
+            except Exception:
+                continue  # 单条脏形状不拖垮整次遍历(R14 形状防御)
             if row["importance"] < min_importance:
                 continue
             out.append(row)
