@@ -11,6 +11,7 @@
 
 import hashlib
 import io
+import json
 import os
 import sys
 import tempfile
@@ -192,6 +193,72 @@ def test_demo_run_keeps_production_state_untouched():
     print("  OK test_demo_run_keeps_production_state_untouched")
 
 
+def test_holidays_file_covers_year():
+    """R22: _file_covers_year 识别文件已含某年数据(_generated_for 匹配或任一 start 落该年)"""
+    assert uh._file_covers_year(
+        {"holidays": {"元旦": {"start": "2026-01-01", "end": "2026-01-03"}}}, 2026)
+    assert not uh._file_covers_year(
+        {"holidays": {"元旦": {"start": "2026-01-01", "end": "2026-01-03"}}}, 2027)
+    assert uh._file_covers_year(
+        {"holidays": {"元旦@2027": {"start": "2027-01-01", "end": "2027-01-03"}}}, 2027)
+    assert uh._file_covers_year({"_generated_for": "2027"}, 2027)
+    assert not uh._file_covers_year(None, 2026)   # 非 dict → False
+    assert not uh._file_covers_year([], 2026)     # 列表 → False
+    print("  OK test_holidays_file_covers_year")
+
+
+def test_holidays_merge_semantics():
+    """R22: _merge_holidays 同名同年→覆盖;同名不同年→归组 name@year 追加;新名→追加"""
+    existing = {"元旦": {"start": "2026-01-01", "end": "2026-01-03"}}
+    new = {
+        "元旦": {"start": "2027-01-01", "end": "2027-01-03"},
+        "春节": {"start": "2027-02-06", "end": "2027-02-14"},
+    }
+    merged = uh._merge_holidays(existing, 2027, new)
+    assert merged["元旦"]["start"] == "2026-01-01"              # 旧年保留
+    assert merged["元旦@2027"]["start"] == "2027-01-01"         # 新年归组追加
+    assert merged["春节"]["start"] == "2027-02-06"              # 新名追加
+
+    # 同名同年 → 覆盖更新,不追加 @year
+    m2 = uh._merge_holidays({"元旦": {"start": "2026-01-01"}}, 2026,
+                            {"元旦": {"start": "2026-01-02"}})
+    assert m2["元旦"]["start"] == "2026-01-02"
+    assert "元旦@2026" not in m2
+    print("  OK test_holidays_merge_semantics")
+
+
+def test_holidays_generate_cross_year_merge():
+    """R22: generate() 跨年自动合并(旧年保留/新年追加),同年重复生成拒绝覆盖"""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        with mock.patch.object(uh, "BASE_DIR", td):
+            # 2026 精确生成
+            uh.generate(2026)
+            p = td / "holidays.json"
+            assert p.exists()
+            data = json.loads(p.read_text(encoding="utf-8"))
+            assert "元旦" in data["holidays"]
+
+            # 2027 估算 → 跨年合并:元旦@2027 追加,2026 元旦保留
+            uh.generate(2027)
+            data = json.loads(p.read_text(encoding="utf-8"))
+            assert data["holidays"]["元旦"]["start"].startswith("2026")
+            assert "元旦@2027" in data["holidays"]
+            assert data["holidays"]["元旦@2027"]["start"].startswith("2027")
+            assert data["_generated_for"] == "2027"
+
+            # 2027 再次生成 → 拒绝覆盖,文件不变
+            before = p.read_text(encoding="utf-8")
+            uh.generate(2027)
+            assert p.read_text(encoding="utf-8") == before, "同年重复生成应拒绝覆盖"
+
+            # 2026 再次生成 → 已含 2026,拒绝
+            before = p.read_text(encoding="utf-8")
+            uh.generate(2026)
+            assert p.read_text(encoding="utf-8") == before, "已含 2026 数据应拒绝覆盖"
+    print("  OK test_holidays_generate_cross_year_merge")
+
+
 if __name__ == "__main__":
     # Bug1
     test_2028_spring_earlier_than_2027()
@@ -206,4 +273,8 @@ if __name__ == "__main__":
     # Bug4
     test_demo_state_path_isolated()
     test_demo_run_keeps_production_state_untouched()
-    print(f"test_demo.py: ALL {10} TESTS PASSED")
+    # R22
+    test_holidays_file_covers_year()
+    test_holidays_merge_semantics()
+    test_holidays_generate_cross_year_merge()
+    print(f"test_demo.py: ALL {13} TESTS PASSED")

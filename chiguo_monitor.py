@@ -778,7 +778,7 @@ class ChiguoMonitor:
         # 7. 磁盘空间
         disk_info = {"free_mb": None, "total_mb": None, "used_mb": None}
         try:
-            usage = shutil.disk_usage(Path.cwd())
+            usage = shutil.disk_usage(Path(__file__).resolve().parent)  # 锚定项目目录,防 cwd 漂移假阴性(R23)
             free_mb = usage.free / (1024 * 1024)
             total_mb = usage.total / (1024 * 1024)
             used_mb = usage.used / (1024 * 1024)
@@ -976,7 +976,7 @@ class AlertManager:
                     return
                 alerts = data.get("alerts", {})
                 self._alerts = alerts if isinstance(alerts, dict) else {}
-        except json.JSONDecodeError, OSError:
+        except json.JSONDecodeError, OSError, UnicodeDecodeError:
             self._alerts = {}
 
     def _save(self):

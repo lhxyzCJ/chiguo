@@ -49,18 +49,18 @@ def _sanitize_path(p) -> str:
 
 
 def _sanitize_url(url: str) -> str:
-    """URL 脱敏：剥离 userinfo（user:pass@），防凭据泄漏到输出。"""
+    """URL 脱敏：剥离 userinfo（user:pass@）与 query/fragment（token/key 等敏感参数），
+    防凭据泄漏到输出（R24，如 OLLAMA_BASE?token=）。"""
     try:
         parts = urllib.parse.urlsplit(url)
     except ValueError:
         return str(url)
-    if not (parts.username or parts.password):
+    if not (parts.username or parts.password or parts.query or parts.fragment):
         return url
     host = parts.hostname or ""
     if parts.port:
         host = f"{host}:{parts.port}"
-    return urllib.parse.urlunsplit((parts.scheme, host, parts.path,
-                                    parts.query, parts.fragment))
+    return urllib.parse.urlunsplit((parts.scheme, host, parts.path, "", ""))
 
 
 def _truncate(text, limit: int = 120) -> str:
