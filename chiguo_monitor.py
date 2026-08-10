@@ -331,7 +331,9 @@ class ChiguoMonitor:
             elif action == "send_result":
                 if entry.get("status") == "success":
                     send_success += 1
-                elif entry.get("status") == "failed":
+                # R2: --user-msg 幻影发送退款（phantom_send_reply_path）不计入 send_failed——
+                # 该记录是回复链内部回滚未送达的决策 booking，非真实发送失败。
+                elif entry.get("status") == "failed" and entry.get("error") != "phantom_send_reply_path":
                     send_failed += 1
 
             # 情绪时间序列

@@ -1682,7 +1682,7 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
   支持 runner/agent_command 参数按 runner 检查
 
 1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_agent.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/agent-run.mjs`（`AGENTRUN_SESSION=chiguo-send`）按 SUN2.md 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
-2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，30s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
+2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，450s 窗口内只补分析微调不重复记账，覆盖 agent 分析往返与 recall 两趟路径）→ 回复文本发回微信
 
 ### 11.1 特殊命令（纪念日/假期，bridge 规则化）
 

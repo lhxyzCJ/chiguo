@@ -356,6 +356,88 @@ def test_recv_dedup_different_text_full_record():
     print("  OK test_recv_dedup_different_text_full_record")
 
 
+def test_phantom_send_reply_path_refund_and_monitor():
+    """v1.11+R2: --user-msg 命中 send → 幻影退款（能量/messages_today/messages_without_reply/
+    Hawkes 事件数恢复），send_result 日志带 error='phantom_send_reply_path'，且
+    ChiguoMonitor 的 send_failed 统计不计该幻影记录（NTH-3 回归）。"""
+    import chiguo_daemon
+    from chiguo_trigger import Trigger
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        engine.netease_service.enabled = False  # 听歌反证与本用例无关，跳过网络
+        st = engine.state
+        now = datetime.now(CST)
+        st.cooldown.current_date = now.strftime("%Y-%m-%d")
+        # 消除时段敏感：quiet 窗口置空 + 伪造非 sleeping 用户态（仿 test_escape_valve）
+        engine.config["schedule"]["quiet_start"] = 0
+        engine.config["schedule"]["quiet_end"] = 0
+        engine.state._sync_quiet_window()
+        st.cooldown.last_message_at = None  # 从未发过 → min_interval 放行
+        st.cooldown.messages_today = 0
+        st.cooldown.messages_without_reply = 0
+        st.cooldown.event_timestamps = []
+        st.cooldown.trigger_history = []
+        st.emotion.energy = 80.0
+        st.infer_user_state = lambda now=None, msg_length=None: {
+            "posterior": {"sleeping": 0.1, "browsing": 0.8, "busy": 0.1},
+            "most_likely": "browsing", "confidence": 0.3, "utility": 0.1,
+            "should_send_bayesian": True, "state_description": "browsing",
+        }
+
+        # ── 构造 --user-msg（无分析）分支：record_user_message → evaluate ──
+        engine.record_user_message("哥哥在吗")
+        energy_before = st.emotion.energy
+        msgs_today_before = st.cooldown.messages_today
+        mwr_before = st.cooldown.messages_without_reply
+        events_before = len(st.cooldown.event_timestamps)
+
+        # 使 evaluate 命中 send：替换触发评估为确定性 lonely_mid（回复链确有该路径——
+        # 幻影记账正是由它造成；真实触发在情绪骤降后几乎不落 send，故测试用桩注入）
+        decision = None
+        orig = chiguo_daemon.evaluate_triggers
+        chiguo_daemon.evaluate_triggers = lambda state, now, trigger_scale=None: \
+            Trigger("lonely_mid", "medium")
+        try:
+            decision = engine.evaluate()
+        finally:
+            chiguo_daemon.evaluate_triggers = orig
+
+        assert decision["action"] == "send", f"expect send, got {decision.get('action')!r}"
+        msg_id = decision.get("msg_id", "")
+
+        # 发送记账已发生（能量消耗 / 日计数+1 / 未回复+1 / Hawkes+1）
+        assert st.emotion.energy < energy_before, "send should cost energy"
+        assert st.cooldown.messages_today == msgs_today_before + 1
+        assert st.cooldown.messages_without_reply == mwr_before + 1
+        assert len(st.cooldown.event_timestamps) == events_before + 1
+
+        # ── CLI --user-msg 幻影退款分支（与 main() 相同调用）──
+        engine.record_send_result(msg_id, "failed", error="phantom_send_reply_path")
+        # 容差 1e-3：evaluate 内 _tick 会按 record_user_message 与 evaluate 间亚毫秒 elapsed
+        # 微量推进情绪（~1e-7），退款只还原 20 能量成本，非精确相等。
+        assert abs(st.emotion.energy - energy_before) < 1e-3, "phantom refund should restore energy"
+        assert st.cooldown.messages_today == msgs_today_before
+        assert st.cooldown.messages_without_reply == mwr_before
+        assert len(st.cooldown.event_timestamps) == events_before
+
+        # send_result 日志带 error=phantom_send_reply_path
+        log_path = td + "/chiguo_decisions.jsonl"
+        entries = [json.loads(l) for l in Path(log_path).read_text().strip().split("\n") if l]
+        phantom = [e for e in entries if e.get("action") == "send_result"]
+        assert len(phantom) == 1, f"expect 1 send_result, got {len(phantom)}"
+        assert phantom[0]["status"] == "failed"
+        assert phantom[0]["error"] == "phantom_send_reply_path"
+        assert phantom[0]["refunded"] is True
+
+        # monitor send_failed 不计幻影记录（NTH-3）
+        state_path = td + "/chiguo_state.json"
+        mon = ChiguoMonitor(log_path, state_path)
+        s = mon.stats(days=0)
+        sr = s.get("send_result", {})
+        assert sr["failed"] == 0, f"phantom refund must not count as send_failed, got {sr}"
+    print("  OK test_phantom_send_reply_path_refund_and_monitor")
+
+
 if __name__ == "__main__":
     print("test_feedback.py\n")
     tests = [
@@ -371,6 +453,7 @@ if __name__ == "__main__":
         test_recv_dedup_analysis_upgrade,
         test_recv_dedup_different_text_full_record,
         test_analysis_string_values_sanitized,
+        test_phantom_send_reply_path_refund_and_monitor,
     ]
     failed = 0
     for t in tests:

@@ -310,7 +310,7 @@ Intent × Cue × Vibe three-layer system:
 ### Reply side — bridge askAgent
 1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no agent) → otherwise `askAgent` (`agent-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
 2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
-3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askAgent `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 30s → analysis-only upgrade, no double counting)
+3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askAgent `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 450s → analysis-only upgrade, no double counting; 窗口覆盖 agent 分析往返与 recall 两趟路径)
 
 ### Schedule-center CLI (daemon subcommands, schedule/ 包)
 - `chiguo_daemon.py --attention` — T1/T2/T3 注意力快照（回复侧注入，零写；失败降级继续 askAgent）
