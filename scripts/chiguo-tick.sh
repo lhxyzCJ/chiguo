@@ -8,8 +8,8 @@ export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin"
 # R16: 锁移入 $HOME/.chiguo/run（/tmp 世界可写 → 符号链接指向任意文件被 O_TRUNC 截断攻击面）
 LOCK_DIR="${CHIGUO_LOCK_DIR:-$HOME/.chiguo/run}"
 LOCK_FILE="$LOCK_DIR/chiguo-tick.lock"
-mkdir -p "$LOCK_DIR"
-exec 9>"$LOCK_FILE"
+mkdir -p "$LOCK_DIR" || { echo "[chiguo-tick] 锁目录不可写: $LOCK_DIR" >&2; exit 1; }
+exec 9>"$LOCK_FILE"  # flock 拿不到（文件打开失败）由 set -e 兜住，脚本非零退出
 if ! flock -n 9; then
     echo "[chiguo-tick] 已有实例运行，跳过本 tick" >&2
     exit 0

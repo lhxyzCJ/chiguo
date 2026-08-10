@@ -170,6 +170,7 @@ export function runAgentBin(bin, args, opts) {
     const maxBuffer = opts.maxBuffer ?? 16 * 1024 * 1024
     const c = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts })
     let stdout = ''
+    let stdoutBytes = 0
     let stderr = ''
     let killed = false
     const bail = (err) => {
@@ -180,7 +181,9 @@ export function runAgentBin(bin, args, opts) {
     }
     c.stdout.on('data', (d) => {
       stdout += d
-      if (Buffer.byteLength(stdout, 'utf8') > maxBuffer) {
+      // R19: 累计字节计数判断超限（避免对已累积 stdout 逐 chunk 整串 Buffer.byteLength 重扫，O(n²)→O(n)）
+      stdoutBytes += d.length
+      if (stdoutBytes > maxBuffer) {
         bail(new Error(`${bin} stdout 超过 ${maxBuffer} 字节上限（输出无界，已终止）`))
       }
     })
