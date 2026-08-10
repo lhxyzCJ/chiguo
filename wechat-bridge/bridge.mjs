@@ -46,6 +46,16 @@ const AGENT_RPC_ENABLED = RUNNER === 'agent' && process.env.WECHAT_BRIDGE_AGENT_
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 // #84 /send 共享 token:未设置时跳过 token 校验(向后兼容 tick.sh 等既有调用);设置后必须匹配
 const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
+/** B1:未配置共享 token 时 /send 与 /agent/prompt 零鉴权(仅 Host/Origin 本地回环把关)→ 启动醒目警告。
+ *  校验逻辑本身保持向后兼容(未配置跳过,兼容 tick.sh 等既有调用),警告提示生成随机 token 写 .env。 */
+export function warnIfNoToken() {
+  if (process.env.WECHAT_BRIDGE_TOKEN) return
+  console.error(
+    '\n[WARN] WECHAT_BRIDGE_TOKEN 未设置:HTTP 端点(/send 与 /agent/prompt)无共享 token 鉴权,' +
+    '同机任意进程可冒充 owner 调用!\n' +
+    '      建议生成随机 token 并写入 .env:\n' +
+    '      echo "WECHAT_BRIDGE_TOKEN=$(openssl rand -hex 16)" >> .env\n')
+}
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 // 仓库根 = 本文件位置推导（可移植，随仓库克隆到任何路径）
 const REPO = resolveRepo(import.meta.url)
@@ -183,9 +193,13 @@ async function runAgentRun({ mode, prompt, facts }, runOverride = null) {
 }
 
 /** recall 信号路由:analysis 带 recall → daemon --schedule-recall → 第二趟 agent → 回答;
- * 无信号/失败/漏检 → null(调用方按普通回复,零额外调用)。 */
-export async function runWithRecall(text, runOverride = askAgent) {
-  const first = await firstAnalysis(text, runOverride)
+ * 无信号/失败/漏检 → null(调用方按普通回复,零额外调用)。
+ * B7: existingAnalysis 复用主链已有分析(askAgentWithAttention 产出),跳过重复 firstAnalysis——
+ * 两次上下文(有无 attention 注入)不同会导致结果不一致,且白烧一次完整调用。 */
+export async function runWithRecall(text, runOverride = askAgent, existingAnalysis = null) {
+  const first = existingAnalysis
+    ? { analysis: existingAnalysis }
+    : await firstAnalysis(text, runOverride)
   if (first?.analysis?.recall) {
     const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--schedule-recall', first.analysis.recall], {
       timeout: 30_000,
@@ -272,12 +286,12 @@ export function readClarify(repoRoot = REPO_ROOT) {
   try {
     const rec = JSON.parse(readFileSync(p, 'utf8'))
     if (!rec.expires_at || Date.parse(rec.expires_at) <= Date.now()) {  // 6h 过期静默清理
-      rmSync(p, { force: true })
+      rmSync(p, { force: true, recursive: true })   // B3: 路径被目录占据时 ERR_FS_EISDIR 也会被消化
       return null
     }
     return rec
   } catch {  // 损坏 → 清空为无记录
-    rmSync(p, { force: true })
+    rmSync(p, { force: true, recursive: true })     // B3
     return null
   }
 }
@@ -288,7 +302,7 @@ export function writeClarify(repoRoot, rec) {
   chmodSync(tmp, 0o600)
   renameSync(tmp, p)
 }
-export function clearClarify(repoRoot = REPO_ROOT) { rmSync(scheduleClarifyPath(repoRoot), { force: true }) }
+export function clearClarify(repoRoot = REPO_ROOT) { rmSync(scheduleClarifyPath(repoRoot), { force: true, recursive: true }) }  // B3
 export function exitWordMatch(text) { return /^(?:算了|不要了|没事)/.test(text.trim()) }
 
 /** /send 来源校验:Host/Origin 必须本地回环(127.0.0.1/localhost/::1),容忍端口后缀。 */
@@ -311,6 +325,11 @@ export async function handleAgentPrompt(payload, res) {
   const deny = (status, error) => {
     res.writeHead(status, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: false, error }))
+  }
+  // B2: RPC 协议仅 RUNNER=agent 且显式开启时可用;关闭时 spawn pi 必败 → 入口直接 503 明确拒绝
+  if (!AGENT_RPC_ENABLED) {
+    deny(503, 'AGENT_RPC_ENABLED=false: RPC 协议不可用(需 RUNNER=agent 且 WECHAT_BRIDGE_AGENT_RPC=1)')
+    return
   }
   const { text, mode } = payload ?? {}
   if (typeof text !== 'string' || !text.trim()) { deny(400, 'text 必填'); return }
@@ -519,7 +538,9 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   await recordUserMsg(text)   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 30s 继承)
 
   // 澄清检查:有待澄清记录且非退出词 → 路由回提取(词表命中=新命令;否则合并"原意+回答")
-  const clarify = readClarify(repoRoot)
+  // B3 兜底:readClarify 内部 rmSync 已容错,防御性再包一层——记录损坏/目录占位等极端情况不阻塞回复流
+  let clarify = null
+  try { clarify = readClarify(repoRoot) } catch { clarify = null }
   let exitWord = false
   if (clarify && !exitWordMatch(text)) {
     const wordIntent = detectScheduleIntent(text)          // 词表命中 = 新命令
@@ -598,8 +619,13 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
         const att = await getAttention()
         const { text: reply, analysis } = await askAgentWithAttention(text, att)
         if (analysis?.recall) {
-          const second = await runWithRecall(text)
+          // B7: 复用主链已有 analysis,runWithRecall 不再重复完整 firstAnalysis
+          // R4: 用已解析的 askAgentFn(deps.askAgent 注入优先)——硬编码模块级 askAgent 会绕过注入
+          const second = await runWithRecall(text, askAgentFn, analysis)
           if (second) {
+            // B8: recalled 分支同样 upgradeAnalysis——daemon 侧该消息才能以
+            // recv_dedup 升级语义记账（--user-msg 带 --analysis），与未命中路径一致
+            await upgradeAnalysis(text, analysis)
             await bot.reply(msg, second).catch((e) => console.error('[reply error]', e))
             recalled = true
           }
@@ -624,6 +650,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
 }
 
 async function main() {
+  warnIfNoToken()   // B1: 生产无 token 零鉴权 → 启动即醒目警告(stderr)
   const bot = new WeChatBot({
     storage: 'file',
     storageDir: process.env.WECHAT_BRIDGE_STORAGE ?? DEFAULT_STORAGE,

@@ -8,10 +8,13 @@
 # ============================================================
 
 import os
+import shutil
 import tomllib
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+PROJ_DIR = Path(__file__).resolve().parent
 CST = timezone(timedelta(hours=8))
 
 from chiguo_state import ChiguoState
@@ -37,8 +40,24 @@ class Color:
 class Demo:
     def __init__(self):
         self.sim_now = datetime.now(CST)
-        with open("chiguo_proactive.toml", "rb") as f:
+        # ⚠️ 演示模式状态隔离(#Bug4):_base_dir 指向独立目录(默认 .demo_state/,
+        # 可用环境变量 CHIGUO_DEMO_BASE_DIR 覆盖),退出时的 state.save() 只写
+        # 演示文件,绝不触碰生产 chiguo_state.json
+        demo_dir = Path(os.environ.get("CHIGUO_DEMO_BASE_DIR") or (PROJ_DIR / ".demo_state"))
+        demo_dir.mkdir(parents=True, exist_ok=True)
+        with open(PROJ_DIR / "chiguo_proactive.toml", "rb") as f:
             self.cfg = tomllib.load(f)
+        self.cfg["_base_dir"] = str(demo_dir)
+        # 演示隔离补充:mem0 记忆路径若在 toml 配成绝对路径,_anchored/_resolve_path
+        # 不会锚定到 demo_dir → 演示会读写生产 qdrant 向量库。强制重写为 demo 目录
+        # 下相对路径,保证「绝不触碰生产」(#Bug4 承诺闭环)。
+        mem_cfg = self.cfg.setdefault("memory", {})
+        mem_cfg["mem0_qdrant_path"] = "data/mem0/qdrant"
+        mem_cfg["mem0_history_db"] = "data/mem0/history.db"
+        # 只读复制生产 holidays.json 到演示目录,保住节假日判定演示效果
+        src_holidays = PROJ_DIR / "holidays.json"
+        if src_holidays.exists() and not (demo_dir / "holidays.json").exists():
+            shutil.copy2(src_holidays, demo_dir / "holidays.json")
         self.state = ChiguoState(self.cfg)
         self.composer = MessageComposer(self.state, self.cfg.get("composer", {}))
         self.sent: list[dict] = []

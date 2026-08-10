@@ -5,13 +5,25 @@
  */
 import assert from 'node:assert'
 import { createServer } from 'node:http'
-import { writeFileSync, mkdtempSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const tmp = mkdtempSync(join(tmpdir(), 'bridge-agent-http-'))
 const FAKE_PI = join(tmp, 'fake-pi.mjs')
 process.env.AGENTRUN_TELEMETRY = '0'
+// B2: 本文件测的是 RPC 可用路径 → 显式开启(否则 handleAgentPrompt 会 503 拒绝)
+process.env.WECHAT_BRIDGE_AGENT_RPC = '1'
+// R3: 干净 HOME 注入——AgentRpc 构造会 mkdir PID_DIR + _killStale() 扫描 ~/.pi/agent,
+// 不隔离会杀掉线上 bridge 的常驻 rpc 子进程(homedir() 在模块顶层求值,须在 import 前设置)。
+const prevHome = process.env.HOME
+const cleanHome = join(tmpdir(), `chiguo-bridge-agent-http-${process.pid}`)
+process.env.HOME = cleanHome
+process.on('exit', () => {
+  if (prevHome === undefined) delete process.env.HOME
+  else process.env.HOME = prevHome
+  rmSync(cleanHome, { recursive: true, force: true })
+})
 
 // fake pi：analysis/send 模板 marker 回复
 writeFileSync(FAKE_PI, `
@@ -36,7 +48,7 @@ rl.on('line', (line) => {
 })
 `)
 
-const { handleAgentPrompt } = await import('../wechat-bridge/bridge.mjs')
+const { handleAgentPrompt, warnIfNoToken } = await import('../wechat-bridge/bridge.mjs')
 const { AgentRpc } = await import('../wechat-bridge/agent-rpc.mjs')
 
 let passed = 0
@@ -113,6 +125,34 @@ t('HTTP 路由:POST /agent/prompt 经真实 server → 200 + 非回环 Host 拒�
     globalThis.__agentRpc.dispose(); globalThis.__agentRpc = null
     await new Promise((r) => server.close(r))
   }
+})
+
+t('warnIfNoToken: 未配置 WECHAT_BRIDGE_TOKEN → stderr 醒目警告(零鉴权告警)', async () => {
+  const prev = process.env.WECHAT_BRIDGE_TOKEN
+  delete process.env.WECHAT_BRIDGE_TOKEN
+  const orig = process.stderr.write
+  let out = ''
+  process.stderr.write = (s) => { out += String(s); return true }
+  try { warnIfNoToken() } finally {
+    process.stderr.write = orig
+    if (prev !== undefined) process.env.WECHAT_BRIDGE_TOKEN = prev
+  }
+  assert(out.includes('WECHAT_BRIDGE_TOKEN'), `警告应提及环境变量: ${out}`)
+  assert(out.includes('WARN'), '应醒目标记')
+})
+
+t('warnIfNoToken: 已配置 token → 无警告', async () => {
+  const prev = process.env.WECHAT_BRIDGE_TOKEN
+  process.env.WECHAT_BRIDGE_TOKEN = 'test-secret'
+  const orig = process.stderr.write
+  let out = ''
+  process.stderr.write = (s) => { out += String(s); return true }
+  try { warnIfNoToken() } finally {
+    process.stderr.write = orig
+    if (prev === undefined) delete process.env.WECHAT_BRIDGE_TOKEN
+    else process.env.WECHAT_BRIDGE_TOKEN = prev
+  }
+  assert.strictEqual(out, '', '已配置不应有警告')
 })
 
 await runAll()

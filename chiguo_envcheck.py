@@ -176,12 +176,12 @@ def check_ollama(base_url: str = "http://localhost:11434") -> dict:
         if any(n.startswith("qwen3-embedding") for n in names):
             return {"name": "ollama", "ok": True, "severity": "ok",
                     "detail": f"ollama embedding OK ({_sanitize_url(base_url)} 有 qwen3-embedding)"}
-        return {"name": "ollama", "ok": False, "severity": "info",
-                "detail": f"ollama({_sanitize_url(base_url)}) 无 qwen3-embedding 模型 → 记忆 embedding 未启用(可选)"
+        return {"name": "ollama", "ok": False, "severity": "warn",
+                "detail": f"ollama({_sanitize_url(base_url)}) 无 qwen3-embedding 模型 → 记忆 embedding 未启用"
                           f"(ollama pull qwen3-embedding:0.6b)"}
     except Exception as e:
-        return {"name": "ollama", "ok": False, "severity": "info",
-                "detail": f"ollama 不可达({_sanitize_url(base_url)}): {_truncate(e)} → 记忆 embedding 未启用(可选)"
+        return {"name": "ollama", "ok": False, "severity": "warn",
+                "detail": f"ollama 不可达({_sanitize_url(base_url)}): {_truncate(e)} → 记忆 embedding 未启用"
                           f"(启动 ollama 后 bash scripts/install_agent.sh --yes)"}
 
 

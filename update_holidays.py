@@ -105,9 +105,30 @@ def try_chinese_calendar(year: int):
         result = {}
         # chinese_calendar API varies by version: may return dict or list;
         # Holiday namedtuple may have .date/.name or .start_date/.end_date
+        def _iso(x):
+            return x.isoformat() if hasattr(x, "isoformat") else str(x)
+
         if isinstance(holidays, dict):
-            for d, name in holidays.items():
-                result[str(name)] = (d.isoformat(), d.isoformat())
+            for d, v in holidays.items():
+                if isinstance(v, str):
+                    # 旧 API: {date: "节日名"} → 单日,键名取 value
+                    name, start, end = v, d, d
+                else:
+                    # 新 API: {date: Holiday}。name 缺失回退 key;
+                    # start/end 优先取区间字段,否则单日,再否则回退 key
+                    name = getattr(v, "name", None) or d
+                    start = (getattr(v, "start_date", None)
+                             or getattr(v, "date", None) or d)
+                    end = (getattr(v, "end_date", None)
+                           or getattr(v, "date", None) or d)
+                # 真实 chinese_calendar 对春节/国庆等多日假期每天一条同名条目 →
+                # 按名聚合 min(start)/max(end)，避免逐日覆盖塌缩为最后一天
+                key = str(name)
+                if key in result:
+                    old_start, old_end = result[key]
+                    result[key] = (min(old_start, _iso(start)), max(old_end, _iso(end)))
+                else:
+                    result[key] = (_iso(start), _iso(end))
         else:
             for h in holidays:
                 name = str(getattr(h, 'name', h))
@@ -131,13 +152,14 @@ def get_holidays_for(year: int) -> dict:
     if year == 2027:
         return dict(ESTIMATED_2027)
     # 通用估算：使用 2027 日期模板。固定日期假期（元旦/劳动节/国庆/清明）准确；
-    # 农历假期（春节/端午/中秋）每年偏移约 11 天，需等国务院通知更新 KNOWN_HOLIDAYS。
+    # 农历假期（春节/端午/中秋）每年提前约 11 天（农历年比公历年短约 11 天：
+    # 2027 春节 2/6 → 2028 春节 1/26），需等国务院通知更新 KNOWN_HOLIDAYS。
     print(f"⚠️ [update_holidays] 警告: {year} 年假期数据为通用估算值"
           f"(仅 2026/2027 有精确或专用估算),农历假期按每年约 11 天偏移推算,"
           f"请以国务院通知为准!", file=sys.stderr)
     from datetime import timedelta
     LUNAR = {"春节", "端午节", "中秋节"}
-    offset = (year - 2027) * 11  # ~11 days/year lunar drift
+    offset = (2027 - year) * 11  # ~11 days/year lunar drift;农历年比公历年短 → 春节逐年提前
     result = {}
     for name, (start, end) in ESTIMATED_2027.items():
         sy, sm, sd = map(int, start.split("-"))

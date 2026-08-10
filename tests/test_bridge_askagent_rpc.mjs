@@ -7,7 +7,7 @@
  * 复用 fake agent-run / fake daemon 模式（与 test_bridge_askagent.mjs 同构）。
  */
 import assert from 'node:assert'
-import { writeFileSync, mkdtempSync, appendFileSync, cpSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, appendFileSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -17,6 +17,19 @@ const FAKE_DAEMON = join(tmp, 'fake-daemon.mjs')
 const FAKE_PI = join(tmp, 'fake-pi.mjs')
 const AGENT_LOG = join(tmp, 'agent.log')
 const DAEMON_LOG = join(tmp, 'daemon.log')
+
+// O2: 防写真实 logs/agent-run.log
+process.env.AGENTRUN_TELEMETRY = '0'
+// R3: 干净 HOME 注入——AgentRpc 构造会 mkdir PID_DIR + _killStale() 扫描 ~/.pi/agent,
+// 不隔离会杀掉线上 bridge 的常驻 rpc 子进程(homedir() 在模块顶层求值,须在 import 前设置)。
+const prevHome = process.env.HOME
+const cleanHome = join(tmpdir(), `chiguo-bridge-askagent-rpc-${process.pid}`)
+process.env.HOME = cleanHome
+process.on('exit', () => {
+  if (prevHome === undefined) delete process.env.HOME
+  else process.env.HOME = prevHome
+  rmSync(cleanHome, { recursive: true, force: true })
+})
 
 const PH_SCRIPT = join(tmp, 'agent_health.py')
 cpSync(new URL('../scripts/agent_health.py', import.meta.url).pathname, PH_SCRIPT)

@@ -143,7 +143,7 @@ t('② 继续缺字段 → 再追问 → 退出词清记录未写入', async () 
     verify: { ok: false, question: '哪天?', missing: ['date'] },
     daemon: async () => { wrote = true; return { ok: true, text: 'x' } },
   }, repo)
-  await handleMessage('交材料', { userId: 'owner@im.wechat' }, fakeBot(replies), queue, deps)
+  await handleMessage('8月20号交材料', { userId: 'owner@im.wechat' }, fakeBot(replies), queue, deps)
   assert.ok(readClarify(repo), '记录存在')
   await handleMessage('算了', { userId: 'owner@im.wechat' }, fakeBot(replies), queue, deps)
   assert.ok(readClarify(repo) === null, '退出词清记录')

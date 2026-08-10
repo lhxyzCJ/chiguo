@@ -106,10 +106,68 @@ def test_run_checks_agent_auth_provider_from_toml():
     print("  OK test_run_checks_agent_auth_provider_from_toml")
 
 
-def test_check_ollama_unreachable_info():
+def test_check_ollama_unreachable_warn():
+    """Bug3: ollama 不可达 → warn(记忆 embedding 缺失影响部署判定),非 info。"""
     r = ec.check_ollama("http://127.0.0.1:1")
-    assert r["severity"] == "info" and not r["ok"]
-    print("  OK test_check_ollama_unreachable_info")
+    assert r["severity"] == "warn" and not r["ok"]
+    assert "不可达" in r["detail"]
+    print("  OK test_check_ollama_unreachable_warn")
+
+
+def test_check_ollama_missing_warn_exit_code():
+    """Bug3: ollama 缺失(不可达/无模型)→ severity=warn 且退出码=1(此前 info 被漏计)。"""
+    # 无模型分支: 起一个返回空模型列表的本地服务
+    import http.server
+    import socketserver
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps({"models": []}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    with socketserver.TCPServer(("127.0.0.1", 0), Handler) as srv:
+        port = srv.server_address[1]
+        th = threading.Thread(target=srv.serve_forever, daemon=True)
+        th.start()
+        try:
+            r = ec.check_ollama(f"http://127.0.0.1:{port}")
+            assert not r["ok"] and r["severity"] == "warn", f"无模型应 warn: {r}"
+            assert "qwen3-embedding" in r["detail"], r["detail"]
+        finally:
+            srv.shutdown()
+    # 不可达分支同样 warn
+    r2 = ec.check_ollama("http://127.0.0.1:1")
+    assert not r2["ok"] and r2["severity"] == "warn", f"不可达应 warn: {r2}"
+    # warn 计入 summary → exit_code 1(修复前 info 不计,误判为 0)
+    report = {"summary": {"ok": 5, "info": 1, "warn": 1, "critical": 0}}
+    assert ec.exit_code(report) == 1
+    print("  OK test_check_ollama_missing_warn_exit_code")
+
+
+def test_run_checks_ollama_warn_sets_exit_code():
+    """Bug3 集成: run_checks 中 ollama 缺失(warn)计入 summary → exit_code=1。"""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        _mk(td, {"chiguo_proactive.toml": '[host]\nrunner = "agent"\n'})
+        orig = ec.check_ollama
+        ec.check_ollama = lambda *a, **k: {"name": "ollama", "ok": False,
+                                           "severity": "warn", "detail": "mock 缺失"}
+        try:
+            report = ec.run_checks(base_dir=td, home=td / "home", skip_agent=True)
+        finally:
+            ec.check_ollama = orig
+        oll = next(c for c in report["checks"] if c["name"] == "ollama")
+        assert oll["severity"] == "warn", oll
+        assert ec.exit_code(report) == 1, report["summary"]
+    print("  OK test_run_checks_ollama_warn_sets_exit_code")
 
 
 def test_check_ollama_proxy_bypassed():
@@ -270,7 +328,9 @@ if __name__ == "__main__":
     test_check_agent_auth_ok()
     test_check_agent_auth_custom_provider()
     test_run_checks_agent_auth_provider_from_toml()
-    test_check_ollama_unreachable_info()
+    test_check_ollama_unreachable_warn()
+    test_check_ollama_missing_warn_exit_code()
+    test_run_checks_ollama_warn_sets_exit_code()
     test_check_ollama_proxy_bypassed()
     test_check_mem0_missing_dir_info()
     test_check_mem0_ok_branch()
@@ -281,4 +341,4 @@ if __name__ == "__main__":
     test_run_checks_never_crashes()
     test_mem0_default_path_anchored()
     test_run_checks_custom_backend_skips_mem0()
-    print(f"test_envcheck.py: ALL {19} TESTS PASSED")
+    print(f"test_envcheck.py: ALL {21} TESTS PASSED")

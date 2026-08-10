@@ -75,9 +75,16 @@ def test_loop_hot_reload_config():
         cfg_path = Path(td) / "chiguo_proactive.toml"
         _setup(td)
         from chiguo_daemon import DecisionEngine
+        # 先显式写入确定不同于 0.42 的初始值（不依赖仓库默认值，防止默认值将来变成 0.42）
+        txt = cfg_path.read_text()
+        txt = re.sub(r"(?m)^comfort_weight_base\s*=.*$",
+                     "comfort_weight_base = 0.11", txt)
+        cfg_path.write_text(txt)
         engine = DecisionEngine(str(cfg_path),
                                 str(Path(td) / "chiguo_decisions.jsonl"))
         old_val = engine.config["trigger"].get("comfort_weight_base", 0.0)
+        assert old_val == 0.11 and old_val != 0.42, \
+            f"重载前初始值应被显式钉为 0.11: {old_val}"
         # 改 toml（保持语法合法）→ mtime 变化
         txt = cfg_path.read_text()
         new_txt = re.sub(r"(?m)^comfort_weight_base\s*=.*$",
@@ -86,7 +93,6 @@ def test_loop_hot_reload_config():
         engine._maybe_reload_config()
         assert engine.config["trigger"]["comfort_weight_base"] == 0.42, \
             f"热重载应生效: {engine.config['trigger'].get('comfort_weight_base')}"
-        assert old_val != 0.42 or True  # 兼容默认已是 0.42 的奇异情形
         # 语法错误 → 保留旧配置不崩溃
         cfg_path.write_text("not valid toml [[[")
         engine._maybe_reload_config()

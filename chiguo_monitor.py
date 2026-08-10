@@ -108,15 +108,17 @@ class ChiguoMonitor:
         if not self.log_path.exists():
             return
         try:
-            with open(self.log_path, encoding="utf-8") as f:
+            with open(self.log_path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
                         continue
                     try:
                         d = json.loads(line)
-                    except json.JSONDecodeError:
+                    except UnicodeDecodeError, json.JSONDecodeError:
                         continue
+                    if not isinstance(d, dict):
+                        continue  # 合法 JSON 但非 dict（形状漂移）→ 跳过，防 AttributeError
                     if since:
                         ts = self._extract_time(d)
                         if ts and ts < since:
@@ -133,17 +135,35 @@ class ChiguoMonitor:
         if isinstance(state, dict):
             raw = state.get("time")
             if raw:
-                try:
-                    return datetime.strptime(raw, "%Y-%m-%d %H:%M").replace(tzinfo=CST)
-                except ValueError, TypeError:
-                    pass
+                ts = ChiguoMonitor._parse_time_str(raw)
+                if ts is not None:
+                    return ts
         # 回退：顶层 time 字段
         raw = entry.get("time")
         if raw and isinstance(raw, str):
-            try:
-                return datetime.strptime(raw, "%Y-%m-%d %H:%M").replace(tzinfo=CST)
-            except ValueError, TypeError:
-                pass
+            return ChiguoMonitor._parse_time_str(raw)
+        return None
+
+    @staticmethod
+    def _parse_time_str(raw: str) -> datetime | None:
+        """解析单条时间字符串。
+
+        优先 "%Y-%m-%d %H:%M"（naive → 视为 CST）；解析失败回退
+        datetime.fromisoformat（daemon compact 输出
+        datetime.now(CST).isoformat()，含 T/微秒/+08:00 —— 混入时不再
+        被静默丢弃）。ISO 结果口径与 _parse_msg_ts 一致：naive → 视为 CST，
+        aware → 统一换算到 CST。全部失败返回 None。"""
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d %H:%M").replace(tzinfo=CST)
+        except ValueError, TypeError:
+            pass
+        try:
+            dt = datetime.fromisoformat(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=CST)  # naive → 视为 CST
+            return dt.astimezone(CST)
+        except ValueError, TypeError:
+            pass
         return None
 
     @staticmethod
@@ -165,18 +185,24 @@ class ChiguoMonitor:
         if not self.state_path.exists():
             return {}
         try:
-            return json.loads(self.state_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError, OSError:
+            data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except UnicodeDecodeError, json.JSONDecodeError, OSError:
             return {}
+        if not isinstance(data, dict):
+            return {}  # 合法 JSON 但形状错误（[]/123/"x"）→ 回退空，避免下游 .get() 崩溃
+        return data
 
     def _read_break_state(self) -> dict:
         """读取假期状态"""
         if not self.break_state_path.exists():
             return {}
         try:
-            return json.loads(self.break_state_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError, OSError:
+            data = json.loads(self.break_state_path.read_text(encoding="utf-8"))
+        except UnicodeDecodeError, json.JSONDecodeError, OSError:
             return {}
+        if not isinstance(data, dict):
+            return {}  # 合法 JSON 但形状错误（[]/123/"x"）→ 回退空，避免下游 .get() 崩溃
+        return data
 
     # ═══════════════════════════════════════════════════════════
     # 统计引擎
@@ -220,6 +246,9 @@ class ChiguoMonitor:
         first_time: datetime | None = None
         last_time: datetime | None = None
 
+        # 无法解析时间的条目数（daemon compact ISO 时间混入等，供统计可观测性）
+        unparsed_time_count = 0
+
         # mem0 降级检测
         mem0_ok_count = 0
         mem0_check_count = 0
@@ -233,6 +262,7 @@ class ChiguoMonitor:
 
             t = self._extract_time(entry)
             if t is None:
+                unparsed_time_count += 1
                 continue
 
             # 时间窗口
@@ -401,6 +431,7 @@ class ChiguoMonitor:
                 "to": last_time.isoformat() if last_time else None,
                 "span_days": round(span_days, 1),
                 "total_entries": total_sends + total_idles,
+                "unparsed_time_count": unparsed_time_count,
             },
             "activity": {
                 "total_sends": total_sends,

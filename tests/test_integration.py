@@ -161,8 +161,13 @@ def test_6_holiday_availability(cfg):
 
 
 def test_7_in_class_availability(cfg):
-    """上课中 → availability 极低"""
+    """上课中 → availability 极低（≤0.20）"""
+    import copy
     import shutil
+    # 钉死 on_break 判定（不依赖真实日历）：semester_end 设为未来 + 注入空假期区间
+    # 的 break_state.json → _on_break 恒 False，断言不再有 0.85 兜底分支
+    cfg = copy.deepcopy(cfg)
+    cfg["schedule"]["semester_end"] = "2099-12-31"
     # 批 3a:break 判定按 now(不再依赖真实今天),无课表缓存时走 unavailable→1.0,
     # 无法锁定"上课中";故注入仓库真实课表文件 data/xskb.xlsx → 周一 08:30 第 1 节上课中
     xlsx_src = Path("data/xskb.xlsx")
@@ -170,16 +175,19 @@ def test_7_in_class_availability(cfg):
     xlsx_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(xlsx_src, xlsx_dst)
     cache_file = TMP_DIR / "schedule_cache.json"
+    break_file = TMP_DIR / "break_state.json"
     try:
+        break_file.write_text(json.dumps({"breaks": []}, ensure_ascii=False))
         s = make_state(cfg)
         # 周一上午第一节课（08:30）
         avail = s.availability(dt(2026, 6, 15, 8, 30))
-        # 上课中 availability 应在 0.05-0.20；on_break(8月=暑假,on_break 用真实今天判定)时兜底 0.85
-        assert avail <= 0.20 or avail == 0.85, \
-            f"expected in-class (<=0.20) or on_break fallback (0.85), got {avail}"
+        # on_break 已钉死为 False（semester_end=未来 + break_state 无假期区间）→ 只剩上课中分支
+        assert avail <= 0.20, \
+            f"expected in-class availability <=0.20, got {avail}"
     finally:
-        # 清理注入的课表(xlsx 副本 + 解析产生的缓存),不污染后续测试(test_7b 依赖无缓存环境)
-        for p in (xlsx_dst, cache_file):
+        # 清理注入的课表(xlsx 副本 + 解析产生的缓存)与 break_state,不污染后续测试
+        # (test_7b 依赖无缓存环境;test_11 自行写入 break_state.json)
+        for p in (xlsx_dst, cache_file, break_file):
             p.unlink(missing_ok=True)
     print("  OK test_7_in_class: availability =", avail)
 
