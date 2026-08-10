@@ -451,9 +451,9 @@ def test_a4_must_send_high_activation():
 def test_a4_mid_band_no_must_send():
     """A4 边界（#79）：must_send_activation=0.75 下，孤独 31-45 与焦虑 45-58
     区间不触发 must_send（200 种子 × 全区间 0 次）。
-    用半忙环境（03:00 静默窗口，日程乘数 ×0.6）保证 activation 严格 < 0.75：
-    空闲(×1.2)+jitter 上限时孤独 36+ 的 activation 上限可触及 0.75，
-    而 0.5 阈值下孤独 45 半忙即有约半数种子触发 → 本用例对阈值提升有区分度。"""
+    半忙环境（03:00 静默窗口，日程乘数 ×0.6）→ activation（维度族 max，抖动前
+    确定性）严格 < 0.75；空闲(×1.2) 下孤独 45 族和≈0.70×1.2=0.84 才越过阈值必发，
+    孤独≤40 空闲仍 <0.75（R7 修正：0.75 按单源标定，两股中低情绪叠加不再凑段）。"""
     with tempfile.TemporaryDirectory() as td:
         now = datetime(2026, 6, 15, 3, 0, tzinfo=CST)  # 静默窗口 0-8 → 半忙 ×0.6
         # 孤独 31-45（焦虑 40 默认；energy=40 关闭 playful 噪声）

@@ -136,6 +136,8 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # ── 记忆触发 ──
     # 两层：① JSON 手动记忆（习惯提醒等）② mem0 随机回忆
     for mem in state.memories:
+        if not isinstance(mem, dict):
+            continue  # 数据防御：非 dict 条目跳过（state 加载已净化，这里再兜底防崩）
         if _memory_should_trigger(mem, now):
             weighted_candidates.append({
                 "trigger": Trigger(type="memory", intensity="soft",
@@ -363,11 +365,9 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # 再乘 uniform(0.8, 1.2) 随机抖动防机械感。逃生阀已在函数首 return → 天然豁免。
     free_mult = trg_cfg.get("free_multiplier", 1.2)
     sched_mult = _schedule_multiplier(state, now, free_mult)
-    # 抖动一次采样全局乘：保持类型间相对权重稳定，activation（A4 输入）不受逐候选随机扰动
-    jitter = random.uniform(0.8, 1.2)
     for c in weighted_candidates:
         if c["trigger"].type in EMOTION_TRIGGERS:
-            c["weight"] *= sched_mult * jitter
+            c["weight"] *= sched_mult
 
     # A6 统一 repeat 阻尼：trigger_history 按 type 计数 n，weight ×= repeat_decay ** min(n, cap)。
     # 对所有 trigger 类型统一生效（daemon 发送时 append history，本层只读不写）。
@@ -378,10 +378,15 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         n = sum(1 for t in history if t == c["trigger"].type)
         c["weight"] *= repeat_decay ** min(n, repeat_cap)
 
-    # A4 三段激活阈值：activation = 情绪类候选权重之和。
+    # A4 三段激活阈值：activation = 情绪维度族取 max（#79 后 0.75 按单源标定）。
+    # 孤独三级（lonely_low/mid/high）是同一孤独维度的互斥表达 → 族内求和；其余情绪
+    # （anxiety/playful/reflect/longing/comfort）各自单源取 max。两股中低情绪叠加
+    # （如孤独35+焦虑57 空闲）不再凑到高段，孤独族和（孤独≥45）或单源焦虑强才必发。
     # 低段（< min_activation）→ 情绪类退出竞争（等效低能量沉默，仪式类照发）；
     # 中段 → 现状加权随机；高段（>= must_send_activation）→ 情绪类加权随机必选
     # （仪式类本轮退让），选中结果标记 must_send: true。
+    # activation 在抖动前计算 → 三段归属是逐状态的确定性属性（同状态不会因随机
+    # uniform(0.8,1.2) 抖动在发/不发间随机翻转）。抖动随后全局乘，防机械感。
     # #79: 阈值解析钳制到 [0,1]（配置越界/非数值不破坏三段语义），并校验 min < must
     min_activation = _clamp01(trg_cfg.get("min_activation", 0.08), 0.08)
     must_send_activation = _clamp01(trg_cfg.get("must_send_activation", 0.75), 0.75)
@@ -391,8 +396,14 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
               f"（需 min < must，请检查 chiguo_proactive.toml [trigger]）")
     emo_cands = [c for c in weighted_candidates if c["trigger"].type in EMOTION_TRIGGERS]
     ritual_cands = [c for c in weighted_candidates if c["trigger"].type not in EMOTION_TRIGGERS]
-    activation = sum(c["weight"] for c in emo_cands)
+    activation = _activation_score(emo_cands)
     must_send = False
+    # 抖动一次采样全局乘（防机械感）：各乘数逐项乘积、换序等价，故最终权重分布不变；
+    # 仅在加权选择前统一作用于情绪类候选（仪式类豁免），不扰动已定的 activation 与三段归属。
+    jitter = random.uniform(0.8, 1.2)
+    for c in weighted_candidates:
+        if c["trigger"].type in EMOTION_TRIGGERS:
+            c["weight"] *= jitter
     if activation >= must_send_activation and emo_cands:
         chosen = weighted_trigger_choice(emo_cands)
         must_send = True
@@ -439,14 +450,35 @@ def _schedule_multiplier(state: ChiguoState, now: datetime, free_mult: float) ->
     return 0.6
 
 
+def _activation_score(emo_cands: list[dict]) -> float:
+    """A4 activation：按情绪维度族取 max（#79 后 must_send_activation=0.75 按单源标定）。
+
+    孤独三级（lonely_low/mid/high）是同一孤独维度的互斥表达 → 族内求和（孤独总量压力）；
+    其余情绪（anxiety/playful/reflect/longing/comfort）各自独立维度 → 单源取 max。
+    与全量求和的差异：两股中低情绪叠加（如孤独35+焦虑57）不再凑到高段触发 must_send，
+    只有单个维度真正强（孤独族和或单源焦虑 ≥ 阈值）才必发 —— 与 toml #79 文档承诺一致。"""
+    lonely = sum(c["weight"] for c in emo_cands
+                 if c["trigger"].type in ("lonely_low", "lonely_mid", "lonely_high"))
+    others = [c["weight"] for c in emo_cands
+              if c["trigger"].type not in ("lonely_low", "lonely_mid", "lonely_high")]
+    return max(lonely, max(others, default=0.0))
+
+
 def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
     """follow_up 候选组装（主块与记忆兜底块共用）。权重 = weight × 年龄钟形。
     #79: entry 缺 topic 键/非字符串/空白 → 跳过（防 KeyError 与空话题）。"""
     topic = entry.get("topic")
     if not isinstance(topic, str) or not topic.strip():
         return None
-    peak = trg_cfg.get("follow_up_peak_hours", 4.0)
-    sigma = trg_cfg.get("follow_up_sigma_hours", 3.0)
+    # 峰值/钟形宽度配置防御：非数值回退默认；sigma<=0 → 回退 3.0（bell 分母
+    # e^{-((age-peak)/sigma)^2}，sigma=0 会 ZeroDivisionError，兄弟配置键同有 clamp 防御）。
+    try:
+        peak = float(trg_cfg.get("follow_up_peak_hours", 4.0))
+        sigma = float(trg_cfg.get("follow_up_sigma_hours", 3.0))
+    except (TypeError, ValueError):
+        peak, sigma = 4.0, 3.0
+    if not math.isfinite(peak) or not math.isfinite(sigma) or sigma <= 0:
+        peak, sigma = 4.0, 3.0
     bell = math.exp(-((age - peak) / sigma) ** 2)
     w = trg_cfg.get("follow_up_weight", 0.35) * bell
     if w <= trg_cfg.get("follow_up_min_weight", 0.03):
