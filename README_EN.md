@@ -84,6 +84,9 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 | 🫂 User mood sensing | LLM senses the user's mood (low/distressed/happy/angry) → comfort trigger + gentler tone note (off by default, grayscale) |
 | 🌊 Emotional fluctuation | OU noise simulates unexplained mood swings (off by default, grayscale) |
 | 🌱 Relationship dynamics | Long-term interactions slowly shift the emotional equilibrium (baseline drift, off by default, grayscale) |
+| 🧠 State-sense upgrade | Bayesian transition matrix + forward filtering + info-gain gating "send when uncertain" (off by default, grayscale) |
+| 🔁 Feedback loops | Per-trigger reply-rate feedback (damp low / boost high) + event-typed emotion deltas + monitor proactive-message evaluation (off by default, grayscale) |
+| 🧹 Memory self-maintenance | Deterministic idle consolidation (zero-LLM dedup/expiry) + Ebbinghaus reinforcement + emotion-memory coupling (off by default, grayscale) |
 | 🛡 Deterministic fallback | agent failure → composer template fallback (zero LLM) + content-level anti-repetition |
 
 ---
