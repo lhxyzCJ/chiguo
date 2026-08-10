@@ -277,11 +277,11 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 
 **v1.10 触发层优化（外部对比，三段）**，按顺序作用于候选权重：
 
-**A3 日程乘数 + 抖动**：情绪类候选权重 × 日程乘数（`_schedule_multiplier`：上课中 0.3 / 空闲 `[trigger].free_multiplier` 默认 1.2 / 半忙 0.6；课表异常按空闲处理）× `uniform(0.8, 1.2)` 抖动一次采样全局乘（保持类型间相对权重稳定，activation 不受逐候选随机扰动）；仪式类（special/morning/night/meal/memory/follow_up）豁免；逃生阀已在函数首 return → 天然豁免。
+**A3 日程乘数 + 抖动**：情绪类候选权重 × 日程乘数（`_schedule_multiplier`：上课中 0.3 / 空闲 `[trigger].free_multiplier` 默认 1.2 / 半忙 0.6；课表异常按空闲处理）；仪式类（special/morning/night/meal/memory/follow_up）豁免；逃生阀已在函数首 return → 天然豁免。`uniform(0.8, 1.2)` 抖动在 A4 三段归属确定后、加权选择前一次采样全局乘（防机械感；各乘数逐项乘积、换序等价，最终权重分布不变）——**activation 不受抖动扰动，三段归属是逐状态的确定性属性**（同状态不会随机在必发/不发间翻转）。
 
 **A6 repeat 阻尼泛化**：`trigger_history` 按 type 计数 n → **全类型**候选 weight × `repeat_decay^min(n, repeat_cap)`（`[trigger] repeat_decay=0.6 / repeat_cap=3`，n≥3 封顶）；取代原 lonely_high 专属 `0.3^n`（daemon 发送时 append history，本层只读不写）。
 
-**A4 三段激活**：`activation` = 情绪类候选权重之和——
+**A4 三段激活**：`activation` = 情绪维度族取 max——孤独三级（lonely_low/mid/high）是同一孤独维度的互斥表达，族内求和；其余情绪（anxiety/playful/reflect/longing/comfort）各自单源取 max。0.75 阈值按单源标定（#79）：两股中低情绪叠加（如孤独35+焦虑57 空闲 ×1.2 → max≈0.58 < 0.75）不再凑到高段；孤独≥45 族和或单源焦虑强才必发。`activation` 在抖动前计算 → 确定性（见 A3）——
 
 | 段 | 条件 | 行为 |
 |----|------|------|
@@ -1203,8 +1203,10 @@ follow_up_min_weight = 0.03     # 低于此权重不成为候选
 
 # v1.10: A3 日程乘数 / A4 三段激活 / A6 repeat 阻尼
 free_multiplier = 1.2            # 空闲（节假日/周末/课间）时情绪类候选乘数（建议 1.0~1.4）
-min_activation = 0.08            # 情绪类候选权重和 < 此值 → 情绪类退出竞争（低能量沉默，仪式类照发）
-must_send_activation = 0.75      # 情绪类权重和 ≥ 此值 → 情绪类加权随机必选（must_send 进 decision JSON）
+min_activation = 0.08            # activation < 此值 → 情绪类退出竞争（低能量沉默，仪式类照发）
+must_send_activation = 0.75      # activation ≥ 此值 → 情绪类加权随机必选（must_send 进 decision JSON）
+# 注：activation = 情绪维度族取 max（孤独三级互斥 → 族内求和；其余情绪单源），
+#     抖动前计算、逐状态确定性（R7 修正：0.75 按单源标定，#79）。
 repeat_decay = 0.6               # 同类型触发历史计数 n → 候选 weight ×= repeat_decay^n
 repeat_cap = 3                   # repeat 计数封顶（超过不再继续衰减）
 

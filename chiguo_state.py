@@ -435,7 +435,12 @@ class ChiguoState:
 
         if self.memories_path.exists():
             try:
-                self.memories = json.loads(self.memories_path.read_text())
+                data = json.loads(self.memories_path.read_text())
+                # 数据防御：memories JSON 应为数组；dict 形状（遍历得键字符串）或含
+                # 非 dict 条目（mem.get 崩）→ 净化。同类 anniversary/schedule/holiday
+                # 加载路径均有形状校验，此处补齐（review R9）。
+                self.memories = ([m for m in data if isinstance(m, dict)]
+                                 if isinstance(data, list) else [])
             except Exception:
                 pass
 

@@ -233,11 +233,14 @@ def test_comfort_weight_monotonic_and_ttl():
 
 
 def test_anxiety_bonus_scales():
-    """user_mood_anxiety_bonus>0 + fresh low → anxiety 选中频率上升（同状态对比）。"""
+    """user_mood_anxiety_bonus>0 + fresh low → anxiety 触发放大（同状态对比）。
+    # R7 修正后 A4 为单源 0.75 阈值：高焦虑（≥65）恒必发、bonus 无可观测增益，
+    # 故用低焦虑 45（w_anx≈0.26 < anxiety_min_weight 0.3 不成候选）验证开/关效应：
+    # base=0，bonus ×1.6 提升 w_anx≈0.36 ≥0.3 成为候选 → boosted>0。"""
     import random
     with tempfile.TemporaryDirectory() as td:
         st = _make_state(td, loneliness=0.0, energy=50.0,
-                         affection=50.0, anxiety=80.0)
+                         affection=50.0, anxiety=45.0)
         now = datetime(2026, 8, 9, 12, 0, tzinfo=CST)
         st.cooldown.last_user_message_at = (now - timedelta(hours=1)).isoformat()
         st.cooldown.user_mood = {"mood": "low", "intensity": 0.8,
@@ -253,9 +256,10 @@ def test_anxiety_bonus_scales():
             return hits
 
         base = hit_rate()
+        assert base == 0, f"无 bonus 时 anxiety=45 应不成候选（<min_weight 0.3）, got {base}"
         st.config["trigger"]["user_mood_anxiety_bonus"] = 2.0
         boosted = hit_rate()
-        assert boosted > base, f"低落时 anxiety 触发应被放大: {base} vs {boosted}"
+        assert boosted > 0, f"bonus 应提升 anxiety 至候选, got {boosted}"
 
 
 # ── 集成：mood_note 注入 + recv_dedup 升级路径 ────────────────────

@@ -192,6 +192,27 @@ def test_reflect_trigger_has_intent():
     print(f"  OK test_reflect_trigger_has_intent: {combo['intent']['text'][:60]}")
 
 
+def test_comfort_followup_have_own_intents():
+    """comfort/follow_up 有自己的 intent，不回退 lonely_low（review R8）"""
+    c = make_composer()
+    now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+    cft = c.select_combo("comfort", now)["intent"]["text"]
+    assert any(w in cft for w in ["安慰", "陪伴", "台阶"]), f"comfort intent 不当: {cft}"
+    fup = c.select_combo("follow_up", now)["intent"]["text"]
+    assert any(w in fup for w in ["接话茬", "趁热打铁", "延伸", "话题"]), \
+        f"follow_up intent 不当: {fup}"
+    print("  OK test_comfort_followup_have_own_intents")
+
+
+def test_fallback_text_comfort_not_generic():
+    """A8 兜底：comfort 走专属安慰池，不走通用池'想哥哥了'（review R8）"""
+    from chiguo_composer import _fallback_text
+    for _ in range(20):
+        t = _fallback_text({"cue": None}, "comfort")
+        assert "想哥哥了" not in t, f"comfort 兜底误走通用池: {t}"
+    print("  OK test_fallback_text_comfort_not_generic")
+
+
 if __name__ == "__main__":
     print("test_composer.py\n")
     tests = [
@@ -205,6 +226,8 @@ if __name__ == "__main__":
         test_compose_situation,
         test_all_trigger_types,
         test_reflect_trigger_has_intent,
+        test_comfort_followup_have_own_intents,
+        test_fallback_text_comfort_not_generic,
     ]
     for t in tests:
         t()
