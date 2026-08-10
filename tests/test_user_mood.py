@@ -234,9 +234,10 @@ def test_comfort_weight_monotonic_and_ttl():
 
 def test_anxiety_bonus_scales():
     """user_mood_anxiety_bonus>0 + fresh low → anxiety 触发放大（同状态对比）。
-    # R7 修正后 A4 为单源 0.75 阈值：高焦虑（≥65）恒必发、bonus 无可观测增益，
-    # 故用低焦虑 45（w_anx≈0.26 < anxiety_min_weight 0.3 不成候选）验证开/关效应：
-    # base=0，bonus ×1.6 提升 w_anx≈0.36 ≥0.3 成为候选 → boosted>0。"""
+    # R7 修正后 A4 为单源 0.75 阈值：free-time 下高焦虑 ≈72+ 才恒必发
+    # （实测 anxiety 65/68/70 → 0/60 必发，仅 ≥72 → 100%），bonus 在低焦虑下才有
+    # 可观测增益；故用低焦虑 45（w_anx≈0.26 < anxiety_min_weight 0.3 不成候选）
+    # 验证开/关效应：base=0，bonus ×1.6 提升 w_anx≈0.36 ≥0.3 成为候选 → boosted>0。"""
     import random
     with tempfile.TemporaryDirectory() as td:
         st = _make_state(td, loneliness=0.0, energy=50.0,

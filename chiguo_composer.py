@@ -177,10 +177,13 @@ class MessageComposer:
         "compensate": "attention_seek",
         "longing": "attention_seek",
         "reflect": "attention_seek",
-        # v7 接话茬 = 延续话题/记忆，复用 memory 类别台词（"你之前说过…"）。
+        # comfort/follow_up 无对应类别 → 均不映射：
         # comfort 无对应类别（personality/*.toml 七类均非安慰向）→ 不映射，
-        # cue 台词留空走 A8 专属兜底池，避免嘴硬台词污染安慰语境。
-        "follow_up": "memory",
+        # cue 台词留空走 A8 专属兜底池，避免嘴硬台词污染安慰语境（review R8）。
+        # follow_up 原复用 memory 类别（v7），但 memory 含 deredere 忧郁台词
+        # （"我到底，是为了什么，才那么努力的呢。"），带 cue 时 _fallback_text
+        # 优先取 cue templates 会遮蔽 follow_up 专属接话池 → 改为不映射（G8 自审），
+        # 接话茬应延续话题而非无指向开场。
     }
 
     def __init__(self, state, config: dict = None):
