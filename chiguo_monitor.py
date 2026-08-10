@@ -8,6 +8,7 @@
 # ============================================================
 
 import json
+import math
 import os
 import shutil
 import statistics
@@ -227,6 +228,8 @@ class ChiguoMonitor:
             replied_within_h = float(self._monitor_config.get("replied_within_hours", 24.0))
         except (TypeError, ValueError):
             replied_within_h = 24.0
+        if not math.isfinite(replied_within_h):
+            replied_within_h = 24.0  # NaN/inf → 回退默认（NaN 比较恒 False 会静默吞掉全部回复）
         send_events: list[tuple] = []  # [(t, trigger)] 按时间序（决策日志顺序）
         recv_times: list = []  # 按时间序的 user-msg 到达时刻
 
@@ -292,7 +295,7 @@ class ChiguoMonitor:
                 total_sends += 1
                 daily[date_key]["sends"] += 1
 
-                trigger = entry.get("trigger", "?")
+                trigger = str(entry.get("trigger", "?") or "?")  # 防损坏行的 dict/list 值 → setdefault 崩溃
                 trigger_counts[trigger] += 1
                 # D1: 收集发送事件（时间 + trigger）供 proactive_stats 分组统计
                 send_events.append((t, trigger))

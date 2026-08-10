@@ -37,11 +37,17 @@ def _clamp01(value, default: float) -> float:
 
 
 def _to_float(value, default: float) -> float:
-    """A2: 配置系数解析——非数值回退默认（不钳制，负值语义由使用处 max() 兜底）。"""
+    """A2: 配置系数解析——非数值/NaN/inf 回退默认（不钳制，负值语义由使用处 max() 兜底）。
+
+    float("nan")/float("inf") 不抛异常，会毒化回复率反馈权重（weight *= nan）；isfinite 兜底。
+    """
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        fv = float(value)
+    except (TypeError, ValueError, OverflowError):
         return default
+    if not math.isfinite(fv):
+        return default
+    return fv
 
 
 def _clamp_int(value, default: int, max_value: int | None = None) -> int:

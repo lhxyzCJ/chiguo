@@ -42,7 +42,7 @@ Reasonix 宿主在 final-answer 时检查四类验收项，报错模式固定，
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-bash scripts/ci-test.sh   # full suite (58 py + 13 script) — 本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
+bash scripts/ci-test.sh   # full suite (59 py + 13 script) — 本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
 ```
 
 - Python 3.14 via uv (`.venv` exists, Python 3.14.6). 3.14-only syntax is intentional: bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`.
@@ -75,5 +75,5 @@ bash scripts/ci-test.sh   # full suite (58 py + 13 script) — 本地与 GitHub 
 
 ## After any code change
 
-1. Run affected test files; full chain (58 py + 13 script) if touching math/state/daemon.
+1. Run affected test files; full chain (59 py + 13 script) if touching math/state/daemon.
 2. Update affected sections of `doc/SYSTEM.md`, `doc/README.md`；`doc/DEPLOYMENT.md` 在 deploy.sh/scripts 改动时同步。

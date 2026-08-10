@@ -2,7 +2,7 @@
 """test_memory_reinforce.py — C2 Ebbinghaus 复习强化测试
 
 覆盖: note_recalled 计数/默认关闭恒等、_effective_importance 加成与封顶、
-_persist_recall 经 FakeMem0 update_memory 写回 recall_count、
+_persist_recall 经 FakeMem0 update 写回 recall_count、
 search_with_forgetting / random_memory_with_forgetting 召回即强化、
 _apply_forgetting 中被召回记忆 _score 更强。
 全部零 LLM、零网络（不触真实 ollama/qdrant）。
@@ -25,7 +25,10 @@ from memory.base import MemoryBackend  # noqa: E402
 
 
 class FakeMem0:
-    """mem0 Memory 最小模拟 + update_memory 记录（C2 写回断言）。"""
+    """mem0 Memory 最小模拟 + update 记录（C2 写回断言）。
+
+    update 签名对齐真实 mem0 2.x：update(memory_id, text=None, metadata=None)。
+    """
 
     def __init__(self, results):
         self._results = list(results)
@@ -40,8 +43,8 @@ class FakeMem0:
     def add(self, messages, user_id=None, metadata=None):
         return {"results": []}
 
-    def update_memory(self, memory_id, data):
-        self.updated.append((memory_id, data))
+    def update(self, memory_id, text=None, metadata=None):
+        self.updated.append((memory_id, metadata))
 
 
 def _row(text="哥哥喜欢喝美式咖啡", importance=0.9, mem_id="m1",
@@ -129,27 +132,61 @@ def test_effective_importance_caps_at_one():
     print("  OK test_effective_importance_caps_at_one")
 
 
+def test_effective_importance_reads_row_recall_count():
+    """#2 跨进程回读：cron 每 15 分钟起新进程，_recall_counts 从空开始——
+    行 dict 里持久化的 recall_count 应参与加成（0.7×(1+0.1×3)=0.91）。"""
+    b = MemoryBackend()
+    b._reinforce_enabled = True
+    b._reinforce_bonus = 0.1
+    # 无内存侧计数（新进程），仅行内 recall_count
+    assert abs(b._effective_importance({"id": "m1", "importance": 0.7,
+                                        "recall_count": 3}) - 0.91) < 1e-9
+    # 行内无 recall_count → 恒等
+    assert b._effective_importance({"id": "m2", "importance": 0.7}) == 0.7
+    # 非法 recall_count（字符串垃圾）→ 兜底 0
+    assert b._effective_importance({"id": "m3", "importance": 0.7,
+                                    "recall_count": "nan"}) == 0.7
+    print("  OK test_effective_importance_reads_row_recall_count")
+
+
+def test_row_maps_recall_count_from_metadata():
+    """Mem0Backend._row 把 mem0 metadata.recall_count 映射进行 dict（#2 回读数据源）。"""
+    with tempfile.TemporaryDirectory() as td:
+        b = _backend([], Path(td))
+        raw = {"id": "m1", "memory": "哥哥喜欢喝美式咖啡",
+               "metadata": {"category": "preferences", "importance": 0.9,
+                            "recall_count": 5},
+               "created_at": datetime.now(timezone.utc).isoformat(),
+               "user_id": "chiguo"}
+        row = b._row(raw)
+        assert row["recall_count"] == 5, row
+        # 无 recall_count / 非法 → 0
+        assert b._row({**raw, "metadata": {"category": "c"}})["recall_count"] == 0
+        assert b._row({**raw, "metadata": {"recall_count": "x"}})["recall_count"] == 0
+    print("  OK test_row_maps_recall_count_from_metadata")
+
+
 # ── Mem0Backend._persist_recall 写回 ─────────────────────
 
 def test_persist_recall_writes_recall_count():
-    """Mem0Backend._persist_recall → FakeMem0.update_memory(recall_count)。"""
+    """Mem0Backend._persist_recall → FakeMem0.update(metadata recall_count)。"""
     with tempfile.TemporaryDirectory() as td:
         b = _backend([_row(mem_id="m1")], Path(td),
                      reinforce_enabled=True, reinforce_bonus=0.1)
         b._persist_recall("m1", 3)
-        assert b._m.updated == [("m1", {"metadata": {"recall_count": 3}})]
+        assert b._m.updated == [("m1", {"recall_count": 3})]
     print("  OK test_persist_recall_writes_recall_count")
 
 
 def test_note_recalled_persists_via_backend():
-    """开启后 note_recalled → 计数 + 经 _persist_recall 写回 update_memory。"""
+    """开启后 note_recalled → 计数 + 经 _persist_recall 写回 update。"""
     with tempfile.TemporaryDirectory() as td:
         b = _backend([_row(mem_id="m1"), _row("另一条", mem_id="m2")],
                      Path(td), reinforce_enabled=True, reinforce_bonus=0.1)
         n = b.note_recalled(["m1"])
         assert n == 1
         updated = {mid: data for mid, data in b._m.updated}
-        assert updated["m1"]["metadata"]["recall_count"] == 1
+        assert updated["m1"]["recall_count"] == 1
     print("  OK test_note_recalled_persists_via_backend")
 
 

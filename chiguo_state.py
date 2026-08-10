@@ -186,6 +186,7 @@ class CooldownState:
     drop_events: list[dict] = field(default_factory=list)  # A10: 回复饱和阻尼事件 [{time: iso, direction: str}]（30 分钟窗口滚动）
     user_mood: dict | None = None  # v1.11 ①: 最近一次用户情绪感知 {"mood","intensity","at"}（TTL 由读取端 mood_fresh 判定，旧状态缺省自动补 None）
     reply_stats: dict = field(default_factory=dict)  # A2: 分类型回复率统计 {trigger_type: {"sent": n, "replied": m}}（触发权重反馈闭环，daemon 发送时 sent+1、--user-msg 回复时 replied+1）
+    reply_pending: list[str] = field(default_factory=list)  # A2: FIFO 归因队列（未回复发送的 trigger 类型，回复时 pop 最旧一条，防多未回复时全记给最新）
     consolidate_last_at: str | None = None  # C1: 上次记忆巩固时间 ISO（空闲静默路径防每 tick 重复）
 
     def __post_init__(self):
@@ -1567,24 +1568,39 @@ class ChiguoState:
         for dim, d in delta.items():
             if hasattr(self.emotion, dim):
                 setattr(self.emotion, dim, getattr(self.emotion, dim) + d)
+        # 边界钳制：delta 可能把情绪推出 [0,100] 取值域（如 anxiety 99 + contradiction 4 → 103），
+        # 立即 clamp 保证 state.json 持久化值不越域（clamp() 与 tick 收尾同源）。
+        self.emotion.clamp()
 
     # ── A2: 分类型回复率统计（触发权重反馈闭环的数据源）──
 
     def record_trigger_sent(self, trigger_type: str):
-        """A2: 发送一条消息 → 该触发类型 sent+1（daemon record_send_text 调用）。"""
+        """A2: 发送一条消息 → 该触发类型 sent+1（daemon record_send_text 调用）。
+
+        同时把 trigger 推进 FIFO 归因队列（未回复发送按发送顺序排队，回复时消费最旧
+        一条）——防多条未回复发送时回复全记给最新 trigger（审查 #6）。队列有界截断
+        （保留最近 64 条，防用户长期不回导致无界增长）。
+        """
         if not trigger_type:
             return
-        stats = self.cooldown.reply_stats.setdefault(str(trigger_type), {"sent": 0, "replied": 0})
+        key = str(trigger_type)
+        stats = self.cooldown.reply_stats.setdefault(key, {"sent": 0, "replied": 0})
         stats["sent"] = stats.get("sent", 0) + 1
+        pending = self.cooldown.reply_pending
+        pending.append(key)
+        if len(pending) > 64:
+            del pending[:-64]
 
     def record_trigger_replied(self):
-        """A2: 收到一次回复 → 最近发送触发类型的 replied+1（daemon --user-msg 调用）。
+        """A2: 收到一次回复 → FIFO 归因队列最旧一条未回复发送的 replied+1
+        （daemon --user-msg 调用）。队列空（无未回复发送）则零效果。
 
-        归因取 trigger_history 最近一条（与 A6 repeat 阻尼同源）；无历史则零效果。
+        修复审查 #6：原实现取 trigger_history[-1]（最近发送），多条未回复发送时
+        回复全部记给最新 trigger，导致早期发送回复率被系统性低估。
         """
-        if not self.cooldown.trigger_history:
+        if not self.cooldown.reply_pending:
             return
-        trigger_type = self.cooldown.trigger_history[-1]
+        trigger_type = self.cooldown.reply_pending.pop(0)
         stats = self.cooldown.reply_stats.setdefault(str(trigger_type), {"sent": 0, "replied": 0})
         stats["replied"] = stats.get("replied", 0) + 1
 

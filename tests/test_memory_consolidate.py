@@ -2,7 +2,7 @@
 """test_memory_consolidate.py — C1 确定性记忆巩固测试
 
 覆盖: consolidate_plan 纯函数（去重降权/过期/保留）、Mem0Backend.consolidate
-写回（FakeMem0 的 delete/update_memory 记录）、dry_run、不可用降级、
+写回（FakeMem0 的 delete/update 记录）、dry_run、不可用降级、
 daemon 空闲静默路径 _maybe_consolidate（FakeBridge 注入 + 门控断言）。
 全部零 LLM、零网络（不触真实 ollama/qdrant）。
 """
@@ -29,7 +29,10 @@ def _now() -> datetime:
 
 
 class FakeMem0:
-    """mem0 Memory 最小模拟 + delete/update_memory 记录（C1 写回断言）。"""
+    """mem0 Memory 最小模拟 + delete/update 记录（C1 写回断言）。
+
+    update 签名对齐真实 mem0 2.x：update(memory_id, text=None, metadata=None)。
+    """
 
     def __init__(self, results):
         self._results = list(results)
@@ -48,8 +51,8 @@ class FakeMem0:
     def delete(self, memory_id):
         self.deleted.append(memory_id)
 
-    def update_memory(self, memory_id, data):
-        self.updated.append((memory_id, data))
+    def update(self, memory_id, text=None, metadata=None):
+        self.updated.append((memory_id, metadata))
 
 
 def _row(text, importance=0.8, age_hours=1.0, mem_id=None, created=None):
@@ -145,7 +148,7 @@ def test_plan_no_false_positive_low_similarity():
 # ── Mem0Backend.consolidate 写回 ─────────────────────────
 
 def test_consolidate_mem0_writeback():
-    """写回：过期 → FakeMem0.delete；降权 → FakeMem0.update_memory(importance 减半)。"""
+    """写回：过期 → FakeMem0.delete；降权 → FakeMem0.update(metadata importance 减半)。"""
     now = _now()
     with tempfile.TemporaryDirectory() as td:
         dup_a = _row("哥哥喜欢喝美式咖啡，不加糖", importance=0.9, age_hours=1, mem_id="a")
@@ -162,8 +165,8 @@ def test_consolidate_mem0_writeback():
         assert rep["expired_ids"] == ["old"]
         assert "old" in b._m.deleted, f"过期记忆应被 delete, got {b._m.deleted}"
         updates = {mid: data for mid, data in b._m.updated}
-        assert "b" in updates, f"降权记忆应 update_memory, got {b._m.updated}"
-        assert abs(updates["b"]["metadata"]["importance"] - 0.25) < 1e-9
+        assert "b" in updates, f"降权记忆应 update, got {b._m.updated}"
+        assert abs(updates["b"]["importance"] - 0.25) < 1e-9
     print("  OK test_consolidate_mem0_writeback")
 
 
@@ -191,6 +194,33 @@ def test_consolidate_unavailable():
     finally:
         os.environ.pop("CHIGUO_MEM0_DISABLED", None)
     print("  OK test_consolidate_unavailable")
+
+
+def test_consolidate_writeback_failure_degrades():
+    """C1 写回失败降级：delete/update 抛异常 → 报告仍返回 ok:True（计划可用），
+    失败条目不进 deleted/updated 但不致整体崩溃（Medium 3 加固）。"""
+    class FailingMem0(FakeMem0):
+        def delete(self, memory_id):
+            raise RuntimeError("qdrant 写失败")
+
+        def update(self, memory_id, text=None, metadata=None):
+            raise RuntimeError("qdrant 写失败")
+
+    now = _now()
+    with tempfile.TemporaryDirectory() as td:
+        dup_a = _row("哥哥喜欢喝美式咖啡", importance=0.9, age_hours=1, mem_id="a")
+        dup_b = _row("哥哥喜欢喝美式咖啡", importance=0.5, age_hours=2, mem_id="b")
+        old_low = _row("多年前的琐事", importance=0.1,
+                       mem_id="old",
+                       created=datetime.fromtimestamp(
+                           (now - timedelta(days=40)).timestamp(),
+                           tz=timezone.utc).isoformat())
+        b = _fake_backend([dup_a, dup_b, old_low], Path(td))
+        b._m = FailingMem0([dup_a, dup_b, old_low])
+        rep = b.consolidate()
+        assert rep["ok"] is True, f"写回失败不应崩, got {rep}"
+        assert rep["demoted_ids"] == ["b"] and rep["expired_ids"] == ["old"], rep
+    print("  OK test_consolidate_writeback_failure_degrades")
 
 
 # ── daemon 空闲静默路径 _maybe_consolidate ───────────────
