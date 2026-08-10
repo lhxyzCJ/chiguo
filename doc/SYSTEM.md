@@ -759,7 +759,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `memory/` 包 | **记忆后端抽象（v1.8 解耦，任意替换）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）/ `mem0_backend.py` Mem0Backend（mem0ai：LLM 事实提取 + ollama 向量 + qdrant 嵌入式）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=Mem0Backend 别名 + CLI） | mem0ai+ollama（必需依赖；无 key/ollama 未启动 → available=False 优雅降级） |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
-| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、agent 后端、agent 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-agent` 时 agent 缺失降为 warn（deploy.sh `--skip-agent` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_agent.sh 一致）；输出脱敏（R24）：`_sanitize_url` 剥离 URL 的 userinfo（user:pass@）与 query/fragment（token/key 等敏感参数）、`_sanitize_path` 绝对路径降为 basename、`_truncate` 截断超长异常/命令输出，防凭据泄漏；测试 `tests/test_envcheck.py` | 无 |
+| `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、agent 后端、agent 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-agent` 时 agent 缺失降为 warn（deploy.sh `--skip-agent` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_agent.sh 一致）；输出脱敏（R24）：`_sanitize_url` 剥离 URL 的 userinfo（user:pass@）与 query/fragment（token/key 等敏感参数）（G8 自审补防：非数字端口访问 `.port` 抛 ValueError 时退化为纯 hostname 不崩，IPv6 字面量重建时包回 `[]`）、`_sanitize_path` 绝对路径降为 basename、`_truncate` 截断超长异常/命令输出，防凭据泄漏；测试 `tests/test_envcheck.py` | 无 |
 | `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.10"`，规则: MINOR+1（1.9→1.10→1.11,非十进制加法）;daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
@@ -826,7 +826,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_wechat_bridge.sh` | 微信桥管理脚本测试（假 bridge 桩） | wechat-bridge.sh |
 | `tests/test_netease_api.sh` | 网易云 API 服务脚本测试（假 systemd/curl 桩） | netease-api.sh |
 | `tests/test_service.sh` | 服务管理脚本测试（13 用例：dry-run 只读/unit 模板/autostart 调用链/幂等/杀 temp 残留/temp 互斥接管+pidfile/temp 幂等/ollama 降级 warn/status 三态/stop 双侧/uninstall 保登录态/缺 node→2/缺 .env→1/非 root→2） | service.sh |
-| `tests/test_envcheck.py` | 环境检查单元测试（22 用例：env 版本/uv、agent 缺失 critical/`--skip-agent` 降 warn/agent 桩正常、agent 扩展缺失/Windows 残留 warn/正常、agent 认证缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、mem0 缺失 info、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_agent）、`_sanitize_url` 脱敏（R24：剥离 query token/user:pass，干净 URL 原样）） | chiguo_envcheck |
+| `tests/test_envcheck.py` | 环境检查单元测试（23 用例：env 版本/uv、agent 缺失 critical/`--skip-agent` 降 warn/agent 桩正常、agent 扩展缺失/Windows 残留 warn/正常、agent 认证缺失 warn/正常、ollama 不可达 warn/本地代理绕过（http_proxy 指向死端口仍直连成功）、mem0 缺失 info、netease API 不可达/无 cookie warn、data 缺失 warn/正常、退出码 0/1/2 映射、run_checks 全场景不崩（含 skip_agent）、`_sanitize_url` 脱敏（R24：剥离 query token/user:pass，干净 URL 原样；G8 自审：非数字端口退化为纯 hostname 不崩、IPv6 字面量重建保留方括号）） | chiguo_envcheck |
 | `doc/` | 文档目录 | 无 |
 | `chiguo_demo.py` | 演示模式（纯模板，无 LLM）：交互式 Demo，回车推进时间/`m 文本` 模拟用户消息/`s` 刷新状态 | 无 |
 | `deploy.sh` | 一键部署：装 uv/Python 3.14 → 建 venv → 全量测试 → envcheck → agent 环境 + wechat-bridge + cron（认证迁移 `~/.chiguo/auth/`） | bash |
