@@ -28,6 +28,7 @@ from chiguo_math import (
     in_quiet_window,
     apply_interaction_matrix, drop_damp, impact_inertia,
     user_mood_impact, MOOD_DELTA, ou_step, noise_cap, baseline_shift_of,
+    mood_fresh,
 )
 from chiguo_personality import (
     PersonalityTraits, PersonalityDelta, PersonalityDeltas,
@@ -280,6 +281,8 @@ class ChiguoState:
 
         # ── v4: Bayesian 用户状态推断器（延迟初始化，避免循环导入）──
         self._bayesian_estimator = None
+        # ── v1.11+R3: 从状态文件还原的 Bayesian 似然缓存（在线学习 EMA 调优跨进程保留）──
+        self._bayesian_restored: dict | None = None
 
         # 课表解析器（v6.1: xlsx/cache 路径锚定 _base_dir，不依赖 cwd）
         sched = config.get("schedule", {})
@@ -524,6 +527,9 @@ class ChiguoState:
             except (ValueError, TypeError):
                 pass
 
+        # ── v1.11+R3: Bayesian 在线学习缓存（EMA 调优）还原——延迟初始化时交给 estimator ──
+        self._bayesian_restored = data.get("bayesian")
+
     def _migrate_circadian_v8(self):
         """v8 双作息迁移(幂等,加载时执行一次):
         ① reply_days/active_days 无 bucket 条目 → 按日期启发式补桶(调休优先 → 节假日 → 周几,解析失败丢弃);
@@ -729,6 +735,10 @@ class ChiguoState:
                 "last_tick": datetime.now(CST).isoformat(),
                 "tick_seq": self.tick_seq,
             }
+            # ── v1.11+R3: Bayesian 在线学习缓存持久化（本进程创建过才落盘，
+            # 未使用 Bayesian 的进程不写入 → 状态文件保持干净）──
+            if self._bayesian_estimator is not None:
+                payload["bayesian"] = self.bayesian_estimator.to_state_dict()
             # ── v5: 校验和（SHA256 of compact JSON，防位翻转）──
             checksum = hashlib.sha256(
                 json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
@@ -779,6 +789,9 @@ class ChiguoState:
             self._bayesian_estimator = UserStateEstimator(
                 self.config.get("bayesian", {})
             )
+            # v1.11+R3: 还原上次进程的在线学习缓存（EMA 调优不丢）
+            if self._bayesian_restored:
+                self._bayesian_estimator.restore_state_dict(self._bayesian_restored)
         return self._bayesian_estimator
 
     def infer_user_state(self, now: datetime = None, msg_length: int = None) -> dict:
@@ -1359,12 +1372,17 @@ class ChiguoState:
 
         # ── v1.11 ①: 用户情绪感知 ──
         self._consume_user_mood(analysis, now or datetime.now(CST))
-        cfg = self.config.get("emotion", {})
-        for dim, d in user_mood_impact(
-                (self.cooldown.user_mood or {}).get("mood", "calm"),
-                (self.cooldown.user_mood or {}).get("intensity", 0.0),
-                cfg).items():
-            setattr(self.emotion, dim, getattr(self.emotion, dim) + d)
+        mood = self.cooldown.user_mood
+        # v1.11+R4': TTL 门禁——过期感知(>TTL,默认 6h)不再重放 delta。
+        # _consume_user_mood 仅在本次 analysis 携带新感知时刷新 cooldown.user_mood,
+        # 无感知时沿用旧感知;无门禁则过期低落 delta 会随每条消息无限重放。
+        # 与 trigger:258 / daemon:760 的 mood_fresh 门禁语义一致。
+        if mood_fresh(mood, now or datetime.now(CST),
+                      self.config.get("trigger", {}).get("user_mood_ttl_minutes", 360.0)):
+            cfg = self.config.get("emotion", {})
+            for dim, d in user_mood_impact(
+                    mood.get("mood", "calm"), mood.get("intensity", 0.0), cfg).items():
+                setattr(self.emotion, dim, getattr(self.emotion, dim) + d)
 
         # ── v7: 接话茬话题摄入 ──
         topic = analysis.get("topic")

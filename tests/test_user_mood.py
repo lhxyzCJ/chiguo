@@ -156,6 +156,37 @@ def test_apply_analysis_impact_applies_mood_delta():
         assert st.cooldown.user_mood and st.cooldown.user_mood["mood"] == "low"
 
 
+def test_apply_analysis_impact_ttl_gate_stale_mood():
+    """v1.11+R4': 过期 user_mood 不再重放 delta——analysis 无新感知时沿用旧感知,
+    若旧感知已过 TTL(默认 6h)→ delta 跳过(修复前无门禁,过期低落 delta 随每条消息无限重放)。"""
+    with tempfile.TemporaryDirectory() as td:
+        st = _make_state(td)
+        st.config["emotion"]["user_mood_low_anxiety_factor"] = 1.0
+        st.config["emotion"]["user_mood_low_affection_factor"] = 1.0
+        now = datetime(2026, 8, 9, 12, 0, tzinfo=CST)
+        # 12h 前(已过期)的低落感知
+        st.cooldown.user_mood = {"mood": "low", "intensity": 0.5,
+                                 "at": (now - timedelta(hours=12)).isoformat()}
+        anx0 = st.emotion.anxiety
+        # analysis 无 user_mood 键 → 保留旧感知(过期) → delta 不得重放
+        st._apply_analysis_impact({"warmth": 0.0, "effort": 0.0, "attention": 0.5}, now)
+        assert abs(st.emotion.anxiety - anx0) < 1e-9, "过期感知不应重放 delta"
+
+
+def test_apply_analysis_impact_replays_fresh_preserved_mood():
+    """v1.11+R4': TTL 内的沿用感知仍重放 delta(有效期内持续影响,门禁只挡过期)。"""
+    with tempfile.TemporaryDirectory() as td:
+        st = _make_state(td)
+        st.config["emotion"]["user_mood_low_anxiety_factor"] = 1.0
+        st.config["emotion"]["user_mood_low_affection_factor"] = 1.0
+        now = datetime(2026, 8, 9, 12, 0, tzinfo=CST)
+        st.cooldown.user_mood = {"mood": "low", "intensity": 0.5,
+                                 "at": now.isoformat()}
+        anx0 = st.emotion.anxiety
+        st._apply_analysis_impact({"warmth": 0.0, "effort": 0.0, "attention": 0.5}, now)
+        assert abs(st.emotion.anxiety - (anx0 + 1.0)) < 1e-9, "有效期内沿用感知应重放 delta"
+
+
 def test_old_state_missing_user_mood_defaults():
     """旧状态无 user_mood 字段 → 加载补默认 None（drop_events 先例）；save→load 往返保留。"""
     with tempfile.TemporaryDirectory() as td:
@@ -341,6 +372,8 @@ if __name__ == "__main__":
         test_mood_fresh_ttl,
         test_consume_mood_tolerance_matrix, test_consume_mood_valid_and_clamp,
         test_apply_analysis_impact_applies_mood_delta,
+        test_apply_analysis_impact_ttl_gate_stale_mood,
+        test_apply_analysis_impact_replays_fresh_preserved_mood,
         test_old_state_missing_user_mood_defaults,
         test_comfort_trigger_appears_when_enabled,
         test_comfort_weight_monotonic_and_ttl,

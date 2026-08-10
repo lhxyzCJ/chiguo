@@ -210,6 +210,26 @@ def test_all_states_in_posterior():
     print("  OK test_all_states_in_posterior")
 
 
+def test_likelihood_cache_persist_roundtrip():
+    """v1.11+R3: to_state_dict/restore_state_dict 往返不丢 EMA 调优；坏键/坏值丢弃不崩"""
+    est = make_estimator()
+    est.record_observation({"reply_latency": 0.05, "msg_length": 3, "silence_hours": 0.5}, "chatting")
+    sd = est.to_state_dict()
+    assert "chatting.reply_latency.fast" in sd
+    learned = est._get_likelihood("chatting", "reply_latency", "fast")
+    # 新实例还原 → 学习后的似然恢复
+    est2 = make_estimator()
+    est2.restore_state_dict(sd)
+    assert est2._get_likelihood("chatting", "reply_latency", "fast") == learned
+    # 坏数据不崩：非 dict / 段数不对 / 未知状态 / 非数值 → 丢弃，默认保留
+    est3 = make_estimator()
+    est3.restore_state_dict("notadict")
+    est3.restore_state_dict({"garbage": 0.9, "only.two": 0.9,
+                             "bogus.key.v": 0.9, "chatting.reply_latency.fast": "NaN"})
+    assert est3._get_likelihood("chatting", "reply_latency", "fast") == 0.60  # 默认值保留
+    print("  OK test_likelihood_cache_persist_roundtrip")
+
+
 if __name__ == "__main__":
     print("test_bayesian.py\n")
     tests = [
@@ -228,6 +248,7 @@ if __name__ == "__main__":
         test_learner_update_from_label,
         test_record_observation_supervised,
         test_all_states_in_posterior,
+        test_likelihood_cache_persist_roundtrip,
     ]
     for t in tests:
         t()

@@ -433,7 +433,9 @@ def test_record_active_merges_into_bucket_counts():
     est = tr.recompute(history_days=14)
     assert est is not None
     assert tr.weekend_quiet_start == 0 and tr.weekend_quiet_end == 5
-    assert tr.weekend_confidence == 0.5  # 7/14 完整度 × 1.0 安静度
+    # v1.11+R5: 完整度按周末有效窗口(14×2/7≈4 天)计 → 7 天满覆盖,置信度 1.0
+    # (修复前 completeness=7/14=0.5,周末桶结构不可达)
+    assert tr.weekend_confidence == 1.0
     assert tr.sample_days == 7  # reply+active 按日期去重,同日期算 1 天
     # 合并计数生效:reply 1 条 + active 6 条(逐小时相加)
     assert aggregate_hours(tr.reply_days, "weekend")[12] == 1
@@ -444,6 +446,30 @@ def test_record_active_merges_into_bucket_counts():
                      history_days=14, bucket="weekend")
     assert isinstance(tr.active_days, list) and len(tr.active_days) == 1
     print("  OK test_record_active_merges_into_bucket_counts")
+
+
+def test_weekend_bucket_reachable_after_proportional_threshold():
+    """v1.11+R5: 周末桶 4 天数据(14 天窗口内可达上限)即可激活——修复前
+    min_sample_days=7 且 completeness=4/14<0.5 双重否决,周末桶睡眠窗口恒学不到。"""
+    tr = CircadianTracker()
+    tr.reply_days = [
+        {"date": f"2026-08-{d:02d}", "hours": list(range(10, 24)),
+         "bucket": "weekend"}
+        for d in (1, 2, 8, 9)  # 两个周末共 4 天(2026-08-01/02 周六日,08/09 周六日)
+    ]
+    est = tr.recompute(history_days=14)
+    assert est is not None
+    assert tr.weekend_quiet_start == 0
+    assert tr.weekend_quiet_end == 5
+    # 4/4 完整度(周末有效窗口=round(14×2/7)=4)× 1.0 安静度 → 置信 1.0 ≥ 0.5 过门
+    assert tr.weekend_confidence == 1.0
+    # 不足 2 天 → 仍回退(有效门槛 max(1, round(7×2/7))=2)
+    tr2 = CircadianTracker()
+    tr2.reply_days = [{"date": "2026-08-01", "hours": list(range(10, 24)),
+                       "bucket": "weekend"}]
+    assert tr2.recompute(history_days=14) is None
+    assert tr2.weekend_confidence == 0.0
+    print("  OK test_weekend_bucket_reachable_after_proportional_threshold")
 
 
 def test_bucket_window_and_set_active_bucket():
@@ -703,6 +729,7 @@ if __name__ == "__main__":
         test_no_bucket_entries_excluded_when_filtering()
         test_recompute_dual_bucket_independent()
         test_record_active_merges_into_bucket_counts()
+        test_weekend_bucket_reachable_after_proportional_threshold()
         test_bucket_window_and_set_active_bucket()
         test_on_user_message_buckets_by_day()
         test_on_user_message_cross_bucket_friday()
