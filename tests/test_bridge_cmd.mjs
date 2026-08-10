@@ -4,7 +4,7 @@ import assert from 'node:assert'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { detectSpecialCommand, inferYear, buildReply, executeSpecialCommand, detectSlashCommand, executeSlashCommand, backupSessionFile, encodeSessionDir } from '../wechat-bridge/command-detect.mjs'
+import { detectSpecialCommand, inferYear, buildReply, executeSpecialCommand, detectSlashCommand, executeSlashCommand, backupSessionFile, encodeSessionDir, detectScheduleIntent } from '../wechat-bridge/command-detect.mjs'
 
 let passed = 0
 const tests = []
@@ -132,6 +132,29 @@ t('detect: 非字符串/空 → null', () => {
   assert.strictEqual(detectSpecialCommand(''), null)
   assert.strictEqual(detectSpecialCommand(null), null)
   assert.strictEqual(detectSpecialCommand(undefined), null)
+})
+
+// ── C1:detectScheduleIntent 意图词表收紧(移除单字「要」+ 无条件短消息兜底)──
+t('C1: 日常短消息不触发 extract/reminder intent(我要吃饭/晚安/哈哈)', () => {
+  assert.strictEqual(detectScheduleIntent('我要吃饭'), null, '「要」不再触发 reminder')
+  assert.strictEqual(detectScheduleIntent('晚安'), null, '短消息兜底不再触发 extract')
+  assert.strictEqual(detectScheduleIntent('哈哈'), null, '短消息兜底不再触发 extract')
+  assert.strictEqual(detectScheduleIntent('交材料'), null, '无日期令牌短消息不再兜底 extract')
+  assert.strictEqual(detectScheduleIntent('在忙吗'), null, '问句照旧不拦截')
+})
+t('C1: reminder 强模式保留(日期令牌/提醒词仍识别)', () => {
+  assert.strictEqual(detectScheduleIntent('8月20号要交材料').intent, 'reminder', '日期令牌 → reminder')
+  assert.strictEqual(detectScheduleIntent('记住交材料').intent, 'reminder')
+  assert.strictEqual(detectScheduleIntent('记得交材料').intent, 'reminder')
+  assert.strictEqual(detectScheduleIntent('提醒我明天开会').intent, 'reminder')
+  assert.strictEqual(detectScheduleIntent('5月11日要过生日').intent, 'reminder', '日期令牌强模式')
+})
+t('C1: 其他词表不受影响', () => {
+  assert.strictEqual(detectScheduleIntent('明天停课').intent, 'cancel')
+  assert.strictEqual(detectScheduleIntent('把课调到周五').intent, 'move')
+  assert.strictEqual(detectScheduleIntent('取消周三停课').intent, 'remove')
+  assert.strictEqual(detectScheduleIntent('下周三开始考试周').intent, 'exam_week')
+  assert.strictEqual(detectScheduleIntent('8月20号').intent, 'reminder', '纯日期短消息 → 日期令牌强模式')
 })
 t('detect: "今天放假了"（一天性陈述）不拦截 → 交 agent 自然回复', () => {
   assert.strictEqual(detectSpecialCommand('今天放假了'), null)

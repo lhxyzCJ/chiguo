@@ -28,6 +28,8 @@ import {
 
 const PID_DIR = join(homedir(), '.pi', 'agent')
 const DEFAULT_SESSIONS = { analysis: 'chiguo-main', send: 'chiguo-send' }
+// R1: 单行(无 \n 残段)累积上限——异常 pi 打出无换行巨型行时防 lineBuffer 无限增长 OOM
+const MAX_LINE_BUFFER = 1024 * 1024
 
 export class AgentRpc {
   constructor({ bin = process.env.AGENT_BIN ?? 'pi', args = [] } = {}) {
@@ -49,7 +51,7 @@ export class AgentRpc {
   _get(key) {
     let s = this.sessions.get(key)
     if (!s) {
-      s = { proc: null, buffer: [], pending: null, dead: true }
+      s = { proc: null, buffer: [], lineBuffer: '', lineHandlers: [], pending: null, dead: true }
       this.sessions.set(key, s)
     }
     return s
@@ -59,14 +61,16 @@ export class AgentRpc {
     return join(PID_DIR, `agent-rpc-${key.replace(/[^a-z0-9-]/gi, '_')}.pid`)
   }
 
-  /** 防孤儿:杀掉本实例之外的旧会话 pid(含改名前的 agent-rpc.pid 残留)。 */
+  /** 防孤儿:杀掉本实例之外的旧会话 pid(含改名前的 agent-rpc.pid 残留)。
+   *  A2:pid 复用防护——杀前确认该 pid 确是 rpc 进程(Linux 读 /proc cmdline 含 '--mode' 'rpc'),
+   *  防止 pid 复用误杀同 uid 无关进程;非 Linux 平台回退仅存活检查。 */
   _killStale() {
     try {
       const files = readdirSync(PID_DIR).filter((f) => f.startsWith('agent-rpc'))
       for (const f of files) {
         try {
           const old = Number(readFileSync(join(PID_DIR, f), 'utf8').trim())
-          if (old > 0 && old !== process.pid) {
+          if (old > 0 && old !== process.pid && this._isOurRpcProcess(old)) {
             try { process.kill(old, 'SIGTERM') } catch {}
           }
           unlinkSync(join(PID_DIR, f))
@@ -75,11 +79,67 @@ export class AgentRpc {
     } catch {}
   }
 
+  /** pid 复用防护:kill(pid,0) 存活后读 /proc/<pid>/cmdline 确认是 rpc 进程才认可;非 Linux 回退现有行为。
+   *  R2: 按 NUL 分割成 argv 精确匹配「独立 token '--mode' 且下一 token 恰为 'rpc'」——
+   *  子串匹配会误杀含 '--mode' 子串的 '--model' 参数或参数值含 'rpc' 的无关进程。 */
+  _isOurRpcProcess(pid) {
+    try {
+      process.kill(pid, 0)  // 存活检查(ESRCH = 不存在/无权限)
+      if (process.platform !== 'linux') return true
+      const argv = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')
+      const modeIdx = argv.indexOf('--mode')
+      return modeIdx >= 0 && argv[modeIdx + 1] === 'rpc'
+    } catch {
+      return false
+    }
+  }
+
   _cleanupPid(key) {
     try {
       const p = this._pidFile(key)
       if (existsSync(p)) unlinkSync(p)
     } catch {}
+  }
+
+  /** C1: 仅当 pidfile 内容仍指向该 proc 时才清理——restart 后旧进程延迟 exit
+   *  不得删掉新进程写入的 pidfile(pidfile 按 key 存,新旧进程共用同一路径)。 */
+  _cleanupPidIfOurs(key, proc) {
+    try {
+      const p = this._pidFile(key)
+      if (existsSync(p) && Number(readFileSync(p, 'utf8').trim()) === proc.pid) unlinkSync(p)
+    } catch {}
+  }
+
+  /** stdout 行处理:data chunk 边界任意,残段保留跨 chunk,只消费完整行(A1 修复)。
+   *  R1: 残段无上限(异常 pi 无换行巨型行)→ 超限丢弃残段并重启该会话,防 OOM。 */
+  _onChunk(key, chunk) {
+    const s = this.sessions.get(key)
+    if (!s) return
+    s.lineBuffer += chunk
+    let nl
+    while ((nl = s.lineBuffer.indexOf('\n')) >= 0) {
+      const line = s.lineBuffer.slice(0, nl)
+      s.lineBuffer = s.lineBuffer.slice(nl + 1)
+      this._handleLine(key, line)
+    }
+    if (s.lineBuffer.length > MAX_LINE_BUFFER) {
+      console.error(`[agent-rpc] 行缓冲超限(${MAX_LINE_BUFFER} bytes),丢弃残段并重启会话 ${key}`)
+      s.lineBuffer = ''
+      this.restart({ key })
+    }
+  }
+
+  /** 完整行分发:入 buffer + settle 判定 + 握手 handler(ready 判定)。 */
+  _handleLine(key, line) {
+    const s = this.sessions.get(key)
+    if (!s) return
+    const trimmed = line.trim()
+    if (!trimmed) return
+    s.buffer.push(trimmed)
+    this._maybeSettle(key, trimmed)
+    for (const h of s.lineHandlers) {
+      try { h(trimmed) } catch {}
+    }
   }
 
   // ── 生命周期 ─────────────────────────────────────────────
@@ -90,34 +150,41 @@ export class AgentRpc {
     if (s.proc && !s.dead) return s
     s.dead = false
     s.buffer = []
+    s.lineBuffer = ''          // A1: 重启后旧残段作废
+    s.lineHandlers = []        // A1: 旧握手 handler 作废(超时/退出后进程已死)
     const finalSession = sessionId ?? DEFAULT_SESSIONS[mode] ?? 'chiguo-main'
     const args = [...this.args, '--mode', 'rpc',
       ...buildBaseAgentArgs({ analysisMode: mode === 'analysis', sessionId: finalSession })]
     const proc = spawn(this.bin, args, { stdio: ['pipe', 'pipe', 'pipe'] })
     s.proc = proc
     writeFileSync(this._pidFile(key), String(proc.pid))
-    // spawn 失败(bin 不存在等)或运行期异常 → 立即标记死亡并 reject ready/pending,不等 10s 超时
+    // C1: 所有监听器闭包捕获 proc,回调首行校验归属——restart(超时/dispose)后旧进程
+    // SIGTERM 延迟退出时,旧 error/exit/data 回调不得动新会话(置 dead/删 pidfile/reject pending)。
     let readyReject = null
     proc.on('error', (e) => {
+      if (s.proc !== proc) return  // 旧进程回调,忽略
       s.dead = true
-      this._cleanupPid(key)
+      this._cleanupPidIfOurs(key, proc)
       const p = s.pending
       s.pending = null
       if (p) p.reject(e)
       if (readyReject) { const r = readyReject; readyReject = null; r(e) }
     })
+    // C2: setEncoding('utf8') 让 data 回调收到 string(StringDecoder 内部跨 chunk 拼接
+    // 多字节字符)——逐 chunk toString() 会把切在多字节中间的字符解码成 U+FFFD。
+    proc.stdout.setEncoding('utf8')
+    // A1: stdout 统一走跨 chunk 行缓冲,不假设 chunk 以行边界结束
     proc.stdout.on('data', (d) => {
-      const lines = d.toString().split('\n')
-      for (const line of lines) {
-        if (!line.trim()) continue
-        s.buffer.push(line)
-        this._maybeSettle(key, line)
-      }
+      if (s.proc !== proc) return  // C1: 旧进程残留 chunk,忽略
+      this._onChunk(key, d.toString())
     })
-    proc.stderr.on('data', () => {})
+    proc.stderr.on('data', () => {
+      if (s.proc !== proc) return  // C1: 旧进程残留输出,忽略
+    })
     proc.on('exit', () => {
+      if (s.proc !== proc) return  // C1: 旧进程回调,忽略
       s.dead = true
-      this._cleanupPid(key)
+      this._cleanupPidIfOurs(key, proc)
       const p = s.pending
       s.pending = null
       if (p) p.reject(new Error('agent rpc 进程退出'))
@@ -129,10 +196,16 @@ export class AgentRpc {
       const t = setTimeout(() => {
         // #review: 超时只 reject 会留下未就绪进程，下轮 prompt 短路复用 → 每轮空耗
         // 至 AGENT_TIMEOUT 才自愈。超时即杀进程 + 标记 dead + 清 pid，下轮自动重启。
+        // C1: 若 ready 窗口内发生 restart 且新进程已就位——旧定时器只解除自身 promise
+        // 挂起(reject),不得标记新会话 dead 或删新进程 pidfile。
+        if (s.proc !== proc) {
+          reject(new Error('agent rpc 启动超时(会话已重启)'))
+          return
+        }
         try { proc.kill('SIGTERM') } catch {}
         s.dead = true
-        this._cleanupPid(key)
-        proc.stdout.off('data', onLine)
+        this._cleanupPidIfOurs(key, proc)
+        s.lineHandlers = s.lineHandlers.filter((h) => h !== onLine)
         reject(new Error('agent rpc 启动超时'))
       }, 10_000)
       const onLine = (line) => {
@@ -140,12 +213,12 @@ export class AgentRpc {
           const ev = JSON.parse(line)
           if (ev.type === 'response' && ev.id === stateId) {
             clearTimeout(t)
-            proc.stdout.off('data', onLine)
+            s.lineHandlers = s.lineHandlers.filter((h) => h !== onLine)
             resolve()
           }
         } catch {}
       }
-      proc.stdout.on('data', onLine)
+      s.lineHandlers.push(onLine)
       proc.stdin.write(`${JSON.stringify({ type: 'get_state', id: stateId })}\n`)
     })
   }
@@ -211,15 +284,29 @@ export class AgentRpc {
     }
   }
 
-  /** /new 或 key 轮换后调用:杀指定会话(默认全部)进程,下一轮 prompt 自动重启。 */
-  restart({ mode, sessionId } = {}) {
-    const keys = mode ? [this._key(mode, sessionId)] : [...this.sessions.keys()]
+  /** /new 或 key 轮换后调用:杀指定会话(默认全部)进程,下一轮 prompt 自动重启。
+   *  R1: 内部支持直接按 key 重启(lineBuffer 溢出等内部触发的场景)。 */
+  restart({ mode, sessionId, key } = {}) {
+    const keys = key ? [key] : mode ? [this._key(mode, sessionId)] : [...this.sessions.keys()]
     for (const key of keys) {
       const s = this.sessions.get(key)
       if (!s) continue
-      try { s.proc?.kill('SIGTERM') } catch {}
+      const proc = s.proc
+      try { proc?.kill('SIGTERM') } catch {}
+      // M3: SIGTERM 后延迟复查,未退出补 SIGKILL——防 pi 卡死成孤儿进程
+      // 与旧进程残留同写会话文件(pidfile 已删,下次启动也找不到它)。
+      if (proc) {
+        const pid = proc.pid
+        setTimeout(() => {
+          try {
+            process.kill(pid, 0)
+            try { proc.kill('SIGKILL') } catch {}
+          } catch {}  // 已退出/无权限 → 无需兜底
+        }, 3000).unref?.()
+      }
       s.proc = null
       s.dead = true
+      s.lineHandlers = []  // M2: 旧握手 handler 作废,防跨轮残留空转
       this._cleanupPid(key)
       const p = s.pending
       s.pending = null

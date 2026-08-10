@@ -8,6 +8,7 @@ import tempfile
 import tomllib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -213,8 +214,11 @@ def test_follow_up_memory_fallback_fires():
         mem = {"timestamp": (now - timedelta(hours=3)).timestamp(),
                "l0_abstract": "哥哥说周末要去爬山", "text": "哥哥说周末要去爬山"}
         s.memory_bridge = FakeBridge([mem])
-        random.seed(42)
-        t = evaluate_triggers(s, now)
+        # 显式放行兜底概率门控(random<0.5)、拦截 mem0 随机浮现块(random<0.08)
+        # ——不依赖「mem0 块恰好先消费 seed 随机数」的隐式序列位置(该位置随
+        # quiet window 配置/available 变化会漂移)
+        with mock.patch("chiguo_trigger.random.random", return_value=0.4):
+            t = evaluate_triggers(s, now)
         assert t is not None and t.type == "follow_up", t
         assert t.data["source"] == "memory"
         assert t.data["topic"] == "哥哥说周末要去爬山"

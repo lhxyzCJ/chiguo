@@ -2,7 +2,7 @@
 // 用法: node test_bridge_askagent.mjs（退出码 0=全过，1=有失败）
 // 集成式：fake agent-run（canned JSON 响应）+ fake daemon（记录 argv + 真实 shape JSON），真实 execFile 链路。
 import assert from 'node:assert'
-import { writeFileSync, mkdtempSync, appendFileSync, cpSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, appendFileSync, cpSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -52,7 +52,9 @@ process.env.WECHAT_BRIDGE_DAEMON_PY = process.execPath
 process.env.WECHAT_BRIDGE_DAEMON = FAKE_DAEMON
 process.env.FAKE_AGENT_LOG = AGENT_LOG
 process.env.FAKE_DAEMON_LOG = DAEMON_LOG
-const { askAgent, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue, runWithRecall, runWithAttention } = await import('../wechat-bridge/bridge.mjs')
+// B2 确定性:本文件测 spawn 路径,确保 AGENT_RPC_ENABLED=false(宿主残留配置不干扰)
+delete process.env.WECHAT_BRIDGE_AGENT_RPC
+const { askAgent, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue, runWithRecall, runWithAttention, handleAgentPrompt, readClarify, clearClarify, scheduleClarifyPath } = await import('../wechat-bridge/bridge.mjs')
 
 let passed = 0
 const tests = []
@@ -200,6 +202,76 @@ t('--attention 回复侧注入:取数失败跳过注入继续 askAgent(降级)',
   // daemon --attention 返回 ok:false → askAgent 仍执行(无 attention 块)
   const got = await runWithAttention(null, async () => ({ text: '自然回复' }))   // 注入失败
   assert.ok(got.includes('自然回复'), '降级为现状行为')
+})
+
+t('B7: runWithRecall 传入 existingAnalysis → 复用已有分析,不重复 firstAnalysis(单次 recall 调用)', async () => {
+  const calls = []
+  const fakeRun = { exec: async (bin, args, opts) => {
+    const joined = args.join(' ')
+    calls.push(joined)
+    if (joined.includes('--schedule-recall')) {
+      return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<RECALL>>{"ok":true,"matches":[{"type":"anniversary","label":"哥哥的生日"}]}<<END>>5月11日呀' }] } }) }
+    }
+    throw new Error('不应再调 firstAnalysis: ' + joined)
+  } }
+  const r = await runWithRecall('哥哥我生日是什么时候', fakeRun, { warmth: 0.5, recall: '生日' })
+  assert.ok(r.includes('5月11日'), `第二趟按事实回答: ${r}`)
+  assert.strictEqual(calls.length, 1, `只应一次调用(recall 第二趟), 实际 ${calls.length}`)
+  assert.ok(!calls[0].includes('--analysis-mode'), '不重复完整 firstAnalysis')
+  assert.ok(calls[0].includes('--facts'), '事实仍走 --facts 通道')
+})
+
+t('R4: handleMessage recall 路径走 deps.askAgent 注入(不走模块级 askAgent)', async () => {
+  // 第一趟仍由模块级 askAgent(fake agent-run)产出 recall 信号;第二趟(recall)必须走
+  // deps.askAgent——旧实现 runWithRecall(text, askAgent, ...) 硬编码模块级函数,
+  // 注入的 askAgent.exec 不会被调用(第二趟落到真实 spawn)。
+  const db = dLines().length
+  const pb = pLines().length
+  setResponse({ ok: true, text: '第一趟回复', analysis: { warmth: 0.5, recall: '生日' } })
+  const bot = botStub()
+  let execCalls = 0
+  const injectedAsk = async () => { throw new Error('不应直接调用注入 askAgent 本体') }
+  injectedAsk.exec = async (bin, args, opts) => {
+    execCalls += 1
+    assert.ok(args.join(' ').includes('--schedule-recall'), '第二趟走 --schedule-recall')
+    return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<RECALL>>{"ok":true}<<END>>注入的第二趟回答' }] } }) }
+  }
+  const r = await handleMessage('哥哥我生日是什么时候', msg('哥哥我生日是什么时候'), bot, queue,
+    { askAgent: injectedAsk })
+  assert.strictEqual(r, 'agent')
+  assert.strictEqual(execCalls, 1, `注入 askAgent.exec 应被调用一次: ${execCalls}`)
+  assert.deepStrictEqual(bot.replies, ['注入的第二趟回答'], '回复应来自注入的第二趟')
+  assert.ok(pLines().length === pb + 1, '第一趟仍走 fake agent-run(模块级)')
+})
+
+t('B2: AGENT_RPC_ENABLED=false → handleAgentPrompt 503 明确拒绝,不实例化 AgentRpc', async () => {
+  const res = { status: 0, body: null }
+  res.writeHead = (s) => { res.status = s }
+  res.end = (b) => { res.body = JSON.parse(b) }
+  await handleAgentPrompt({ text: 'hi', mode: 'analysis' }, res)
+  assert.strictEqual(res.status, 503, `status=${res.status}`)
+  assert.strictEqual(res.body.ok, false)
+  assert.ok(String(res.body.error).length > 0, `应有明确错误: ${JSON.stringify(res.body)}`)
+  assert.ok(globalThis.__agentRpc === undefined, '不得实例化 AgentRpc')
+})
+
+t('B3: readClarify/clearClarify 路径被目录占据(ERR_FS_EISDIR)不抛错', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'clarify-eisdir-'))
+  try {
+    mkdirSync(scheduleClarifyPath(repo), { recursive: true })   // 目录占据文件路径
+    let threw = false
+    try { readClarify(repo) } catch { threw = true }
+    assert.ok(!threw, 'readClarify 目录场景不应抛 ERR_FS_EISDIR')
+    threw = false
+    try { clearClarify(repo) } catch { threw = true }
+    assert.ok(!threw, 'clearClarify 目录场景不应抛 ERR_FS_EISDIR')
+    threw = false
+    // 过期记录 + 目录场景:静默清理路径同样不抛
+    try { readClarify(repo) } catch { threw = true }
+    assert.ok(!threw, '重复 readClarify 仍不抛')
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
 })
 
 // ── onMessage 链路（handleMessage：detect→execute→reply 接线，bridge.mjs）──

@@ -84,6 +84,30 @@ class ChiguoEmotion:
         self.tsundere_index = max(10, min(95, self.tsundere_index))
 
 
+def _coerce_dataclass_fields(fields: dict, cls) -> dict:
+    """v11: dataclass 数值字段(annotation 为 int/float)类型强转。
+    手改/损坏数据可能字符串化或为 None → float()/int() 失败时回退字段默认值，
+    防 ChiguoEmotion.clamp()/can_send 的 max/min 比较直接 TypeError。"""
+    out = dict(fields)
+    for name, fdef in cls.__dataclass_fields__.items():
+        ann = fdef.type
+        if ann not in (int, float, "int", "float"):
+            continue
+        if name not in out:
+            continue
+        val = out[name]
+        if isinstance(val, (int, float)):
+            continue
+        try:
+            if ann is int or ann == "int":
+                out[name] = int(float(val))
+            else:
+                out[name] = float(val)
+        except (ValueError, TypeError, OverflowError):
+            out[name] = fdef.default
+    return out
+
+
 # v1.11 ④: 情绪基线全局默认（= 原 tick 收敛 target：loneliness/anxiety→100、affection→0）
 BASELINE_DEFAULTS = {"loneliness": 100.0, "anxiety": 100.0, "affection": 0.0}
 
@@ -118,9 +142,17 @@ class CooldownState:
         self._quiet_end = 8
 
     def set_quiet_window(self, start: int, end: int):
-        """v6: 注入睡眠窗口（来自 config [schedule] quiet_start/quiet_end）。"""
-        self._quiet_start = int(start)
-        self._quiet_end = int(end)
+        """v6: 注入睡眠窗口（来自 config [schedule] quiet_start/quiet_end）。
+        v11: 类型强转 + 0-23 值域校验，非法回退默认 (0,8)，
+        防 _sleep_hours_in_range 的 day.replace(hour=…) 抛 ValueError。"""
+        try:
+            start, end = int(start), int(end)
+        except (ValueError, TypeError):
+            start, end = 0, 8
+        if not (0 <= start <= 23 and 0 <= end <= 23):
+            start, end = 0, 8
+        self._quiet_start = start
+        self._quiet_end = end
 
     def quiet_window(self) -> tuple[int, int]:
         """v7: 当前生效的静默窗口(start, end,含跨午夜语义)。
@@ -158,6 +190,16 @@ class CooldownState:
             ws = day.replace(hour=qs, minute=0, second=0, microsecond=0)
             we = day.replace(hour=qe, minute=0, second=0, microsecond=0)
             if qe < qs:
+                # v11: 跨午夜窗口先处理当天收尾段 [0:00, qe)（属昨日窗口尾声）。
+                # 否则查询起点 start 落在凌晨收尾段（如 6:30）时该窗口被整体跳过漏算。
+                if cur < we:  # 此时 we = 当天 qe
+                    tail_start = max(cur, day)
+                    tail_end = min(end, we)
+                    if tail_start < tail_end:
+                        total += (tail_end - tail_start).total_seconds() / 3600
+                    cur = we  # 推进到收尾段结束，再进入常规主段循环
+                    guard += 1
+                    continue
                 we = we + timedelta(days=1)  # 跨午夜窗口（如 22:00-08:00）
             if we <= cur:
                 # 当前时间已在窗口之后 → 跳到下一天窗口起点
@@ -321,6 +363,9 @@ class ChiguoState:
             start, end, conf = int(start), int(end), float(conf)
         except (ValueError, TypeError):
             start, end, conf = 0, 8, 0.0
+        # v11: 0-23 值域校验(手改/损坏数据可能越界 → 回退配置默认),防 day.replace 抛 ValueError
+        if not (0 <= start <= 23 and 0 <= end <= 23):
+            start, end = 0, 8
         self.circadian.set_active_bucket(self._current_bucket(now), start, end, conf)
         if conf >= cfg.get("min_confidence", 0.5):
             self.cooldown.set_quiet_window(start, end)
@@ -418,9 +463,13 @@ class ChiguoState:
         # 过滤未知字段，防止未来版本新增字段导致 dataclass __init__ 崩溃
         emo_fields = {k: v for k, v in data.get("emotion", {}).items()
                       if k in ChiguoEmotion.__dataclass_fields__}
+        # ── v11: 数值字段类型强转(字符串/None → 回退默认),防 clamp() TypeError ──
+        emo_fields = _coerce_dataclass_fields(emo_fields, ChiguoEmotion)
         self.emotion = ChiguoEmotion(**emo_fields)
         cd_fields = {k: v for k, v in data.get("cooldown", {}).items()
                      if k in CooldownState.__dataclass_fields__}
+        # ── v11: 数值字段类型强转(如 messages_today 字符串 → 回退默认),防 can_send TypeError ──
+        cd_fields = _coerce_dataclass_fields(cd_fields, CooldownState)
         # ── v5: accumulated_lambda null → 0.0 (type drift fix) ──
         if cd_fields.get("accumulated_lambda") is None:
             cd_fields["accumulated_lambda"] = 0.0

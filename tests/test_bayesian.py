@@ -166,6 +166,9 @@ def test_should_send_bayesian():
     }, datetime(2026, 6, 15, 3, 0, tzinfo=CST))
     assert result_good["utility"] > 0.3
     assert result_bad["utility"] < 0.4
+    # 核心语义：好时机的效用应高于坏时机（修复前两断言区间在 0.3~0.4 重叠，测不出大小关系）
+    assert result_good["utility"] > result_bad["utility"], \
+        f"good-timing utility should exceed bad-timing: {result_good['utility']:.3f} vs {result_bad['utility']:.3f}"
     print(f"  OK test_should_send_bayesian: good={result_good['utility']:.2f} bad={result_bad['utility']:.2f}")
 
 

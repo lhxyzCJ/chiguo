@@ -36,6 +36,19 @@ def _clamp01(value, default: float) -> float:
     return max(0.0, min(1.0, v))
 
 
+def _clamp_int(value, default: int, max_value: int | None = None) -> int:
+    """#83: 退场阈值解析——非整数值（"3.5"/None 等）回退默认，负数钳制为 0（仿 _clamp01 惯例）。
+    可选 max_value 钳制上限（如 backoff 阈值过大 = 静默禁用退场，属配置事故）。"""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    v = max(0, v)
+    if max_value is not None:
+        v = min(max_value, v)
+    return v
+
+
 def backoff_level(state: ChiguoState, now: datetime) -> int:
     """
     A5 未回复退场状态机（三态，不新增持久化字段——用现有 messages_without_reply 推导）：
@@ -47,8 +60,9 @@ def backoff_level(state: ChiguoState, now: datetime) -> int:
     now 保留作签名（未来可用 last_user_message_at 加时间窗扩展），当前只用计数推导。
     """
     cfg = state.config.get("cooldown", {})
-    start = int(cfg.get("backoff_start", 3))
-    silent = int(cfg.get("backoff_silent", 5))
+    # #83: 类型防护——配置为 "3.5"/None 等非整数时回退默认，防 ValueError/TypeError 崩溃
+    start = _clamp_int(cfg.get("backoff_start", 3), 3, max_value=100)
+    silent = _clamp_int(cfg.get("backoff_silent", 5), 5, max_value=100)
     n = state.cooldown.messages_without_reply
     if n >= silent:
         return 2
@@ -166,12 +180,16 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             cand = _followup_candidate(entry, age, trg_cfg)
             if cand:
                 weighted_candidates.append(cand)
-    elif not state.pending_topics and state.memory_bridge.available:
+    elif (not state.pending_topics and state.memory_bridge.available
+          and random.random() < 0.5):
         # 记忆兜底:近 48h 内、用户相关的记忆,选中一条作为接话茬素材(不落盘)
+        # #83: ① 概率门控(50%)——pending_topics 为空时不得每 tick 无条件多关键词搜索
+        # (热点 IO;与同文件 mem0 随机浮现块 silent_h>6 and random<0.08 同款降频风格);
+        # ② timestamp 类型防护——ISO 字符串等非数值直接跳过,防 str > float TypeError。
         now_ts = now.timestamp()
         for mem in state.memory_bridge.user_relevant(limit=10, min_importance=0.4):
             ts = mem.get("timestamp") or 0
-            if not ts:
+            if not ts or not isinstance(ts, (int, float)):
                 continue
             ts = ts / 1000.0 if ts > 1e12 else ts  # epoch ms → s
             age = (now_ts - ts) / 3600
@@ -481,9 +499,14 @@ def _is_free_time(state: ChiguoState, now: datetime) -> bool:
     if in_quiet_window(now, qs, qe):
         return False
     # 节假日/周末 → 空闲
-    if state.holiday_parser.is_holiday(now):
+    # #83: HolidayParser 构造失败降级（state.holiday_parser=None，chiguo_state 显式承诺
+    # 使用点 None 防护）→ 无假日判定视为空闲，防 AttributeError 崩溃
+    hp = state.holiday_parser
+    if hp is None:
         return True
-    if not state.holiday_parser.is_school_day(now):
+    if hp.is_holiday(now):
+        return True
+    if not hp.is_school_day(now):
         return True
     # 上课中 → 非空闲（schedule_status 门面:课表不可用 → None → 空闲）
     try:

@@ -320,14 +320,6 @@ class DecisionEngine:
                 if isinstance(mem_ref, dict) and mem_ref.get("type") == "reminder":
                     mem_ref["last_triggered_at"] = now.isoformat()
 
-            # 3.5 记录触发历史（用于话题多样性检查）
-            cfg_topic = self.config.get("topic_picker", {})
-            history_max = cfg_topic.get("trigger_history_max", 6)
-            self.state.cooldown.trigger_history.append(trigger.type)
-            if len(self.state.cooldown.trigger_history) > history_max:
-                self.state.cooldown.trigger_history = \
-                    self.state.cooldown.trigger_history[-history_max:]
-
             # 4. 构建上下文（给 pi-agent 生成消息用）
             context = self._build_context(trigger, now, user_state)
             # v10 (#73 A4): trigger 层高段激活的 must_send 标记写入 context（情绪类必发）
@@ -426,6 +418,19 @@ class DecisionEngine:
             last_time = last_msg_dt
         else:
             last_time = last_user_dt
+
+        # ── v12: cron 模式情绪全量重放修复 —— 推进基准取「最后消息 / 上次 tick
+        # 推进时刻」的较新者。cron 每 15 分钟起新进程跑单次 evaluate，新进程
+        # _monotonic_at_save=0.0 使下方单调防护失效；若不引入持久化 last_tick
+        # （save 时落盘，chiguo_state._save），每轮都会按「自最后消息以来的全量
+        # elapsed」调用非幂等 state.tick(hours)（elastic_recover 半衰期增量公式）
+        # → 情绪以设计速率 ~33 倍重复累积。last_tick 为 None 或解析失败 →
+        # 回退现有逻辑（只用消息时间）。修复后 last_tick 由 evaluate 路径的
+        # save() 更新；loop 模式 _monotonic_at_save 单调防护原样保留（cron
+        # 新进程无法用 monotonic 封顶 NTP 前跳——既有限制，非本次引入）。──
+        last_tick_dt = _parse_tz(self.state.last_tick) if self.state.last_tick else None
+        if last_tick_dt is not None:
+            last_time = max(last_time, last_tick_dt)
 
         elapsed = (now - last_time).total_seconds() / 3600
 
@@ -1145,10 +1150,22 @@ class DecisionEngine:
         out["generated"] = True
         # ② 发送 + ③ 记账
         to = (self.config.get("wechat", {}) or {}).get("wechat_recipient", "")
+        if not to:
+            # ── v12: 收件人未配置 → 消息并未发出。不能走 record_send_text
+            # （未发送文本若归档为 send，会污染 chiguo_messages.jsonl——
+            # recent_sent_texts 的 A9 查重数据源，这些文本将被当「最近发过」
+            # 抑制复用）；必须走 failed 退款闭环（Hawkes 事件清账/额度回滚）
+            # 并告警，否则 msg_id 永不清账。──
+            err = "wechat_recipient not configured"
+            print(f"[chiguo_daemon] send skipped: {err} (msg_id={msg_id})",
+                  file=sys.stderr)
+            out["send_error"] = err
+            if msg_id:
+                self.record_send_result(msg_id, "failed", err)
+            return out
         try:
-            if to:
-                _post("/send", {"to": to, "text": text}, 10.0)
-                out["sent"] = True
+            _post("/send", {"to": to, "text": text}, 10.0)
+            out["sent"] = True
             self.record_send_text(msg_id, text, trigger, intensity)
         except Exception as e:  # noqa: BLE001
             out["send_error"] = str(e)
@@ -1213,11 +1230,27 @@ class DecisionEngine:
         幂等: 同一 msg_id 重复上报不再退款（日志按 msg_id 去重）。
         time 用 %Y-%m-%d %H:%M 格式（与 snapshot 一致，monitor _extract_time 依赖）。"""
         now = datetime.now(CST)
-        already_reported = self._has_send_result(msg_id)
         refunded = False
         # ── v11 (#75): RMW 临界区全程持跨进程锁，防并发重复退款或丢更新。
+        # v12: already_reported 检查与 result 日志写入均移入锁内——并发进程
+        # 锁外各自读到「未上报」后依次进锁，第二个进程锁内重查可见第一条
+        # 日志 → duplicate=true 不再退款（修复锁外检查的 TOCTOU 双退款）。
+        # 注意：state_lock 为单线程语义（同进程第二线程视为重入直接通过、
+        # 不互斥）；本方法生产调用路径（--loop 主循环 / CLI --send-result）
+        # 均单线程，并发去重保障针对跨进程（flock）场景。
         # 本方法为单次 CLI 进程（启动时已加载最新状态），不重载 _load。──
         with self.state.state_lock():
+            # v12-R2: 锁内重载磁盘最新状态再执行退款——CLI --send-result 与
+            # cron evaluate 并发时，若基于构造时（T0）陈旧快照 refund 后 save，
+            # 会覆盖 evaluate 已落盘的情绪推进（tick_seq CAS 只防序列回退，
+            # 不保护 emotion/cooldown 字段）。安全前提：本方法调用路径进锁前
+            # 均无未保存的进程内修改（evaluate 各出口无条件 save；--loop 的
+            # _loop_send 在 evaluate 锁释放后才执行）。
+            try:
+                self.state._load()
+            except Exception:  # noqa: BLE001 - 重载失败维持现有内存状态
+                pass
+            already_reported = self._has_send_result(msg_id)
             if status == "failed" and not already_reported:
                 # ── v6 修复: 仅当 msg_id 能在在途 Hawkes 事件中定位时退款 ──
                 # 未知 msg_id → 只审计跳过，不执行退款副作用（防止凭空刷新逃生阀冷却/
@@ -1229,7 +1262,19 @@ class DecisionEngine:
                 if matched or legacy_events:
                     self.state.refund_send(now, msg_id=msg_id)
                     if not self.state.save():
-                        print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
+                        # v12-R1: save 失败 → 不写 send_result 日志、refunded 保持
+                        # False。幂等依据是日志：日志不写 = 可重试，下一进程会再次
+                        # 尝试退款直至落盘；若此处照写日志，退款将永久丢失。
+                        print("[chiguo_daemon] state_save_failed: 退款未落盘，下轮重试", file=sys.stderr)
+                        return {
+                            "action": "send_result",
+                            "msg_id": msg_id,
+                            "status": status,
+                            "error": error,
+                            "time": now.strftime("%Y-%m-%d %H:%M"),
+                            "refunded": False,
+                            "duplicate": False,
+                        }
                     refunded = True
                 else:
                     print(
@@ -1237,16 +1282,18 @@ class DecisionEngine:
                         f"not found in {len(events)} in-flight events",
                         file=sys.stderr,
                     )
-        result = {
-            "action": "send_result",
-            "msg_id": msg_id,
-            "status": status,
-            "error": error,
-            "time": now.strftime("%Y-%m-%d %H:%M"),
-            "refunded": refunded,
-            "duplicate": already_reported,
-        }
-        self._log(result)
+            result = {
+                "action": "send_result",
+                "msg_id": msg_id,
+                "status": status,
+                "error": error,
+                "time": now.strftime("%Y-%m-%d %H:%M"),
+                "refunded": refunded,
+                "duplicate": already_reported,
+            }
+            # v12: 日志写入与去重检查同一临界区（并发进程的 duplicate 判定
+            # 基于锁内可见的最新日志；state_lock 可重入，_log 不持其他锁）
+            self._log(result)
         return result
 
     def snapshot(self):

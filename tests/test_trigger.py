@@ -590,6 +590,103 @@ def test_backoff_level2_escape_valve_exempt():
 
 
 # ═══════════════════════════════════════════════════════════
+# #83 回归: None 防护 / 配置类型防护 / 记忆兜底类型+概率门控
+# ═══════════════════════════════════════════════════════════
+
+def test_is_free_time_holiday_parser_none_no_crash():
+    """#83 Bug1: HolidayParser 构造失败降级（holiday_parser=None）→
+    _is_free_time 不抛 AttributeError 且视为空闲（无假日判定 → 空闲）"""
+    from chiguo_trigger import _is_free_time
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, energy=40)
+        s.holiday_parser = None
+        assert _is_free_time(s, now) is True, \
+            "holiday_parser=None 时无假日判定 → 应视为空闲"
+    print("  OK test_is_free_time_holiday_parser_none_no_crash")
+
+
+def test_backoff_level_bad_config_falls_back():
+    """#83 Bug2: backoff_start/silent 为 "3.5"/None 等非整数 → 不崩溃且回退默认 3/5"""
+    from chiguo_trigger import backoff_level
+    now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+    with tempfile.TemporaryDirectory() as td:
+        # 字符串小数 → 回退默认 3/5：n=4 → level 1
+        s = _make_state(td, now, energy=40)
+        s.config["cooldown"]["backoff_start"] = "3.5"
+        s.config["cooldown"]["backoff_silent"] = "5.7"
+        s.cooldown.messages_without_reply = 4
+        assert backoff_level(s, now) == 1, '"3.5"/"5.7" 应回退默认 3/5 → level 1'
+        # None → 回退默认 3/5：n=5 → level 2
+        s2 = _make_state(td, now, energy=40)
+        s2.config["cooldown"]["backoff_start"] = None
+        s2.config["cooldown"]["backoff_silent"] = None
+        s2.cooldown.messages_without_reply = 5
+        assert backoff_level(s2, now) == 2, 'None 应回退默认 3/5 → level 2'
+        # 合法整数配置不受影响
+        s3 = _make_state(td, now, energy=40)
+        s3.config["cooldown"]["backoff_start"] = 2
+        s3.config["cooldown"]["backoff_silent"] = 4
+        s3.cooldown.messages_without_reply = 2
+        assert backoff_level(s3, now) == 1, "合法整数配置应正常工作"
+    print("  OK test_backoff_level_bad_config_falls_back")
+
+
+class _FakeMemoryBridge:
+    """memory_bridge 替身：available=True，user_relevant 返回预设记忆（含调用计数）"""
+    available = True
+
+    def __init__(self, mems=None):
+        self.mems = list(mems or [])
+        self.calls = 0
+
+    def user_relevant(self, limit=10, min_importance=0.4):
+        self.calls += 1
+        return list(self.mems)
+
+    def random_memory(self, min_importance=0.4):
+        return None
+
+
+def test_memory_fallback_string_timestamp_no_crash():
+    """#83 Bug3①: 记忆兜底 timestamp 为 ISO 字符串 → 跳过该条不崩溃，
+    后续正常 epoch 条目仍可处理（防 str > float TypeError）"""
+    from unittest import mock
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        epoch_ts = int(now.timestamp() - 5 * 3600)  # 5h 前 → 48h 窗口内
+        bridge = _FakeMemoryBridge([
+            {"timestamp": "2026-06-15T10:00:00", "text": "字符串时间戳"},
+            {"timestamp": epoch_ts, "text": "正常 epoch 记忆"},
+        ])
+        s = _make_state(td, now, energy=40)
+        s.memory_bridge = bridge
+        with mock.patch("chiguo_trigger.random.random", return_value=0.0):
+            t = evaluate_triggers(s, now)  # 不得抛异常
+        assert bridge.calls == 1, "门控放行时应执行一次兜底搜索"
+        assert t is None or t.type == "follow_up", f"兜底命中应为 follow_up, got {t}"
+    print("  OK test_memory_fallback_string_timestamp_no_crash")
+
+
+def test_memory_fallback_probability_gate():
+    """#83 Bug3②: 记忆兜底块必须有概率门控（pending_topics 为空时
+    不得每 tick 无条件多关键词搜索）——random 恒 1.0 拦截、恒 0.0 放行"""
+    from unittest import mock
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        bridge = _FakeMemoryBridge([])
+        s = _make_state(td, now, energy=40)
+        s.memory_bridge = bridge
+        with mock.patch("chiguo_trigger.random.random", return_value=1.0):
+            evaluate_triggers(s, now)
+        assert bridge.calls == 0, "概率门控应拦截兜底搜索"
+        with mock.patch("chiguo_trigger.random.random", return_value=0.0):
+            evaluate_triggers(s, now)
+        assert bridge.calls == 1, "概率门控放行时应执行兜底搜索"
+    print("  OK test_memory_fallback_probability_gate")
+
+
+# ═══════════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════════
 
@@ -624,6 +721,11 @@ if __name__ == "__main__":
         test_backoff_level1_suppresses_emotional_keeps_ritual,
         test_backoff_level2_silent_suppresses_all,
         test_backoff_level2_escape_valve_exempt,
+        # #83 回归
+        test_is_free_time_holiday_parser_none_no_crash,
+        test_backoff_level_bad_config_falls_back,
+        test_memory_fallback_string_timestamp_no_crash,
+        test_memory_fallback_probability_gate,
     ]
     failed = 0
     # CHIGUO_MEM0_DISABLED 恢复：_make_state 设置后须在收尾还原（同进程其它测试不受污染）

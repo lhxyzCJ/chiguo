@@ -322,6 +322,12 @@ def test_reply_rate_detection():
         mon = ChiguoMonitor(str(log), str(state))
         s = mon.stats(days=0)
         assert s["activity"]["total_sends"] == 5
+        # 回复率口径（与 stats()/alerts() B5 一致）：相邻 send 中 mwr 下降 = 检测到 1 次回复
+        # 本序列 1→0→1→0→1：mwr 下降 2 次（第 2、4 条），等待过回复的 send 数 = 3（第 1、3、5 条）
+        assert s["replies"]["total_send_events_tracked"] == 5, \
+            f"expected 5 send events tracked, got {s['replies']['total_send_events_tracked']}"
+        assert abs(s["replies"]["reply_rate"] - 0.667) < 0.01, \
+            f"expected reply_rate≈0.667 (2 replies / 3 sends-with-mwr>0), got {s['replies']['reply_rate']}"
     print("  OK test_reply_rate_detection")
 
 
@@ -708,11 +714,11 @@ def test_recv_entry_logged():
     print("  OK test_recv_entry_logged")
 
 
-def test_msg_id_on_all_actions():
-    """所有决策条目（send/idle）都包含 msg_id"""
+def test_old_format_without_msg_id_compatible():
+    """旧格式决策条目（无 msg_id）→ stats() 兼容统计，不因缺 msg_id 报错或丢计数"""
     with tempfile.TemporaryDirectory() as td:
         log = Path(td) / "decisions.jsonl"
-        # Write entries without msg_id to simulate old format
+        # 旧格式：send/idle 条目不含 msg_id（msg_id 是后来新增的字段）
         entries = [
             {"action": "send", "trigger": "morning", "intensity": "soft",
              "state": {"emotion": {"loneliness": 15.0, "affection": 55.0, "anxiety": 40.0, "energy": 85.0, "tsundere_index": 70.0},
@@ -727,7 +733,36 @@ def test_msg_id_on_all_actions():
         s = mon.stats(days=0)
         assert s["activity"]["total_sends"] == 1
         assert s["activity"]["total_idles"] == 1
-    print("  OK test_msg_id_on_all_actions")
+    print("  OK test_old_format_without_msg_id_compatible")
+
+
+def test_new_format_with_msg_id_stats():
+    """新格式决策条目（含 msg_id）→ stats() 正确统计，且 msg_id 原样保留在日志中"""
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "decisions.jsonl"
+        entries = [
+            {"action": "send", "msg_id": "send_001", "trigger": "morning", "intensity": "soft",
+             "state": {"emotion": {"loneliness": 15.0, "affection": 55.0, "anxiety": 40.0, "energy": 85.0, "tsundere_index": 70.0},
+                       "cooldown": {}, "time": "2026-06-28 08:00"}},
+            {"action": "idle", "msg_id": "idle_001", "reason": "quiet_hours",
+             "state": {"emotion": {"loneliness": 15.0, "affection": 55.0, "anxiety": 40.0, "energy": 85.0, "tsundere_index": 70.0},
+                       "cooldown": {}, "time": "2026-06-28 03:00"}},
+        ]
+        log.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries))
+
+        mon = ChiguoMonitor(str(log))
+        s = mon.stats(days=0)
+        # 带 msg_id 的新格式条目被正确统计（stats 不因 msg_id 字段崩溃或丢计数）
+        assert s["activity"]["total_sends"] == 1
+        assert s["activity"]["total_idles"] == 1
+        assert s["period"]["total_entries"] == 2
+        # stats() 只读不写：日志文件中 msg_id 原样保留
+        lines = [l for l in log.read_text(encoding="utf-8").strip().splitlines() if l.strip()]
+        assert len(lines) == 2
+        by_action = {json.loads(l)["action"]: json.loads(l) for l in lines}
+        assert by_action["send"]["msg_id"] == "send_001"
+        assert by_action["idle"]["msg_id"] == "idle_001"
+    print("  OK test_new_format_with_msg_id_stats")
 
 
 def test_recv_empty_text():
@@ -1105,7 +1140,8 @@ if __name__ == "__main__":
         test_fuzz_empty_and_extreme,
         # v5: conversation logging & archive
         test_recv_entry_logged,
-        test_msg_id_on_all_actions,
+        test_old_format_without_msg_id_compatible,
+        test_new_format_with_msg_id_stats,
         test_recv_empty_text,
         test_messages_jsonl_created,
         test_conversation_by_date,
