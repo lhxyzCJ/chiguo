@@ -195,6 +195,10 @@ class CircadianTracker:
 
         桶内数据不足 → 该桶保持当前值(不覆盖);sample_days 更新为有数据天数(跨桶按日期去重)。
         返回第一桶(weekday 优先)成功估计的窗口,两桶均无估计 → None。
+
+        v1.11+R5: 周末桶样本门槛按周内占比(2/7)折算——14 天窗口内周末最多 ~4-6 天,
+        直接用 min_sample_days=7 且 completeness=days/14 → 门槛与置信双重否决,
+        周末桶结构不可达,睡眠窗口学习对周末恒失效。工作日桶行为不变。
         """
         result = None
         dates_all: set[str] = set()
@@ -205,9 +209,16 @@ class CircadianTracker:
             counts = [a + b for a, b in zip(
                 aggregate_hours(self.reply_days, bucket),
                 aggregate_hours(self.active_days, bucket))]
+            # ── v1.11+R5: 按桶折算样本门槛与完整性分母(周末桶可达到的最大天数≈周占比×窗口)──
+            if bucket == "weekend":
+                ratio = 2.0 / 7.0
+                eff_min_sample = max(1, round(min_sample_days * ratio))
+                eff_history = max(1, round(history_days * ratio))
+            else:
+                eff_min_sample, eff_history = min_sample_days, history_days
             est = estimate_sleep_window(
                 counts, len(reply_dates | active_dates),
-                history_days, min_sample_days, min_width, max_width,
+                eff_history, eff_min_sample, min_width, max_width,
             )
             if est is None:
                 continue

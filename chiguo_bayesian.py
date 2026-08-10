@@ -4,6 +4,7 @@
 # 从可观测信号推断用户隐藏状态，填补最大能力缺口
 # ============================================================
 
+import math
 from datetime import datetime, timezone, timedelta
 
 CST = timezone(timedelta(hours=8))
@@ -33,6 +34,14 @@ class UserStateEstimator:
     """
 
     STATES = ["chatting", "browsing", "busy", "sleeping", "away", "needs_care"]
+
+    # 合法观测空间（restore_state_dict 校验用）：obs_key → 合法 obs_value 集合。
+    # 与 _init_default_likelihoods 的经验参数表保持一致。
+    OBS_SPACE = {
+        "reply_latency": {"fast", "normal", "slow", "very_slow", "none"},
+        "msg_length": {"short", "medium", "long", "none"},
+        "silence": {"active", "recent", "moderate", "long"},
+    }
 
     # 状态 → 发送效用（越高越适合发送）
     UTILITY = {
@@ -377,6 +386,35 @@ class UserStateEstimator:
         actual_state: 已知真实状态（用户明确说了）时触发监督学习。"""
         if actual_state:
             self.learner.update_from_label(observations, actual_state)
+
+    # ── 持久化（v1.11+R3: 在线学习 EMA 调优跨进程保留）──────────────
+
+    def to_state_dict(self) -> dict:
+        """序列化似然缓存供状态落盘（tuple key → "state.obs_key.obs_value"）。
+        供 ChiguoState.save 写入；含默认值+本次进程学习增量，还原时叠加于默认之上。"""
+        return {
+            f"{s}.{ok}.{ov}": float(v)
+            for (s, ok, ov), v in self._likelihood_cache.items()
+        }
+
+    def restore_state_dict(self, data: dict) -> None:
+        """从持久化数据还原似然缓存。坏键（非 3 段 key / 非法状态 / 非法观测维度或取值 /
+        非数值 / 非有限值如 NaN）丢弃，缺键保留默认值 → 还原幂等、不破坏默认参数表。"""
+        if not isinstance(data, dict):
+            return
+        for k, v in data.items():
+            parts = str(k).split(".")
+            if len(parts) != 3 or parts[0] not in self.STATES:
+                continue
+            if parts[1] not in self.OBS_SPACE or parts[2] not in self.OBS_SPACE[parts[1]]:
+                continue
+            try:
+                val = float(v)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(val):
+                continue
+            self._likelihood_cache[(parts[0], parts[1], parts[2])] = val
 
 
 class BayesianLearner:
