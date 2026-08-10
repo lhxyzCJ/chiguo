@@ -36,6 +36,14 @@ def _clamp01(value, default: float) -> float:
     return max(0.0, min(1.0, v))
 
 
+def _to_float(value, default: float) -> float:
+    """A2: 配置系数解析——非数值回退默认（不钳制，负值语义由使用处 max() 兜底）。"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _clamp_int(value, default: int, max_value: int | None = None) -> int:
     """#83: 退场阈值解析——非整数值（"3.5"/None 等）回退默认，负数钳制为 0（仿 _clamp01 惯例）。
     可选 max_value 钳制上限（如 backoff 阈值过大 = 静默禁用退场，属配置事故）。"""
@@ -404,6 +412,34 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     for c in weighted_candidates:
         if c["trigger"].type in EMOTION_TRIGGERS:
             c["weight"] *= jitter
+
+    # ── A2: 分类型回复率反馈闭环（reply_feedback_enabled 默认 0 关闭恒等，可灰度）──
+    # 对标 revive-companion 的反馈闭环：低回复率类型 weight ×(1-damp)（降频），
+    # 高回复率类型 ×(1+boost)（微加成）。damp/boost 为 0 → 恒等。统计源 =
+    # 状态持久化的 cooldown.reply_stats（daemon 发送时 sent+1、--user-msg 收到
+    # 回复时 replied+1），样本数 < min_samples 不调整（防冷启动误伤）。
+    # 放在抖动后、三段选择前 → 只影响类型间相对概率，不扰动 A4 三段归属阈值。
+    if trg_cfg.get("reply_feedback_enabled", 0):
+        stats = getattr(state.cooldown, "reply_stats", None) or {}
+        rfb_damp = _to_float(trg_cfg.get("reply_feedback_damp", 0.0), 0.0)
+        rfb_boost = _to_float(trg_cfg.get("reply_feedback_boost", 0.0), 0.0)
+        rfb_low = _to_float(trg_cfg.get("reply_feedback_low_rate", 0.3), 0.3)
+        rfb_high = _to_float(trg_cfg.get("reply_feedback_high_rate", 0.7), 0.7)
+        rfb_min = _clamp_int(trg_cfg.get("reply_feedback_min_samples", 3), 3)
+        for c in weighted_candidates:
+            st = stats.get(c["trigger"].type) or {}
+            try:
+                sent, replied = int(st.get("sent", 0)), int(st.get("replied", 0))
+            except (TypeError, ValueError):
+                continue
+            if sent < rfb_min or sent <= 0:
+                continue  # 样本不足 → 保持默认权重
+            rate = replied / sent
+            if rate < rfb_low:
+                c["weight"] *= max(0.0, 1.0 - rfb_damp)
+            elif rate >= rfb_high:
+                c["weight"] *= max(0.0, 1.0 + rfb_boost)
+
     if activation >= must_send_activation and emo_cands:
         chosen = weighted_trigger_choice(emo_cands)
         must_send = True

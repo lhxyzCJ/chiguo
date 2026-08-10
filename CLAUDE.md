@@ -30,7 +30,7 @@ Reasonix 宿主在 final-answer 时检查四类验收项，报错模式固定，
 ## Build & Test
 
 ```bash
-# Run all tests (Python 3.14+ required) — 48 py + 13 script tests
+# Run all tests (Python 3.14+ required) — 53 py + 13 script tests
 bash scripts/ci-test.sh   # 本地与 GitHub Actions ci.yml 同一入口
 ```
 
