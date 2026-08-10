@@ -166,16 +166,38 @@ class MemoryBackend:
         weight = math.exp(-age_hours / effective_strength)
         return max(min_weight, min(1.0, weight))
 
+    @staticmethod
+    def emotion_tag_similarity(mem_tag, req_tag) -> float:
+        """B2: 情绪标签相似度（0~1）= 请求档位与记忆档位匹配的维度占比。
+
+        记忆或请求任一缺 emotion_tag（None/非 dict/空 dict）→ 0（不加权）。
+        user_mood 键存在时也参与比对（写侧打标含 user_mood）。
+        """
+        if not isinstance(mem_tag, dict) or not isinstance(req_tag, dict) or not req_tag:
+            return 0.0
+        matched = sum(1 for k, v in req_tag.items() if mem_tag.get(k) == v)
+        return matched / len(req_tag)
+
     def _apply_forgetting(self, results: list[dict], now: datetime,
                           strength: float = None, min_weight: float = None,
                           prefer_categories: list[str] = None,
-                          limit: int = None) -> list[dict]:
-        """Ebbinghaus 权重重排核心（search_with_forgetting 等共用）。"""
+                          limit: int = None,
+                          emotion_tag: dict = None,
+                          emotion_tag_weight: float = 0.0) -> list[dict]:
+        """Ebbinghaus 权重重排核心（search_with_forgetting 等共用）。
+
+        B2: emotion_tag（请求当前情绪）+ emotion_tag_weight>0 时，对带 emotion_tag
+        的记忆按相似度加权 ×(1 + weight × sim)；weight 默认 0 → 恒等关闭。
+        """
         for mem in results:
             mem["_ebbinghaus_weight"] = self.ebbinghaus_weight(
                 mem, now, strength, min_weight
             )
             mem["_score"] = mem.get("importance", 0.5) * mem["_ebbinghaus_weight"]
+            if emotion_tag and emotion_tag_weight > 0:
+                sim = self.emotion_tag_similarity(mem.get("emotion_tag"), emotion_tag)
+                if sim > 0:
+                    mem["_score"] *= (1.0 + emotion_tag_weight * sim)
         if prefer_categories:
             for mem in results:
                 if mem.get("memory_category") in prefer_categories:
@@ -191,23 +213,35 @@ class MemoryBackend:
                                 min_importance: float = 0.3,
                                 now: datetime = None,
                                 strength: float = None,
-                                min_weight: float = None) -> list[dict]:
-        """search() 的包装，结果按遗忘权重重排序（新/重要记忆在前）。"""
+                                min_weight: float = None,
+                                emotion_tag: dict = None,
+                                emotion_tag_weight: float = 0.0) -> list[dict]:
+        """search() 的包装，结果按遗忘权重重排序（新/重要记忆在前）。
+
+        B2: emotion_tag + emotion_tag_weight 透传给 _apply_forgetting（情绪相近加权）。
+        """
         results = self.search(query, limit=limit * 3, category=category,
                               min_importance=min_importance)
         if not results:
             return []
         if now is None:
             now = datetime.now(CST)
-        return self._apply_forgetting(results, now, strength, min_weight, limit=limit)
+        return self._apply_forgetting(results, now, strength, min_weight, limit=limit,
+                                      emotion_tag=emotion_tag,
+                                      emotion_tag_weight=emotion_tag_weight)
 
     def user_relevant_with_forgetting(self, limit: int = 20,
                                        min_importance: float = 0.3,
                                        prefer_categories: list[str] = None,
                                        now: datetime = None,
                                        strength: float = None,
-                                       min_weight: float = None) -> list[dict]:
-        """user_relevant() 的包装，结果按遗忘权重重排序（偏好类别 ×1.2）。"""
+                                       min_weight: float = None,
+                                       emotion_tag: dict = None,
+                                       emotion_tag_weight: float = 0.0) -> list[dict]:
+        """user_relevant() 的包装，结果按遗忘权重重排序（偏好类别 ×1.2）。
+
+        B2: emotion_tag + emotion_tag_weight 透传给 _apply_forgetting。
+        """
         results = self.user_relevant(limit=limit * 3, min_importance=min_importance,
                                       prefer_categories=prefer_categories)
         if not results:
@@ -215,15 +249,22 @@ class MemoryBackend:
         if now is None:
             now = datetime.now(CST)
         return self._apply_forgetting(results, now, strength, min_weight,
-                                      prefer_categories=prefer_categories, limit=limit)
+                                      prefer_categories=prefer_categories, limit=limit,
+                                      emotion_tag=emotion_tag,
+                                      emotion_tag_weight=emotion_tag_weight)
 
     def random_memory_with_forgetting(self, category: str = None,
                                        min_importance: float = 0.5,
                                        prefer_categories: list[str] = None,
                                        now: datetime = None,
                                        strength: float = None,
-                                       min_weight: float = None) -> dict | None:
-        """random_memory() 的包装，用遗忘权重加权随机（新记忆更可能被选中）。"""
+                                       min_weight: float = None,
+                                       emotion_tag: dict = None,
+                                       emotion_tag_weight: float = 0.0) -> dict | None:
+        """random_memory() 的包装，用遗忘权重加权随机（新记忆更可能被选中）。
+
+        B2: emotion_tag + emotion_tag_weight 透传给 user_relevant_with_forgetting。
+        """
         if prefer_categories is None:
             prefer_categories = ["preferences", "entities", "events", "profile"]
 
@@ -231,6 +272,7 @@ class MemoryBackend:
             limit=50, min_importance=min_importance,
             prefer_categories=prefer_categories,
             now=now, strength=strength, min_weight=min_weight,
+            emotion_tag=emotion_tag, emotion_tag_weight=emotion_tag_weight,
         )
         if not relevant:
             return None

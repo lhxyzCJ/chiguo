@@ -13,6 +13,8 @@
 import json
 import os
 import random
+import re
+import math
 import hashlib
 import shutil
 import sys
@@ -113,6 +115,53 @@ def _coerce_dataclass_fields(fields: dict, cls) -> dict:
 BASELINE_DEFAULTS = {"loneliness": 100.0, "anxiety": 100.0, "affection": 0.0}
 
 
+# ── B1: 事件类型化情绪 delta（event_delta_enabled 默认 False → 恒等，可灰度）──
+# 对标 pad-plus-ai event_listener：按 analysis 事件类型直接加减情绪（规则表语义，
+# 不走 impact_inertia 阻尼）。情绪维度取值域与 chiguo_state 保持一致。
+EVENT_DELTA = {
+    "praise":        {"loneliness": -3.0, "affection": 2.0},    # 夸奖 → 孤独降、好感升
+    "criticism":     {"loneliness": 2.0, "anxiety": 3.0},       # 批评 → 孤独升、不安升
+    "contradiction": {"anxiety": 4.0},                           # 反驳/抬杠 → 不安升
+    "comfort":       {"anxiety": -3.0, "affection": 1.5},       # 安慰 → 不安降、好感微升
+    "new_topic":     {"affection": 1.0},                         # 主动换话题 → 好感微升
+    "question":      {"affection": 0.8},                         # 提问 → 好感微升
+    "complaint":     {"anxiety": 2.0},                           # 抱怨 → 不安升
+}
+
+# B1: 事件类型宽松匹配别名（归一化后的原始串 → 规范事件类型）
+EVENT_TYPE_SYNONYMS = {
+    "praise": "praise", "夸": "praise", "夸奖": "praise", "表扬": "praise",
+    "赞": "praise", "赞美": "praise",
+    "criticism": "criticism", "批评": "criticism", "责备": "criticism",
+    "骂": "criticism", "指责": "criticism",
+    "contradiction": "contradiction", "反驳": "contradiction", "抬杠": "contradiction",
+    "comfort": "comfort", "安慰": "comfort", "哄": "comfort", "安抚": "comfort",
+    "new_topic": "new_topic", "newtopic": "new_topic", "换话题": "new_topic", "新话题": "new_topic",
+    "question": "question", "提问": "question", "问": "question",
+    "complaint": "complaint", "抱怨": "complaint", "吐槽": "complaint",
+}
+
+
+def emotion_tag_snapshot(emotion) -> dict:
+    """B2: 情绪 → 离散档标签（写侧打标用，读侧加权比对）。
+
+    档位阈值（low ≤30 / high ≥70，中段为 mid）与触发/分类经验保持一致；
+    任何取值都映射到 {low, mid, high} 三档之一，标签可直接存 mem0 metadata。
+    """
+    def _level(v: float) -> str:
+        if v <= 30:
+            return "low"
+        if v >= 70:
+            return "high"
+        return "mid"
+    return {
+        "loneliness": _level(emotion.loneliness),
+        "affection": _level(emotion.affection),
+        "anxiety": _level(emotion.anxiety),
+        "energy": _level(emotion.energy),
+    }
+
+
 @dataclass
 class CooldownState:
     last_message_at: str | None = None
@@ -136,6 +185,7 @@ class CooldownState:
     recv_dedup: dict | None = None  # v9: 最近一次用户消息去重标记 {"text_sha","at","analysis"}（bridge 确定性记录 + standing order 升级共用）
     drop_events: list[dict] = field(default_factory=list)  # A10: 回复饱和阻尼事件 [{time: iso, direction: str}]（30 分钟窗口滚动）
     user_mood: dict | None = None  # v1.11 ①: 最近一次用户情绪感知 {"mood","intensity","at"}（TTL 由读取端 mood_fresh 判定，旧状态缺省自动补 None）
+    reply_stats: dict = field(default_factory=dict)  # A2: 分类型回复率统计 {trigger_type: {"sent": n, "replied": m}}（触发权重反馈闭环，daemon 发送时 sent+1、--user-msg 回复时 replied+1）
 
     def __post_init__(self):
         # v6: 睡眠窗口来源配置（非 dataclass 字段，不序列化）。ChiguoState 负责注入。
@@ -812,15 +862,27 @@ class ChiguoState:
         # 从未交互过 → 返回默认中性状态（墙钟，睡眠也计入天数）
         silent_h = self.cooldown.silent_hours(now, wall=True)
         if silent_h > 720:  # 30 天从未交互
-            return {
-                "posterior": {"chatting": 0.05, "browsing": 0.50, "busy": 0.10,
-                              "sleeping": 0.05, "away": 0.25, "needs_care": 0.05},
+            default_posterior = {"chatting": 0.05, "browsing": 0.50, "busy": 0.10,
+                                 "sleeping": 0.05, "away": 0.25, "needs_care": 0.05}
+            result = {
+                "posterior": dict(default_posterior),
                 "most_likely": "browsing",
                 "confidence": 0.50,
                 "utility": 0.53,
                 "should_send_bayesian": True,
                 "state_description": "未知（从未交互）",
             }
+            # A1: 仅启用时产出熵/透传后验（默认关闭恒等，与常规路径一致）
+            b_cfg = self.config.get("bayesian", {})
+            try:
+                ig_thr = float(b_cfg.get("info_gain_threshold", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                ig_thr = 0.0  # 非法阈值 → 关闭（恒等，与常规 A3 门控对称）
+            if b_cfg.get("transition_enabled", False) or ig_thr > 0:
+                entropy = -sum(p * math.log2(p) for p in default_posterior.values() if p > 0)
+                result["entropy"] = round(entropy, 4)
+                result["prev_posterior"] = dict(default_posterior)
+            return result
 
         last_latency = None
         if self.cooldown.reply_latencies:
@@ -850,6 +912,25 @@ class ChiguoState:
         }
 
         result = self.bayesian_estimator.infer(observations, now)
+
+        # ── A3: 信息增益门控「不确定才发」（info_gain_threshold 默认 0 关闭恒等，可灰度）──
+        # 对标 revive-companion 的信息增益/不确定性驱动探测：熵高（状态不确定）→ 微调
+        # Bayesian 发送效用（+info_gain_utility_bonus，默认 0.1）并放行 should_send_bayesian，
+        # 提高探询型消息的发送概率（agent 侧读 decision.bayesian.utility 感知）。
+        # 最简单实现：只上调 utility/放行标记；触发类型级加权为可扩展点。
+        b_cfg = self.config.get("bayesian", {})
+        try:
+            ig_threshold = float(b_cfg.get("info_gain_threshold", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            ig_threshold = 0.0  # 非法阈值 → 关闭（恒等，防 daemon 崩溃）
+        if ig_threshold > 0 and result.get("entropy", 0.0) >= ig_threshold:
+            try:
+                ig_bonus = float(b_cfg.get("info_gain_utility_bonus", 0.1))
+            except (TypeError, ValueError):
+                ig_bonus = 0.1
+            result["utility"] = round(result.get("utility", 0.0) + ig_bonus, 4)
+            result["should_send_bayesian"] = True
+            result["info_gain_boost"] = True
         return result
 
     # ── v4: 人格自适应 ─────────────────────────────────────
@@ -1373,7 +1454,11 @@ class ChiguoState:
         供 on_user_message（首次记录）与 recv_dedup 升级路径（bridge 已记录后
         standing order 补分析）共用——只叠加分析维度，不重复基础回复效果。
         v1.11 ①: 额外消费 user_mood（用户情绪感知）——写入 cooldown.user_mood
-        并叠加情绪 delta（系数默认 0 关闭）。"""
+        并叠加情绪 delta（系数默认 0 关闭）。
+        B1: 事件类型化情绪 delta 最先应用（规则表直接加减，_anxiety_before_analysis
+        在其后取值 → 事件 delta 不被 anxiety_sensitivity 二次缩放）。"""
+        # ── B1: 事件类型化情绪 delta（event_delta_enabled 默认 False 关闭恒等）──
+        self.apply_event_delta(self._extract_event_type(analysis), now or datetime.now(CST))
         self._anxiety_before_analysis = self.emotion.anxiety
         self._apply_emotion_impact(analysis, now)
 
@@ -1424,6 +1509,83 @@ class ChiguoState:
         else:
             self.cooldown.user_mood = {
                 "mood": mood, "intensity": intensity, "at": now.isoformat()}
+
+    # ── B1: 事件类型化情绪 delta（event_delta_enabled 默认 False → 恒等，可灰度）──
+
+    @staticmethod
+    def _normalize_event_type(event_type: str) -> str:
+        """B1: 事件类型宽松归一化（小写 + 去标点，保留中文/字母/数字/下划线）。
+        下划线保留以便规范键 new_topic 直接命中规则表；空格等其余字符去除。"""
+        s = str(event_type or "").strip().lower()
+        return re.sub(r"[^a-z0-9_一-鿿]", "", s)
+
+    def _extract_event_type(self, analysis: dict) -> str | None:
+        """B1: 从 analysis JSON 宽松提取事件类型。
+
+        优先显式 event_type/event 键；缺省按信号推断（warmth 正负 → 夸奖/批评、
+        user_mood 低落 → comfort、有 topic → new_topic）。返回原始字符串，
+        由 apply_event_delta 内部归一化+别名映射；无事件 → None（零效果）。
+        """
+        if not isinstance(analysis, dict):
+            return None
+        for key in ("event_type", "event"):
+            v = analysis.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        try:
+            warmth = float(analysis.get("warmth", 0.0))
+        except (TypeError, ValueError):
+            warmth = 0.0
+        mood = analysis.get("user_mood")
+        if isinstance(mood, str) and mood.strip().lower() in ("low", "distressed"):
+            return "comfort"
+        if warmth > 0.3:
+            return "praise"
+        if warmth < -0.2:
+            return "criticism"
+        if analysis.get("topic"):
+            return "new_topic"
+        return None
+
+    def apply_event_delta(self, event_type: str, now: datetime | None = None):
+        """B1: 事件类型化情绪 delta 入口（规则表命中直接加减，不走 inertia）。
+
+        now 保留为签名扩展位（未来可做按时间衰减）；当前直接加减。未知事件类型
+        → 零效果。event_delta_enabled=False（默认）→ 整体恒等跳过。
+        """
+        cfg = self.config.get("emotion", {})
+        if not cfg.get("event_delta_enabled", False):
+            return
+        if not event_type:
+            return
+        key = self._normalize_event_type(event_type)
+        key = EVENT_TYPE_SYNONYMS.get(key, key)
+        delta = EVENT_DELTA.get(key)
+        if not delta:
+            return
+        for dim, d in delta.items():
+            if hasattr(self.emotion, dim):
+                setattr(self.emotion, dim, getattr(self.emotion, dim) + d)
+
+    # ── A2: 分类型回复率统计（触发权重反馈闭环的数据源）──
+
+    def record_trigger_sent(self, trigger_type: str):
+        """A2: 发送一条消息 → 该触发类型 sent+1（daemon record_send_text 调用）。"""
+        if not trigger_type:
+            return
+        stats = self.cooldown.reply_stats.setdefault(str(trigger_type), {"sent": 0, "replied": 0})
+        stats["sent"] = stats.get("sent", 0) + 1
+
+    def record_trigger_replied(self):
+        """A2: 收到一次回复 → 最近发送触发类型的 replied+1（daemon --user-msg 调用）。
+
+        归因取 trigger_history 最近一条（与 A6 repeat 阻尼同源）；无历史则零效果。
+        """
+        if not self.cooldown.trigger_history:
+            return
+        trigger_type = self.cooldown.trigger_history[-1]
+        stats = self.cooldown.reply_stats.setdefault(str(trigger_type), {"sent": 0, "replied": 0})
+        stats["replied"] = stats.get("replied", 0) + 1
 
     def on_user_message(self, now: datetime, msg_length: int = 10,
                          analysis: dict | None = None):

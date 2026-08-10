@@ -10,6 +10,7 @@ import random
 from datetime import datetime
 
 from chiguo_math import weighted_trigger_choice, in_quiet_window, jaccard_3gram
+from chiguo_state import emotion_tag_snapshot
 from solar_terms import SolarTerms
 
 
@@ -211,12 +212,35 @@ class TopicPicker:
 
     # ── 来源 2：mem0 记忆 ────────────────────────────────
 
+    def _emotion_tag_kwargs(self) -> dict:
+        """B2: 情绪-记忆耦合读侧上下文（kwargs 形式，供记忆检索 **展开）。
+
+        [memory].emotion_tagging=True 且 emotion_tag_weight>0 时返回
+        {"emotion_tag": 当前情绪快照, "emotion_tag_weight": 权重}；
+        否则返回 {}（恒等——不新增调用参数，兼容不认这两个键的 mock/旧实现）。
+        state.config 缺失/非 dict 亦安全回退 {}（默认关闭恒等）。
+        """
+        cfg = getattr(self.state, "config", None) or {}
+        mem_cfg = cfg.get("memory", {}) if isinstance(cfg, dict) else {}
+        if not mem_cfg.get("emotion_tagging", False):
+            return {}
+        try:
+            weight = float(mem_cfg.get("emotion_tag_weight", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            weight = 0.0
+        if weight <= 0:
+            return {}
+        return {"emotion_tag": emotion_tag_snapshot(self.state.emotion),
+                "emotion_tag_weight": weight}
+
     def _memory_topic(self) -> dict | None:
         """基于 mem0 随机记忆的话题。数据库不可用时静默跳过。
         v4: 使用 Ebbinghaus 遗忘权重（新记忆更可能被选中）。
-             50% 概率使用 search_with_forgetting 做相关性搜索。"""
+             50% 概率使用 search_with_forgetting 做相关性搜索。
+        B2: [memory].emotion_tagging=True 时按当前情绪相近加权记忆检索。"""
         if not self.state.memory_bridge.available:
             return None
+        emo_kw = self._emotion_tag_kwargs()
         mem = None
         # ── v4: 50% 概率用 Ebbinghaus 搜索（相关性），50% 随机 ──
         if random.random() < 0.5:
@@ -227,7 +251,7 @@ class TopicPicker:
                 queries.insert(0, recent[-1])
             for q in queries[:2]:  # 最多试 2 个查询
                 results = self.state.memory_bridge.search_with_forgetting(
-                    q, limit=3, min_importance=0.3
+                    q, limit=3, min_importance=0.3, **emo_kw
                 )
                 if results:
                     mem = random.choice(results)
@@ -237,6 +261,7 @@ class TopicPicker:
             mem = self.state.memory_bridge.random_memory_with_forgetting(
                 min_importance=0.5,
                 prefer_categories=["preferences", "entities", "events"],
+                **emo_kw,
             )
         if not mem:
             return None
@@ -361,10 +386,13 @@ class TopicPicker:
         v4: 使用 Ebbinghaus 遗忘权重。"""
         if not self.state.memory_bridge.available:
             return None
+        # B2: 情绪-记忆耦合读侧（emotion_tagging=True 时按当前情绪相近加权）
+        emo_kw = self._emotion_tag_kwargs()
         # ── v4: Ebbinghaus 加权搜索 ──
         mem = self.state.memory_bridge.random_memory_with_forgetting(
             min_importance=0.5,
             prefer_categories=["preferences"],
+            **emo_kw,
         )
         if not mem:
             return None

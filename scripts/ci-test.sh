@@ -65,6 +65,11 @@ uv run python tests/test_attention_tiers.py && uv run python tests/test_availabi
 uv run python tests/test_trigger_scale.py && uv run python tests/test_isolation.py && \
 uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py && \
 uv run python tests/test_memory_backends.py && \
+uv run python tests/test_bayesian_transition.py && \
+uv run python tests/test_info_gain.py && \
+uv run python tests/test_reply_feedback.py && \
+uv run python tests/test_event_delta.py && \
+uv run python tests/test_emotion_tagging.py && \
 uv run python tests/test_docs_sync.py
 ); then
   echo "TEST FAILED" >&2
