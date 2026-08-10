@@ -898,7 +898,9 @@ class DecisionEngine:
             "instruction": instruction,
         }
 
-    RECV_DEDUP_WINDOW_S = 30  # v9: 补报升级判定的极短窗口（<30s 才视为 bridge 补报）
+    RECV_DEDUP_WINDOW_S = 450  # v9+R1+R2: 补报升级判定窗口（须覆盖 bridge 两次 daemon 调用间的 agent 分析往返：
+                               #  recall 两趟 agent 路径最坏 420s：getAttention≤30s + askAgent 第一趟≤180s
+                               #  + --schedule-recall daemon≤30s + runAgentRun 第二趟 agent≤180s；余量 30s）
 
     def record_user_message(self, text: str, analysis_json: str | None = None):
         now = datetime.now(CST)
@@ -921,7 +923,7 @@ class DecisionEngine:
             # 同一条消息会被记录两次：bridge 先确定性 --user-msg（无分析），
             # standing order 随后补 --user-msg --analysis。基础回复效果
             # （延迟/情绪骤降/好感/元气）只应应用一次；第二次只补分析微调。
-            # 仅当上一条同文本记录"无分析"且时间差极短（<30s）时，本条才视为
+            # 仅当上一条同文本记录"无分析"且时间差极短（<RECV_DEDUP_WINDOW_S）时，本条才视为
             # bridge 补报的升级副本；其余同文本（已升级过的、或时间差较长的）
             # 一律视为用户真实重发 → 走完整 on_user_message。
             text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -1730,6 +1732,17 @@ def main():
         engine.record_user_message(args.user_msg, args.analysis)
         # 用户刚发消息 → 立即评估一次（情绪最新，最佳联系窗口）
         decision = engine.evaluate()
+        # v1.11+R2 (review R2): --user-msg 由 bridge 在回复链中调用，其实际回复经 agent
+        # 另路生成并发送；此路径 evaluate() 若命中 send 分支，booking 的状态
+        # （能量/每日额度/未回复计数/Hawkes 事件）无人消费 → 幻影记账。
+        # 立即按"未送达"退款回滚（复用 v6 反馈闭环），等真实发送路径再记账。
+        # 回滚范围（refund_send）：energy/anxiety/messages_today/messages_without_reply/
+        # Hawkes 事件/last_longing_break_at；一次性标记不回滚（接受取舍）：
+        # morning_sent/night_sent/last_triggered_at/trigger_history/adapt_personality
+        # 在本次 evaluate 已写入，退回后仍保留（防下次 tick 重复触发仪式/改人格）。
+        if decision["action"] == "send":
+            engine.record_send_result(decision.get("msg_id", ""), "failed",
+                                      error="phantom_send_reply_path")
         if args.compact and decision["action"] == "idle":
             compact = {"action": "idle", "time": datetime.now(CST).isoformat()}
             if "next_evaluation_at" in decision:
