@@ -89,6 +89,15 @@ class MessageComposer:
             {"text": "憋不住——'本来不想打扰哥哥的但是...'，积累的思念溢出"},
             {"text": "自然流露——没想好理由，就是突然想跟哥哥说话"},
         ],
+        "follow_up": [
+            {"text": "接话茬——顺着哥哥上次说了一半的话题自然接上，显得一直在听"},
+            {"text": "趁热打铁——趁话题还没凉，把上次没聊完的延伸下去"},
+        ],
+        "comfort": [
+            {"text": "温柔安慰——察觉哥哥心情低落，先安抚情绪、表示陪伴，不追问不施压"},
+            {"text": "安静陪伴——不急着给建议，先让哥哥知道有人在身边"},
+            {"text": "递台阶——给哥哥一个不用强撑的理由，让他能放松下来"},
+        ],
         "compensate": [
             {"text": "两不相欠——用'扯平了'包装关心（'上次的奶茶，扯平。'）"},
             {"text": "快过期了——'再不吃就过期了'式补偿邀请"},
@@ -168,6 +177,13 @@ class MessageComposer:
         "compensate": "attention_seek",
         "longing": "attention_seek",
         "reflect": "attention_seek",
+        # comfort/follow_up 无对应类别 → 均不映射：
+        # comfort 无对应类别（personality/*.toml 七类均非安慰向）→ 不映射，
+        # cue 台词留空走 A8 专属兜底池，避免嘴硬台词污染安慰语境（review R8）。
+        # follow_up 原复用 memory 类别（v7），但 memory 含 deredere 忧郁台词
+        # （"我到底，是为了什么，才那么努力的呢。"），带 cue 时 _fallback_text
+        # 优先取 cue templates 会遮蔽 follow_up 专属接话池 → 改为不映射（G8 自审），
+        # 接话茬应延续话题而非无指向开场。
     }
 
     def __init__(self, state, config: dict = None):
@@ -389,6 +405,16 @@ class MessageComposer:
             weights["playful_bubbly"] *= 1.2
         elif trigger_type == "night":
             weights["tsundere_soft"] *= 1.2
+        elif trigger_type == "comfort":
+            # 安慰语境 → 安抚系 cue 占优，压嘴硬/玩闹（review R8：勿用试探傲娇语气安慰）
+            weights["caring_gentle"] *= 1.8
+            weights["dere_dere"] *= 1.3
+            weights["tsundere_classic"] *= 0.3
+            weights["playful_bubbly"] *= 0.5
+        elif trigger_type == "follow_up":
+            # 接话茬 → 自然延续，轻快系微升
+            weights["playful_bubbly"] *= 1.2
+            weights["tsundere_soft"] *= 1.2
 
         return weights
 
@@ -494,12 +520,21 @@ class MessageComposer:
 # 注意：INTENTS 的 text 是给 LLM 的内部意图指示（如「轻松试探——假装恰好想到哥哥」），
 # 不可直发用户，故用固定可发送文案随机一条。
 _FALLBACK_LINES = ("想哥哥了。", "哥哥在干嘛呀？", "今天过得怎么样？", "有点想你了。")
+# A8 兜底专属池：通用池"想哥哥了"对安慰/接话茬语境不当（review R8）——
+# comfort 应安抚而非示弱，follow_up 应延续话题而非无指向开场。
+_FALLBACK_BY_TRIGGER = {
+    "comfort": ("哥哥是不是心情不太好呀……", "别一个人撑着啦，跟我说说也好。",
+                "累了就歇一歇，我一直都在的。"),
+    "follow_up": ("对了，哥哥之前说的那件事……后来怎么样了？",
+                  "哥哥，你上次提的那个，我还记着呢。"),
+}
 
 
-def _fallback_text(combo: dict) -> str:
+def _fallback_text(combo: dict, trigger_type: str = "") -> str:
     """从 combo 拼 1-3 句可发送文本。
     优先 cue 台词模板（personality/*.toml 的 trigger_templates，直出）；
-    无模板（size=1 等）→ 固定文案池随机一条。剥离行号注释（如 （L1069 报单风早安））。
+    无模板（size=1 等）→ 固定文案池随机一条（comfort/follow_up 走专属池）。
+    剥离行号注释（如 （L1069 报单风早安））。
     """
     lines: list[str] = []
     cue = combo.get("cue")
@@ -516,7 +551,8 @@ def _fallback_text(combo: dict) -> str:
             cleaned.append(line)
     if not cleaned:
         # 模板全被过滤（占位符/空行）→ 回退固定可发送文案池
-        cleaned = [random.choice(_FALLBACK_LINES)]
+        pool = _FALLBACK_BY_TRIGGER.get(trigger_type, _FALLBACK_LINES)
+        cleaned = [random.choice(pool)]
     text = "\n".join(cleaned)
     if len(text) > 500:
         text = text[:500]  # 兜底文本长度上限，防超长直发
@@ -557,7 +593,7 @@ def _cli_main(argv=None) -> int:
     composer = MessageComposer(state_stub, config={})
     now = datetime.now(cst)
     combo = composer.select_combo(trigger_type, now)
-    text = _fallback_text(combo)
+    text = _fallback_text(combo, trigger_type)
     if not text:
         print("composer fallback: 无可用模板", file=sys.stderr)
         return 1

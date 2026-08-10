@@ -192,6 +192,54 @@ def test_reflect_trigger_has_intent():
     print(f"  OK test_reflect_trigger_has_intent: {combo['intent']['text'][:60]}")
 
 
+def test_comfort_followup_have_own_intents():
+    """comfort/follow_up 有自己的 intent，不回退 lonely_low（review R8）"""
+    c = make_composer()
+    now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+    cft = c.select_combo("comfort", now)["intent"]["text"]
+    assert any(w in cft for w in ["安慰", "陪伴", "台阶"]), f"comfort intent 不当: {cft}"
+    fup = c.select_combo("follow_up", now)["intent"]["text"]
+    assert any(w in fup for w in ["接话茬", "趁热打铁", "延伸", "话题"]), \
+        f"follow_up intent 不当: {fup}"
+    print("  OK test_comfort_followup_have_own_intents")
+
+
+def test_fallback_text_comfort_not_generic():
+    """A8 兜底：comfort 走专属安慰池，不走通用池'想哥哥了'（review R8）"""
+    from chiguo_composer import _fallback_text
+    for _ in range(20):
+        t = _fallback_text({"cue": None}, "comfort")
+        assert "想哥哥了" not in t, f"comfort 兜底误走通用池: {t}"
+    print("  OK test_fallback_text_comfort_not_generic")
+
+
+def test_fallback_text_followup_not_memory_templates():
+    """A8 兜底：follow_up 走专属接话池，不被 personality memory 模板遮蔽（G8 自审）。
+
+    修复前 TRIGGER_TO_TEMPLATE['follow_up']='memory' → 带 cue 时 _fallback_text 优先取
+    cue templates，直发 deredere memory 忧郁台词（"我到底，是为了什么，才那么努力的
+    呢。"）；修复后 follow_up 无 toml 映射 → cue 台词恒空 → 必走
+    _FALLBACK_BY_TRIGGER['follow_up'] 专属池。"""
+    from chiguo_composer import _FALLBACK_BY_TRIGGER, _fallback_text
+    pool = set(_FALLBACK_BY_TRIGGER["follow_up"])
+    c = make_composer()
+    now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+    # follow_up 触发下任意 cue 均不得命中 personality toml 台词
+    for cue_name in c.cue_weights:
+        assert c._template_lines_for(cue_name, "follow_up") == [], \
+            f"follow_up cue {cue_name} 不应命中 toml 模板（会遮蔽专属池）"
+    # 真实 follow_up combo（含 cue 选中）→ 输出必为专属池台词
+    seen_cue = 0
+    for _ in range(40):
+        combo = c.select_combo("follow_up", now)
+        if combo.get("cue"):
+            seen_cue += 1
+        t = _fallback_text(combo, "follow_up")
+        assert t in pool, f"follow_up 兜底未走专属池: {t!r}"
+    assert seen_cue > 0, "应出现带 cue 的 follow_up combo"
+    print("  OK test_fallback_text_followup_not_memory_templates")
+
+
 if __name__ == "__main__":
     print("test_composer.py\n")
     tests = [
@@ -205,6 +253,9 @@ if __name__ == "__main__":
         test_compose_situation,
         test_all_trigger_types,
         test_reflect_trigger_has_intent,
+        test_comfort_followup_have_own_intents,
+        test_fallback_text_comfort_not_generic,
+        test_fallback_text_followup_not_memory_templates,
     ]
     for t in tests:
         t()
