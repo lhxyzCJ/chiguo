@@ -4,14 +4,34 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import re
+import json
+import tempfile
+import tomllib
+from pathlib import Path
+
 from datetime import datetime, timezone, timedelta
 CST = timezone(timedelta(hours=8))
 
 from chiguo_bayesian import UserStateEstimator, BayesianLearner
+from chiguo_state import ChiguoState
 
 
 def make_estimator():
     return UserStateEstimator({})
+
+
+def _make_state(temp_dir: str) -> ChiguoState:
+    """构造临时目录中的 ChiguoState（隔离配置/状态文件）。"""
+    src = Path("chiguo_proactive.toml").read_text()
+    src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                 f'mem0_qdrant_path = "{Path(temp_dir) / "no_qdrant"}"', src)
+    cfg_path = Path(temp_dir) / "chiguo_proactive.toml"
+    cfg_path.write_text(src)
+    with open(cfg_path, "rb") as f:
+        cfg = tomllib.load(f)
+    cfg["_base_dir"] = str(temp_dir)
+    return ChiguoState(cfg)
 
 
 def test_time_based_prior_midnight():
@@ -221,13 +241,48 @@ def test_likelihood_cache_persist_roundtrip():
     est2 = make_estimator()
     est2.restore_state_dict(sd)
     assert est2._get_likelihood("chatting", "reply_latency", "fast") == learned
-    # 坏数据不崩：非 dict / 段数不对 / 未知状态 / 非数值 → 丢弃，默认保留
+    # 坏数据不崩：非 dict / 段数不对 / 未知状态 / 非法观测维度或取值 / 非数值 → 丢弃，默认保留
     est3 = make_estimator()
     est3.restore_state_dict("notadict")
     est3.restore_state_dict({"garbage": 0.9, "only.two": 0.9,
-                             "bogus.key.v": 0.9, "chatting.reply_latency.fast": "NaN"})
+                             "bogus.key.v": 0.9, "chatting.reply_latency.fast": "NaN",
+                             "chatting.bogus_obs.fast": 0.9,     # 未知观测维度 → 丢弃
+                             "chatting.reply_latency.bogus_val": 0.9})  # 非法取值 → 丢弃
     assert est3._get_likelihood("chatting", "reply_latency", "fast") == 0.60  # 默认值保留
     print("  OK test_likelihood_cache_persist_roundtrip")
+
+
+def test_state_save_preserves_persisted_bayesian_cache():
+    """G8-Required-1: 进程未触碰 estimator 时 save 不丢弃磁盘已有的 bayesian 缓存。
+
+    流程：进程A 学习并落盘 bayesian → 进程B 加载后不触碰 estimator 直接 save
+    （典型：30 天无互动走 silent_h>720 早退路径）→ 进程C 重新加载，缓存仍在。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        # 进程 A：创建 estimator 学习一次并落盘
+        s1 = _make_state(td)
+        s1.bayesian_estimator.record_observation(
+            {"reply_latency": 0.05, "msg_length": 3, "silence_hours": 0.5}, "chatting"
+        )
+        learned = s1.bayesian_estimator._get_likelihood("chatting", "reply_latency", "fast")
+        assert learned != 0.60, "学习后应偏离默认值"
+        assert s1.save()
+        assert "bayesian" in json.loads(Path(s1.state_path).read_text())
+
+        # 进程 B：加载但全程不触碰 estimator（早退路径），直接 save
+        s2 = _make_state(td)
+        assert s2._bayesian_estimator is None, "进程B 不应已创建 estimator"
+        assert s2._bayesian_restored is not None, "磁盘缓存应已还原到内存"
+        assert s2.save()
+        # 核心回归断言：save 后磁盘缓存仍在（修复前被静默丢弃）
+        assert "bayesian" in json.loads(Path(s2.state_path).read_text())
+
+        # 进程 C：重新加载，缓存应保留且学习值不丢
+        s3 = _make_state(td)
+        assert s3._bayesian_restored is not None
+        assert s3._bayesian_restored.get("chatting.reply_latency.fast") == learned
+        assert s3.bayesian_estimator._get_likelihood("chatting", "reply_latency", "fast") == learned
+    print("  OK test_state_save_preserves_persisted_bayesian_cache")
 
 
 if __name__ == "__main__":
@@ -249,6 +304,7 @@ if __name__ == "__main__":
         test_record_observation_supervised,
         test_all_states_in_posterior,
         test_likelihood_cache_persist_roundtrip,
+        test_state_save_preserves_persisted_bayesian_cache,
     ]
     for t in tests:
         t()

@@ -35,6 +35,14 @@ class UserStateEstimator:
 
     STATES = ["chatting", "browsing", "busy", "sleeping", "away", "needs_care"]
 
+    # 合法观测空间（restore_state_dict 校验用）：obs_key → 合法 obs_value 集合。
+    # 与 _init_default_likelihoods 的经验参数表保持一致。
+    OBS_SPACE = {
+        "reply_latency": {"fast", "normal", "slow", "very_slow", "none"},
+        "msg_length": {"short", "medium", "long", "none"},
+        "silence": {"active", "recent", "moderate", "long"},
+    }
+
     # 状态 → 发送效用（越高越适合发送）
     UTILITY = {
         "chatting": 0.2,
@@ -390,13 +398,15 @@ class UserStateEstimator:
         }
 
     def restore_state_dict(self, data: dict) -> None:
-        """从持久化数据还原似然缓存。坏键（非 3 段 key / 非法状态 / 非数值 / 非有限值如 NaN）
-        丢弃，缺键保留默认值 → 还原幂等、不破坏默认参数表。"""
+        """从持久化数据还原似然缓存。坏键（非 3 段 key / 非法状态 / 非法观测维度或取值 /
+        非数值 / 非有限值如 NaN）丢弃，缺键保留默认值 → 还原幂等、不破坏默认参数表。"""
         if not isinstance(data, dict):
             return
         for k, v in data.items():
             parts = str(k).split(".")
             if len(parts) != 3 or parts[0] not in self.STATES:
+                continue
+            if parts[1] not in self.OBS_SPACE or parts[2] not in self.OBS_SPACE[parts[1]]:
                 continue
             try:
                 val = float(v)

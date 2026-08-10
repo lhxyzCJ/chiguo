@@ -735,10 +735,12 @@ class ChiguoState:
                 "last_tick": datetime.now(CST).isoformat(),
                 "tick_seq": self.tick_seq,
             }
-            # ── v1.11+R3: Bayesian 在线学习缓存持久化（本进程创建过才落盘，
-            # 未使用 Bayesian 的进程不写入 → 状态文件保持干净）──
-            if self._bayesian_estimator is not None:
-                payload["bayesian"] = self.bayesian_estimator.to_state_dict()
+            # ── v1.11+R3: Bayesian 在线学习缓存持久化（本进程创建过或磁盘已有缓存
+            # 才写入；未使用 Bayesian 且磁盘无缓存的进程不写入 → 状态文件保持干净）──
+            if self._bayesian_estimator is not None or self._bayesian_restored:
+                payload["bayesian"] = (self.bayesian_estimator.to_state_dict()
+                                       if self._bayesian_estimator is not None
+                                       else self._bayesian_restored)
             # ── v5: 校验和（SHA256 of compact JSON，防位翻转）──
             checksum = hashlib.sha256(
                 json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
