@@ -67,6 +67,39 @@ def test_validation_matrix():
     print("  OK test_validation_matrix")
 
 
+def test_interval_end_date_ordering():
+    """R11: 区间 end_date<date 死区间 → 拒绝;==date 单日退化 / >date 正常 → 接受。
+    双路径覆盖:when={"date","end_date"} 与顶层 end_date+when={"date"}。"""
+    with tempfile.TemporaryDirectory() as td:
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        # 路径①:when 内联区间,死区间 → 拒绝
+        for item in (
+            {"kind": "cancel", "period": 5, "when": {"date": "2026-08-20", "end_date": "2026-08-10"}},
+            {"kind": "exam_week", "when": {"date": "2026-08-20", "end_date": "2026-08-10"}, "label": "考"},
+        ):
+            try:
+                api.apply_override(item)
+                raise AssertionError(f"死区间应拒绝: {item}")
+            except ApiRejection as e:
+                assert e.category == "invalid_value", f"死区间类别, got {e.category}"
+        # 路径②:顶层 end_date + when 单 date,死区间 → 拒绝
+        try:
+            api.apply_override({"kind": "exam_week", "when": {"date": "2026-08-20"},
+                                "end_date": "2026-08-10", "label": "考"})
+            raise AssertionError("顶层 end_date 死区间应拒绝")
+        except ApiRejection as e:
+            assert e.category == "invalid_value"
+        # 单日退化:end_date == date → 接受
+        r = api.apply_override({"kind": "cancel", "period": 5,
+                                "when": {"date": "2026-08-20", "end_date": "2026-08-20"}})
+        assert r["ok"] is True
+        # 正常区间:end_date > date → 接受
+        r = api.apply_override({"kind": "cancel", "period": 5,
+                                "when": {"date": "2026-08-20", "end_date": "2026-08-24"}})
+        assert r["ok"] is True
+    print("  OK test_interval_end_date_ordering")
+
+
 def test_idempotent_write():
     with tempfile.TemporaryDirectory() as td:
         api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
@@ -242,10 +275,10 @@ def test_plan_store_and_confirm():
 
 if __name__ == "__main__":
     print("test_schedule_override.py\n")
-    tests = [test_apply_and_file_schema, test_validation_matrix, test_idempotent_write,
-             test_remove_override, test_cleanup_endpoints, test_corrupt_and_migration_order,
-             test_toml_exam_weeks_migration, test_toml_special_dates_migration,
-             test_plan_store_and_confirm]
+    tests = [test_apply_and_file_schema, test_validation_matrix, test_interval_end_date_ordering,
+             test_idempotent_write, test_remove_override, test_cleanup_endpoints,
+             test_corrupt_and_migration_order, test_toml_exam_weeks_migration,
+             test_toml_special_dates_migration, test_plan_store_and_confirm]
     for t in tests:
         t()
     print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

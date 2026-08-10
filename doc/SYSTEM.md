@@ -486,7 +486,7 @@ evaluate(now)
 
 **配额**：
 - 音乐话题共享日配额 2（`netease_daily_quota`）：daily（每日推荐）与 recent（播放历史）两源共享、跨天重置；双源全挂 → None 不消费配额
-- 故障话题日配额 1（`netease_fault_daily_quota`）：faulty 期间跳过网络直出故障话题，**不受上课/睡眠时段门控**，但发送仍受 daemon 总体发送门控（can_send/日限额）约束
+- 故障话题日配额 1（`netease_fault_daily_quota`）：faulty 期间跳过网络直出故障话题，**时段门禁前置——上课/睡眠窗口与正常话题同级静默（R13）**，窗口外照常产出；发送仍受 daemon 总体发送门控（can_send/日限额）约束；门禁前置还意味着上课/睡眠窗口内 netease 健康重探（refresh_health）与故障话题产出被延后到窗口外，属有意语义
 
 **随机选源**：`netease_source_weights`（默认 [0.5, 0.5]）加权随机选 daily（每日推荐）/recent（最近播放，取 playTime 最大者）；选中源不可用自动换另一源；负权重钳制非负、两权全 0 回退 [0.5, 0.5]。
 
@@ -588,7 +588,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
      降级: mem0 不可用 → available=False → 自动跳过
      - mem0 在 available 探测内**惰性导入**：未安装时 daemon 照常启动（import 失败也被 available=False 捕获）
      - 探测失败后按 60s 节流重试：`--loop` 长驻时故障恢复可自愈，不永久禁用
-     - 结果行防御：importance 的 None/NaN 统一清洗为默认 0.5，行级异常整体降级为空列表
+     - 结果行防御：importance 的 None/NaN 统一清洗为默认 0.5，行级异常整体降级为空列表；非字符串 created_at 转串解析、失败落 0.0（防 `_parse_iso_ts` 的 .replace AttributeError），单条脏行 try 隔离不拖垮整次检索（R14）
 
   ③ Ebbinghaus 遗忘曲线（v4）
      R = e^(-t / (S × importance))
@@ -631,6 +631,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 `schedule/anniversary.py`（AnniversaryManager）管理 `anniversaries.json`（原子写：tmp → os.replace）。一种类型：
 - **anniversary**: 每年重复，存 "MM-DD"（一次性倒计时 6c 起废弃，经 `--schedule-change` 写 reminder）
+- **形状防御（R12）**：`anniversaries.json` 顶层非 dict（list 等历史脏形状）→ 视同损坏置 `_corrupt`、合并默认纪念日，不崩 daemon 启动（原 `data.get` 对 list 抛 AttributeError 逃逸 try）
 
 **路径锚定（2026-07-31）**：无参构造时，若 cwd 已存在同名 `anniversaries.json` 则沿用（兼容旧版/隔离目录），否则锚定模块目录（项目根），防止从其他 cwd（如 /tmp）运行把数据写散；显式传绝对路径仍原样生效。
 
@@ -759,7 +760,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_math.py` | 纯数学库：sigmoid/decay/recover/elastic_recover/Hawkes/longing/Ebbinghaus + 交互矩阵/饱和阻尼（v1.10） | 无 |
 | `chiguo_personality.py` | Big Five + 角色特质（8 维人格）（v4） | 无 |
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态，在线学习）（v4） | 无 |
-| `schedule/` 包 | 课表/假期/纪念日/安排（15 模块）：`parser.py` 数据面（xlsx → JSON cache → 刷新）/ `parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `holiday.py` 节假日判断（2026 国务院安排 + 调休）/ `anniversary.py` 纪念日 CRUD / `override_store.py` 手动覆盖存储（0600）/ `plan_store.py` 日计划存储（0600）/ `api.py` 安排读写门面（校验 + 澄清接口）/ `sources.py` 课表检索源 / `day_plan.py` 日计划组装 / `resolve_when.py` 触发时机解析 / `attention.py` 注意力快照 / `recall.py` 安排回忆检索 / `confirm.py` 写后确认 / `replan.py` 复盘（--check 明日计划） | openpyxl（可选，惰性导入） |
+| `schedule/` 包 | 课表/假期/纪念日/安排（15 模块）：`parser.py` 数据面（xlsx → JSON cache → 刷新）/ `parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `holiday.py` 节假日判断（2026 国务院安排 + 调休）/ `anniversary.py` 纪念日 CRUD / `override_store.py` 手动覆盖存储（0600）/ `plan_store.py` 日计划存储（0600）/ `api.py` 安排读写门面（校验 + 澄清接口；区间 date/end_date 双路径统一校验 end_date≥date，死区间拒绝 R11）/ `sources.py` 课表检索源 / `day_plan.py` 日计划组装 / `resolve_when.py` 触发时机解析 / `attention.py` 注意力快照 / `recall.py` 安排回忆检索 / `confirm.py` 写后确认 / `replan.py` 复盘（--check 明日计划） | openpyxl（可选，惰性导入） |
 | `solar_terms.py` | 24 节气日期查询（零依赖） | 无 |
 | `memory/` 包 | **记忆后端抽象（v1.8 解耦，任意替换）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装）/ `mem0_backend.py` Mem0Backend（mem0ai：LLM 事实提取 + ollama 向量 + qdrant 嵌入式）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=Mem0Backend 别名 + CLI） | mem0ai+ollama（必需依赖；无 key/ollama 未启动 → available=False 优雅降级） |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康） | 无 |
@@ -799,13 +800,13 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `tests/test_circadian.py` | 生物钟学习单元测试（34 用例：环形滑动窗口/置信度/损坏数据防护/学习窗口作用于门禁/双桶分桶/迁移/按桶选窗/record_active 合并） | chiguo_circadian |
 | `tests/test_followup.py` | 接话茬单元测试（14 用例：pending 管理/钟形权重/多话题/记忆兜底/FakeBridge） | chiguo_state, chiguo_trigger, memory |
 | `tests/test_netease_proof.py` | 听歌反证单元测试（31 用例：fetch_recent_play 解析/缓存/降级 + `_api_get` 重试策略与每日推荐 schema 过滤 + 非 dict 响应降级 + 窗口内反证 sleeping 压制/按播放时刻分桶/逃生阀放行 + netease 跨触发注入规则） | netease.bridge, chiguo_daemon |
-| `tests/test_netease_service.py` | 网易云策略层单元测试（30 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题绕过门控+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | netease.service, netease.bridge |
+| `tests/test_netease_service.py` | 网易云策略层单元测试（34 用例：健康文件缺失/损坏重建/原子写/脏值类型回退/非法配置回退/check_health 非 dict 降级、音乐+故障双配额与跨天重置、随机选源比例分布（seed 固定 2000 次抽样 0.5±0.08）/换源兜底/双源全挂探针判定不消费、时段门控、故障话题受时段门禁（R13，上课/睡眠静默、窗口外产出）+配额、登录失效检测、重探间隔、恢复、抓取失败置故障下一轮产故障话题、素材无链接、最新播放、naive tz 补齐、源权重配置与负权重钳制、两阶段 peek 不消费/consume 确认/music_topic=peek+consume） | netease.service, netease.bridge |
 | `tests/test_composer_trade.py` | 组合权衡测试（5 用例：cue 权重重排、trade_tsundere 交易式撒娇） | chiguo_composer |
 | `tests/test_personality_init.py` | 初始人格值对齐原著测试（2 用例） | chiguo_personality |
 | `tests/test_toml_binding.py` | personality toml 接线测试（7 用例：toml 存在、meta.name、cue↔模板关联、参考台词注入） | chiguo_composer, chiguo_proactive.toml |
 | `tests/test_adapt_personality.py` | 基线回归防漂移测试（v10，2 用例：300 次热情回复不甜妹化/200 次沉默不极端化） | chiguo_personality |
-| `tests/test_anniversary.py` | 纪念日单元测试（6 用例：默认合并/special_dates 迁移/countdown 移除与 6c 迁移激活/损坏容错） | schedule.anniversary, schedule.api |
-| `tests/test_schedule_override.py` | 覆盖存储单元测试（9 用例：override_store/plan_store/confirm） | schedule.override_store, schedule.plan_store, schedule.confirm |
+| `tests/test_anniversary.py` | 纪念日单元测试（7 用例：默认合并/special_dates 迁移/countdown 移除与 6c 迁移激活/损坏容错/顶层 list 视同损坏 R12） | schedule.anniversary, schedule.api |
+| `tests/test_schedule_override.py` | 覆盖存储单元测试（10 用例：override_store/plan_store/confirm/区间死区间 R11） | schedule.override_store, schedule.plan_store, schedule.confirm |
 | `tests/test_day_plan.py` | 日计划单元测试（21 用例：sources/day_plan/resolve_when/api 写路径） | schedule.day_plan, schedule.sources, schedule.resolve_when |
 | `tests/test_recall.py` | 安排回忆检索测试（3 用例：日期/关键词/中文日期） | schedule.recall |
 | `tests/test_attention_tiers.py` | 注意力分层测试（3 用例：T1/T2/T3 组装、T2 阻塞、T3 窗口与今日例外） | schedule.attention |
