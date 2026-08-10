@@ -221,6 +221,15 @@ class ChiguoMonitor:
         if days > 0:
             since = self._now() - timedelta(days=days)
 
+        # ── D1: 主动消息效果评估（对标 ProactiveEval；[monitor].proactive_eval 默认 False 恒等）──
+        proactive_eval = bool(self._monitor_config.get("proactive_eval", False))
+        try:
+            replied_within_h = float(self._monitor_config.get("replied_within_hours", 24.0))
+        except (TypeError, ValueError):
+            replied_within_h = 24.0
+        send_events: list[tuple] = []  # [(t, trigger)] 按时间序（决策日志顺序）
+        recv_times: list = []  # 按时间序的 user-msg 到达时刻
+
         # ── 累加器 ──
         total_sends = 0
         total_idles = 0
@@ -285,6 +294,8 @@ class ChiguoMonitor:
 
                 trigger = entry.get("trigger", "?")
                 trigger_counts[trigger] += 1
+                # D1: 收集发送事件（时间 + trigger）供 proactive_stats 分组统计
+                send_events.append((t, trigger))
 
                 intensity = entry.get("intensity", "?")
                 intensity_counts[intensity] += 1
@@ -335,6 +346,10 @@ class ChiguoMonitor:
                 # 该记录是回复链内部回滚未送达的决策 booking，非真实发送失败。
                 elif entry.get("status") == "failed" and entry.get("error") != "phantom_send_reply_path":
                     send_failed += 1
+
+            elif action == "recv":
+                # D1: 用户消息到达时刻（主动消息效果评估的"已回复"数据源）
+                recv_times.append(t)
 
             # 情绪时间序列
             emo = state.get("emotion", {})
@@ -426,7 +441,37 @@ class ChiguoMonitor:
 
         mem0_likely = mem0_ok_count > 0
 
-        return {
+        # ── D1: 主动消息效果评估（按 trigger 分组：发送后 replied_within_h 内
+        # 收到首条 user-msg 视为已回复；双指针流式，一次遍历 O(n)）──
+        # 语义：一条 user-msg 至多算作一条主动消息的回复——命中窗口即消费
+        # （recv_ptr 前进），后续 send 不再重复计同一条回复（防串计）。
+        proactive_stats = None
+        if proactive_eval:
+            per_trigger: dict[str, dict] = {}
+            recv_ptr = 0
+            for s_time, trig in send_events:  # 决策日志时间序
+                bucket = per_trigger.setdefault(trig, {"sent": 0, "replied": 0})
+                bucket["sent"] += 1
+                while recv_ptr < len(recv_times) and recv_times[recv_ptr] <= s_time:
+                    recv_ptr += 1  # 跳过发送时刻之前的 user-msg（非本消息的回复）
+                if recv_ptr < len(recv_times):
+                    delta_h = (recv_times[recv_ptr] - s_time).total_seconds() / 3600.0
+                    if delta_h <= replied_within_h:
+                        bucket["replied"] += 1
+                        recv_ptr += 1  # 消费该回复：不重复计给更晚的 send
+            for trig, b in per_trigger.items():
+                b["reply_rate"] = round(b["replied"] / b["sent"], 3) if b["sent"] else 0.0
+            overall_sent = sum(b["sent"] for b in per_trigger.values())
+            overall_replied = sum(b["replied"] for b in per_trigger.values())
+            proactive_stats = dict(per_trigger)
+            proactive_stats["overall"] = {
+                "sent": overall_sent,
+                "replied": overall_replied,
+                "reply_rate": (round(overall_replied / overall_sent, 3)
+                               if overall_sent else 0.0),
+            }
+
+        out = {
             "period": {
                 "days": days if days > 0 else "all",
                 "from": first_time.isoformat() if first_time else None,
@@ -472,6 +517,10 @@ class ChiguoMonitor:
                 "failed": send_failed,
             },
         }
+        # D1: 默认关闭恒等——proactive_eval=False 时不新增输出键
+        if proactive_stats is not None:
+            out["proactive_stats"] = proactive_stats
+        return out
 
     @staticmethod
     def _weekday_name(d: int) -> str:

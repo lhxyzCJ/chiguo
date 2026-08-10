@@ -204,7 +204,8 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             ts = ts / 1000.0 if ts > 1e12 else ts  # epoch ms → s
             age = (now_ts - ts) / 3600
             if 0 < age <= fup_max:
-                text = (mem.get("l0_abstract") or mem.get("text") or "").strip()[:50]
+                # C3: l0_abstract 已废弃，text 兜底为准。
+                text = (mem.get("text") or mem.get("l0_abstract") or "").strip()[:50]
                 if text:
                     follow_entries.append(
                         ({"topic": text, "source": "memory",

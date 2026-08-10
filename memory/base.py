@@ -16,7 +16,18 @@ import math
 import random
 from datetime import datetime, timezone, timedelta
 
+from chiguo_math import jaccard_3gram  # C1: 文本相似度（零新依赖，3-gram Jaccard）
+
 CST = timezone(timedelta(hours=8))
+
+# ── C1: 确定性记忆巩固默认参数（config [memory].consolidate_* 可覆盖）──
+DEFAULT_CONSOLIDATE_SIM_THRESHOLD = 0.85   # jaccard_3gram 相似度阈值，≥ 视为近似重复
+DEFAULT_CONSOLIDATE_MIN_IMPORTANCE = 0.3   # 低于此重要度且超龄 → 过期候选
+DEFAULT_CONSOLIDATE_MAX_AGE_HOURS = 720.0  # 低重要度记忆超龄阈值（小时，720=30天）
+DEFAULT_CONSOLIDATE_PAIR_SCAN = 10         # 去重时每个候选最多向后比对行数（O(n·k) 有界）
+
+# ── C2: Ebbinghaus 复习强化默认参数（config [memory].reinforce_* 可覆盖）──
+DEFAULT_REINFORCE_BONUS = 0.0              # 每次召回 importance ×(1+bonus×count)；0=关闭恒等
 
 # ── Ebbinghaus 遗忘参数（v4）──
 DEFAULT_EBBINGHAUS_STRENGTH = 168.0   # 记忆强度 S（小时），越大遗忘越慢
@@ -88,6 +99,136 @@ class MemoryBackend:
         elif ts > 0:
             return datetime.fromtimestamp(ts, tz=CST)
         return datetime(1970, 1, 1, tzinfo=CST)
+
+    # ── C1: 确定性记忆巩固（无 LLM 的 Letta dreaming / Deep Dream 版）──
+
+    @staticmethod
+    def consolidate_plan(rows: list[dict], now: datetime,
+                         sim_threshold: float = DEFAULT_CONSOLIDATE_SIM_THRESHOLD,
+                         min_importance: float = DEFAULT_CONSOLIDATE_MIN_IMPORTANCE,
+                         max_age_hours: float = DEFAULT_CONSOLIDATE_MAX_AGE_HOURS,
+                         pair_scan: int = DEFAULT_CONSOLIDATE_PAIR_SCAN) -> dict:
+        """生成确定性巩固计划（纯函数，零 LLM，不写库）。
+
+        对标 Letta dreaming / CowAgent Deep Dream，但吸收思想不换库：
+          - 去重：按 text 的 jaccard_3gram 相似度 ≥ sim_threshold 找近似重复对，
+            保留 importance 高 / 时间新的一条（排序靠前者），另一条降权
+            （importance 减半 + `_consolidated` 标记 + consolidated_with）。
+          - 过期：importance < min_importance 且年龄 > max_age_hours → 标记
+            `_expired`（候选删除）。timestamp 缺失/非法（≤0）→ 年龄未知，不过期
+            （避免误删脏数据）。
+
+        rows 会被就地补标记/改 importance（消费方按需读改写）。
+        返回报告：{"demoted": [...], "expired": [...], "kept": [...]}，每条为行 dict。
+        """
+        if now is None:
+            now = datetime.now(CST)
+
+        def _age_hours(r: dict) -> float | None:
+            ts = r.get("timestamp") or 0
+            if not isinstance(ts, (int, float)) or ts <= 0:
+                return None
+            ts = ts / 1000.0 if ts > 1e12 else ts  # epoch ms → s
+            return max(0.0, (now.timestamp() - ts) / 3600.0)
+
+        # 排序：importance 高 / 时间新在前（前者为"保留方"）
+        # C3 兼容：timestamp 可能为 ISO 字符串/None/非数值（原始行直入纯函数时），
+        # 排序键归一化为数值，避免 float < str 抛 TypeError（年龄未知不过期）。
+        def _norm_ts(r: dict) -> float:
+            ts = r.get("timestamp")
+            return float(ts) if isinstance(ts, (int, float)) else 0.0
+        ordered = sorted(rows, key=lambda r: (MemoryBackend.clean_importance(r),
+                                              _norm_ts(r)),
+                         reverse=True)
+        demoted_ids: set[str] = set()
+        demoted: list[dict] = []
+        for i, keeper in enumerate(ordered):
+            if keeper.get("id") in demoted_ids:
+                continue  # 已被降权，不再作为保留方
+            for other in ordered[i + 1:i + 1 + max(pair_scan, 1)]:
+                if other.get("id") in demoted_ids:
+                    continue
+                sim = jaccard_3gram(keeper.get("text", ""), other.get("text", ""))
+                if sim >= sim_threshold:
+                    other["_consolidated"] = True
+                    other["consolidated_with"] = keeper.get("id")
+                    other["importance"] = MemoryBackend.clean_importance(other) / 2.0
+                    demoted.append(other)
+                    demoted_ids.add(other.get("id"))
+        # 过期：未参与去重的行，低重要度且超龄
+        expired: list[dict] = []
+        for r in ordered:
+            if r.get("id") in demoted_ids:
+                continue
+            age = _age_hours(r)
+            if age is None:
+                continue  # 年龄未知不过期
+            if MemoryBackend.clean_importance(r) < min_importance and age > max_age_hours:
+                r["_expired"] = True
+                expired.append(r)
+        kept = [r for r in ordered if r.get("id") not in demoted_ids
+                and not r.get("_expired")]
+        return {"demoted": demoted, "expired": expired, "kept": kept}
+
+    # ── C2: Ebbinghaus 复习强化（对标 FSRS：成功召回 → 强度 S 增大）──
+
+    def _recall_counts_dict(self) -> dict:
+        """惰性初始化 recall_count 表（内存侧；写回由 _persist_recall 钩子负责）。"""
+        if not hasattr(self, "_recall_counts"):
+            self._recall_counts = {}
+        return self._recall_counts
+
+    def _reinforce_attrs(self) -> tuple[bool, float]:
+        """读取 reinforce 配置（constructor kwargs 或子类属性；缺省关闭恒等）。"""
+        enabled = bool(getattr(self, "_reinforce_enabled", False))
+        try:
+            bonus = float(getattr(self, "_reinforce_bonus", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            bonus = 0.0
+        return enabled, bonus
+
+    def note_recalled(self, memory_ids: list[str] | None) -> int:
+        """C2: 记录记忆被召回（复习强化；[memory].reinforce_enabled 默认 False 恒等）。
+
+        被召回记忆 recall_count+1；importance 有效值 = importance × (1 + bonus×count)
+        （见 _effective_importance，读侧加权用）。写回由 _persist_recall 钩子完成：
+        基类 no-op（内存侧），Mem0Backend 覆写为 mem0 update_memory（有该能力时）。
+        返回本次记录条数。
+        """
+        enabled, bonus = self._reinforce_attrs()
+        if not enabled or bonus <= 0:
+            return 0  # 默认关闭：不引入任何副作用，read 侧纯函数语义保持
+        counts = self._recall_counts_dict()
+        n = 0
+        for mid in memory_ids or []:
+            if not mid:
+                continue
+            cnt = counts.get(mid, 0) + 1
+            counts[mid] = cnt
+            try:
+                self._persist_recall(mid, cnt)
+            except Exception:
+                pass  # 写回失败不阻断召回记录
+            n += 1
+        return n
+
+    def _persist_recall(self, memory_id: str, count: int):
+        """C2: 召回次数持久化钩子。基类 no-op；子类（Mem0Backend）覆写写回。"""
+        return None
+
+    def _effective_importance(self, mem: dict) -> float:
+        """C2: 记忆有效重要度 = importance × (1 + reinforce_bonus × recall_count)。
+
+        reinforce 关闭（默认）→ 恒等返回 raw importance（read 侧行为不变）。
+        """
+        imp = self.clean_importance(mem)
+        enabled, bonus = self._reinforce_attrs()
+        if not enabled or bonus <= 0:
+            return imp
+        cnt = self._recall_counts_dict().get(mem.get("id"), 0)
+        if cnt <= 0:
+            return imp
+        return min(1.0, imp * (1.0 + bonus * cnt))
 
     # ── 基类实现：用户相关召回（基于 search 原语）──────────
 
@@ -193,7 +334,8 @@ class MemoryBackend:
             mem["_ebbinghaus_weight"] = self.ebbinghaus_weight(
                 mem, now, strength, min_weight
             )
-            mem["_score"] = mem.get("importance", 0.5) * mem["_ebbinghaus_weight"]
+            # C2: importance 走 _effective_importance（reinforce 开启时被召回记忆更强）
+            mem["_score"] = self._effective_importance(mem) * mem["_ebbinghaus_weight"]
             if emotion_tag and emotion_tag_weight > 0:
                 sim = self.emotion_tag_similarity(mem.get("emotion_tag"), emotion_tag)
                 if sim > 0:
@@ -226,9 +368,12 @@ class MemoryBackend:
             return []
         if now is None:
             now = datetime.now(CST)
-        return self._apply_forgetting(results, now, strength, min_weight, limit=limit,
-                                      emotion_tag=emotion_tag,
-                                      emotion_tag_weight=emotion_tag_weight)
+        out = self._apply_forgetting(results, now, strength, min_weight, limit=limit,
+                                     emotion_tag=emotion_tag,
+                                     emotion_tag_weight=emotion_tag_weight)
+        # C2: 召回即强化（[memory].reinforce_enabled 开启时记录 recall_count）
+        self.note_recalled([m.get("id") for m in out])
+        return out
 
     def user_relevant_with_forgetting(self, limit: int = 20,
                                        min_importance: float = 0.3,
@@ -282,10 +427,15 @@ class MemoryBackend:
         weights = []
         for m in relevant:
             ebw = self.ebbinghaus_weight(m, now, strength, min_weight)
-            w = m.get("importance", 0.5) ** 2 * ebw
+            # C2: importance 走 _effective_importance（reinforce 开启时被召回记忆更强）
+            w = self._effective_importance(m) ** 2 * ebw
             weights.append(w)
 
         total = sum(weights)
         if total <= 0:
-            return random.choice(relevant)
-        return random.choices(relevant, weights=weights, k=1)[0]
+            picked = random.choice(relevant)
+        else:
+            picked = random.choices(relevant, weights=weights, k=1)[0]
+        # C2: 召回即强化（[memory].reinforce_enabled 开启时记录 recall_count）
+        self.note_recalled([picked.get("id")])
+        return picked
