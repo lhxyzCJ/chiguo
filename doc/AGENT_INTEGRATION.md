@@ -61,6 +61,8 @@ crontab */15 * * * * scripts/chiguo-tick.sh
   chiguo-main  = 回复侧（bridge 进程内 TurnQueue 串行）
   chiguo-send  = 主动发送（chiguo-tick.sh 经 AGENTRUN_SESSION 注入）
   两进程不同会话 → 无跨进程并发 turn；bridge 进程内 TurnQueue 兜底回复侧自身串行
+  /agent/prompt 发送侧端点（R20）与 askAgent 共用同一 TurnQueue —— 原实现直接调 __agentRpc.prompt()
+  绕过队列，并发 HTTP turn 会交错同一会话 RPC 调用，现由 startSendServer(bot, queue) 透传统一约束
 ```
 
 ### v1.11 RPC 常驻（可选项，默认 cron tick；互斥切换）
@@ -94,6 +96,8 @@ bash scripts/install_agent.sh --yes
 WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs   # spawn 回退路径
 WECHAT_BRIDGE_AGENT_RPC=1                                     # 1=回复链 RPC 优先（失败自动回退 spawn）
 WECHAT_BRIDGE_TOKEN=<随机 hex>                                # /send 与 /agent/prompt 共享 token（wechat-bridge.sh 生成，幂等保留）
+# loop 形态下 daemon _loop_send 的 /send 鉴权（R17）：install_agent.sh 生成 chiguo-daemon.service
+# 时注入 EnvironmentFile=-wechat-bridge/.env，systemd 常驻进程直接读同一份 WECHAT_BRIDGE_TOKEN
 ```
 
 daemon `[loop]` 段（--loop 发送侧内聚用）：
@@ -152,7 +156,8 @@ node scripts/agent-run.mjs --prompt <文本> --analysis-mode  # 情绪分析 + �
 - **输出解析**：NDJSON 取最后一条 `message_end` 的 text 拼接；analysis-mode 提取
   `<<ANALYSIS>>{...}<<END>>` 块
 - **失败语义**：`{"ok":false,"error":"..."}`；非零退出但 stdout 含完整回复 → salvage 不丢回复
-- 单测：`node tests/test_agent_run.mjs`（19 用例）
+- **stdout 字节上限（R19）**：Node `spawn` 忽略 `maxBuffer`，agent-run 手动按 `opts.maxBuffer ?? 16MB` 计数，超出即 SIGKILL 子进程并 reject（防无界输出累积拖垮 tick/bridge）；stderr 截断保留末 256KB
+- 单测：`node tests/test_agent_run.mjs`（49 用例）
 
 ## 三、chiguo-tick（系统 crontab 入口）
 

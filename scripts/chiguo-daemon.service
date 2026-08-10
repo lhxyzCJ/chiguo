@@ -8,11 +8,13 @@ Wants=chiguo-bridge.service
 
 [Service]
 Type=simple
+# R17: loop 模式经 bridge /agent/prompt 与 /send，须与 bridge 同源共享 token →
+# 加载 wechat-bridge/.env（含 WECHAT_BRIDGE_TOKEN）；'-' 前缀容忍 .env 缺失（后续补装不阻断）
+EnvironmentFile=-__REPO__/wechat-bridge/.env
 ExecStart=__PY__ __REPO__/chiguo_daemon.py --loop 900 --compact
 Restart=on-failure
 RestartSec=10
 WorkingDirectory=__REPO__
-# loop 模式经 bridge /agent/prompt 与 /send（toml [loop] 段配置），无需 wechat-bridge/.env
 
 [Install]
 WantedBy=multi-user.target

@@ -218,7 +218,12 @@ grep -q 'replan-tick' "$CRON_STATE" || fail "loop 模式应保留 replan-tick"
 echo "$OUT" | grep -q "chiguo-tick crontab" || fail "loop 模式应有移除提示"
 grep -q -- "--loop 900" "$TMP/systemd/chiguo-daemon.service" \
   || fail "loop unit 应写入 CHIGUO_SYSTEMD_DIR 且含 --loop 900: $(cat "$TMP/systemd/chiguo-daemon.service" 2>/dev/null)"
-pass "CHIGUO_DAEMON_LOOP=1 → 移除 tick 条目、保留 replan（防双发）"
+# R17: loop daemon unit 必须加载 wechat-bridge/.env（_loop_send 读 WECHAT_BRIDGE_TOKEN 防 403 共享鉴权）
+grep -q "EnvironmentFile=-" "$TMP/systemd/chiguo-daemon.service" \
+  || fail "loop unit 应含 EnvironmentFile=-（R17 共享 token）: $(cat "$TMP/systemd/chiguo-daemon.service" 2>/dev/null)"
+grep -q "wechat-bridge/.env" "$TMP/systemd/chiguo-daemon.service" \
+  || fail "loop unit EnvironmentFile 应指向 wechat-bridge/.env: $(cat "$TMP/systemd/chiguo-daemon.service" 2>/dev/null)"
+pass "CHIGUO_DAEMON_LOOP=1 → 移除 tick 条目、保留 replan（防双发）+ R17 EnvironmentFile"
 
 # ── 用例 16: loop 模式 dry-run → 待办含 daemon unit 提示且零写入 ──
 clean_home

@@ -54,7 +54,14 @@ case "$1" in
   is-enabled) exit 0 ;;
   daemon-reload) exit 0 ;;
   stop) exit 0 ;;
-  enable) exit 0 ;;
+  enable)
+    # R15: 若 ENFORCE_TEMP_DEAD=1 且 temp pidfile 仍存在 → enable 必败
+    #（证明 autostart 先 kill_temp 才启动 systemd 实例,防 18790 端口死锁）
+    if [ -n "${ENFORCE_TEMP_DEAD:-}" ] && [ -f "${ENFORCE_TEMP_DEAD_PIDFILE:-}" ]; then
+      echo "[fake-systemctl] enable 失败: temp 仍在运行" >> "$CALLS_LOG"
+      exit 1
+    fi
+    exit 0 ;;
   *) exit 0 ;;
 esac
 STUB
@@ -99,6 +106,20 @@ echo "$FAKE_TEMP_PID" > "$TMP/pid/bridge-temp.pid"
 [ ! -f "$TMP/pid/bridge-temp.pid" ] || fail "残留 temp pidfile 未被清理"
 kill "$FAKE_TEMP_PID" 2>/dev/null || true
 pass "autostart 清理 temp 残留"
+
+# ── 用例 4b: kill_temp 前置（R15）——enable chiguo-bridge 前 temp 必须已死（18790 端口死锁修复）──
+sleep 300 & FAKE_TEMP_PID2=$!
+echo "$FAKE_TEMP_PID2" > "$TMP/pid/bridge-temp.pid"
+export ENFORCE_TEMP_DEAD=1 ENFORCE_TEMP_DEAD_PIDFILE="$TMP/pid/bridge-temp.pid"
+if ! "$SERVICE" autostart >/dev/null 2>&1; then
+  unset ENFORCE_TEMP_DEAD ENFORCE_TEMP_DEAD_PIDFILE
+  kill "$FAKE_TEMP_PID2" 2>/dev/null || true
+  fail "temp 存活时 autostart 应先 kill_temp 再 enable（R15 顺序回归）"
+fi
+unset ENFORCE_TEMP_DEAD ENFORCE_TEMP_DEAD_PIDFILE
+[ ! -f "$TMP/pid/bridge-temp.pid" ] || fail "残留 temp pidfile 未被清理"
+kill "$FAKE_TEMP_PID2" 2>/dev/null || true
+pass "autostart kill_temp 前置（R15: 释放 18790 端口）"
 
 # ── 用例 5: temp 先停 systemd 实例（互斥接管），再启动并写 pidfile ──
 touch "$TMP/active"   # fake systemctl is-active → 0
