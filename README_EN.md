@@ -86,33 +86,13 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 | 🌱 Relationship dynamics | Long-term interactions slowly shift the emotional equilibrium (baseline drift, off by default, grayscale) |
 | 🛡 Deterministic fallback | agent failure → composer template fallback (zero LLM) + content-level anti-repetition |
 
-### v1.11 Changelog (4 emotion-engine improvements, 2026-08)
-
-1. **A11 Reply impact inertia**: single-reply emotion deltas are damped (heavier for negative, affection-modulated; `[emotion].impact_inertia_*` default 0 = off) → [SYSTEM.md §2.3](doc/SYSTEM.md)
-2. **A12 User mood sensing**: analysis gains `user_mood`/`user_mood_intensity`; sensed mood → emotion deltas + `comfort` trigger + gentler tone note (`[emotion].user_mood_*`/`[trigger].comfort_*` off by default) → §2.3, §5.1
-3. **A13 Emotional fluctuation**: OU noise inside tick() mimics natural mood swings (σ√Δt + dynamic cap, dedicated RNG; `[emotion].noise_*` off by default) → §2.3
-4. **A14 Emotion baseline drift**: long-term interactions slowly move the convergence targets (bounded ±20 + 30-day forgetting; `[emotion].baseline_*` off by default) → §2.3
-5. **Agent RPC resident**: the agent binary stays resident in `--mode rpc` (reply chain enabled by default, auto-fallback to spawn on failure) + dual sessions (chiguo-main/chiguo-send) + bridge `/agent/prompt` endpoint + with `CHIGUO_DAEMON_LOOP=1` the daemon stays resident via `--loop` with send-side cohesion (cron tick removed as mutually exclusive, only replan remains) → [AGENT_INTEGRATION.md §架构总览](doc/AGENT_INTEGRATION.md)
-
-### v1.10 Changelog (9 external-comparison optimizations, 2026-08)
-
-1. **A1 Elastic decay**: recovery half-life adapts to deviation (`effective_hl = half_life / (1 + |gap| / baseline)`, `[emotion].elastic_baseline`) → [SYSTEM.md §2.3](doc/SYSTEM.md)
-2. **A2 Emotion interaction matrix**: cross-dimension coupling after each tick (affection→anxiety, energy→loneliness, anxiety→energy; `[emotion].interaction_*` off by default) → §2.3
-3. **A10 Reply saturation damping**: more same-direction replies in a 30-minute window → weaker mood boost (×0.5^min(n,3)) → §2.4
-4. **A3 Schedule multiplier + jitter**: emotional trigger weights scaled by in-class 0.3 / free 1.2 / half-busy 0.6 × uniform(0.8,1.2); ritual triggers exempt → §2.6
-5. **A4 Three-stage activation**: emotional weight sum < 0.08 → silent, ≥ 0.75 → must-send (must_send lands in the decision JSON) → §2.6
-6. **A6 Generalized repeat damping**: all trigger types decay by history count (×0.6^min(n,3)) → §2.6
-7. **A5 Unreplied backoff state machine**: graded suppression after consecutive unreplied messages (3-4 → emotional blocked, ≥5 → all blocked; escape valve exempt) → §2.6
-8. **A8 Deterministic generation fallback**: agent failure → composer template fallback outputs the message (`_FALLBACK_LINES` last resort) → §5.7 & CLI reference
-9. **A9 Content-level anti-repetition**: topic candidates with 3-gram Jaccard ≥ 0.6 vs recent sends are dropped → §4.1
-
 ---
 
 ## 🏗 Architecture
 
 The system is two message pipelines, all running locally — the model API and the self-hosted NetEase API service are the only external calls.
 
-**Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes (or resident with `CHIGUO_DAEMON_LOOP=1`, see [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)) → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/agent-run.mjs --send-mode` (agent abstraction, the agent backend by default) turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`); if agent generation fails, `chiguo_composer.py` falls back to the template pool and outputs the text directly (zero LLM, v1.10 A8: still sends with a fallback flag; only if composer also fails does the tick fail).
+**Proactive sending**: a system crontab wakes `scripts/chiguo-tick.sh` every 15 minutes (or resident with `CHIGUO_DAEMON_LOOP=1`, see [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)) → runs `chiguo_daemon.py --compact` as a **zero-LLM decision gate** (emotion / gating / triggers / topics all computed locally) → if the decision is not `send`, it exits; otherwise `scripts/agent-run.mjs --send-mode` (agent abstraction, the agent backend by default) turns the decision JSON into WeChat text via the LLM (dedicated session `chiguo-send`) → HTTP POST to the bridge `/send` for delivery → the send result is reported back to the daemon (`--record-send`); if agent generation fails, `chiguo_composer.py` falls back to the template pool and outputs the text directly (zero LLM: still sends with a fallback flag; only if composer also fails does the tick fail).
 
 **Passive replying**: a WeChat message enters the bridge → an **OWNER_ID gate** (non-owners only get a plain chat reply — no accounting, no command/recall paths) → `chiguo_daemon.py --user-msg` records it **deterministically** (real-time emotion response, recv_dedup against double-counting) → `command-detect.mjs` rules check first: **special commands** (anniversaries / holidays / break on-off) are executed and answered directly, **no LLM**; **schedule write-commands** (cancel / move / add / exam week / reminder / remove) go through `agent-run.mjs --schedule-extract` extraction → `--schedule-verify` verification (dual agents, separate sessions; if info is missing they return a question into the clarify loop, records valid 6h) → daemon `--schedule-change` atomic write (confirmation text carries weekday + date); ordinary messages first fetch a lightweight `--attention` injection (today's important days / active range facts / this week's schedule), then run `agent-run.mjs --analysis-mode`, producing "mood analysis JSON + reply text" in one call — if the analysis carries a recall signal (registered facts / past dates), the bridge queries the facts and answers via a second agent pass → the analysis is merged back into the daemon via `--analysis` (dedup upgrade) → the reply is sent back to WeChat. The reply side runs as a resident serial process (TurnQueue, session `chiguo-main`), zero session sharing with proactive sending.
 
@@ -223,7 +203,7 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: 44 py + 13 script standalone runners)
+# Core tests (full suite: 48 py + 13 script standalone runners)
 bash scripts/ci-test.sh   # same entry point as GitHub Actions; any failure exits non-zero
 ```
 
@@ -263,7 +243,7 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ### Memory system (memory backend abstraction)
 
-**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. Since v1.8 this is a **memory backend abstraction**: the `memory/` package provides the `MemoryBackend` abstract base class + the `create_backend` factory (`memory_bridge.py` is now a compatibility facade), switched via `[memory].backend` in `chiguo_proactive.toml` — `mem0` (default, the [mem0ai](https://github.com/mem0ai/mem0) memory layer) / a custom class `module.path.ClassName`. In mem0 mode, the daemon **auto-writes** after conversations (`_mem0_autowrite`, LLM fact extraction via deepseek-v4-flash through the opencode gateway); retrieval uses **vector semantic search** (local ollama `qwen3-embedding:0.6b`, zero API cost) over an embedded qdrant store (`data/mem0/`, no docker) plus a SQLite operation history. The decision engine recalls **read-only** (semantic search + Ebbinghaus weighting), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
+**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. This is a **memory backend abstraction**: the `memory/` package provides the `MemoryBackend` abstract base class + the `create_backend` factory (`memory_bridge.py` is now a compatibility facade), switched via `[memory].backend` in `chiguo_proactive.toml` — `mem0` (default, the [mem0ai](https://github.com/mem0ai/mem0) memory layer) / a custom class `module.path.ClassName`. In mem0 mode, the daemon **auto-writes** after conversations (`_mem0_autowrite`, LLM fact extraction via deepseek-v4-flash through the opencode gateway); retrieval uses **vector semantic search** (local ollama `qwen3-embedding:0.6b`, zero API cost) over an embedded qdrant store (`data/mem0/`, no docker) plus a SQLite operation history. The decision engine recalls **read-only** (semantic search + Ebbinghaus weighting), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
 
 **Setup**: `uv sync` (mem0ai + ollama client are required dependencies); the store lives at `data/mem0/` (embedded qdrant + history.db; paths/LLM/embedder are configured by the `[memory]` `mem0_*` keys; the LLM key defaults to the opencode-go entry of `~/.pi/agent/auth.json`).
 
@@ -374,7 +354,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 Any contribution is welcome — especially ones that help *her* grow:
 
 - **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each `test_*.py` in `tests/` is a standalone runner, exit-code driven.
-- **Run the full suite before submitting**: see `AGENTS.md` (44 py + 13 script tests), all green before commit.
+- **Run the full suite before submitting**: see `AGENTS.md` (48 py + 13 script tests), all green before commit.
 - **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md` (repo rule).
 - **Commit style**: `feat:` / `fix:` / `docs:` / `chore:` prefix + Chinese description.
 - **Design docs**: for major changes, write a design doc under `~/chiguo-meta/specs/` (outside the repo) and get it reviewed first.
@@ -416,7 +396,7 @@ chiguo_proactive.toml    # main config (all parameters, hot-reloaded)
 chiguo_daemon.py         # decision engine (main entry, zero LLM)
 chiguo_state.py          # emotion engine + persona + Bayesian + schedule facade + circadian
 chiguo_math.py           # pure math library (sigmoid / elastic decay / interaction matrix / damping / Hawkes / Jaccard)
-chiguo_composer.py       # Intent×Cue×Vibe composer + fallback CLI (A8 generation fallback)
+chiguo_composer.py       # Intent×Cue×Vibe composer + fallback CLI (generation fallback)
 memory/                  # memory backend abstraction (base/mem0_backend/factory; memory_bridge.py facade)
 schedule/                # schedule center (holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan)

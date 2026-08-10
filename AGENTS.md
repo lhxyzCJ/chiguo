@@ -26,12 +26,23 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 8. 参考成熟产品的验证方案，别从零发明
 9. **铁律：完成任务并报告之前，必须解决 todo list 与宿主的报错**——逐项 `complete_step` 签收任务（不留 incomplete 项）；报告前处理全部宿主报错（final-answer readiness 门禁：无未签收 todo、本轮有可观测工作、mutation 后运行验证并提交 reviewed_paths、prefer 能力调用或 `use_capability` 显式 decline），带着报错收尾视为未完成
 
+## 宿主收尾门禁（final-answer readiness）
+
+Reasonix 宿主在 final-answer 时检查四类验收项，报错模式固定，对策如下：
+
+1. **capability 门禁**：capability-route 中标 `require`/`prefer` 的 skill 必须**显式调用**（`read_skill`/`run_skill`/`use_capability`）或显式 decline（`use_capability` action=decline + reason）；「内容已常驻系统提示」不算调用痕迹
+2. **verification 门禁**：mutation 后必须跑**宿主白名单**验证命令，并在 `complete_step` evidence 的 `command` 字段引用：JS 改动 → `node --check <file>`；文档/纯文本改动 → `git diff --check`；标准测试 → `pytest`/`go test ./...`/`npm test`。**不算数**：`git status/log`、`gh run ...`、`bash scripts/ci-test.sh`（项目自定义 runner 照跑，但只能作补充信息）、`node -e`/`python -c` 内联解释器
+3. **review 门禁**：mutation 后跑 `review`/`security_review` 覆盖最新变更；按建议改码后必须重跑
+4. **todo 门禁**：逐项 `complete_step` 签收，不留 incomplete 项
+
+机械自检：`bash scripts/ci-test.sh`（项目全量测试链，与 GitHub Actions 同一入口）。
+
 ## Test & run
 
 No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
 
 ```bash
-bash scripts/ci-test.sh   # full suite (44 py + 13 script) — 本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
+bash scripts/ci-test.sh   # full suite (48 py + 13 script) — 本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
 ```
 
 - Python 3.14 via uv (`.venv` exists, Python 3.14.6). 3.14-only syntax is intentional: bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`.
@@ -64,5 +75,5 @@ bash scripts/ci-test.sh   # full suite (44 py + 13 script) — 本地与 GitHub 
 
 ## After any code change
 
-1. Run affected test files; full chain (44 py + 13 script) if touching math/state/daemon.
+1. Run affected test files; full chain (48 py + 13 script) if touching math/state/daemon.
 2. Update affected sections of `doc/SYSTEM.md`, `doc/README.md`；`doc/DEPLOYMENT.md` 在 deploy.sh/scripts 改动时同步。
