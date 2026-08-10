@@ -34,7 +34,7 @@ from pathlib import Path
 # v8: 模块级 os.chdir 已移除 —— import 不再劫持调用方 cwd。
 # 所有运行时文件均通过 _inject_base_dir + ChiguoState._anchored 锚定。
 
-from chiguo_state import ChiguoState
+from chiguo_state import ChiguoState, emotion_tag_snapshot
 from chiguo_trigger import evaluate_triggers
 from chiguo_topics import TopicPicker
 from netease.service import NeteaseService
@@ -975,6 +975,9 @@ class DecisionEngine:
 
             # ── v4: 人格自适应（收到回复后）──
             if prev_send_was_replied:
+                # A2: 分类型回复率统计——本次用户消息是对上一条发送的回复 →
+                # 最近发送触发类型的 replied+1（数据源供 chiguo_trigger 反馈闭环）。
+                self.state.record_trigger_replied()
                 try:
                     self.state.adapt_personality({
                         "type": "character_send",
@@ -1020,16 +1023,26 @@ class DecisionEngine:
         self._mem0_autowrite(text)
 
     def _mem0_autowrite(self, text: str):
-        """daemon 对话后自动写入 mem0（LLM 提取事实；见 memory/mem0_backend.py）。"""
+        """daemon 对话后自动写入 mem0（LLM 提取事实；见 memory/mem0_backend.py）。
+        B2: [memory].emotion_tagging=True（默认 False 恒等）时，把当前情绪快照
+        （loneliness/affection/anxiety/energy 离散档 + user_mood）写进 metadata 的
+        emotion_tag——供读侧按情绪相近加权（emotion_tag_weight）。"""
         if len(text.strip()) < 8:
             return  # 短消息（寒暄/无信息量）不写，也避免无谓的可用性探测
         try:
             mem = self.state.memory_bridge
             if not getattr(mem, "available", False) or not getattr(mem, "add_messages", None):
                 return
+            metadata = {"category": "conversation", "scope": "global", "source": "daemon"}
+            if self.config.get("memory", {}).get("emotion_tagging", False):
+                tag = emotion_tag_snapshot(self.state.emotion)
+                mood = self.state.cooldown.user_mood
+                if isinstance(mood, dict) and str(mood.get("mood", "")).strip():
+                    tag["user_mood"] = str(mood.get("mood"))
+                metadata["emotion_tag"] = tag
             mem.add_messages(
                 [{"role": "user", "content": text}],
-                metadata={"category": "conversation", "scope": "global", "source": "daemon"},
+                metadata=metadata,
             )
         except Exception:
             pass  # 记忆写入失败不影响主流程
@@ -1076,7 +1089,17 @@ class DecisionEngine:
         仅写 chiguo_messages.jsonl —— decisions.jsonl 已有 send 决策条目。
         trigger/intensity 从 send 决策中提取，使 messages.jsonl 自包含。
         fallback（A8）: composer 确定性兜底生成的标记（agent 生成失败时 True）。
+        A2: 发送确认时对该触发类型 sent+1（分类型回复率统计数据源）。
         """
+        # A2: 确认已发送 → 该触发类型 sent+1（与 --user-msg 的 replied 归因配对）
+        if trigger:
+            try:
+                self.state.record_trigger_sent(trigger)
+                # A2: 立即持久化——cron --record-send 为一次性进程，不 save 则 sent 计数
+                # 随进程退出丢失（replied 在 --user-msg 侧有 save，sent 侧必须同步落盘）
+                self.state.save()
+            except Exception:
+                pass  # 统计失败不影响发送记录主链路
         self._log_message(
             msg_id=msg_id,
             direction="send",

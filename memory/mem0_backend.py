@@ -180,6 +180,8 @@ class Mem0Backend(MemoryBackend):
             "l2_content": str(meta.get("l2_content") or ""),
             "tier": str(meta.get("tier") or "working"),
             "source": str(meta.get("source") or "mem0"),
+            # B2: 情绪标签（写侧 emotion_tagging 打标；读侧 _apply_forgetting 按相近加权）
+            "emotion_tag": meta.get("emotion_tag") if isinstance(meta.get("emotion_tag"), dict) else None,
         }
 
     # ── 原语 ──────────────────────────────────────────────

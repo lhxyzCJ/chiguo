@@ -63,8 +63,25 @@ class UserStateEstimator:
         "needs_care": "需要关心",
     }
 
+    # ── A1: 状态转移矩阵（前向滤波，state → {next_state: prob}）──
+    # 行内概率归一化为 1（马尔可夫一行）；经验值：状态保持概率最高，
+    # 睡觉/离开有向活跃状态滑落的倾向，needs_care 保持但会缓慢衰减。
+    # config 可整体覆盖某一行：`[bayesian].transition_chatting = { chatting = 0.4, ... }`，
+    # 覆盖后行内重新归一化。transition_enabled=False 时完全不参与推断（恒等）。
+    TRANSITIONS = {
+        "chatting":   {"chatting": 0.45, "browsing": 0.25, "busy": 0.10, "sleeping": 0.02, "away": 0.08, "needs_care": 0.10},
+        "browsing":   {"chatting": 0.25, "browsing": 0.45, "busy": 0.10, "sleeping": 0.05, "away": 0.10, "needs_care": 0.05},
+        "busy":       {"chatting": 0.10, "browsing": 0.10, "busy": 0.45, "sleeping": 0.05, "away": 0.25, "needs_care": 0.05},
+        "sleeping":   {"chatting": 0.02, "browsing": 0.05, "busy": 0.03, "sleeping": 0.70, "away": 0.18, "needs_care": 0.02},
+        "away":       {"chatting": 0.15, "browsing": 0.25, "busy": 0.10, "sleeping": 0.10, "away": 0.35, "needs_care": 0.05},
+        "needs_care": {"chatting": 0.15, "browsing": 0.10, "busy": 0.05, "sleeping": 0.05, "away": 0.20, "needs_care": 0.45},
+    }
+
     def __init__(self, config: dict = None):
         self.config = config or {}
+
+        # ── A1: 上一 tick 后验（前向滤波），随状态落盘（to_state_dict/restore）──
+        self.prev_posterior: dict | None = None
 
         # ── 似然参数表：P(obs_value | state) ──
         # 用经验规则初始化。key: (state, obs_key, obs_value)
@@ -302,7 +319,44 @@ class UserStateEstimator:
 
     # ── 核心推断 ──────────────────────────────────────────
 
-    def infer(self, observations: dict, now: datetime = None) -> dict:
+    def _transition_prior(self, prev_posterior: dict) -> dict:
+        """A1: 前向滤波先验 = prev_posterior × TRANSITIONS（矩阵向量乘）。
+
+        config 支持逐行覆盖：`transition_<state>` 键为 dict 时以该行替换默认行，
+        覆盖后行内归一化（防配置配错导致行和 ≠ 1）。返回归一化后的预测分布。
+        """
+        trans: dict[str, dict] = {}
+        for s in self.STATES:
+            row = dict(self.TRANSITIONS.get(s, {}))
+            override = self.config.get(f"transition_{s}")
+            if isinstance(override, dict):
+                # 配置行 = 整行覆盖（含 0 值），防漏配状态被默认保持概率吞掉
+                row = {}
+                for k, v in override.items():
+                    if k not in self.STATES:
+                        continue
+                    try:
+                        row[k] = float(v)
+                    except (TypeError, ValueError):
+                        pass  # 非法数值忽略，缺省 0
+            total = sum(row.values())
+            if total > 0:
+                row = {k: v / total for k, v in row.items()}
+            trans[s] = row
+        prior = {}
+        for next_state in self.STATES:
+            prior[next_state] = sum(
+                prev_posterior.get(s, 0.0) * trans[s].get(next_state, 0.0)
+                for s in self.STATES
+            )
+        total = sum(prior.values())
+        if total > 0:
+            for s in prior:
+                prior[s] /= total
+        return prior
+
+    def infer(self, observations: dict, now: datetime = None,
+              prev_posterior: dict | None = None) -> dict:
         """
         Bayesian 推断用户当前状态。
 
@@ -313,6 +367,11 @@ class UserStateEstimator:
         - in_class: bool            (是否在上课)
         - is_weekend: bool          (是否周末)
 
+        prev_posterior: 上一 tick 后验（dict|None，默认取自身持久化的 prev_posterior）。
+        配合 [bayesian].transition_enabled 走前向滤波（马尔可夫转移先验）；否则回退
+        纯时间先验（恒等，A1 默认关闭）。返回的 prev_posterior 字段为当前后验，
+        供调用方落盘下一 tick 用。
+
         返回:
         {
             "posterior": {state: prob, ...},
@@ -321,12 +380,32 @@ class UserStateEstimator:
             "utility": float (加权发送效用),
             "should_send_bayesian": bool (仅基于 Bayesian 的建议),
             "state_description": str (人类可读),
+            "entropy": float (后验熵，bits；A1 新增，不确定性度量),
+            "prev_posterior": {state: prob, ...} (A1 新增，当前后验透传落盘),
         }
         """
         if now is None:
             now = datetime.now(CST)
 
-        prior = self._time_based_prior(now)
+        if prev_posterior is None:
+            prev_posterior = self.prev_posterior
+
+        # ── A1: 前向滤波先验 ──
+        # transition_enabled 且存在上一后验时：先验 = 0.5×转移先验 + 0.5×时间先验
+        # （线性混合，最简单合理）。转移先验利用状态持续性平滑（上一 tick 后验 → 当前
+        # 先验）；时间先验兜底——长沉默/跨时段场景下防陈旧后验完全主导时段分布。
+        if self.config.get("transition_enabled", False) and prev_posterior:
+            trans_prior = self._transition_prior(prev_posterior)
+            time_prior = self._time_based_prior(now)
+            prior = {
+                s: 0.5 * trans_prior.get(s, 0.05) + 0.5 * time_prior.get(s, 0.05)
+                for s in self.STATES
+            }
+            total = sum(prior.values())
+            if total > 0:
+                prior = {s: v / total for s, v in prior.items()}
+        else:
+            prior = self._time_based_prior(now)
 
         # 提取信号分类
         latency_cat = self.classify_latency(observations.get("reply_latency"))
@@ -372,7 +451,15 @@ class UserStateEstimator:
         # 加权发送效用
         utility = sum(posterior[s] * self.UTILITY[s] for s in self.STATES)
 
-        return {
+        # ── A1: 当前后验持久化（下一 tick 前向滤波用）+ 后验熵（bits）──
+        # 仅 A1 启用（transition_enabled 或 info_gain_threshold>0）时产出熵/透传后验并
+        # 更新持久化后验——默认关闭恒等：决策日志不新增字段、状态不落盘 prev_posterior。
+        try:
+            ig_thr = float(self.config.get("info_gain_threshold", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            ig_thr = 0.0  # 非法阈值 → 视为关闭（防 infer 崩溃）
+        a1_active = (self.config.get("transition_enabled", False) or ig_thr > 0)
+        out = {
             "posterior": {s: round(posterior[s], 4) for s in self.STATES},
             "most_likely": most_likely,
             "confidence": round(confidence, 4),
@@ -380,6 +467,14 @@ class UserStateEstimator:
             "should_send_bayesian": utility >= self.utility_threshold,
             "state_description": self.STATE_DESCRIPTIONS[most_likely],
         }
+        if a1_active:
+            self.prev_posterior = {s: float(posterior[s]) for s in self.STATES}
+            entropy = -sum(p * math.log2(p) for p in posterior.values() if p > 0)
+            out["entropy"] = round(entropy, 4)
+            out["prev_posterior"] = {s: round(posterior[s], 4) for s in self.STATES}
+        else:
+            self.prev_posterior = None
+        return out
 
     def record_observation(self, observations: dict, actual_state: str = None):
         """记录观察用于在线学习。
@@ -391,15 +486,24 @@ class UserStateEstimator:
 
     def to_state_dict(self) -> dict:
         """序列化似然缓存供状态落盘（tuple key → "state.obs_key.obs_value"）。
-        供 ChiguoState.save 写入；含默认值+本次进程学习增量，还原时叠加于默认之上。"""
-        return {
+        供 ChiguoState.save 写入；含默认值+本次进程学习增量，还原时叠加于默认之上。
+        A1: 附加 _prev_posterior（前向滤波上一后验，随状态跨进程保留）。"""
+        sd = {
             f"{s}.{ok}.{ov}": float(v)
             for (s, ok, ov), v in self._likelihood_cache.items()
         }
+        # A1: 仅 transition_enabled 时 _prev_posterior 随状态跨进程保留（默认关闭恒等）
+        if self.config.get("transition_enabled", False) and self.prev_posterior:
+            sd["_prev_posterior"] = {
+                k: float(v) for k, v in self.prev_posterior.items() if k in self.STATES
+            }
+        return sd
 
     def restore_state_dict(self, data: dict) -> None:
         """从持久化数据还原似然缓存。坏键（非 3 段 key / 非法状态 / 非法观测维度或取值 /
-        非数值 / 非有限值如 NaN）丢弃，缺键保留默认值 → 还原幂等、不破坏默认参数表。"""
+        非数值 / 非有限值如 NaN）丢弃，缺键保留默认值 → 还原幂等、不破坏默认参数表。
+        A1: _prev_posterior（dict → 归一化 float 值域校验）还原到 prev_posterior，
+        坏数据静默丢弃（缺省 None → 走纯时间先验，恒等）。"""
         if not isinstance(data, dict):
             return
         for k, v in data.items():
@@ -415,6 +519,21 @@ class UserStateEstimator:
             if not math.isfinite(val):
                 continue
             self._likelihood_cache[(parts[0], parts[1], parts[2])] = val
+        pp = data.get("_prev_posterior")
+        if isinstance(pp, dict):
+            cleaned = {}
+            for k, v in pp.items():
+                if k not in self.STATES:
+                    continue
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(fv) and fv >= 0:
+                    cleaned[k] = fv
+            total = sum(cleaned.values())
+            if total > 0:
+                self.prev_posterior = {k: v / total for k, v in cleaned.items()}
 
 
 class BayesianLearner:
