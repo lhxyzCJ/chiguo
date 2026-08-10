@@ -2,7 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 ## 维护规则
-## 注意，在你开始修复前一定记得做个计划或者todolist，然后尽量多开子代理，让事情做起来更高效，不要吝啬token消耗,做完事情后也要多开代理进行自我审计，这是铁律。
+## 注意，在你开始修复前一定记得做个计划或者todolist，然后强制用 Workflow 或多代理编排并行执行，让事情做起来更高效，不要吝啬token消耗,做完事情后也要开子代理进行自我审计，这是铁律。
+## 实质性任务（多文件改动、重构、调研、审计、验证）默认强制走 Workflow 或多代理编排（Agent 扇出），禁止单线程直推；token 消耗不是约束，除非任务明确只适合单点小改动。
 ## 所有子代理（Agent/Workflow）开工前必须继承主模型，不得通过 model 参数覆盖（如 opus/haiku/fable），除非任务明确需要专用模型。
 ## 工程原则
 1. 不保留向后兼容，过时路径直接删，别加兼容层
