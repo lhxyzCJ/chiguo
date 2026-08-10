@@ -6,6 +6,7 @@
 经 daemon record_send_text 与 record_user_message 的端到端归因。
 """
 
+import json
 import os
 import random
 import re
@@ -187,6 +188,7 @@ def test_daemon_record_send_persists_sent():
         dec_path = Path(td) / "decisions.jsonl"
         # 引擎 A：发送一条带 trigger 的消息（模拟 cron --record-send 进程）
         eng = DecisionEngine(str(cfg_path), str(dec_path))
+        eng.config["trigger"]["reply_feedback_enabled"] = 1  # A2 记账门控（默认 0）
         eng.state.cooldown.reply_stats = {}
         eng.record_send_text("msg-1", "哥哥今天好吗", trigger="lonely_low")
         assert eng.state.cooldown.reply_stats["lonely_low"]["sent"] == 1
@@ -195,6 +197,94 @@ def test_daemon_record_send_persists_sent():
         st = eng2.state.cooldown.reply_stats.get("lonely_low")
         assert st is not None and st["sent"] == 1, f"record_send_text 后应持久化 sent: {st}"
     print("  OK test_daemon_record_send_persists_sent")
+
+
+def test_daemon_user_msg_persists_replied():
+    """A2 修复：--user-msg（带 analysis）的 replied 归因端到端落盘。
+    send(trigger) → --user-msg 带 analysis（prev_send_was_replied 路径）→ 新引擎还原 replied=1。"""
+    from chiguo_daemon import DecisionEngine
+    with tempfile.TemporaryDirectory() as td:
+        src = Path("chiguo_proactive.toml").read_text()
+        src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                     f'mem0_qdrant_path = "{Path(td) / "no_qdrant"}"', src)
+        src = re.sub(r"(?m)^mem0_history_db\s*=.*$",
+                     f'mem0_history_db = "{Path(td) / "no_history.db"}"', src)
+        cfg_path = Path(td) / "chiguo_proactive.toml"
+        cfg_path.write_text(src)
+        dec_path = Path(td) / "decisions.jsonl"
+        os.environ["CHIGUO_MEM0_DISABLED"] = "1"
+        # 引擎 A：发送带 trigger 的消息（sent+1）+ 模拟发送后尚未被回复
+        eng = DecisionEngine(str(cfg_path), str(dec_path))
+        eng.config["trigger"]["reply_feedback_enabled"] = 1
+        eng.state.cooldown.reply_stats = {}
+        eng.record_send_text("msg-1", "哥哥今天好吗", trigger="lonely_low")
+        eng.state.cooldown.messages_without_reply = 1  # 发送决策路径设未回复
+        eng.state.save()
+        # 收到用户回复（带 LLM 分析）→ prev_send_was_replied 路径 → replied+1 落盘
+        analysis = json.dumps({"emotion": "happy", "warmth": 0.8, "event": "praise"})
+        eng.record_user_message("我很好呀", analysis)
+        assert eng.state.cooldown.reply_stats["lonely_low"] == {"sent": 1, "replied": 1}, \
+            eng.state.cooldown.reply_stats
+        # 引擎 B：全新加载（等价 --user-msg 独立进程后的下次进程）→ replied 从磁盘还原
+        eng2 = DecisionEngine(str(cfg_path), str(dec_path))
+        st = eng2.state.cooldown.reply_stats.get("lonely_low")
+        assert st is not None and st == {"sent": 1, "replied": 1}, \
+            f"--user-msg 后应持久化 replied: {st}"
+    print("  OK test_daemon_user_msg_persists_replied")
+
+
+def test_daemon_record_send_disabled_no_stats():
+    """#4 恒等：reply_feedback_enabled=0（默认）→ record_send_text 不记账、不写盘——
+    状态文件不新增 reply_stats 键（与默认关闭口径一致）。"""
+    from chiguo_daemon import DecisionEngine
+    with tempfile.TemporaryDirectory() as td:
+        src = Path("chiguo_proactive.toml").read_text()
+        src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                     f'mem0_qdrant_path = "{Path(td) / "no_qdrant"}"', src)
+        src = re.sub(r"(?m)^mem0_history_db\s*=.*$",
+                     f'mem0_history_db = "{Path(td) / "no_history.db"}"', src)
+        cfg_path = Path(td) / "chiguo_proactive.toml"
+        cfg_path.write_text(src)
+        dec_path = Path(td) / "decisions.jsonl"
+        eng = DecisionEngine(str(cfg_path), str(dec_path))
+        assert not eng.config["trigger"].get("reply_feedback_enabled")  # 默认关闭
+        tick_before = eng.state.tick_seq
+        eng.record_send_text("msg-1", "哥哥今天好吗", trigger="lonely_low")
+        assert eng.state.cooldown.reply_stats == {}, "关闭时不应产生 reply_stats"
+        assert eng.state.cooldown.reply_pending == [], "关闭时不应产生 reply_pending"
+        assert eng.state.tick_seq == tick_before, "关闭时不应额外写盘（tick_seq 不变）"
+    print("  OK test_daemon_record_send_disabled_no_stats")
+
+
+def test_reply_attribution_fifo():
+    """#6 修复：多条未回复发送时回复按 FIFO 归因（最旧优先），不全部记给最新 trigger。"""
+    s = _make_state(tempfile.mkdtemp(), datetime(2026, 6, 15, 14, 0, tzinfo=CST))
+    # 发送 A(lonely_low) → 发送 B(reflect) → 用户连回两条
+    s.record_trigger_sent("lonely_low")
+    s.record_trigger_sent("reflect")
+    s.record_trigger_replied()  # 第一条回复 → 记给最早的 lonely_low
+    s.record_trigger_replied()  # 第二条回复 → 记给 reflect
+    assert s.cooldown.reply_stats["lonely_low"] == {"sent": 1, "replied": 1}, \
+        s.cooldown.reply_stats
+    assert s.cooldown.reply_stats["reflect"] == {"sent": 1, "replied": 1}, \
+        s.cooldown.reply_stats
+    assert s.cooldown.reply_pending == [], "回复应消费完归因队列"
+    # 队列空 → replied 零效果（不崩）
+    s.record_trigger_replied()
+    assert s.cooldown.reply_stats["lonely_low"]["replied"] == 1
+    print("  OK test_reply_attribution_fifo")
+
+
+def test_reply_pending_queue_bounded():
+    """归因队列有界（保留最近 64 条），防用户长期不回导致无界增长。"""
+    s = _make_state(tempfile.mkdtemp(), datetime(2026, 6, 15, 14, 0, tzinfo=CST))
+    for i in range(80):
+        s.record_trigger_sent(f"t{i}")
+    assert len(s.cooldown.reply_pending) == 64, len(s.cooldown.reply_pending)
+    # 消费最旧一条 → t16 被 pop，队首变 t17（t0..t15 早已被截断丢弃）
+    s.record_trigger_replied()
+    assert s.cooldown.reply_pending[0] == "t17"
+    print("  OK test_reply_pending_queue_bounded")
 
 
 if __name__ == "__main__":
@@ -208,6 +298,10 @@ if __name__ == "__main__":
         test_min_samples_guard,
         test_mid_rate_no_adjust,
         test_daemon_record_send_persists_sent,
+        test_daemon_user_msg_persists_replied,
+        test_daemon_record_send_disabled_no_stats,
+        test_reply_attribution_fifo,
+        test_reply_pending_queue_bounded,
     ]
     for t in tests:
         t()

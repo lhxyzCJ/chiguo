@@ -15,6 +15,7 @@
 # ============================================================
 
 import json
+import math
 import os
 import random
 import time as _time_module
@@ -51,6 +52,21 @@ def _pi_api_key(provider: str = "opencode-go") -> str | None:
             return (json.load(f).get(provider) or {}).get("key") or None
     except Exception:
         return None
+
+
+def _finite_float(value, default: float) -> float:
+    """配置数值解析：非数值 / NaN / inf / 负数一律回退默认。
+
+    toml 手改事故（字符串阈值、NaN）会让 consolidate_plan 内 `sim >= sim_threshold`
+    直接 TypeError 或静默禁掉去重；统一在这里兜底，CLI 与 idle 双入口共享。
+    """
+    try:
+        fv = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(fv) or fv < 0:
+        return default
+    return fv
 
 
 class Mem0Backend(MemoryBackend):
@@ -202,6 +218,11 @@ class Mem0Backend(MemoryBackend):
         importance = self.clean_importance(meta) or 0.5
         if importance <= 0:
             importance = 0.5  # mem0 无 importance 概念；缺省中位权重，避免全零
+        rc = meta.get("recall_count")
+        try:
+            recall_count = int(rc)
+        except (TypeError, ValueError):
+            recall_count = 0
         return {
             "id": str(r.get("id") or ""),
             "text": text,
@@ -217,6 +238,9 @@ class Mem0Backend(MemoryBackend):
             "source": str(meta.get("source") or "mem0"),
             # B2: 情绪标签（写侧 emotion_tagging 打标；读侧 _apply_forgetting 按相近加权）
             "emotion_tag": meta.get("emotion_tag") if isinstance(meta.get("emotion_tag"), dict) else None,
+            # C2: 召回次数回读（_persist_recall 写进 metadata；跨进程 cron 部署下
+            # _recall_counts 每次从空开始，读行内持久化值强化才不失效——审查 #2）
+            "recall_count": recall_count,
         }
 
     # ── 原语 ──────────────────────────────────────────────
@@ -347,22 +371,28 @@ class Mem0Backend(MemoryBackend):
         if now is None:
             now = datetime.now(CST)
         rows = self._all_rows(min_importance=0.0, top_k=limit)
+        # 阈值有限性强制：配置可能是字符串/NaN/inf（toml 手改事故），统一兜底防
+        # consolidate_plan 内 sim >= sim_threshold 直接 TypeError（cli/_maybe_consolidate 双入口都走这）。
+        sim_threshold = _finite_float(
+            sim_threshold if sim_threshold is not None else self._consolidate_sim_threshold,
+            DEFAULT_CONSOLIDATE_SIM_THRESHOLD)
+        min_importance = _finite_float(
+            min_importance if min_importance is not None else self._consolidate_min_importance,
+            DEFAULT_CONSOLIDATE_MIN_IMPORTANCE)
+        max_age_hours = _finite_float(
+            max_age_hours if max_age_hours is not None else self._consolidate_max_age_hours,
+            DEFAULT_CONSOLIDATE_MAX_AGE_HOURS)
         plan = self.consolidate_plan(
-            rows, now,
-            sim_threshold=(sim_threshold if sim_threshold is not None
-                           else self._consolidate_sim_threshold),
-            min_importance=(min_importance if min_importance is not None
-                            else self._consolidate_min_importance),
-            max_age_hours=(max_age_hours if max_age_hours is not None
-                           else self._consolidate_max_age_hours),
+            rows, now, sim_threshold=sim_threshold,
+            min_importance=min_importance, max_age_hours=max_age_hours,
         )
         if not dry_run:
             for r in plan["demoted"]:
                 try:
-                    upd = getattr(self._m, "update_memory", None)
+                    upd = getattr(self._m, "update", None)
                     if upd is None:
-                        continue  # mem0 无 update_memory API → 仅报告降权计划
-                    upd(r["id"], {"metadata": {"importance": r["importance"]}})
+                        continue  # mem0 无 update API → 仅报告降权计划
+                    upd(r["id"], metadata={"importance": r["importance"]})
                 except Exception as e:
                     import logging
                     logging.warning("mem0 consolidate demote failed: %r", e)
@@ -390,12 +420,13 @@ class Mem0Backend(MemoryBackend):
     # ── C2: 复习强化写回（_persist_recall 钩子覆写）──
 
     def _persist_recall(self, memory_id: str, count: int):
-        """召回次数持久化：mem0 有 update_memory 时写 metadata.recall_count；
-        无该 API → no-op（仅内存侧 recall_count）。"""
-        upd = getattr(self._m, "update_memory", None)
+        """召回次数持久化：mem0 有 update 时写 metadata.recall_count；
+        无该 API → no-op（仅内存侧 recall_count）。update 的 metadata 为 merge 语义，
+        不会覆盖既有 category/scope/emotion_tag。"""
+        upd = getattr(self._m, "update", None)
         if upd is None:
             return
-        upd(memory_id, {"metadata": {"recall_count": count}})
+        upd(memory_id, metadata={"recall_count": count})
 
     # ── 内部 ──────────────────────────────────────────────
 

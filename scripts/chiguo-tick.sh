@@ -124,6 +124,11 @@ BODY="$(python3 -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text"
 MSG_ID="$(printf '%s' "$OUT" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("msg_id",""))
 except: print("")' 2>/dev/null || true)"
+# A2: 把决策 JSON 的 trigger 传给 --record-send —— 否则 cron 主链路 record_send_text
+# 的 `if trigger:` 恒不成立，reply_stats 只有 replied 没有 sent，反馈闭环永不激活。
+TRIGGER="$(printf '%s' "$OUT" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("trigger",""))
+except: print("")' 2>/dev/null || true)"
 if ! curl -sf --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
   -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$BODY" >/dev/null 2>&1; then
   echo "[chiguo-tick] bridge 发送失败，下个 tick 重试" >&2
@@ -135,12 +140,11 @@ if ! curl -sf --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_U
   exit 1
 fi
 # 回传发送结果（A8: composer 兜底时额外打 fallback 标记，health 已记 success）
+# A2: --trigger 来自决策 JSON（sent+1 的归因键），无 trigger（如告警直发）则跳过。
 if [ -n "$MSG_ID" ]; then
-  if [ -n "${COMPOSER_FALLBACK:-}" ]; then
-    "$PY" "$REPO/chiguo_daemon.py" --record-send "$MSG_ID" --text "$TEXT" --fallback >/dev/null 2>&1 \
-      || echo "[chiguo-tick] record-send 失败 msg_id=$MSG_ID" >&2
-  else
-    "$PY" "$REPO/chiguo_daemon.py" --record-send "$MSG_ID" --text "$TEXT" >/dev/null 2>&1 \
-      || echo "[chiguo-tick] record-send 失败 msg_id=$MSG_ID" >&2
-  fi
+  RS_ARGS=(--record-send "$MSG_ID" --text "$TEXT")
+  [ -n "$TRIGGER" ] && RS_ARGS+=(--trigger "$TRIGGER")
+  [ -n "${COMPOSER_FALLBACK:-}" ] && RS_ARGS+=(--fallback)
+  "$PY" "$REPO/chiguo_daemon.py" "${RS_ARGS[@]}" >/dev/null 2>&1 \
+    || echo "[chiguo-tick] record-send 失败 msg_id=$MSG_ID" >&2
 fi

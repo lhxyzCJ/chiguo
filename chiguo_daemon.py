@@ -574,6 +574,7 @@ class DecisionEngine:
         mem_cfg = self.config.get("memory", {})
         if not mem_cfg.get("consolidate_enabled", False):
             return
+        attempted = False
         try:
             silent_h = self.state.cooldown.silent_hours(now)
             if silent_h < float(mem_cfg.get("consolidate_idle_silent_hours", 24.0)):
@@ -589,10 +590,8 @@ class DecisionEngine:
             bridge = self.state.memory_bridge
             if not getattr(bridge, "consolidate", None):
                 return  # 后端不支持巩固 → 静默跳过
+            attempted = True
             report = bridge.consolidate()
-            self.state.cooldown.consolidate_last_at = now.isoformat()
-            if not self.state.save():
-                print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
             n_demoted = len((report or {}).get("demoted", []))
             n_expired = len((report or {}).get("expired", []))
             if n_demoted or n_expired:
@@ -601,6 +600,48 @@ class DecisionEngine:
         except Exception as e:
             # 巩固失败不影响 idle 主链路（记忆整理是锦上添花）
             print(f"[chiguo_daemon] memory consolidate skipped: {e}", file=sys.stderr)
+        finally:
+            # 防 hot-loop：无论成功失败，只要真正尝试过巩固就推进 last_at（间隔门控防
+            # 后端/配置错误导致每 15 分钟全量 get_all+扫描重试）。失败原因已打到 stderr，
+            # 显式 --consolidate CLI 仍可手动兜底。
+            if attempted:
+                self.state.cooldown.consolidate_last_at = now.isoformat()
+                if not self.state.save():
+                    print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
+
+    def cli_consolidate(self) -> int:
+        """C1: `--consolidate` CLI 单进程逻辑（self 即引擎，测试注入 fake state.memory_bridge）。
+
+        exit 0 = 后端可用且 consolidate ok；exit 1 = 后端不支持/异常/报告 ok=False。
+        stdout 只出 JSON（供 cron 落日志）；隐私：报告剔除 text 字段——记忆行是 LLM
+        提取的用户私聊事实，重定向到日志文件会泄露完整对话内容（自动路径本就只打计数）。
+        阈值走 Mem0Backend.consolidate 内的 _finite_float 兜底，字符串/NaN 配置不崩。
+        """
+        mem_cfg = self.config.get("memory", {})
+        bridge = self.state.memory_bridge
+        if not getattr(bridge, "consolidate", None):
+            print(json.dumps({"action": "consolidate", "ok": False,
+                              "error": "记忆后端不支持 consolidate"}, ensure_ascii=False))
+            return 1
+        try:
+            report = bridge.consolidate(
+                sim_threshold=mem_cfg.get("consolidate_sim_threshold", 0.85),
+                min_importance=mem_cfg.get("consolidate_min_importance", 0.3),
+                max_age_hours=mem_cfg.get("consolidate_max_age_hours", 720.0),
+            )
+        except Exception as e:
+            # 配置/后端异常 → 结构化错误（不裸 traceback），exit 1
+            print(json.dumps({"action": "consolidate", "ok": False,
+                              "error": f"consolidate failed: {e}"},
+                             ensure_ascii=False, default=str))
+            return 1
+        safe_report = dict(report)
+        for k in ("demoted", "expired", "kept"):
+            safe_report[k] = [{kk: vv for kk, vv in r.items() if kk != "text"}
+                              for r in report.get(k, [])]
+        print(json.dumps({"action": "consolidate", **safe_report}, ensure_ascii=False,
+                         default=str))
+        return 0 if report.get("ok") else 1
 
     def _idle_reason(self, now: datetime, user_state: dict = None) -> str:
         # ── v7: 忙碌抑制期（用户说"别烦我"）→ 独立 reason，抑制期不累积 longing ──
@@ -1017,8 +1058,10 @@ class DecisionEngine:
             # ── v4: 人格自适应（收到回复后）──
             if prev_send_was_replied:
                 # A2: 分类型回复率统计——本次用户消息是对上一条发送的回复 →
-                # 最近发送触发类型的 replied+1（数据源供 chiguo_trigger 反馈闭环）。
-                self.state.record_trigger_replied()
+                # FIFO 归因队列最旧的未回复发送触发类型的 replied+1（数据源供
+                # chiguo_trigger 反馈闭环）。门控 reply_feedback_enabled（默认 0 恒等）。
+                if self.config.get("trigger", {}).get("reply_feedback_enabled", False):
+                    self.state.record_trigger_replied()
                 try:
                     self.state.adapt_personality({
                         "type": "character_send",
@@ -1137,8 +1180,10 @@ class DecisionEngine:
         fallback（A8）: composer 确定性兜底生成的标记（agent 生成失败时 True）。
         A2: 发送确认时对该触发类型 sent+1（分类型回复率统计数据源）。
         """
-        # A2: 确认已发送 → 该触发类型 sent+1（与 --user-msg 的 replied 归因配对）
-        if trigger:
+        # A2: 确认已发送 → 该触发类型 sent+1（与 --user-msg 的 replied 归因配对）。
+        # 门控 reply_feedback_enabled（默认 0）：关闭时不做记账也不写盘——状态文件
+        # 不新增 reply_stats 键、发送路径不产生额外 save（默认关闭恒等）。
+        if trigger and self.config.get("trigger", {}).get("reply_feedback_enabled", False):
             try:
                 self.state.record_trigger_sent(trigger)
                 # A2: 立即持久化——cron --record-send 为一次性进程，不 save 则 sent 计数
@@ -1697,21 +1742,7 @@ def main():
 
     # ── C1: 确定性记忆巩固（零 LLM；[memory].consolidate_* 参数；可接入 cron）──
     if args.consolidate:
-        engine = DecisionEngine()
-        mem_cfg = engine.config.get("memory", {})
-        bridge = engine.state.memory_bridge
-        if not getattr(bridge, "consolidate", None):
-            print(json.dumps({"action": "consolidate", "ok": False,
-                              "error": "记忆后端不支持 consolidate"}, ensure_ascii=False))
-            sys.exit(1)
-        report = bridge.consolidate(
-            sim_threshold=mem_cfg.get("consolidate_sim_threshold", 0.85),
-            min_importance=mem_cfg.get("consolidate_min_importance", 0.3),
-            max_age_hours=mem_cfg.get("consolidate_max_age_hours", 720.0),
-        )
-        print(json.dumps({"action": "consolidate", **report}, ensure_ascii=False,
-                         default=str))
-        sys.exit(0 if report.get("ok") else 1)
+        sys.exit(DecisionEngine().cli_consolidate())
 
     # ── 监控系统（stats / alerts / monitor）（v10: 锚定 base_dir，从任意 cwd 运行都读写项目文件）──
     if args.stats is not None or args.alerts or args.monitor:
