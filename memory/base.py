@@ -227,6 +227,13 @@ class MemoryBackend:
             return imp
         cnt = self._recall_counts_dict().get(mem.get("id"), 0)
         if cnt <= 0:
+            # 跨进程回读：cron 每 15 分钟起新进程，_recall_counts 从空开始——读
+            # 行 dict 里持久化的 recall_count（_row 已从 mem0 metadata 映射）。
+            try:
+                cnt = int(mem.get("recall_count") or 0)
+            except (TypeError, ValueError):
+                cnt = 0
+        if cnt <= 0:
             return imp
         return min(1.0, imp * (1.0 + bonus * cnt))
 

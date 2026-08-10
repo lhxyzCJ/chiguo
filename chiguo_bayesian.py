@@ -336,9 +336,12 @@ class UserStateEstimator:
                     if k not in self.STATES:
                         continue
                     try:
-                        row[k] = float(v)
+                        fv = float(v)
                     except (TypeError, ValueError):
-                        pass  # 非法数值忽略，缺省 0
+                        continue  # 非法数值忽略，缺省 0
+                    if not math.isfinite(fv) or fv < 0:
+                        continue  # NaN/inf/负数忽略：防 NaN 传播进 posterior → JSONL 非法 token
+                    row[k] = fv
             total = sum(row.values())
             if total > 0:
                 row = {k: v / total for k, v in row.items()}
