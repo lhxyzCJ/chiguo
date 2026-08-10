@@ -261,16 +261,19 @@ def test_time_gate_quiet_window():
 # ── 4. 故障降级链 ───────────────────────────────────────────
 
 
-def test_fault_topic_bypasses_time_gate():
-    """refresh_health 置 faulty → in_class=True 且 fault 配额内 → 产出 netease_fault"""
+def test_fault_topic_respects_time_gate():
+    """refresh_health 置 faulty → 时段门禁对故障话题同样生效(R13):
+    上课/睡眠窗口静默 None,窗口外才产出 netease_fault。"""
     with tempfile.TemporaryDirectory() as td:
         svc = _make_service(td, health=_down_health)
         svc.refresh_health(NOW)
         assert svc.health()["faulty"] is True
-        t = _mt(svc, NOW, in_class=True)
+        assert _mt(svc, NOW, in_class=True) is None          # 上课:不发故障消息
+        assert _mt(svc, NOW, in_quiet_window=True) is None   # 睡眠:不发故障消息
+        t = _mt(svc, NOW)                                    # 窗口外 → 正常产故障话题
         assert t is not None and t["type"] == "netease_fault"
         assert t["data"] == {"source": "fault", "reason": "unreachable"}
-    print("  OK test_fault_topic_bypasses_time_gate")
+    print("  OK test_fault_topic_respects_time_gate")
 
 
 def test_fault_quota():
@@ -731,7 +734,7 @@ if __name__ == "__main__":
     test_source_fallback_when_daily_down()
     test_time_gate_in_class()
     test_time_gate_quiet_window()
-    test_fault_topic_bypasses_time_gate()
+    test_fault_topic_respects_time_gate()
     test_fault_quota()
     test_login_expired_detection()
     test_faulty_fast_skip_until_reprobe()

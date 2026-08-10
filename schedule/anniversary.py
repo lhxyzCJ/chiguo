@@ -57,19 +57,24 @@ class AnniversaryManager:
         if self._path.exists():
             try:
                 data = json.loads(self._path.read_text())
-                anns = data.get("anniversaries", [])
-                # 白名单:type 仅 anniversary;countdown 条目读入即丢(M20/6c,
-                # 历史数据已由 api 迁移入口②直读原始文件迁为 reminder)
-                # 显式取值构造:未知键(extra 等历史脏键)忽略,不误判 corrupt
-                items = []
-                for a in anns:
-                    if not self._valid(a) or a.get("type") != "anniversary":
-                        continue
-                    items.append(Anniversary(
-                        id=a["id"], type=a["type"], name=a["name"], date=a["date"],
-                        note=a.get("note", ""), created_at=a.get("created_at", "")))
-                self._items = items
-            except (json.JSONDecodeError, TypeError):
+                # 顶层非 dict(list 等历史脏形状)→ 视同损坏:合并默认、不崩 daemon 启动(R12)
+                if not isinstance(data, dict):
+                    self._corrupt = True
+                    self._items = []
+                else:
+                    anns = data.get("anniversaries", [])
+                    # 白名单:type 仅 anniversary;countdown 条目读入即丢(M20/6c,
+                    # 历史数据已由 api 迁移入口②直读原始文件迁为 reminder)
+                    # 显式取值构造:未知键(extra 等历史脏键)忽略,不误判 corrupt
+                    items = []
+                    for a in anns:
+                        if not self._valid(a) or a.get("type") != "anniversary":
+                            continue
+                        items.append(Anniversary(
+                            id=a["id"], type=a["type"], name=a["name"], date=a["date"],
+                            note=a.get("note", ""), created_at=a.get("created_at", "")))
+                    self._items = items
+            except (json.JSONDecodeError, TypeError, AttributeError):
                 self._corrupt = True
                 self._items = []
 

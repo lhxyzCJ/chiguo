@@ -220,10 +220,14 @@ class NeteaseService:
         """与 music_topic 相同逻辑,但不消费配额。
         供 TopicPicker 在加权抽选前探测候选;选中后须调 consume_music_topic/consume_fault_topic
         确认消费。拉取成功仍同步健康恢复(_sync_success 只改健康态不消费配额);
-        两源全失败仍走 refresh_health 探针(与 music_topic 一致)。"""
+        两源全失败仍走 refresh_health 探针(与 music_topic 一致)。
+        时段门禁优先于故障分支:上课/睡眠窗口恒 None(故障话题也受时段约束,R13)。"""
         now = now or datetime.now(CST)
         if now.tzinfo is None:
             now = now.replace(tzinfo=CST)
+        # 时段门禁前置:上课/睡眠窗口连故障话题也不发(与正常话题同级静默,R13)
+        if in_class or in_quiet_window:
+            return None
         if self._health.get("faulty"):
             if self._should_reprobe(now):
                 self.refresh_health(now)
@@ -237,8 +241,6 @@ class NeteaseService:
                     "data": {"source": "fault", "reason": self._health.get("failure_reason")},
                 }
             # 恢复 → 继续走正常话题
-        if in_class or in_quiet_window:
-            return None
         if self._music_quota_left(now) <= 0:
             return None
         return self._pick_and_fetch(now, consume=False)
