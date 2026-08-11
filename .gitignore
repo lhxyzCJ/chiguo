@@ -80,3 +80,6 @@ netease/netease_cache.json.bak
 
 # Reasonix 工具私有配置（本地权限台账，不进 git）
 reasonix.toml
+
+# claude-mem SQLite 记忆库（运行态数据，不入库）
+.open-mem/
