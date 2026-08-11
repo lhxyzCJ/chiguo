@@ -1311,8 +1311,11 @@ anxiety_mid = 58
 
 [trigger]
 # v7: anxiety 触发候选归一化（与孤独三级同款 softmax"不触发基线"模式）
-# w = raw / (raw + anxiety_baseline)，归一化权重 > anxiety_min_weight 才成为候选。
-# 默认态 anxiety=40 → w≈0.171 < 0.3 → 不再确定性触发 anxiety 刷满日限额。
+# w = raw / (raw + anxiety_baseline * (1 - raw))，归一化权重 > anxiety_min_weight 才成为候选。
+# 默认态 anxiety=40 → w≈0.187 < 0.3 → 不再确定性触发 anxiety 刷满日限额。
+# v1.13 B2(#137)：原 w = raw/(raw+baseline) 把 w_anx 钳在 max≈0.664 < must_send_activation(0.75)，
+# 高焦虑永远到不了 A4 高段必发；补 (1-raw) 项后 raw→1 时 w→1（高焦虑可达 must_send），
+# 中低段基本保持（anx=40 → 0.187 vs 原 0.171）。
 anxiety_baseline = 0.5
 anxiety_min_weight = 0.3
 

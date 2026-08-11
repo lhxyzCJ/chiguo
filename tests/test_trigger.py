@@ -133,6 +133,36 @@ def test_anxiety_high_fires():
     print("  OK test_anxiety_high_fires")
 
 
+def test_b2_anxiety_extreme_reaches_must_send():
+    """B2 (#137): A4 must_send 标定矛盾修复 —— 修复前 w_anx 被 "不触发基线" softmax
+    钳在 max≈0.664 < must_send_activation(0.75)，anxiety 单源权重永远到不了高段必发
+    （空闲×1.2 下 anx=70 仅 0.74 <0.75 不触发，红线）。
+    修复后 raw_anx→1 时 w_anx→≈1：空闲高焦虑 70 → 必发标记；极高焦虑 90(raw≈0.98)
+    → 基础权重≈0.99 ≥0.75，端到端 100% 标记 must_send；
+    中低焦虑(40) 归一化仍 ≈0.187<0.3 不成候选 → 不触发 must_send（恒等）。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)  # 空闲 ×1.2
+        # 高焦虑 70（= anxiety_block_threshold）+ 低孤独 + 低元气（关 playful 噪声）
+        # → anxiety 为唯一情绪候选。修复前 w_old≈0.618×1.2=0.741<0.75 不标记（红线）；
+        # 修复后 w_new≈0.894×1.2=1.07 ≥0.75 → 必发。
+        s70 = _make_state(td, now, anxiety=70, loneliness=15, energy=40)
+        ms70 = _count_must_send(s70, now, n=50)
+        assert ms70 == 50, f"高焦虑 70 空闲应必发 must_send, got {ms70}/50"
+        # 极高焦虑 90：raw_anx≈0.98 → 修复后基础 w_anx≈0.99 ≥0.75，端到端 100% 标记
+        s90 = _make_state(td, now, anxiety=90, loneliness=15, energy=40)
+        ms90 = _count_must_send(s90, now, n=50)
+        assert ms90 == 50, f"极高焦虑 90 应 100% must_send, got {ms90}/50"
+        random.seed(99)
+        t = evaluate_triggers(s90, now)
+        assert t is not None and t.type == "anxiety", f"极高焦虑应选中 anxiety, got {t}"
+        assert t.data.get("must_send") is True, f"must_send 标记缺失, got {t.data}"
+        # 中低焦虑(40) 对照：归一化 <0.3 不成候选 → 不得 must_send
+        s40 = _make_state(td, now, anxiety=40, loneliness=15, energy=40)
+        ms40 = _count_must_send(s40, now, n=50)
+        assert ms40 == 0, f"中低焦虑不得 must_send, got {ms40}/50"
+    print("  OK test_b2_anxiety_extreme_reaches_must_send")
+
+
 # ═══════════════════════════════════════════════════════════
 # 时间窗口 ritual 触发
 # ═══════════════════════════════════════════════════════════
@@ -698,6 +728,7 @@ if __name__ == "__main__":
         test_lonely_softmax_competition_at_high_loneliness,
         test_rate_factor_boosts_lonely_at_low_loneliness,
         test_anxiety_high_fires,
+        test_b2_anxiety_extreme_reaches_must_send,
         test_morning_window_probability,
         test_night_window_probability,
         test_meal_window_probability,
