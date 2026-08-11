@@ -131,12 +131,14 @@ export function appendTelemetry(entry, repo = REPO) {
 }
 
 export function extractAnalysis(text) {
-  const m = text.match(/<<ANALYSIS>>\s*(\{[\s\S]*?\})\s*<<END>>/)
-  if (!m) return { analysis: null, reply: text }
+  // 复用 extractBlock 平衡括号解析（嵌套 JSON 不被首 } 截断）；无论解析成败都剥离块，标记不泄露进微信消息
+  const block = extractBlock(text, 'ANALYSIS')
+  const reply = text.replace(/<<ANALYSIS>>[\s\S]*?<<END>>/, '').trim()
+  if (block == null) return { analysis: null, reply }
   try {
-    return { analysis: JSON.parse(m[1]), reply: text.replace(/<<ANALYSIS>>[\s\S]*?<<END>>/, '').trim() }
+    return { analysis: JSON.parse(block), reply }
   } catch {
-    return { analysis: null, reply: text }
+    return { analysis: null, reply }
   }
 }
 

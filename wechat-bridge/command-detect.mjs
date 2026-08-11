@@ -51,7 +51,7 @@ export function detectSpecialCommand(text) {
     const mm = String(Number(m[1])).padStart(2, '0')
     const dd = String(Number(m[2])).padStart(2, '0')
     const name = m[3].replace(/[。！!～~，,、了]+$/, '').trim()
-    if (name) {
+    if (name && !isAskOrNegate(name)) {
       return {
         action: 'anniversary_added',
         daemon: ['--anniversary', `add anniversary ${mm}-${dd} ${name}`],
@@ -64,7 +64,7 @@ export function detectSpecialCommand(text) {
   m = t.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日\s*(?:是|为|要)?\s*(.+)$/)
   if (m) {
     const name = m[4].replace(/[。！!～~，,、]+$/, '').trim()
-    if (name) {
+    if (name && !isAskOrNegate(name)) {
       const date = `${m[1]}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`
       return {
         action: 'reminder_added',
@@ -76,7 +76,7 @@ export function detectSpecialCommand(text) {
   m = t.match(/^(\d{1,2})月(\d{1,2})日\s*要\s*(.+)$/)
   if (m) {
     const name = m[3].replace(/[。！!～~，,、了]+$/, '').trim()
-    if (name) {
+    if (name && !isAskOrNegate(name)) {
       const year = inferYear(Number(m[1]), Number(m[2]))
       const date = `${year}-${String(Number(m[1])).padStart(2, '0')}-${String(Number(m[2])).padStart(2, '0')}`
       return {
@@ -101,6 +101,15 @@ export function detectSpecialCommand(text) {
   }
 
   return null
+}
+
+/** 语义反转守卫(Issue #130)：日期前缀正则捕获的剩余文本呈疑问/否定/征求语气 → 放行 agent 自然回复。
+ *  征求/疑问词(要不要|是不是|可不可以|可以吗|好不好|行不行|能不能|行吗|能吗|吗|怎么|什么|怎么办|几点|何时)
+ *  或以否定词开头(不|别|没)——如"2026年8月11日要不要一起吃饭"残留"不要一起吃饭"语义反转，一律不拦截。
+ *  正例(要考试/过生日/迟菓生日)不含上述词，不受影响。 */
+function isAskOrNegate(s) {
+  return /要不要|是不是|可不可以|可以吗|好不好|行不行|能不能|行吗|能吗|吗|怎么|什么|怎么办|几点|何时/.test(s)
+    || /^(?:不|别|没)/.test(s)
 }
 
 /** 写/回忆意图检测(schedule-center 6a):词表子串命中 + start-anchored 豁免 MAX_LEN(R1/MED 钉死)。
