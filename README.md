@@ -99,7 +99,7 @@
 
 **被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假/开学）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `agent-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `agent-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
 
-**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 默认 mem0，可切自定义类）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 agent 调用成败都记入 `agent_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
+**共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 唯一 mem0）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 agent 调用成败都记入 `agent_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 50, "rankSpacing": 60, "curve": "basis", "fontSize": 18}}}%%
@@ -186,7 +186,7 @@ flowchart LR
 
 ## 🚀 快速开始
 
-需要 **Python 3.14+**（uv 管理）。核心零第三方依赖（纯 stdlib）；记忆/课表增强可选。
+需要 **Python 3.14+**（uv 管理）。核心零第三方依赖（纯 stdlib）；记忆层 mem0 为必需依赖（`uv sync --all-extras` 安装），课表解析需 openpyxl。
 
 部署分三档，按需选择：
 
@@ -246,11 +246,11 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 ### 记忆系统（记忆后端抽象）
 
-**作用**：迟菓的长期记忆——比情绪更持久的"记得"。它是**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类 + `create_backend` 工厂（`memory_bridge.py` 降为兼容门面），由 `chiguo_proactive.toml` 的 `[memory].backend` 切换——`mem0`（默认，[mem0ai](https://github.com/mem0ai/mem0) 记忆层）/ 自定义类 `module.path.ClassName`。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
+**作用**：迟菓的长期记忆——比情绪更持久的"记得"。它是**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类 + `create_backend` 工厂（`memory_bridge.py` 降为兼容门面），由 `chiguo_proactive.toml` 的 `[memory].backend` 指定——`mem0`（唯一后端，[mem0ai](https://github.com/mem0ai/mem0) 记忆层；仅 `mem0`/`auto`（遗留同义）合法）。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
 
 **安装/配置**：`uv sync`（mem0ai + ollama 客户端为必需依赖），记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db；路径/LLM/embedding 由 `[memory]` 段 `mem0_*` 键配置，LLM key 缺省读 `~/.pi/agent/auth.json` 的 opencode-go 条目）。
 
-**缺失影响**：mem0 不可用时优雅降级（`available=False`，查询返回空、不抛异常）——记忆话题源减少，`chiguo_envcheck.py` 报 warn（不影响运行）。装与不装的差异见 [❓ FAQ](#-faq)。
+**缺失影响**：部署硬性检查——`chiguo_envcheck.py` 记忆层检查报 warn/critical：mem0ai 未装 → critical（阻塞部署，`uv sync` 即装齐）；无 LLM key/qdrant 未初始化 → warn（记忆话题源减少，不影响运行）。运行中不可用则 60 秒节流重试，故障恢复后自动自愈。装与不装的差异见 [❓ FAQ](#-faq)。
 
 ### 网易云音乐桥
 
@@ -370,7 +370,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 源自《三色△绘恋》系列官方角色（见[🎀 她是谁](#-她是谁)）。本项目是二次演绎，剧本仅作学习参考，版权归原作者；权利方异议即移除。
 
 **记忆系统装不装有什么区别？**
-`[memory].backend` 默认 `mem0`：`uv sync` 即装齐（mem0ai+ollama 为必需依赖）+ ollama 本地 qwen3-embedding + LLM key 时全功能；LLM key 缺失/ollama 未启动时记忆未启用（`available=False` 优雅降级），记忆话题源减少，`envcheck` 报 info。
+`[memory].backend` 唯一 `mem0`：`uv sync` 即装齐（mem0ai+ollama 为必需依赖）+ ollama 本地 qwen3-embedding + LLM key 时全功能；部署硬性检查——mem0ai 未装 → `envcheck` 报 critical（阻塞部署）；无 LLM key/ollama 未启动 → 报 warn（记忆话题源减少，不影响运行），运行中不可用则 60 秒节流自愈。
 
 **怎么换人格/调性格？**
 迟菓的人格是固定的（系统围绕单一角色设计），不可替换角色。想调整行为？改 `chiguo_proactive.toml` 的参数即可——`SUN2.md` 是唯一权威设定，语感在《迟菓语言技巧指南》。
@@ -400,7 +400,7 @@ chiguo_daemon.py         # 决策引擎（主入口，零 LLM）
 chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian
 chiguo_math.py           # 纯数学库（sigmoid/弹性衰减/交互矩阵/饱和阻尼/Hawkes/Jaccard）
 chiguo_composer.py       # Intent×Cue×Vibe 消息组合 + 兜底 CLI（生成失败回退）
-memory/                  # 记忆后端抽象（base/mem0_backend/factory；memory_bridge.py 兼容门面）
+memory/                  # 记忆后端（mem0 唯一；base/mem0_backend/factory；memory_bridge.py 兼容门面）
 schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan）
 scripts/                 # tick/replan crontab 入口 + agent runner 抽象（agent-run.mjs，默认 agent）

@@ -373,7 +373,7 @@ class ChiguoState:
             print(f"[warn] HolidayParser 构造失败，节假日判断降级: {exc}", file=sys.stderr)
             self.holiday_parser = None
 
-        # 记忆后端（v1.8 解耦：memory/ 包工厂；v1.9 内置 mem0，可换自定义类路径）
+        # 记忆后端（v1.8 解耦：memory/ 包工厂；v1.15 起 mem0 唯一后端，backend 仅 mem0/auto）
         base_dir = str(self._anchored("."))
         mem_cfg = config.get("memory", {})
         self.memory_bridge = create_backend(mem_cfg, base_dir=base_dir)

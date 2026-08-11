@@ -26,11 +26,11 @@ if [ ! -x .venv/bin/python ]; then
 fi
 say "Python: $(uv run python --version)($(uv run python -c 'import sys;print(sys.executable)'))"
 
-# ── 2. 可选依赖 mem0(记忆层,缺省优雅降级 available=False) ────
+# ── 2. 必需依赖 mem0(唯一记忆后端;缺失即中止部署) ────
 if uv run python -c "import mem0" >/dev/null 2>&1; then
     say "mem0 OK → 记忆库 data/mem0(qdrant 本地 + ollama qwen3-embedding)"
 else
-    warn "mem0 未安装 → 记忆未启用(可运行: uv sync --all-extras)"
+    fail "mem0 未安装 → 记忆层缺失(唯一记忆后端,必需);请运行 uv sync --all-extras"
 fi
 
 # ── 3. 全量自检(ci-test.sh 单一入口: 44 py + 13 script + stub 自举) ──

@@ -536,6 +536,53 @@ def test_bug5_record_user_message_upgrade_reloads_disk_state(cfg_path: Path):
 
 
 # ═══════════════════════════════════════════════════════
+# --memory-search CLI（v1.15 回复侧记忆检索，mem0 唯一后端）
+# ═══════════════════════════════════════════════════════
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DAEMON_SCRIPT = os.path.join(_REPO_ROOT, "chiguo_daemon.py")
+
+
+def test_memory_search_disabled_mem0_soft_degrade(cfg_path: Path):
+    """CHIGUO_MEM0_DISABLED=1（mem0 不可用）→ --memory-search 软降级：
+    ok:true + memories:[] + exit 0（检索失败不阻塞调用方）。"""
+    env = dict(os.environ, CHIGUO_MEM0_DISABLED="1")
+    p = subprocess.run([sys.executable, _DAEMON_SCRIPT, "--memory-search", "咖啡"],
+                       capture_output=True, text=True, env=env, cwd=_REPO_ROOT)
+    assert p.returncode == 0, f"exit {p.returncode}: {p.stdout} {p.stderr}"
+    out = json.loads(p.stdout)
+    assert out["action"] == "memory_search"
+    assert out["ok"] is True
+    assert out["query"] == "咖啡"
+    assert out["count"] == 0
+    assert out["memories"] == []
+    print("  OK test_memory_search_disabled_mem0_soft_degrade")
+
+
+def test_memory_search_bad_backend_config(cfg_path: Path):
+    """临时 toml [memory] backend='x.y'（坏配置）→ ok:false + exit 1
+    （子进程真实退出码；坏配置明确报错而非静默空结果）。"""
+    with tempfile.TemporaryDirectory(prefix="chiguo_test_daemon_fixes_") as td:
+        bad_cfg = Path(td) / "chiguo_proactive.toml"
+        bad_cfg.write_text('[memory]\nbackend = "x.y"\n')
+        code = (
+            "import sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import chiguo_daemon as m\n"
+            "m._cmd_memory_search(sys.argv[3], config_path=sys.argv[2])\n"
+        )
+        p = subprocess.run([sys.executable, "-c", code, _REPO_ROOT, str(bad_cfg), "咖啡"],
+                           capture_output=True, text=True, cwd=_REPO_ROOT)
+        assert p.returncode == 1, (
+            f"bad backend config should exit 1, got {p.returncode}: {p.stdout} {p.stderr}")
+        out = json.loads(p.stdout)
+        assert out["action"] == "memory_search"
+        assert out["ok"] is False
+        assert "--memory-search 失败" in p.stderr
+    print("  OK test_memory_search_bad_backend_config")
+
+
+# ═══════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════
 
@@ -554,6 +601,8 @@ if __name__ == "__main__":
             test_bug4_concurrent_send_result_single_refund,
             test_bug5_record_user_message_reloads_disk_state,
             test_bug5_record_user_message_upgrade_reloads_disk_state,
+            test_memory_search_disabled_mem0_soft_degrade,
+            test_memory_search_bad_backend_config,
         ]
         for t in tests:
             t(cfg_path)

@@ -60,7 +60,7 @@ No build step. Minimal dependencies beyond Python stdlib (plus `tomllib` for Pyt
 **Decision/generation separation** — the core design principle. `chiguo_daemon.py` is a zero-LLM math engine that evaluates state and outputs structured JSON. Message generation happens externally via the **agent backend** (Phase 4 host; v1.8 抽象：默认 agent 后端，`[host].runner = command` 可替换为任意 CLI agent，见下), which reads that JSON, generates text per `personality/SUN2.md`, and sends via wechat-bridge.
 
 **agent backend integration** (see `doc/AGENT_INTEGRATION.md`, Phase 4):
-- **v1.8 agent 抽象；v1.9 记忆后端**：`[host].runner` — `agent`（默认，agent 后端二进制）| `command`（任意 CLI agent，`[host].agent_command` 指定；统一契约 `--prompt <完整提示词> --mode <mode>`，stdout JSON 或 NDJSON；RPC 常驻仅 agent 模式）。**记忆后端抽象**：`[memory].backend` — `mem0`（默认，mem0ai 记忆层：LLM 事实提取写入 + ollama 本地向量检索 + qdrant 嵌入式存储）/ `module.path.ClassName` 自定义类（`memory/` 包：MemoryBackend 基类 + Mem0Backend + create_backend 工厂；`memory_bridge.py` 兼容门面）
+- **v1.8 agent 抽象；v1.9 记忆后端**：`[host].runner` — `agent`（默认，agent 后端二进制）| `command`（任意 CLI agent，`[host].agent_command` 指定；统一契约 `--prompt <完整提示词> --mode <mode>`，stdout JSON 或 NDJSON；RPC 常驻仅 agent 模式）。**记忆后端**：`[memory].backend` — `mem0`（唯一记忆后端，mem0ai 记忆层：LLM 事实提取写入 + ollama 本地向量检索 + qdrant 嵌入式存储；`memory/` 包：MemoryBackend 基类 + Mem0Backend + create_backend 工厂；`memory_bridge.py` 兼容门面；backend 仅 mem0/auto，其他值抛 ValueError）
 - Send side: system crontab `*/15 * * * * scripts/chiguo-tick.sh` — runs `chiguo_daemon.py --compact` with zero model calls; idle → silent exit, send → `scripts/agent-run.mjs` (session `chiguo-send`) generates message per SUN2.md → curl `[host].wechat_bridge_url` → `--record-send` writes back；agent 生成失败 → `chiguo_composer.py` 模板池兜底直出文本（v1.10 A8：成功发送 + fallback 标记，composer 也失败才 fail）
 - Reply side: `wechat-bridge/bridge.mjs` — deterministic `--user-msg` on arrival → special-command detection (`command-detect.mjs`: anniversary/break/schedule rules, no agent; schedule-center CLI 子命令 `--attention`/`--schedule-recall`/`--schedule-change` + `python -m schedule.replan --check`/`schedule.holiday`) → otherwise `askAgent` (agent-run `--analysis-mode`: one call does emotion analysis JSON + reply, session `chiguo-main`, in-process TurnQueue serializes) → `--user-msg --analysis` upgrade (daemon recv_dedup, no double-count)
 - Sessions: reply=`chiguo-main`, proactive send=`chiguo-send` — separate sessions eliminate cross-process concurrent turns
@@ -93,7 +93,7 @@ chiguo_daemon.py (DecisionEngine)
   ├─ memory/ 包        → 记忆后端抽象：MemoryBackend 基类 + Mem0Backend + create_backend 工厂（Ebbinghaus 包装在基类；memory_bridge.py 兼容门面）
   ├─ chiguo_rotation.py  → monthly log rotation → archive/
   ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
-  ├─ chiguo_version.py   → project version single source (VERSION="1.14", MINOR +1 per round: 1.9→1.10→1.11→1.12→1.13→1.14, not decimal addition)
+  ├─ chiguo_version.py   → project version single source (VERSION="1.15", MINOR +1 per round: 1.9→1.10→1.11→1.12→1.13→1.14→1.15, not decimal addition)
   └─ chiguo_monitor.py   → streaming JSONL analytics (stats/alerts/health)
 
   Output: chiguo_decisions.jsonl (append-only structured log)
@@ -102,7 +102,7 @@ chiguo_daemon.py (DecisionEngine)
 
 **Config**: `chiguo_proactive.toml` — all parameters (368 lines). Legacy host section from Task 14 (superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
-**Version**: `chiguo_version.py` is the single source (`VERSION="1.14"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
+**Version**: `chiguo_version.py` is the single source (`VERSION="1.15"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
 
 **5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h). v1.10: 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+|target-current|/baseline)，偏离越远回弹越快；loneliness/anxiety/affection/energy 四处推进改调）+ 情绪交互矩阵（tick 后 `apply_interaction_matrix` 一次：affection>60→anxiety 恢复加速 / energy<30→loneliness 恢复加速 / anxiety>70→energy 恢复减速，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ 回复饱和阻尼（30 分钟窗口同向回复计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）。v1.11: 惯性阻尼（`impact_inertia` 压缩单条 analysis delta）+ 用户情绪感知（`user_mood` 三路消费：情绪 delta / comfort 触发 / mood_note 注解）+ OU 噪声（tick 内 loneliness/anxiety 小幅起伏）+ 基线漂移（`baseline_*` 长期收敛目标，tick target 改用基线）。v1.12: B1 事件类型化情绪 delta（`EVENT_DELTA` 规则表 + 别名映射，analysis 事件直接加减情绪不走 inertia，`[emotion].event_delta_enabled` 默认关闭）+ B2 情绪-记忆耦合（写侧 emotion_tag 打标进 mem0 metadata、读侧 emotion_tag_similarity 相似加权，`[memory].emotion_tagging`/`emotion_tag_weight` 默认关闭）。
 

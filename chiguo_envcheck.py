@@ -233,18 +233,20 @@ def _pi_api_key(provider: str = "opencode-go") -> str | None:
 
 def check_mem0(qdrant_dir: Path, history_db: Path) -> dict:
     """mem0 记忆层检查：mem0ai 可导入 + LLM key 存在 + 本地向量库目录就绪。
-    任一缺失 → info（记忆未启用可选；具体可用性由后端自身降级，不阻塞部署）。"""
+    mem0 为唯一记忆后端（必需依赖）：mem0ai 缺失 → critical（阻塞部署）；key 缺失 /
+    qdrant 目录未初始化 → warn（部署时序：envcheck 先于 install_agent.sh 写 key，
+    目录首写自动创建；具体可用性由后端自身降级）。"""
     try:
         import mem0  # noqa: F401
     except ImportError:
-        return {"name": "mem0", "ok": False, "severity": "info",
-                "detail": "mem0ai 未安装 → 记忆未启用(可选)"}
+        return {"name": "mem0", "ok": False, "severity": "critical",
+                "detail": "mem0ai 未安装 → 记忆层缺失(唯一记忆后端,必需依赖);运行 uv sync --all-extras"}
     if not _pi_api_key():
-        return {"name": "mem0", "ok": False, "severity": "info",
-                "detail": "~/.pi/agent/auth.json 无 opencode-go key → 记忆写入不可用(可选)"}
+        return {"name": "mem0", "ok": False, "severity": "warn",
+                "detail": "~/.pi/agent/auth.json 无 opencode-go key → 记忆写入不可用(mem0 唯一后端)"}
     if not qdrant_dir.is_dir():
-        return {"name": "mem0", "ok": False, "severity": "info",
-                "detail": f"{_sanitize_path(qdrant_dir)} 不存在 → 记忆库未初始化(首次对话自动创建)"}
+        return {"name": "mem0", "ok": False, "severity": "warn",
+                "detail": "记忆库未初始化(mem0 唯一后端;首次对话自动创建)"}
     if not history_db.is_file():
         return {"name": "mem0", "ok": True, "severity": "ok",
                 "detail": f"mem0 OK ({_sanitize_path(qdrant_dir)}，历史库未创建)"}
@@ -313,18 +315,12 @@ def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = Non
     # v1.8: agent 后端抽象（runner=agent 默认；command=自定义 CLI agent）
     runner = cfg.get("host", {}).get("runner") or "agent"
     agent_command = cfg.get("host", {}).get("agent_command") or None
-    # 记忆后端检查（v1.9: mem0 为唯一内置后端；json/lancedb 已移除）：
-    # mem0/auto/缺省 → mem0 直检；自定义类路径（含 "."）→ 具体可用性由后端自身降级
-    memory_backend = cfg.get("memory", {}).get("backend") or "mem0"
+    # 记忆后端检查（mem0 为唯一后端，恒直检；具体可用性由后端自身降级）
     checks = [
         check_env(),
         check_agent(skip_agent=skip_agent, runner=runner, agent_command=agent_command),
     ]
-    if memory_backend in ("mem0", "auto"):
-        checks.append(check_mem0(mem0_qdrant, mem0_history))
-    else:
-        checks.append({"name": "memory_backend", "ok": True, "severity": "ok",
-                       "detail": f"自定义记忆后端 {memory_backend}（envcheck 不直检，由后端自身降级）"})
+    checks.append(check_mem0(mem0_qdrant, mem0_history))
     if runner == "agent":
         checks.append(check_ollama(ollama_url))
         checks.append(check_agent_auth(agent_auth, provider=provider))

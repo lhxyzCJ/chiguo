@@ -7,7 +7,7 @@
 #       非 TTY 等价 --dry-run）
 # 退出码: 0=完成  1=有待办/警告/残留未处理  2=严重问题
 # 幂等: 重复运行安全；每次修改前备份。
-# 安全边界: 只写 ~/.pi/。
+# 安全边界: 只写 ~/.pi/；阶段 0b 另清理已废弃扩展 memory-lancedb-pro 的 ~/.pi-agent 残留（mem0 唯一后端）。
 # ============================================================
 set -uo pipefail
 
@@ -85,6 +85,87 @@ if [ -n "$KEY_VAL" ]; then
 else
   warn "$KEY_VAR 未设置 → $PROVIDER key 无法写入（auth.json 已有该条目则不受影响）"
 fi
+
+# ── 阶段 0b: 清理 pi 记忆扩展残留（memory-lancedb-pro 已移除；mem0 唯一后端）──
+# v1.15 起 mem0 为唯一记忆后端，该扩展不再安装/加载；对历史部署机幂等清理，
+# 无扩展机器零副作用。dry-run 只报告；ask/yes 执行（ask 模式一次性 confirm）。
+cleanup_memory_extension() {
+  local SET="$HOME/.pi/agent/settings.json"
+  local FOUND=0 HAS_EXT=0
+  # 1) settings.json 是否仍引用 memory-lancedb-pro 扩展（只读探测；扩展路径含该串）
+  if [ -f "$SET" ] && grep -q 'memory-lancedb-pro' "$SET"; then
+    HAS_EXT=1; FOUND=1
+    [ "$DRY" = 1 ] && echo "  [dry-run] 将清理 settings.json 的 memory-lancedb-pro 扩展条目"
+  fi
+  # 2) 文件/目录残留探测
+  local t
+  for t in \
+    "$HOME/.pi/agent/memory-lancedb-pro.json5" \
+    "$HOME/.pi/agent/memory-lancedb-pro.json5.bak" \
+    "$HOME/.pi/agent/memory" \
+    "$HOME/.pi/agent/sessions/--root-.pi-agent-TestForPi-memory-lancedb-pro--" \
+    "$HOME/.pi-agent/TestForPi-memory-lancedb-pro" \
+    "$HOME/.pi-agent/memory/lancedb-pro"; do
+    [ -e "$t" ] || continue
+    FOUND=1
+    [ "$DRY" = 1 ] && echo "  [dry-run] 将删除记忆扩展残留: $t"
+  done
+  [ "$FOUND" = 0 ] && return 0
+  [ "$DRY" = 1 ] && { PENDING=1; warn "检测到 memory-lancedb-pro 残留 → 执行模式（--yes/ask）将清理"; return 0; }
+  if ! confirm "清理 memory-lancedb-pro 扩展残留（settings.json 条目 + json5/会话/数据/代码目录）"; then
+    return 0
+  fi
+  # 3) 实际执行（JSON 保形，先备份；仅实际移除才报成功，解析失败/无匹配条目置 PENDING）
+  if [ "$HAS_EXT" = 1 ]; then
+    if "$PY" - "$SET" <<'PYC' | grep -q '^removed$'
+import json, sys, shutil
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception as e:
+    print(f"parse-error: {e}")
+    sys.exit(1)
+exts = d.get("extensions")
+if not isinstance(exts, list):
+    sys.exit(0)
+keep = []
+for e in exts:
+    if isinstance(e, str):
+        if "memory-lancedb-pro" not in e:
+            keep.append(e)
+    elif isinstance(e, dict):
+        if not any("memory-lancedb-pro" in str(v) for v in e.values()):
+            keep.append(e)
+    else:
+        keep.append(e)
+if len(keep) != len(exts):
+    shutil.copyfile(sys.argv[1], sys.argv[1] + ".bak-memext")
+    if keep:
+        d["extensions"] = keep
+    else:
+        d.pop("extensions", None)
+    json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    open(sys.argv[1], "a").write("\n")
+    print("removed")
+PYC
+    then
+      say "已从 settings.json 移除 memory-lancedb-pro 扩展条目（备份: settings.json.bak-memext）"
+    else
+      PENDING=1
+      warn "settings.json 清理未生效（解析失败或无匹配条目），请手工检查: $SET"
+    fi
+  fi
+  for t in \
+    "$HOME/.pi/agent/memory-lancedb-pro.json5" \
+    "$HOME/.pi/agent/memory-lancedb-pro.json5.bak" \
+    "$HOME/.pi/agent/memory" \
+    "$HOME/.pi/agent/sessions/--root-.pi-agent-TestForPi-memory-lancedb-pro--" \
+    "$HOME/.pi-agent/TestForPi-memory-lancedb-pro" \
+    "$HOME/.pi-agent/memory/lancedb-pro"; do
+    [ -e "$t" ] && { rm -rf "$t"; say "已删除记忆扩展残留: $t"; }
+  done
+  say "memory-lancedb-pro 扩展残留已清理（mem0 唯一记忆后端）"
+}
+cleanup_memory_extension
 
 # ── 阶段 4: ollama embedding 模型检查 ──────────────────────
 say "阶段 4: ollama embedding（$OLLAMA_BASE）..."
