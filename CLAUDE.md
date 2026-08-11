@@ -93,7 +93,7 @@ chiguo_daemon.py (DecisionEngine)
   ├─ memory/ 包        → 记忆后端抽象：MemoryBackend 基类 + Mem0Backend + create_backend 工厂（Ebbinghaus 包装在基类；memory_bridge.py 兼容门面）
   ├─ chiguo_rotation.py  → monthly log rotation → archive/
   ├─ chiguo_envcheck.py  → read-only env readiness check (exit 0/1/2)
-  ├─ chiguo_version.py   → project version single source (VERSION="1.13", MINOR +1 per round: 1.9→1.10→1.11→1.12→1.13, not decimal addition)
+  ├─ chiguo_version.py   → project version single source (VERSION="1.14", MINOR +1 per round: 1.9→1.10→1.11→1.12→1.13→1.14, not decimal addition)
   └─ chiguo_monitor.py   → streaming JSONL analytics (stats/alerts/health)
 
   Output: chiguo_decisions.jsonl (append-only structured log)
@@ -102,7 +102,7 @@ chiguo_daemon.py (DecisionEngine)
 
 **Config**: `chiguo_proactive.toml` — all parameters (368 lines). Legacy host section from Task 14 (superseded by `[host]`; only `wechat_recipient` still read). `DecisionEngine._maybe_reload_config()` detects mtime changes and hot-reloads in `--loop` mode without restart.
 
-**Version**: `chiguo_version.py` is the single source (`VERSION="1.13"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
+**Version**: `chiguo_version.py` is the single source (`VERSION="1.14"`); +0.1 per completed round. Decision JSON/`--version`/envcheck/monitor carry the version; state file `_version` is the schema number (STATE_VERSION=10), unrelated to the project version.
 
 **5 emotion dimensions** with half-life decay toward equilibrium: loneliness (→100, 40h), affection (→0, 500h), anxiety (→100, 30h), energy (→100, 8h), tsundere_index (10-95, computed). User replies apply half-life decay drops (loneliness 0.35h, anxiety 0.5h). v1.10: 弹性衰减（`elastic_recover`：effective_hl = half_life/(1+|target-current|/baseline)，偏离越远回弹越快；loneliness/anxiety/affection/energy 四处推进改调）+ 情绪交互矩阵（tick 后 `apply_interaction_matrix` 一次：affection>60→anxiety 恢复加速 / energy<30→loneliness 恢复加速 / anxiety>70→energy 恢复减速，`[emotion].interaction_*` 默认 1.0=关闭恒等）+ 回复饱和阻尼（30 分钟窗口同向回复计数，加成 ×0.5^min(n,3)，`[cooldown].drop_damp_*`）。v1.11: 惯性阻尼（`impact_inertia` 压缩单条 analysis delta）+ 用户情绪感知（`user_mood` 三路消费：情绪 delta / comfort 触发 / mood_note 注解）+ OU 噪声（tick 内 loneliness/anxiety 小幅起伏）+ 基线漂移（`baseline_*` 长期收敛目标，tick target 改用基线）。v1.12: B1 事件类型化情绪 delta（`EVENT_DELTA` 规则表 + 别名映射，analysis 事件直接加减情绪不走 inertia，`[emotion].event_delta_enabled` 默认关闭）+ B2 情绪-记忆耦合（写侧 emotion_tag 打标进 mem0 metadata、读侧 emotion_tag_similarity 相似加权，`[memory].emotion_tagging`/`emotion_tag_weight` 默认关闭）。
 
