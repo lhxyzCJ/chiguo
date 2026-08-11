@@ -706,6 +706,68 @@ def test_evaluate_syncs_quiet_window_to_current_bucket():
 
 
 # ════════════════════════════════════════════════════════════
+# B1 (#136): 播放反证→放行发送（死逻辑修复——播放证明绕行 quiet-window gate）
+# ════════════════════════════════════════════════════════════
+
+
+def test_can_send_quiet_ok_bypasses_quiet_window():
+    """窗口内播放反证成立 → can_send(now, quiet_ok=True) 放行;默认 quiet_ok=False(现状)仍 False"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        engine.state.cooldown.set_quiet_window(0, 8)
+        assert in_quiet_window(DAEMON_NOW, 0, 8)  # 周六 01:30,窗口内
+        now_ms = int(DAEMON_NOW.timestamp() * 1000)
+        # 构造播放证明:窗口内 1h 前播放
+        orig, calls = _patch_engine_fetch(
+            engine, [{"playTime": now_ms - 3600_000, "name": "夜曲", "artist": "周杰伦"}])
+        try:
+            play_proof = engine._check_play_proof(DAEMON_NOW)
+        finally:
+            engine.netease_service.bridge.fetch_recent_play = orig
+        assert play_proof is True, play_proof
+        # 现状(默认 quiet_ok=False): 窗口内仍被 quiet 门禁拦截
+        assert engine.state.can_send(DAEMON_NOW) is False
+        assert engine.state.can_send(DAEMON_NOW, quiet_ok=False) is False
+        # 反证成立: quiet_ok=True → 绕过 quiet-window gate,其余 gate 全放行
+        assert engine.state.can_send(DAEMON_NOW, quiet_ok=True) is True
+    print("  OK test_can_send_quiet_ok_bypasses_quiet_window")
+
+
+def test_evaluate_play_proof_bypasses_quiet_window():
+    """窗口内播放反证成立 → evaluate 不再因 quiet-window gate 返回 idle(quiet_hours)。
+    经 config [schedule] 注入覆盖真实 now 与 now-1h 的窗口(h-1,h+1)——
+    evaluate 内 _load 会重建 cooldown,须由 _sync_quiet_window 回退 config 重注(cooldown 直接 set
+    会被 _load 复位)。"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        real_cpp = engine._check_play_proof
+        real_now = datetime.now(CST)
+        qs = (real_now.hour - 1) % 24
+        qe = (real_now.hour + 1) % 24
+        engine.config["schedule"]["quiet_start"] = qs
+        engine.config["schedule"]["quiet_end"] = qe
+        engine.state._sync_quiet_window()  # 回退注入 cooldown 窗口
+        assert engine.state.cooldown.quiet_window() == (qs, qe)
+        assert in_quiet_window(real_now, qs, qe)
+        # 对照: 无播放证据 → 窗口内 can_send 被 quiet 门禁拦截 → idle(quiet_hours)
+        engine._check_play_proof = lambda now: False
+        d = engine.evaluate()
+        assert d["action"] == "idle" and d.get("reason") == "quiet_hours", d
+        # 有播放证据(窗口内 1h 前播放)→ quiet_ok=True 绕过门禁 → 不再 idle(quiet_hours)
+        engine._check_play_proof = real_cpp
+        orig, calls = _patch_engine_fetch(
+            engine, [{"playTime": int((real_now - timedelta(hours=1)).timestamp() * 1000),
+                      "name": "夜曲", "artist": "周杰伦"}])
+        try:
+            d2 = engine.evaluate()
+        finally:
+            engine.netease_service.bridge.fetch_recent_play = orig
+        assert calls["n"] >= 1, calls
+        assert d2.get("reason") != "quiet_hours", d2
+    print("  OK test_evaluate_play_proof_bypasses_quiet_window")
+
+
+# ════════════════════════════════════════════════════════════
 # v9 Task 1: 桥接层加固 (_api_get 有限重试 + fetch_daily_songs schema 过滤)
 # ════════════════════════════════════════════════════════════
 
@@ -882,6 +944,8 @@ if __name__ == "__main__":
     test_check_play_proof_play_outside_quiet_window()
     test_evaluate_play_proof_suppresses_sleeping_confidence()
     test_toml_sleeping_confidence_factor_drives_effective()
+    test_can_send_quiet_ok_bypasses_quiet_window()
+    test_evaluate_play_proof_bypasses_quiet_window()
     test_evaluate_syncs_quiet_window_to_current_bucket()
     test_api_get_retries_transient_failure()
     test_api_get_no_retry_on_http_4xx()

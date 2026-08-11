@@ -108,6 +108,32 @@ def test_disabled_returns_none():
     print("  OK test_disabled_returns_none")
 
 
+def test_peek_disabled_no_bridge_call():
+    """A3: enabled=False → peek_music_topic 直接 None 且不触 bridge（enabled 门控置于最前，
+    与 fetch_play_proof 一致）。bridge 有素材也绝不拉取/不探针。"""
+    calls = {"daily": 0, "recent": 0, "health": 0}
+
+    def fd(*a, **k):
+        calls["daily"] += 1
+        return _songs()
+
+    def fr(*a, **k):
+        calls["recent"] += 1
+        return _plays()
+
+    def fh(*a, **k):
+        calls["health"] += 1
+        return {"api_alive": True, "logged_in": True}
+
+    with tempfile.TemporaryDirectory() as td:
+        svc = _make_service(td, enabled=False, daily=fd, recent=fr, health=fh)
+        assert svc.peek_music_topic(NOW) is None
+        assert svc.peek_music_topic(NOW, in_class=False, in_quiet_window=False) is None
+        assert calls["daily"] == 0 and calls["recent"] == 0, calls
+        assert calls["health"] == 0, calls
+    print("  OK test_peek_disabled_no_bridge_call")
+
+
 def test_enabled_default_true():
     """enabled 缺省默认 true（向后兼容）"""
     import tempfile
@@ -724,6 +750,7 @@ def test_bridge_default_injected():
 
 if __name__ == "__main__":
     test_disabled_returns_none()
+    test_peek_disabled_no_bridge_call()
     test_enabled_default_true()
     test_health_file_default_when_missing()
     test_health_file_corrupt_rebuild()

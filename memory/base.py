@@ -194,6 +194,11 @@ class MemoryBackend:
         （见 _effective_importance，读侧加权用）。写回由 _persist_recall 钩子完成：
         基类 no-op（内存侧），Mem0Backend 覆写为 mem0 update_memory（有该能力时）。
         返回本次记录条数。
+
+        A2 跨进程累积（Issue #133）：cron 每 15 分钟起新进程，_recall_counts dict 从空
+        开始——只从 dict 取数会把持久化 recall_count 覆盖成 1。计数基数改为先经
+        _load_recall_count 读回后端持久化旧值，再 +1；进程内 dict 仅作会话内缓存
+        （同一进程内多次召回不再重复读库）。reinforce 关闭 → 仍不引入任何副作用。
         """
         enabled, bonus = self._reinforce_attrs()
         if not enabled or bonus <= 0:
@@ -203,7 +208,13 @@ class MemoryBackend:
         for mid in memory_ids or []:
             if not mid:
                 continue
-            cnt = counts.get(mid, 0) + 1
+            if mid not in counts:
+                try:
+                    persisted = int(self._load_recall_count(mid) or 0)
+                except (TypeError, ValueError):
+                    persisted = 0  # 后端读回异常/非法值 → 兜底 0，不阻断召回记录
+                counts[mid] = persisted
+            cnt = counts[mid] + 1
             counts[mid] = cnt
             try:
                 self._persist_recall(mid, cnt)
@@ -215,6 +226,13 @@ class MemoryBackend:
     def _persist_recall(self, memory_id: str, count: int):
         """C2: 召回次数持久化钩子。基类 no-op；子类（Mem0Backend）覆写写回。"""
         return None
+
+    def _load_recall_count(self, memory_id: str) -> int:
+        """C2: 读取后端已持久化的 recall_count（A2 跨进程累积数据源）。
+
+        基类 no-op 返回 0（无持久化能力）；子类（Mem0Backend）覆写为 mem0 get 读 metadata。
+        """
+        return 0
 
     def _effective_importance(self, mem: dict) -> float:
         """C2: 记忆有效重要度 = importance × (1 + reinforce_bonus × recall_count)。

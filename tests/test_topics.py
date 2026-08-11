@@ -103,7 +103,8 @@ class FakeNeteaseService:
     """假网易云策略层：记录 peek/consume 调用；可固定返回话题或抛异常（不限配额）。
     music_topic = peek + consume（与真实 NeteaseService 语义一致）"""
 
-    def __init__(self, topic=None, raise_exc=None):
+    def __init__(self, topic=None, raise_exc=None, enabled=True):
+        self.enabled = enabled  # A3: 与真实 NeteaseService 同门控
         self.peek_calls = []
         self.consume_music_calls = 0
         self.consume_fault_calls = 0
@@ -467,6 +468,23 @@ def test_netease_service_called_with_gate_args():
     print("  OK test_netease_service_called_with_gate_args")
 
 
+def test_netease_disabled_no_peek_no_topic():
+    """A3: enabled=False → _netease_music_topic 短路不探测(fake 无 peek 记录)、
+    pick 不产出 netease 话题(配置门控语义)"""
+    with tempfile.TemporaryDirectory() as td:
+        state = _real_state(td)
+        svc = FakeNeteaseService(topic=NETEASE_FIXED, enabled=False)
+        picker = TopicPicker(state, _picker_cfg(), netease_service=svc)
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        for i in range(50):
+            random.seed(9000 + i)
+            t = picker.pick(now)
+            assert t is not None and t.get("type") != "netease_music", t
+        assert len(svc.peek_calls) == 0, "enabled=False 不应探测(无 peek 调用)"
+        assert svc.consume_music_calls == 0 and svc.consume_fault_calls == 0
+    print("  OK test_netease_disabled_no_peek_no_topic")
+
+
 def test_netease_consume_only_when_selected():
     """两阶段：peek 每次 pick 都探测（不消费）；consume 只在 netease 被抽中时调用
     （consume 次数 == 选中次数 < 候选生成次数）"""
@@ -696,6 +714,7 @@ if __name__ == "__main__":
         test_memory_and_preference_topics_with_bridge,
         test_netease_weight_in_weights,
         test_netease_service_called_with_gate_args,
+        test_netease_disabled_no_peek_no_topic,
         test_netease_consume_only_when_selected,
         test_netease_fault_consume_when_selected,
         test_netease_gate_exception_fail_closed,
