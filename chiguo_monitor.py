@@ -59,7 +59,7 @@ class ChiguoMonitor:
             "memory_critical_mb": 1000,
             "mem0_qdrant_path": "data/mem0/qdrant",
             "mem0_history_db": "data/mem0/history.db",
-            "backend": "mem0",         # v1.9: 记忆后端抽象（mem0/自定义类路径）
+            "backend": "mem0",         # mem0 唯一记忆后端（[memory].backend 镜像）
         }
         candidates = [config_path]
         if not config_path.is_absolute():
@@ -77,7 +77,7 @@ class ChiguoMonitor:
                 if "mem0_history_db" not in monitor:
                     defaults["mem0_history_db"] = (cfg.get("memory", {}).get("mem0_history_db")
                                                    or defaults["mem0_history_db"])
-                # v1.9: 记忆后端单一事实来源 = [memory] 段
+                # [memory].backend 镜像（mem0 唯一后端）
                 defaults["backend"] = cfg.get("memory", {}).get("backend") or defaults["backend"]
                 break
             except Exception:
@@ -92,10 +92,6 @@ class ChiguoMonitor:
         if p.is_absolute():
             return p
         return Path(__file__).resolve().parent / p
-
-    def _memory_backend(self) -> str:
-        """v1.9: 记忆后端类型（[memory].backend，缺省 mem0）。"""
-        return self._monitor_config.get("backend", "mem0")
 
     # ═══════════════════════════════════════════════════════════
     # 内部：流式解析
@@ -888,21 +884,16 @@ class ChiguoMonitor:
             elif rss_mb > warn:
                 issues.append(f"process memory {rss_mb:.0f}MB > {warn}MB (warn)")
 
-        # 9. 记忆后端连通性直检（v1.9: 按 [memory].backend 分流；mem0 检查本地向量库目录，
-        # 自定义类路径不直检（由后端自身降级），避免误报 mem0 状态）
-        mem0_direct = None  # None=未检测(自定义后端), True=正常, False=不可达
-        mem_backend = self._memory_backend()
-        if mem_backend in ("auto", "mem0", ""):
-            qdir = self._mem0_qdrant_dir()
-            if not qdir.is_dir():
-                mem0_direct = False
-                issues.append(f"mem0 qdrant dir missing: {qdir}")
-            elif _HAS_MEM0:
-                mem0_direct = True
-            else:
-                mem0_direct = False
-                issues.append("mem0ai 未安装 → 记忆未启用(可选)")
-        # 自定义类路径（含 .）→ mem0_direct stays None (skipped)
+        # 9. 记忆后端连通性直检（mem0 唯一后端，恒检本地向量库目录）
+        qdir = self._mem0_qdrant_dir()
+        if not qdir.is_dir():
+            mem0_direct = False
+            issues.append(f"mem0 qdrant dir missing: {qdir}")
+        elif _HAS_MEM0:
+            mem0_direct = True
+        else:
+            mem0_direct = False
+            issues.append("mem0ai 未安装 → 记忆层缺失(唯一记忆后端)")
 
         return {
             "healthy": healthy,

@@ -210,12 +210,12 @@ def test_check_ollama_proxy_bypassed():
     print("  OK test_check_ollama_proxy_bypassed")
 
 
-def test_check_mem0_missing_dir_info():
+def test_check_mem0_missing_dir_warn():
     with tempfile.TemporaryDirectory() as td:
         r = ec.check_mem0(Path(td) / "no_such_qdrant", Path(td) / "no_history.db")
-        # mem0ai 未装 / key 缺失 / 目录不存在 → 均为 info,不崩
-        assert r["severity"] == "info" and not r["ok"]
-    print("  OK test_check_mem0_missing_dir_info")
+        # 方案 A: mem0 为唯一后端——mem0ai 缺失 critical / key 缺失 warn / 目录不存在 warn,均不崩
+        assert r["severity"] == "warn" and not r["ok"]
+    print("  OK test_check_mem0_missing_dir_warn")
 
 
 def test_check_mem0_ok_branch():
@@ -304,19 +304,17 @@ def test_mem0_default_path_anchored():
     print("  OK test_mem0_default_path_anchored")
 
 
-def test_run_checks_custom_backend_skips_mem0():
-    """自定义记忆后端类路径（含 .）→ envcheck 不直检 mem0，改报 memory_backend 提示。"""
+def test_run_checks_custom_backend_still_checks_mem0():
+    """自定义记忆后端类路径（含 .）→ envcheck 仍恒直检 mem0（唯一后端，无旁路假检查项）。"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         _mk(td, {"chiguo_proactive.toml": '[memory]\nbackend = "mymodule.MyBackend"\n'})
         report = ec.run_checks(base_dir=td, skip_agent=True)
         names = [c["name"] for c in report["checks"]]
-        assert "mem0" not in names, names
-        assert "memory_backend" in names, names
-        mb = next(c for c in report["checks"] if c["name"] == "memory_backend")
-        assert mb["ok"] and "mymodule.MyBackend" in mb["detail"], mb
+        assert "mem0" in names, names
+        assert "memory_backend" not in names, names
         assert len(report["checks"]) == 7
-    print("  OK test_run_checks_custom_backend_skips_mem0")
+    print("  OK test_run_checks_custom_backend_still_checks_mem0")
 
 
 def test_sanitize_url_strips_credentials():
@@ -361,7 +359,7 @@ if __name__ == "__main__":
     test_check_ollama_missing_warn_exit_code()
     test_run_checks_ollama_warn_sets_exit_code()
     test_check_ollama_proxy_bypassed()
-    test_check_mem0_missing_dir_info()
+    test_check_mem0_missing_dir_warn()
     test_check_mem0_ok_branch()
     test_check_netease_no_cookie_info()
     test_check_data_missing_info()
@@ -369,7 +367,7 @@ if __name__ == "__main__":
     test_exit_code_mapping()
     test_run_checks_never_crashes()
     test_mem0_default_path_anchored()
-    test_run_checks_custom_backend_skips_mem0()
+    test_run_checks_custom_backend_still_checks_mem0()
     test_sanitize_url_strips_credentials()
     test_sanitize_url_bad_port_and_ipv6()
     print(f"test_envcheck.py: ALL {23} TESTS PASSED")

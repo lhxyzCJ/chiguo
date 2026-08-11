@@ -13,11 +13,7 @@ wechat_recipient = "owner@im.wechat"   # 发送目标占位符：登录后自动
 
 [memory]
 # ── 记忆后端抽象（v1.8 解耦；v1.9 默认后端 = mem0 AI 记忆层）──
-# backend 取值：
-#   "mem0"    （默认）mem0（mem0ai 库）：LLM 事实提取写入 + 向量语义检索。
-#             库缺失/无 LLM key/ollama 未启动 → available=False 优雅降级
-#   "module.path.ClassName"  自定义后端类（实现 memory/base.py MemoryBackend 四原语，
-#                             实例化 kwargs = 本段其余键；见 doc/SYSTEM.md「记忆后端抽象」）
+# mem0 唯一后端；backend 仅 mem0 / auto（遗留同义）；其他值抛 ValueError。
 backend = "mem0"
 # ── mem0 配置（https://github.com/mem0ai/mem0）──
 mem0_user_id = "chiguo"                      # mem0 记忆命名空间（user_id）

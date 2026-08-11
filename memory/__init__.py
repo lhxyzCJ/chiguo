@@ -1,9 +1,8 @@
 # ============================================================
 # memory/ — 记忆后端抽象包（v1.8 解耦；v1.9 默认后端 = mem0）
 #
-# 任意替换记忆模块：实现 memory/base.py 的 MemoryBackend 四原语
-# （available/search/random_memory/stats），toml [memory].backend
-# 指向 "module.path.ClassName" 即接入；内置 "mem0"。
+# mem0 为唯一记忆后端（[memory].backend 仅接受 "mem0"/"auto" 遗留值）；
+# MemoryBackend 抽象保留作内部测试桩/复用层。
 # 详情见 doc/SYSTEM.md「记忆后端抽象」。
 # ============================================================
 

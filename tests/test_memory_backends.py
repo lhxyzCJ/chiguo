@@ -2,7 +2,8 @@
 """test_memory_backends.py — 记忆后端抽象测试（v1.9 默认后端 mem0）
 
 覆盖: Mem0Backend 行契约映射/查询/加权随机/统计/降级（FakeMem0 模拟，
-不依赖真实 ollama/LLM/网络）、factory 的 mem0/自定义类路径分流、
+不依赖真实 ollama/LLM/网络）、factory 的 mem0 唯一后端分流
+（非 mem0/auto 的 backend 抛 ValueError）、
 Ebbinghaus 包装在基类对所有后端生效。
 """
 
@@ -231,33 +232,35 @@ def test_factory_mem0():
 
 
 def test_factory_custom_class():
-    """自定义类路径：importlib 动态加载；**kwargs 类全传。"""
-    with tempfile.TemporaryDirectory() as td:
-        b = create_backend({"backend": "memory.mem0_backend.Mem0Backend",
-                            "user_id": "custom-user"}, base_dir=td)
-        assert isinstance(b, Mem0Backend) and b.user_id == "custom-user"
+    """自定义类路径已移除：任何非 mem0/auto 的 backend（含类路径）→ 抛 ValueError。"""
+    try:
+        create_backend({"backend": "memory.mem0_backend.Mem0Backend",
+                        "user_id": "custom-user"})
+        raise AssertionError("应抛 ValueError")
+    except ValueError:
+        pass
     print("  OK test_factory_custom_class")
 
 
 def test_factory_custom_class_bad():
-    """自定义类不存在/非 MemoryBackend 子类 → 抛错（配置错误要暴露）。"""
-    try:
-        create_backend({"backend": "memory.mem0_backend.NoSuchClass"})
-        raise AssertionError("应抛 AttributeError")
-    except AttributeError:
-        pass
-    try:
-        create_backend({"backend": "memory.factory.create_backend"})  # 函数不是类
-        raise AssertionError("应抛 TypeError")
-    except TypeError:
-        pass
+    """任何非 mem0/auto 的 backend（类不存在/非类）→ 统一抛 ValueError。"""
+    for bad in ("memory.mem0_backend.NoSuchClass",
+                "memory.factory.create_backend"):  # 函数不是类
+        try:
+            create_backend({"backend": bad})
+            raise AssertionError(f"应抛 ValueError: {bad}")
+        except ValueError:
+            pass
     print("  OK test_factory_custom_class_bad")
 
 
 def test_factory_unknown_string():
-    """未知非点分值 → 回退默认 mem0（不抛）。"""
-    b = create_backend({"backend": "weird"})
-    assert isinstance(b, Mem0Backend)
+    """未知非 mem0/auto 的字符串 → 抛 ValueError（配置错误要暴露）。"""
+    try:
+        create_backend({"backend": "weird"})
+        raise AssertionError("应抛 ValueError")
+    except ValueError:
+        pass
     print("  OK test_factory_unknown_string")
 
 

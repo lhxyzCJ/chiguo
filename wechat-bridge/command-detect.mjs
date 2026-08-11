@@ -264,7 +264,7 @@ function runCli(spawnFn, args, timeoutMs = 30_000) {
   return runCmd(spawnFn, process.execPath, args, timeoutMs)
 }
 
-/** 任意命令 spawn（v1.8：记忆斜杠命令改走 memory_bridge.py 抽象 CLI，不再硬编码 pi 扩展）。 */
+/** 任意命令 spawn（v1.8：记忆斜杠命令走 memory_bridge.py CLI(mem0 后端)）。 */
 function runCmd(spawnFn, cmd, args, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const c = spawnFn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs })
@@ -286,8 +286,8 @@ function fmtTokens(n) {
 }
 
 /** 执行斜杠命令(纯 node 侧:文件操作 + 记忆后端 CLI),不经 pi/daemon。
- *  v1.8: 记忆命令走 memory_bridge.py（经 memory/ 工厂，尊重 [memory].backend），
- *  不再硬编码 pi 记忆扩展路径——任意记忆后端都可用 /记忆、/记得什么。 */
+ *  v1.8: 记忆命令走 memory_bridge.py CLI(mem0 唯一记忆后端),
+ *  /记忆、/记得什么 均可用。 */
 export async function executeSlashCommand(spawnFn, spec, cwd) {
   const repo = process.env.CHIGUO_REPO ?? dirname(cwd)
   const backups = join(homedir(), '.chiguo', 'session-backups')
