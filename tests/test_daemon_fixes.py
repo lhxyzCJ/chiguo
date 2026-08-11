@@ -11,6 +11,7 @@ Bug 2: _tick cron 模式情绪全量重放——推进基准只用「最后消�
       state.tick(hours)，情绪以设计速率 ~33 倍重复累积。
 """
 
+import hashlib
 import json
 import os
 import re
@@ -30,7 +31,7 @@ CST = timezone(timedelta(hours=8))
 
 import chiguo_daemon as daemon_mod
 from chiguo_daemon import DecisionEngine
-from chiguo_math import elastic_recover
+from chiguo_math import decay, elastic_recover
 
 TMP_DIR: Path | None = None
 
@@ -420,6 +421,121 @@ def test_bug4_concurrent_send_result_single_refund(cfg_path: Path):
 
 
 # ═══════════════════════════════════════════════════════
+# Bug 5: record_user_message 锁内不 _load → 覆盖 evaluate 已落盘推进（#139）
+# ═══════════════════════════════════════════════════════
+
+def test_bug5_record_user_message_reloads_disk_state(cfg_path: Path):
+    """构造加载 S0 后，另一进程（cron evaluate）已把 S1 落盘 → --user-msg
+    record_user_message 若基于陈旧 S0 快照 RMW+save，S0→S1 的情绪推进会被
+    整体回滚覆盖（tick_seq CAS 只防序列回退，不保护 emotion/cooldown）。
+
+    v1.14 修复（与 record_send_result v12-R2 一致）：state_lock 内先 _load()
+    重载磁盘最新状态再处理 → 保存后磁盘 = S1 + 本消息 delta（而非 S0 + delta）。
+    """
+    # 先清残留再构造：共享 temp 目录中前序测试（如 bug4）可能留下 last_message_at/
+    # drop_events 等 cooldown 字段，engine 构造会加载它们污染 S0 → 必须先删状态文件。
+    for name in ("chiguo_state.json", "chiguo_state.json.bak", "chiguo_state.json.tmp",
+                 "chiguo_decisions.jsonl"):
+        (cfg_path.parent / name).unlink(missing_ok=True)
+    eng = make_engine(cfg_path)
+    s = eng.state
+
+    # ── S0：构造时加载的基础状态（无 last_message_at → 无回复延迟倍率）──
+    s.emotion.loneliness = 50.0
+    s.emotion.anxiety = 50.0
+    s.emotion.affection = 10.0
+    s.emotion.energy = 50.0
+    s.emotion.tsundere_index = 50.0
+    s.cooldown.messages_without_reply = 2
+    assert s.save()
+
+    # ── S1：另一进程（cron evaluate）已落盘的推进后状态 ──
+    eng2 = make_engine(cfg_path)  # 从磁盘加载 S0，模拟独立 cron 进程
+    s2 = eng2.state
+    s2.emotion.loneliness = 80.0
+    s2.emotion.anxiety = 70.0
+    s2.emotion.affection = 12.0
+    s2.emotion.energy = 60.0
+    s2.cooldown.messages_without_reply = 3
+    assert s2.save()
+
+    # ── --user-msg：本进程仍持 S0 陈旧内存快照 → 进锁处理 ──
+    eng.record_user_message("bug5test")
+
+    # 修复后磁盘 = S1 + 本消息 delta（on_user_message 单次完整效果，damp=1）
+    data = json.loads(s.state_path.read_text())
+    emo_cfg = eng.config.get("emotion", {})
+    lo_decay = decay(1.0, 1.0, float(emo_cfg.get("loneliness_decay_on_reply", 0.35)))
+    anx_decay = decay(1.0, 1.0, float(emo_cfg.get("anxiety_decay_on_reply", 0.5)))
+    aff_gain = float(emo_cfg.get("affection_gain_per_interaction", 0.8))
+    energy_bonus = float(emo_cfg.get("energy_bonus_on_reply", 10.0))
+
+    # 各维度的「S1 推进后 + delta」期望值（回滚到 S0 再 + delta 则为回退值）
+    exp_energy = 60.0 + energy_bonus      # 保留 S1 的 60；回滚则 50+10=60 ≠ 70
+    assert abs(data["emotion"]["energy"] - exp_energy) < 1e-3, (
+        f"energy 应保留 S1 推进（60+{energy_bonus}={exp_energy:.1f}），"
+        f"实得 {data['emotion']['energy']:.1f}")
+    assert abs(data["emotion"]["affection"] - (12.0 + aff_gain)) < 1e-3, (
+        f"affection 应保留 S1 推进（12+{aff_gain}={12.0 + aff_gain:.2f}），"
+        f"实得 {data['emotion']['affection']:.2f}（回滚到 S0 则为 {10.0 + aff_gain:.2f}）")
+    assert abs(data["emotion"]["loneliness"] - (80.0 * lo_decay)) < 1e-3, (
+        f"loneliness 应保留 S1 推进（80×{lo_decay:.4f}={80.0 * lo_decay:.3f}），"
+        f"实得 {data['emotion']['loneliness']:.3f}（回滚到 S0 则为 {50.0 * lo_decay:.3f}）")
+    assert abs(data["emotion"]["anxiety"] - (70.0 * anx_decay)) < 1e-3, (
+        f"anxiety 应保留 S1 推进（70×{anx_decay:.4f}={70.0 * anx_decay:.3f}），"
+        f"实得 {data['emotion']['anxiety']:.3f}（回滚到 S0 则为 {50.0 * anx_decay:.3f}）")
+    print("  OK test_bug5_record_user_message_reloads_disk_state")
+
+
+def test_bug5_record_user_message_upgrade_reloads_disk_state(cfg_path: Path):
+    """recv_dedup 升级分支同样锁内 _load：standing order 补 --analysis 时，
+    若另一进程已把 S1 落盘，升级分析也基于最新磁盘状态（不基于构造时 S0）。"""
+    for name in ("chiguo_state.json", "chiguo_state.json.bak", "chiguo_state.json.tmp",
+                 "chiguo_decisions.jsonl"):
+        (cfg_path.parent / name).unlink(missing_ok=True)
+    eng = make_engine(cfg_path)
+    s = eng.state
+
+    now = datetime.now(CST)
+    text = "哥哥在吗"
+    text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    dedup_entry = {"text_sha": text_sha, "at": now.isoformat(), "analysis": False}
+
+    # ── S0：bridge 首趟已记录（无分析），基础情绪 ──
+    s.cooldown.recv_dedup = dict(dedup_entry)
+    s.emotion.energy = 50.0
+    s.emotion.affection = 10.0
+    assert s.save()
+
+    # ── S1：另一进程 evaluate 已推进并落盘 ──
+    eng2 = make_engine(cfg_path)  # 从磁盘加载 S0，模拟独立进程
+    s2 = eng2.state
+    s2.cooldown.recv_dedup = dict(dedup_entry)
+    s2.emotion.energy = 60.0
+    s2.emotion.affection = 12.0
+    assert s2.save()
+
+    # ── standing order 补分析（本进程仍持 S0 陈旧快照）→ 升级路径 ──
+    eng.record_user_message(text, '{"warmth": 1.0}')
+
+    data = json.loads(s.state_path.read_text())
+    emo_cfg = eng.config.get("emotion", {})
+    energy_warmth = float(emo_cfg.get("energy_warmth_factor", 4.0))
+    aff_warmth = float(emo_cfg.get("affection_warmth_factor", 1.5))
+    exp_energy = 60.0 + energy_warmth   # 升级只叠加分析维度（不动基础回复效果）
+    exp_aff = 12.0 + aff_warmth
+    assert abs(data["emotion"]["energy"] - exp_energy) < 1e-3, (
+        f"upgrade energy 应保留 S1 推进（60+{energy_warmth}={exp_energy:.1f}），"
+        f"实得 {data['emotion']['energy']:.1f}（回滚到 S0 则为 {50.0 + energy_warmth:.1f}）")
+    assert abs(data["emotion"]["affection"] - exp_aff) < 1e-3, (
+        f"upgrade affection 应保留 S1 推进（12+{aff_warmth}={exp_aff:.1f}），"
+        f"实得 {data['emotion']['affection']:.1f}（回滚到 S0 则为 {10.0 + aff_warmth:.1f}）")
+    assert data["cooldown"]["recv_dedup"].get("analysis") is True, \
+        "升级后去重标记应持久化为 analysis=True"
+    print("  OK test_bug5_record_user_message_upgrade_reloads_disk_state")
+
+
+# ═══════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════
 
@@ -436,6 +552,8 @@ if __name__ == "__main__":
             test_bug2_tick_no_messages_still_noop,
             test_bug3_no_recipient_no_fake_send,
             test_bug4_concurrent_send_result_single_refund,
+            test_bug5_record_user_message_reloads_disk_state,
+            test_bug5_record_user_message_upgrade_reloads_disk_state,
         ]
         for t in tests:
             t(cfg_path)
