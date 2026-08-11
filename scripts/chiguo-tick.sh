@@ -18,7 +18,16 @@ REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
 PY="$REPO/.venv/bin/python"
 # pi 生成需要 LLM key（cron 环境无该变量）;来源单一 = scripts/agent-auth.sh
 source "$(dirname "$(readlink -f "$0")")/agent-auth.sh"
-OUT="$("$PY" "$REPO/chiguo_daemon.py" --compact 2>/dev/null || true)"
+# Issue #135: daemon --compact 失败不能被静默吞掉——保留退出码，非零时告警到 stderr（idle 静默 exit 0 语义不变）
+# 一次执行同时捕获 stdout/stderr/退出码（stderr 走临时文件，避免与 OUT 混流）
+DAEMON_ERR_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-tick-daemon-XXXXXX.err")"
+OUT="$("$PY" "$REPO/chiguo_daemon.py" --compact 2>"$DAEMON_ERR_FILE")" || {
+  rc=$?
+  echo "[chiguo-tick] daemon --compact 失败（exit $rc）：$(head -c 300 "$DAEMON_ERR_FILE")" >&2
+  rm -f "$DAEMON_ERR_FILE"
+  exit 1
+}
+rm -f "$DAEMON_ERR_FILE"
 ACTION="$(printf '%s' "$OUT" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("action",""))
 except: print("")' 2>/dev/null || true)"
