@@ -50,16 +50,27 @@ t('extractAnalysis: 含 <<ANALYSIS>> 块 → 提取 JSON + 剥离后回复', () 
   assert.deepStrictEqual(r.analysis, { warmth: 0.5, effort: 0.3 })
   assert.strictEqual(r.reply, '那、那也还行吧。')
 })
+t('extractAnalysis: 嵌套 JSON 平衡括号提取（首 } 不截断）', () => {
+  const text = '<<ANALYSIS>>{"a":{"b":1},"c":[1,2,3]}<<END>>\n回复文本'
+  const r = extractAnalysis(text)
+  assert.strictEqual(r.analysis.a.b, 1)
+  assert.deepStrictEqual(r.analysis.c, [1, 2, 3])
+  assert.ok(!r.reply.includes('<<ANALYSIS>>'), `reply 不得含标记，实得: ${r.reply}`)
+  assert.ok(!r.reply.includes('<<END>>'), `reply 不得含 END 标记，实得: ${r.reply}`)
+  assert.strictEqual(r.reply, '回复文本')
+})
 t('extractAnalysis: 无块 → analysis=null, reply=原文', () => {
   const r = extractAnalysis('就普通一句话')
   assert.strictEqual(r.analysis, null)
   assert.strictEqual(r.reply, '就普通一句话')
 })
-t('extractAnalysis: 块内坏 JSON → analysis=null, reply=原文', () => {
+t('extractAnalysis: 块内坏 JSON → analysis=null, reply=剥离块后文本（标记不泄露）', () => {
   const text = '<<ANALYSIS>>{"warmth": broken<<END>>\n回复'
   const r = extractAnalysis(text)
   assert.strictEqual(r.analysis, null)
-  assert.strictEqual(r.reply, text)
+  assert.ok(!r.reply.includes('<<ANALYSIS>>'), `reply 不得含标记（当前 bug：保留原文含标记），实得: ${r.reply}`)
+  assert.ok(!r.reply.includes('<<END>>'), `reply 不得含 END 标记，实得: ${r.reply}`)
+  assert.strictEqual(r.reply, '回复')
 })
 
 // ── 调用链路（mock execFileP）──
