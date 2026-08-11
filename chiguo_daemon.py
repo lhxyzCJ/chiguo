@@ -1000,9 +1000,19 @@ class DecisionEngine:
                 analysis_dict = None
 
         # ── v11 (#75): RMW 临界区全程持跨进程锁，防并发丢更新。
-        # 本方法为单次 CLI 进程（启动时已加载最新状态），不重载 _load，
-        # 避免覆盖调用方在构造后的内存修改。──
+        # v1.14 (#139): 锁内先重载磁盘最新状态再处理——构造加载（S0）与拿到锁
+        # 之间，cron evaluate（锁内 _load+推进+save）可能已把 S1 落盘；若基于
+        # S0 陈旧快照 RMW+save，S0→S1 的情绪推进/cooldown 更新被整体回滚
+        # （tick_seq CAS 只防序列回退，不保护 emotion/cooldown 字段）。
+        # 与 record_send_result v12-R2 同一修复。旧注释「单次 CLI 进程不重载、
+        # 避免覆盖调用方在构造后的内存修改」理由不成立：唯一生产调用点
+        # （main 1855 行 engine 构造后立即调用）进锁前无任何进程内修改，
+        # 重载幂等且安全。──
         with self.state.state_lock():
+            try:
+                self.state._load()
+            except Exception:  # noqa: BLE001 - 重载失败维持现有内存状态
+                pass
             # ── v9: recv 去重（升级语义）──────────────────────
             # 同一条消息会被记录两次：bridge 先确定性 --user-msg（无分析），
             # standing order 随后补 --user-msg --analysis。基础回复效果
