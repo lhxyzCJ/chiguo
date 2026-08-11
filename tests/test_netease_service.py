@@ -7,6 +7,8 @@
 netease_health.json。
 """
 
+import contextlib
+import io
 import json
 import os
 import random
@@ -748,6 +750,52 @@ def test_bridge_default_injected():
     print("  OK test_bridge_default_injected")
 
 
+# ── Issue #138: 成功提示不得泄漏到 stdout（daemon --compact 链 json 解析 stdout）──
+
+
+def test_save_cache_stdout_pure():
+    """Issue #138: _save_cache 成功提示 [ok] 不得进 stdout（cron 链 json.load(sys.stdin)
+    解析 daemon stdout，文本混入即 JSONDecodeError → send 决策被丢弃）。stdout 必须为空，
+    [ok] 提示应走 stderr。"""
+    with tempfile.TemporaryDirectory() as td:
+        b = NeteaseBridge(td, cookie_path=os.path.join(td, "cookie.txt"))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            b._save_cache([{"id": 1, "name": "歌1"}])
+        assert out.getvalue() == "", f"stdout 泄漏: {out.getvalue()!r}"
+        assert "[ok]" in err.getvalue(), "stderr 应含 [ok] 缓存提示"
+
+
+def test_save_cookie_stdout_pure():
+    """Issue #138: _save_cookie 成功提示 [ok] 不得进 stdout。"""
+    with tempfile.TemporaryDirectory() as td:
+        b = NeteaseBridge(td, cookie_path=os.path.join(td, "cookie.txt"))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            b._save_cookie("MUSIC_U=abc123")
+        assert out.getvalue() == "", f"stdout 泄漏: {out.getvalue()!r}"
+        assert "[ok]" in err.getvalue(), "stderr 应含 [ok] cookie 提示"
+
+
+def test_fetch_daily_songs_force_refresh_stdout_pure():
+    """Issue #138: 缓存过期/force_refresh 场景 fetch_daily_songs 全链 stdout 纯净。
+    真实复现 daemon --compact 链：某 tick 命中 netease 话题且每日缓存过期 → 重拉 → _save_cache。
+    stdout 任何非 JSON 文本即崩 json.load。"""
+    with tempfile.TemporaryDirectory() as td:
+        b = NeteaseBridge(td, cookie_path=os.path.join(td, "cookie.txt"))
+        b._load_cookie = lambda: "MUSIC_U=test"
+        b._api_get = lambda *a, **k: {"code": 200, "data": {"dailySongs": [
+            {"id": 1, "name": "歌1", "ar": [{"name": "歌手"}], "al": {"name": "专辑"},
+             "dt": 180000, "fee": 0},
+        ]}}
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            songs = b.fetch_daily_songs(force_refresh=True)
+        assert songs is not None and songs[0]["name"] == "歌1"
+        assert out.getvalue() == "", f"stdout 泄漏: {out.getvalue()!r}"
+        assert "[ok]" in err.getvalue(), "stderr 应含 [ok] 缓存保存提示"
+
+
 if __name__ == "__main__":
     test_disabled_returns_none()
     test_peek_disabled_no_bridge_call()
@@ -784,4 +832,7 @@ if __name__ == "__main__":
     test_fetch_play_proof_passes_ttl_and_returns_plays()
     test_fetch_play_proof_naive_now_padded()
     test_bridge_default_injected()
+    test_save_cache_stdout_pure()
+    test_save_cookie_stdout_pure()
+    test_fetch_daily_songs_force_refresh_stdout_pure()
     print("test_netease_service.py: ALL PASS")
