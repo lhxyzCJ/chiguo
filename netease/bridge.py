@@ -114,7 +114,7 @@ class NeteaseBridge:
         with open(path, "w") as f:
             f.write(raw)
         os.chmod(path, 0o600)
-        print(f"[ok] Cookie saved to {path}")
+        print(f"[ok] Cookie saved to {path}", file=sys.stderr)
 
     # ── HTTP ─────────────────────────────────────────────────
 
@@ -301,7 +301,7 @@ class NeteaseBridge:
                 "fetched_at": fetched_at,
                 "songs": songs,
             }, f, ensure_ascii=False, indent=2)
-        print(f"[ok] 缓存已保存: {len(songs)} 首歌 → {self.cache_file}")
+        print(f"[ok] 缓存已保存: {len(songs)} 首歌 → {self.cache_file}", file=sys.stderr)
 
     # ── Core API ─────────────────────────────────────────────
 
