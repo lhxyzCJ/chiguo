@@ -221,7 +221,10 @@ class NeteaseService:
         供 TopicPicker 在加权抽选前探测候选;选中后须调 consume_music_topic/consume_fault_topic
         确认消费。拉取成功仍同步健康恢复(_sync_success 只改健康态不消费配额);
         两源全失败仍走 refresh_health 探针(与 music_topic 一致)。
-        时段门禁优先于故障分支:上课/睡眠窗口恒 None(故障话题也受时段约束,R13)。"""
+        时段门禁优先于故障分支:上课/睡眠窗口恒 None(故障话题也受时段约束,R13)。
+        enabled=False → 直接 None(不拉取不消费,与 fetch_play_proof 一致,A3)。"""
+        if not self.enabled:
+            return None
         now = now or datetime.now(CST)
         if now.tzinfo is None:
             now = now.replace(tzinfo=CST)

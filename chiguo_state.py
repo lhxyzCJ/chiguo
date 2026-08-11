@@ -1316,12 +1316,16 @@ class ChiguoState:
             anx_step = abs(self.emotion.anxiety - old_anx)
             # OU 内存态：x += θ(0−x)Δt + σ√Δt·ε；cron 单次 tick 从 0 出发等效
             # 零均值扰动，loop 常驻模式连续 tick 时均值回归生效（θ 有效）。
+            # A4 修复：x 是累积状态，加到 emotion 的必须是"本次增量"x_i − x_{i-1}，
+            # 而非完整 x_i——否则 loop 常驻模式第 N tick 会把前 N-1 次噪声再累加一遍
+            # （单次 cron 从 0 出发 prev=0 → 增量=x，行为与之前逐位一致）。
             nx = self._noise_x
-            x_lo = ou_step(nx["loneliness"], 0.0, noise_theta, lo_sigma, hours, rng)
-            x_anx = ou_step(nx["anxiety"], 0.0, noise_theta, anx_sigma, hours, rng)
+            prev_lo, prev_anx = nx["loneliness"], nx["anxiety"]
+            x_lo = ou_step(prev_lo, 0.0, noise_theta, lo_sigma, hours, rng)
+            x_anx = ou_step(prev_anx, 0.0, noise_theta, anx_sigma, hours, rng)
             nx["loneliness"], nx["anxiety"] = x_lo, x_anx
-            self.emotion.loneliness += noise_cap(lo_step, x_lo)
-            self.emotion.anxiety += noise_cap(anx_step, x_anx)
+            self.emotion.loneliness += noise_cap(lo_step, x_lo - prev_lo)
+            self.emotion.anxiety += noise_cap(anx_step, x_anx - prev_anx)
 
         # ── ④ 情绪基线淡忘（向全局默认弱回归，防无限漂移；默认 720h）──
         try:
@@ -2100,7 +2104,7 @@ class ChiguoState:
         self.cooldown.last_longing_break_at = None
         self._finalize(now)
 
-    def can_send(self, now: datetime) -> bool:
+    def can_send(self, now: datetime, quiet_ok: bool = False) -> bool:
         cfg = self.config.get("cooldown", {})
         silent_h = self.cooldown.silent_hours(now)
 
@@ -2132,9 +2136,12 @@ class ChiguoState:
                 return False
 
         # 静默窗口禁止(配置默认 0-8;生物钟学习达标后为学习窗口)
-        qs, qe = self.cooldown.quiet_window()
-        if in_quiet_window(now, qs, qe):
-            return False
+        # B1(#136): quiet_ok=True(窗口内播放反证成立)时跳过——夜间活跃允许窗口内发送,
+        # 其余 gate(日上限/最小间隔/元气/忙碌)不变。
+        if not quiet_ok:
+            qs, qe = self.cooldown.quiet_window()
+            if in_quiet_window(now, qs, qe):
+                return False
 
         # 忙碌抑制（用户说"忙"/"晚安"等）
         if self.cooldown.is_busy_suppressed(now):

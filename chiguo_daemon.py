@@ -260,12 +260,14 @@ class DecisionEngine:
             # ── v8: 每次评估同步当前生效桶窗口(loop 模式跨桶翻转/听歌校正即时生效)──
             self.state._sync_quiet_window(now)
 
-            # 2. 能否发送（v4: 增加 Bayesian 用户状态门控）
-            can_send = self.state.can_send(now)
-
             # ── v8: 听歌反证(夜间活跃)——睡眠窗口内最近有播放 → 用户醒着 ──
             # 仅睡眠窗口内拉取(白天无意义);API/解析/状态损坏全链路降级,不阻塞。
+            # B1(#136): 先于 can_send 调用——内部会 recompute + _sync_quiet_window,
+            # 窗口更新后再判定;反证成立时经 quiet_ok 绕过 quiet-window gate(放行发送)。
             play_proof = self._check_play_proof(now)
+
+            # 2. 能否发送（v4: 增加 Bayesian 用户状态门控;v8: 播放反证 quiet_ok 放行）
+            can_send = self.state.can_send(now, quiet_ok=play_proof)
 
             # Bayesian 阻塞：用户很可能在睡觉 → idle（v6: 逃生阀激活时豁免——
             # 72h+ 沉默的高焦虑破防是仅有的救命通道，不能被"可能在睡觉"拦死）

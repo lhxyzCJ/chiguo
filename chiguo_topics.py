@@ -417,8 +417,8 @@ class TopicPicker:
         """v9: 委托 NeteaseService.peek_music_topic(不消费配额,选中后由 pick 确认消费)。
         未注入 → None(不崩溃)。时段门控:上课/睡眠由本方法计算
         (schedule_status + cooldown.quiet_window);门控信息不可得 → fail-closed 不发。"""
-        if not self.netease_service:
-            return None
+        if not self.netease_service or not self.netease_service.enabled:
+            return None  # 未注入 / enabled=false → 不探测(A3,与 daemon 播放反证同门控)
         try:
             sch = self.state.schedule_status(now)
             in_class = bool(sch and sch.get("in_class"))
