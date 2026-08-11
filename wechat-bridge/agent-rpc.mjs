@@ -3,7 +3,7 @@
  * agent-rpc.mjs — 常驻 agent 进程(RPC 模式)客户端,供 bridge 回复链与发送链复用。
  *
  * 架构动机(对比 OpenClaw 常驻 gateway):每次消息 spawn 新 pi 进程会重复
- * 扩展初始化(LanceDB 打开/FTS/健康检查)。RPC 常驻让 pi + 记忆扩展只初始化一次,
+ * 进程/会话初始化。RPC 常驻让 pi 进程只初始化一次,
  * 每消息走 stdio JSON-RPC prompt,省去 per-message 进程/初始化开销。
  *
  * 协议(pi dist/modes/rpc):stdin 发 {type,id,...} 命令;stdout 流式输出

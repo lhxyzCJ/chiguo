@@ -1,15 +1,13 @@
 # ============================================================
 # memory/base.py — 记忆后端抽象基类（v1.8 解耦）
 #
-# 任意记忆模块替换点：实现 search/random_memory/stats/available
-# 四个原语（子类），Ebbinghaus 遗忘曲线包装、用户相关召回等
-# 通用逻辑全部在基类完成，后端只负责"存什么、怎么搜"。
+# mem0 为唯一后端；MemoryBackend 抽象保留作内部测试桩/复用层
+# （Ebbinghaus 遗忘曲线包装、用户相关召回等通用逻辑全部在基类完成，
+# 后端只负责"存什么、怎么搜"；子类实现四个原语）。
 #
 # 现成实现：
 #   memory/mem0_backend.py  Mem0Backend — mem0 AI 记忆层（读写双向，
 #     LLM 事实提取写入 + 向量语义检索；见 doc/SYSTEM.md「记忆后端抽象」）
-# 自定义后端：实现本基类四个原语，toml [memory].backend 填
-#   "module.path.ClassName" 即可热接入（见 memory/factory.py）。
 # ============================================================
 
 import math

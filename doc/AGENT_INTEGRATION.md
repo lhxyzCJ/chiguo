@@ -249,9 +249,9 @@ chiguo 对后端模型不做绑定：**消息生成/情绪分析全部走 agent 
 
 **注意事项**
 
-- `chiguo-tick.sh` / `wechat-bridge.sh` 注入的 `OPENCODE_API_KEY`（memory 扩展 smart extraction 固定 env 名）**优先取
-  auth.json 的 `opencode-go` 条目**（扩展 json5 llm 端点固定 opencode 网关），无该条目时回退 `[host].provider` 条目
-  （best effort）——换对话 provider 无需改脚本；若不再有 opencode-go key，smart extraction 降级为正则（agent 启动日志可见）
+- `chiguo-tick.sh` / `wechat-bridge.sh` 注入的 `OPENCODE_API_KEY`（mem0 LLM 事实提取固定用 opencode-go key）**优先取
+  auth.json 的 `opencode-go` 条目**（mem0 事实提取端点固定 opencode 网关），无该条目时回退 `[host].provider` 条目
+  （best effort）——换对话 provider 无需改脚本；若不再有 opencode-go key，mem0 事实提取不可用（envcheck 记忆层报 warn/critical）
 - install_agent.sh 的 auth 写入与冒烟自动跟随 `[host].provider`（key 环境变量用通用名 `AGENT_API_KEY`，兼容回退 `OPENCODE_API_KEY`）
 - 换 provider 后会话记忆（chiguo-main/chiguo-send）保留；模型能力差异（thinking 档位等）按 agent 侧 model 配置生效
 
@@ -297,12 +297,8 @@ agent_command = ["node", "/path/to/agent.mjs"]  # 必填：可执行命令 + 固
 ## 九、记忆后端抽象（[memory].backend）
 
 v1.8 起记忆模块解耦为 `memory/` 包（`memory_bridge.py` 保留兼容门面：MemoryBridge=Mem0Backend 别名 + CLI）。
-v1.9 起唯一内置后端为 mem0（旧 LanceDB/JSON 后端已删除）。`[memory].backend` 取值：
-
-| 取值 | 行为 |
-|------|------|
-| `mem0`（默认） | mem0ai 记忆层：LLM 事实提取写入 + ollama 本地向量检索 + qdrant 嵌入式存储（`data/mem0/`） |
-| `module.path.ClassName` | 自定义后端类（importlib 动态加载，须继承 `memory/base.py` 的 `MemoryBackend`） |
+mem0 是唯一记忆后端——`[memory].backend` 仅 `mem0` / `auto`（遗留同义）合法，其他值抛 ValueError；
+`MemoryBackend` 抽象基类保留作内部测试桩/复用层：
 
 **MemoryBackend 四原语**（子类实现；不可用 → 查询返回空，不抛）：
 
@@ -318,35 +314,9 @@ class MyBackend(MemoryBackend):
 ```
 
 - **Ebbinghaus 在基类**：`ebbinghaus_weight`/`search_with_forgetting`/`user_relevant_with_forgetting`/
-  `random_memory_with_forgetting` 由基类基于原语包装（R = e^(-t/(S×importance))，S=168h、min_weight=0.1），
-  自定义后端零成本获得遗忘曲线
+  `random_memory_with_forgetting` 由基类基于原语包装（R = e^(-t/(S×importance))，S=168h、min_weight=0.1）
 - 行契约（search/random_memory 返回 dict 字段）：id/text/category/scope/importance/timestamp/datetime/
   memory_category/l0_abstract/l2_content/tier/source；importance 必须清洗为非 NaN
-- 自定义后端示例骨架：
-
-```python
-# my_memory.py — toml [memory].backend = "my_memory.MyBackend"
-from memory.base import MemoryBackend
-
-class MyBackend(MemoryBackend):
-    def __init__(self, manual_path=None, **kwargs):   # kwargs = [memory] 段其余键
-        ...
-
-    @property
-    def available(self) -> bool:
-        return True
-
-    def search(self, query, limit=10, category=None, min_importance=0.3):
-        return [...]                                   # 统一行契约 dict 列表
-
-    def random_memory(self, category=None, min_importance=0.5, prefer_categories=None):
-        return {...} or None
-
-    def stats(self) -> dict:
-        return {...}
-```
-
-（自定义类放仓库任意模块路径即可；实例化 kwargs = [memory] 段其余键，按构造签名过滤。）
 
 ## 十一、故障排查
 

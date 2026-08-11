@@ -1,6 +1,6 @@
 # 迟菓主动消息系统 — 系统文档
 
-> 版本: v1.14（`chiguo_version.py` VERSION=1.14,规则: MINOR+1 次版本步进（1.9→1.10→1.11→1.12→1.13→1.14,非十进制加法）;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
+> 版本: v1.15（`chiguo_version.py` VERSION=1.15,规则: MINOR+1 次版本步进（1.9→1.10→1.11→1.12→1.13→1.14→1.15,非十进制加法）;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
 
 ## 一、架构总览
 
@@ -62,7 +62,7 @@ chiguo_daemon.py (DecisionEngine)
   │     │                    存储 override_store.py / plan_store.py / api.py；检索与安排 sources.py /
   │     │                    day_plan.py / resolve_when.py / attention.py / recall.py；确认 confirm.py；
   │     │                    复盘 replan.py）
-  │     ├─ memory/ 包         → 记忆后端抽象（mem0 默认，可替换自定义类）+ Ebbinghaus 遗忘
+  │     ├─ memory/ 包         → 记忆后端抽象（mem0 唯一后端）+ Ebbinghaus 遗忘
   │     │                       （v1.12 C1 确定性巩固 / C2 复习强化 / C3 死 metadata 清理 / C4 写全轮次 + B2 情绪标签）
   │     └─ chiguo_circadian.py → 生物钟学习（双作息双桶分桶学习：工作日/周末独立窗口 + 置信度，
   │                             听歌活跃合并计数）(v7 NEW, v8 双桶)
@@ -644,7 +644,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
 
   ② mem0 记忆（mem0ai 记忆层，v1.9 唯一内置后端）
      路径: data/mem0/（qdrant 嵌入式向量库 + history.db，相对路径经 `_anchored` 解析，gitignore）
-     访问: memory/ 包（默认 Mem0Backend：LLM 事实提取写入 + 向量语义检索 + Ebbinghaus 加权；[memory].backend 可替换自定义类）
+     访问: memory/ 包（默认 Mem0Backend：LLM 事实提取写入 + 向量语义检索 + Ebbinghaus 加权；mem0 唯一后端）
      配置: [memory] 段 mem0_user_id/mem0_collection/mem0_qdrant_path/mem0_history_db/mem0_llm_*/mem0_embedder_*；LLM key 缺省读 ~/.pi/agent/auth.json 的 opencode-go 条目
      写入: daemon 对话后自动写入（_mem0_autowrite，短消息跳过）
      降级: mem0 不可用 → available=False → 自动跳过
@@ -839,11 +839,11 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态，在线学习）（v4）+ v1.12 A1 转移矩阵+前向滤波（TRANSITIONS/_transition_prior/prev_posterior 落盘）+ A3 后验熵产出 | 无 |
 | `schedule/` 包 | 课表/假期/纪念日/安排（15 模块）：`parser.py` 数据面（xlsx → JSON cache → 刷新）/ `parsing.py` 纯解析（正则/周数）/ `query.py` 策略（上课状态纯函数）/ `holiday.py` 节假日判断（2026 国务院安排 + 调休）/ `anniversary.py` 纪念日 CRUD / `override_store.py` 手动覆盖存储（0600）/ `plan_store.py` 日计划存储（0600）/ `api.py` 安排读写门面（校验 + 澄清接口；区间 date/end_date 双路径统一校验 end_date≥date，死区间拒绝 R11）/ `sources.py` 课表检索源 / `day_plan.py` 日计划组装 / `resolve_when.py` 触发时机解析 / `attention.py` 注意力快照 / `recall.py` 安排回忆检索 / `confirm.py` 写后确认 / `replan.py` 复盘（--check 明日计划） | openpyxl（可选，惰性导入） |
 | `solar_terms.py` | 24 节气日期查询（零依赖） | 无 |
-| `memory/` 包 | **记忆后端抽象（v1.8 解耦，任意替换）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装 + v1.12 C1 consolidate_plan 纯函数 / C2 note_recalled 复习强化 / B2 emotion_tag_similarity 读侧加权）/ `mem0_backend.py` Mem0Backend（mem0ai：LLM 事实提取 + ollama 向量 + qdrant 嵌入式 + v1.12 consolidate 写回 + _persist_recall 钩子 + emotion_tag 写侧打标）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=Mem0Backend 别名 + CLI） | mem0ai+ollama（必需依赖；无 key/ollama 未启动 → available=False 优雅降级） |
+| `memory/` 包 | **记忆后端抽象（mem0 唯一后端）**：`base.py` MemoryBackend 基类（available/search/random_memory/stats 四原语 + 基类 Ebbinghaus 包装 + v1.12 C1 consolidate_plan 纯函数 / C2 note_recalled 复习强化 / B2 emotion_tag_similarity 读侧加权）/ `mem0_backend.py` Mem0Backend（mem0ai：LLM 事实提取 + ollama 向量 + qdrant 嵌入式 + v1.12 consolidate 写回 + _persist_recall 钩子 + emotion_tag 写侧打标）/ `factory.py` create_backend 工厂；`memory_bridge.py` 保留为兼容门面（MemoryBridge=Mem0Backend 别名 + CLI） | mem0ai+ollama（必需依赖；无 key/ollama 未启动 → available=False 优雅降级） |
 | `chiguo_monitor.py` | 流式 JSONL 分析（统计/告警/健康）+ v1.12 D1 主动消息效果评估（proactive_stats 按 trigger 分组 + overall，replied_within_hours 窗口） | 无 |
 | `chiguo_rotation.py` | 日志轮转 + 告警持久化 + 索引查询（v5） | 无 |
 | `chiguo_envcheck.py` | 环境就绪检查（v10.3）：8 组只读检查（Python/uv、agent 后端、agent 扩展路径、mem0、ollama embedding、auth.json [host].provider key、网易云、数据文件），网易云/ollama 检查仅轻量 HTTP 请求（localhost 目标绕过系统代理，等价 curl `--noproxy '*'`；不可达 → warn），`--skip-agent` 时 agent 缺失降为 warn（deploy.sh `--skip-agent` 传入，不阻塞部署），JSON → stdout，退出码 0=就绪/1=警告/2=严重，路径单一事实来源为 `chiguo_proactive.toml` + `~/.pi` 约定（与 install_agent.sh 一致）；输出脱敏（R24）：`_sanitize_url` 剥离 URL 的 userinfo（user:pass@）与 query/fragment（token/key 等敏感参数）（G8 自审补防：非数字端口访问 `.port` 抛 ValueError 时退化为纯 hostname 不崩，IPv6 字面量重建时包回 `[]`）、`_sanitize_path` 绝对路径降为 basename、`_truncate` 截断超长异常/命令输出，防凭据泄漏；测试 `tests/test_envcheck.py` | 无 |
-| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.14"`，规则: MINOR+1（1.9→1.10→1.11→1.12→1.13→1.14,非十进制加法）;daemon/envcheck/monitor import 引用） | 无 |
+| `chiguo_version.py` | 项目版本号单一来源（`VERSION="1.15"`，规则: MINOR+1（1.9→1.10→1.11→1.12→1.13→1.14→1.15,非十进制加法）;daemon/envcheck/monitor import 引用） | 无 |
 | `chiguo_proactive.toml` | **配置文件**（所有参数） | 无 |
 | `data/chiguo_memories.json` | 手动记忆（习惯/提醒） | 无 |
 | `chiguo_state.json` | 运行时状态（STATE_VERSION=10，首次运行后生成；v10 含 `personality_baseline`/`personality_history`） | 无 |
@@ -942,7 +942,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 # 单次决策（输出 JSON 到 stdout）
 python3 chiguo_daemon.py
 
-# 版本号（chiguo_version.py: 规则 MINOR+1,1.9→1.10→1.11→1.12→1.13→1.14）
+# 版本号（chiguo_version.py: 规则 MINOR+1,1.9→1.10→1.11→1.12→1.13→1.14→1.15）
 python3 chiguo_daemon.py --version
 
 # 确定性记忆巩固（v1.12 C1；也可经 [memory].consolidate_enabled 挂空闲静默路径）
@@ -981,6 +981,7 @@ python3 chiguo_daemon.py --attention            # 注意力快照（T1/T2/T3 + �
 python3 chiguo_daemon.py --schedule-recall "明天"  # 安排回忆检索（日期或关键词）
 python3 chiguo_daemon.py --schedule-change '{"kind":"reminder","when":{"date":"2026-08-08"},"label":"体检"}'
                                               # 写安排（reminder/add/cancel/move/exam_week/remove）
+python3 chiguo_daemon.py --memory-search "咖啡"  # 记忆检索（mem0 语义检索，回复侧注入用；mem0 不可用软降级返回空）
 
 # 文件传参（避免 shell 转义问题）
 python3 chiguo_daemon.py --user-msg-file /tmp/user_msg.txt
@@ -1037,20 +1038,19 @@ uv run python -m schedule.holiday 2026-10-01
 
 ### memory/ 包（记忆后端抽象，v1.9）
 
-v1.8 起记忆模块解耦为 `memory/` 包，可任意替换（chiguo_state.py 经 `create_backend(mem_cfg, base_dir)` 接入）：
+v1.8 起记忆模块解耦为 `memory/` 包，mem0 为唯一记忆后端（chiguo_state.py 经 `create_backend(mem_cfg, base_dir)` 接入）：
 
 - `memory/base.py` — `MemoryBackend` 抽象基类：四原语 `available`/`search()`/`random_memory()`/`stats()`（子类实现）；
   Ebbinghaus 遗忘包装（`ebbinghaus_weight`/`search_with_forgetting`/`user_relevant_with_forgetting`/`random_memory_with_forgetting`）
   与 `user_relevant` 多关键词召回等通用逻辑在基类共享，后端只负责「存什么、怎么搜」
-- `memory/mem0_backend.py` — `Mem0Backend`（v1.9 唯一内置后端）：mem0ai 记忆层（LLM 事实提取写入 + 向量语义检索 + qdrant 嵌入式存储）
+- `memory/mem0_backend.py` — `Mem0Backend`：mem0ai 记忆层（LLM 事实提取写入 + 向量语义检索 + qdrant 嵌入式存储）
 - `memory/factory.py` — `create_backend(config, base_dir)` 工厂，按 toml `[memory].backend` 选择后端
 
-**backend 两取值**（toml `[memory].backend`，默认 `mem0`）：
+**backend 取值**（toml `[memory].backend`，默认 `mem0`；mem0 唯一后端，仅 `mem0`/`auto`（遗留同义）合法，其他值抛 ValueError）：
 
 | 取值 | 行为 |
 |------|------|
 | `mem0` | mem0ai 记忆层（默认；库缺失/无 key/ollama 未启动 → available=False 优雅降级） |
-| `module.path.ClassName` | 自定义后端类（importlib 动态加载，须继承 MemoryBackend；见 factory.py） |
 
 `memory_bridge.py` 保留为兼容门面（`MemoryBridge = Mem0Backend` 别名 + CLI 保留，经工厂创建、尊重 toml backend）：
 
@@ -1201,7 +1201,7 @@ age = 16
 identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
 
 [memory]
-backend = "mem0"                       # v1.9 记忆后端：mem0（默认）/ module.path.ClassName（自定义）
+backend = "mem0"                       # v1.9 记忆后端：mem0 唯一后端（仅 mem0 / auto（遗留同义），其他值抛 ValueError）
 mem0_user_id = "chiguo"                  # mem0 命名空间（user_id）
 mem0_qdrant_path = "data/mem0/qdrant"     # 本地向量库（qdrant 嵌入式，无需 docker）
 mem0_history_db = "data/mem0/history.db"  # mem0 操作历史（SQLite）
@@ -1498,8 +1498,8 @@ memory_critical_mb = 1000              # 进程 RSS 大于此 → critical
 proactive_eval = false     # 开启后 stats()/report() 聚合输出 proactive_stats（按 trigger 分组的发送/回复统计 + overall）
 replied_within_hours = 24.0  # 发送后此小时数内收到首条 user-msg 视为已回复
 
-[memory]        # 记忆后端抽象（v1.9；backend 两取值见「七、CLI 参考 → memory/ 包」）
-backend = "mem0"                          # mem0（默认）/ module.path.ClassName
+[memory]        # 记忆后端抽象（v1.9；mem0 唯一后端）
+backend = "mem0"                          # mem0 唯一后端（仅 mem0 / auto（遗留同义），其他值抛 ValueError）
 ```
 
 ---
@@ -1991,6 +1991,7 @@ rm <仓库根目录>/chiguo_state.json
 
 | 版本 | 日期 | 变更 |
 |:----:|:----:|------|
+| **v1.15** | **2026-08-12** | **移除 pi 记忆扩展（memory-lancedb-pro），mem0 唯一记忆后端；新增 daemon `--memory-search` 回复侧注入**：`memory/factory.py` 唯一后端化（backend 仅 mem0 / auto（遗留同义），其他值抛 ValueError）、`chiguo_monitor.py` 恒走 mem0 直检；bridge 每轮回复前经 `--memory-search` 检索 mem0 相关记忆注入 `<relevant-memories>`（顶替 pi 扩展语义，安全边界 `[UNTRUSTED DATA]` 保留）；部署硬性检查（envcheck 记忆层 mem0ai 未装 → critical 阻塞部署；无 key/qdrant 缺失 → warn，运行中 60s 自愈不变）；测试 59 py + 13 script 计数门禁不变 |
 | **v1.14** | **2026-08-12** | **修复驱动轮（#138/#139，均为 v1.13 最终全面审计发现的既有缺陷修复非新功能；STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移）**：#138 netease stdout 污染（`netease/bridge.py` `_save_cache`/`_save_cookie` 裸 `print` 写 stdout 破坏 `--compact`/`--json` 契约，cron send 决策被静默丢弃 → 补 `file=sys.stderr`）+ #139 `record_user_message` 锁内 `_load()` 重载（与 `record_send_result` v12-R2 同一修复：锁内 RMW 不再基于陈旧快照，cron evaluate 落盘进度不再被覆盖回滚）；测试 59 py + 13 script 计数门禁不变 |
 | **v1.13** | **2026-08-11** | **修复驱动轮（A1-A6 + B1-B2，均为既有功能 bug 修复非新功能；STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移）**：A1 command-detect 问句守卫（一次性提醒正则误吞日常问句/否定句 → 新增 `isAskOrNegate` 守卫放行 agent 自然回复）+ A2 recall_count 跨进程累积（新增 `_load_recall_count` 钩子读回 mem0 持久化旧值再 +1，防 cron 进程覆盖丢累积）+ A3 netease enabled 门控（`peek_music_topic` 忽略 enabled → 入口短路 + topics 调用侧补齐，disabled 时零调用）+ A4 OU 噪声增量（`ou_step` 由加完整状态改为单 tick 增量 x_i - x_{i-1} 语义，loop 常驻不再漂移）+ A5 extractAnalysis 嵌套 JSON（非贪婪正则吞嵌套 JSON 致标记泄露 → 复用 `extractBlock` 平衡括号解析 + 标记剥离）+ A6 tick 失败告警（`chiguo-tick --compact` 失败被静默吞掉 → 保留退出码，非零时 stderr 告警 + 非零退出）+ B1 播放反证 quiet_ok 放行（`can_send(quiet_ok)` + evaluate 先拉 `fetch_play_proof` 后判定，修复睡眠窗口听歌反证死逻辑）+ B2 anxiety 归一化补 (1-raw) 项（原 w=raw/(raw+baseline) 把 w_anx 钳在 max≈0.664 < must_send_activation(0.75)，高焦虑永远到不了 A4 高段必发；补 (1-raw) 项后 raw→1 时 w→1（高焦虑可达 must_send），中低段基本保持 anx=40 → 0.187 vs 原 0.171）；测试 59 py + 13 script 计数门禁不变（新增 test_bridge_cmd 58 用例 / test_agent_run 50 用例 / test_tick_health A6 用例） |
 | **v1.12** | **2026-08-11** | **对标调研落地两轮（Wave 1 state-engine A1/A2/A3/B1/B2 + Wave 2 memory/monitor C1-C4/D1；STATE_VERSION 不变仍为 10，dataclass 默认字段无迁移；全部 config 门控默认关闭恒等可灰度）**：A1 转移矩阵+前向滤波（`chiguo_bayesian.py` 6×6 TRANSITIONS，上 tick 后验×矩阵作预测先验，0.5 混合时间先验，逐行可覆盖 `transition_<state>`，`[bayesian].transition_enabled` 默认 False；后验熵 + prev_posterior 透传，仅启用时落盘）+ A3 信息增益门控（后验熵 ≥ `info_gain_threshold` → utility +`info_gain_utility_bonus` 并放行 `should_send_bayesian`/`info_gain_boost`，默认 0 关闭）+ A2 分类型回复率反馈闭环（`cooldown.reply_stats` 记 sent/replied，daemon 发送 sent+1 立即 save、`--user-msg` 回复按 trigger_history 归因 replied+1；触发权重按回复率 damp/boost，`[trigger].reply_feedback_*` 默认关闭）+ B1 事件类型化情绪 delta（`EVENT_DELTA` 规则表 + `EVENT_TYPE_SYNONYMS` 别名，analysis 事件类型直接加减情绪不走 impact_inertia，`[emotion].event_delta_enabled` 默认 False）+ B2 情绪-记忆耦合（写侧 `emotion_tag_snapshot` 进 mem0 metadata、读侧 `emotion_tag_similarity` 相似加权，`[memory].emotion_tagging`/`emotion_tag_weight` 默认关闭）+ C1 空闲期确定性记忆巩固（零 LLM：`consolidate_plan` 纯函数 jaccard_3gram≥0.85 去重降权 + 低重要度超龄过期；`Mem0Backend.consolidate` 写回 demote→update/expire→delete/dry_run；daemon `_maybe_consolidate` 空闲静默路径 + `--consolidate` CLI；`[memory].consolidate_*` 默认关闭）+ C2 Ebbinghaus 复习强化（`note_recalled` → `recall_count` 持久化，`_effective_importance = imp×(1+bonus×count)` 加权，`[memory].reinforce_*` 默认关闭）+ C3 死 metadata 清理（chiguo_topics/trigger/memory_bridge 读路径 text 优先，去 memory_category/l0_abstract 死读依赖）+ C4 写全对话轮次（`_mem0_autowrite` 在 `[memory].write_full_turns` 开启时追加 assistant 轮）+ D1 monitor 主动消息评估（`proactive_stats` 按 trigger 分组 sent/replied/reply_rate + overall，消费式 recv_ptr 防串计，`[monitor].proactive_eval`/`replied_within_hours` 默认关闭恒等）；测试 59 py + 13 script（新增 11 个 runner：test_bayesian_transition / test_info_gain / test_reply_feedback / test_event_delta / test_emotion_tagging / test_memory_consolidate / test_memory_reinforce / test_metadata_cleanup / test_full_turns / test_proactive_eval / test_consolidate_cli，共 98 用例） |

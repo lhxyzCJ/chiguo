@@ -1517,6 +1517,26 @@ def _cmd_schedule_change(json_arg: str, config_path: str | None = None):
                       ensure_ascii=False))
 
 
+def _cmd_memory_search(query: str, config_path: str | None = None):
+    """--memory-search <query>: 回复侧记忆检索(mem0,软降级)。JSON→stdout,诊断→stderr,失败 exit 1。"""
+    import json as _json
+    from memory import create_backend
+    cfg = _load_light_config(config_path)
+    try:
+        bridge = create_backend(cfg.get("memory", {}), base_dir=cfg["_base_dir"])
+        rows = bridge.search_with_forgetting(query, limit=5)
+    except Exception as e:
+        print(_json.dumps({"action": "memory_search", "ok": False, "reason": str(e)[:200]},
+                          ensure_ascii=False))
+        print(f"[chiguo_daemon] --memory-search 失败: {e}", file=sys.stderr)
+        sys.exit(1)
+    # 行契约(id/text/category/scope/importance/timestamp/datetime…)已为 JSON 可序列化；
+    # default=str 兜底 datetime 等非标准类型，防单条脏形状拖垮整个检索输出
+    print(_json.dumps({"action": "memory_search", "ok": True, "query": query,
+                       "count": len(rows), "memories": rows},
+                      ensure_ascii=False, default=str))
+
+
 # ── 入口 ──────────────────────────────────────────────────
 
 def main():
@@ -1553,6 +1573,9 @@ def main():
     parser.add_argument("--schedule-change", type=str, default=None,
                         metavar="JSON",
                         help="写安排（JSON: reminder/add/cancel/move/exam_week/remove）")
+    parser.add_argument("--memory-search", type=str, default=None,
+                        metavar="QUERY",
+                        help="记忆检索（mem0 语义检索，回复侧记忆注入用；mem0 不可用软降级返回空）")
     parser.add_argument("--tune", action="store_true",
                         help="参数校准：基于回复延迟推荐 base_lambda 调整")
     parser.add_argument("--stats", type=int, nargs="?", const=7, metavar="DAYS",
@@ -1833,6 +1856,9 @@ def main():
         return
     if args.schedule_change:
         _cmd_schedule_change(args.schedule_change)
+        return
+    if args.memory_search:
+        _cmd_memory_search(args.memory_search)
         return
 
     engine = DecisionEngine()

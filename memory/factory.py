@@ -1,16 +1,12 @@
 # ============================================================
 # memory/factory.py — 记忆后端工厂（v1.8 解耦；v1.9 默认 mem0）
 #
-# [memory].backend 取值：
+# mem0 为唯一记忆后端（[memory].backend 仅接受 "mem0"/"auto" 遗留值）：
 #   "mem0"   （默认）mem0 AI 记忆后端（mem0ai 库；库缺失/无 key/
 #             ollama 未启动 → available=False 优雅降级，60s 节流重试）
-#   "module.path.ClassName"  自定义后端类（importlib 动态加载，
-#                            实例化 kwargs = [memory] 段其余键）
-# 自定义后端只需实现 memory/base.py MemoryBackend 的四个原语。
+# 自定义类路径（module.path.ClassName）已移除，非 "mem0"/"auto" 直接抛错。
 # ============================================================
 
-import importlib
-import inspect
 import os
 from pathlib import Path
 
@@ -19,37 +15,21 @@ from memory.mem0_backend import Mem0Backend
 
 
 def create_backend(config: dict | None = None, base_dir: str | Path | None = None) -> MemoryBackend:
-    """按 [memory] 配置创建记忆后端。
+    """按 [memory] 配置创建记忆后端（mem0 唯一）。
 
     config: toml [memory] 段 dict（backend + mem0_* 键 +
-            ebbinghaus_strength/ebbinghaus_min_weight + 自定义键）。
+            ebbinghaus_strength/ebbinghaus_min_weight）。
     base_dir: 相对路径锚定目录（daemon 的 _base_dir；缺省 cwd）。
     """
     cfg = config or {}
     backend = cfg.get("backend", "mem0")
+    if backend not in ("mem0", "auto"):
+        raise ValueError(f"[memory].backend={backend} 不是受支持的后端;mem0 是唯一记忆后端")
     base = Path(base_dir) if base_dir else None
     strength = cfg.get("ebbinghaus_strength")
     min_weight = cfg.get("ebbinghaus_min_weight")
 
-    # 自定义类路径（含 "." 且非内置名）
-    if isinstance(backend, str) and "." in backend and backend != "mem0":
-        module_name, _, class_name = backend.rpartition(".")
-        module = importlib.import_module(module_name)
-        cls = getattr(module, class_name)
-        if not issubclass(cls, MemoryBackend):
-            raise TypeError(f"[memory].backend={backend} 不是 MemoryBackend 子类")
-        kwargs = {k: v for k, v in cfg.items() if k != "backend"}
-        # 按构造签名过滤（内置键名对自定义类可能不适用；**kwargs 类全传）
-        try:
-            params = inspect.signature(cls.__init__).parameters
-            if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
-                kwargs = {k: v for k, v in kwargs.items() if k in params}
-        except (TypeError, ValueError):
-            pass
-        return cls(**kwargs)
-
-    # 默认（backend == "mem0" / "auto" 遗留值）：mem0 后端
-    # 相对路径（qdrant_path/history_db）锚定 base_dir
+    # mem0 后端（唯一）；相对路径（qdrant_path/history_db）锚定 base_dir
     return Mem0Backend(
         user_id=cfg.get("mem0_user_id", "chiguo"),
         collection_name=cfg.get("mem0_collection", "chiguo"),

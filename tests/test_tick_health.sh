@@ -185,7 +185,7 @@ set +e; CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
 [ "$(state_field fail_streak)" = 0 ] || fail "composer 兜底应记 success（fail_streak 归零）, 实得 $(state_field fail_streak)"
 rm -f "$REPO/chiguo_composer.py"
 
-# ── 用例 5: OPENCODE_API_KEY 注入——优先 opencode-go 条目（memory 扩展端点固定），无则回退 [host].provider ──
+# ── 用例 5: OPENCODE_API_KEY 注入——优先 opencode-go 条目（mem0 LLM 事实提取），无则回退 [host].provider ──
 mkdir -p "$TMP/home/.pi/agent"
 printf '{"opencode-go":{"type":"api_key","key":"sk-og"},"deepseek":{"type":"api_key","key":"sk-ds"}}' \
   > "$TMP/home/.pi/agent/auth.json"

@@ -58,7 +58,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 ### 5. agent 环境
 
-`bash scripts/install_agent.sh`（七阶段：探测 → 记忆扩展 clone+build → settings.json → json5 配置 → ollama 检查 → auth.json 写 key → crontab 注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。**切换 loop 常驻**：`CHIGUO_DAEMON_LOOP=1 bash scripts/install_agent.sh --yes` → 移除 chiguo-tick crontab（防与常驻双发）+ 安装 systemd `chiguo-daemon.service`（`--loop 900 --compact`）。
+`bash scripts/install_agent.sh`（阶段：探测 → ollama 检查 → auth.json 写 key → crontab 注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。**切换 loop 常驻**：`CHIGUO_DAEMON_LOOP=1 bash scripts/install_agent.sh --yes` → 移除 chiguo-tick crontab（防与常驻双发）+ 安装 systemd `chiguo-daemon.service`（`--loop 900 --compact`）。
 
 ### 6. 网易云 API 服务（可选）
 
@@ -110,7 +110,7 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 
 ## 九、迁移与备份
 
-- 备份/迁移清单：`~/.chiguo/auth/`、`~/.pi-agent/`、`~/.pi/`、仓库内运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`schedule_overrides.json`、`schedule_plan.json`、`schedule_clarify.json`、`anniversaries.json`、`break_state.json`）、`data/`（课表/手动记忆）
+- 备份/迁移清单：`~/.chiguo/auth/`、`~/.pi/`、仓库内运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`schedule_overrides.json`、`schedule_plan.json`、`schedule_clarify.json`、`anniversaries.json`、`break_state.json`）、`data/`（课表/手动记忆）
 - 新机器：clone → 拷贝上述 → `bash deploy.sh`（自动接入；agent key 100% 迁移可用；微信/网易云跨设备自动重登兜底）
 - 微信登录态跨设备实测可复用：迁移后轮询正常，但首次**主动发送**可能被服务端拒（`[send error] prepare failed`，context_token 过期）——从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
 
