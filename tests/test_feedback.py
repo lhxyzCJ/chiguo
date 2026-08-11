@@ -348,6 +348,10 @@ def test_recv_dedup_different_text_full_record():
 
         engine.record_user_message("哥哥在吗")
         st.emotion.energy = 50.0  # 留出 +10 空间（能量有 100 上限）
+        # v1.14 (#139): record_user_message 锁内重载磁盘最新状态（防覆盖 evaluate
+        # 落盘推进）→ 内存改动必须先落盘，否则会被重载回滚。落盘后 drop_events
+        # 一并持久化（上一条同窗口回复事件），第二跳的 damp=0.5 语义不受影响。
+        assert st.save()
         e1 = st.emotion.energy
         engine.record_user_message("哥哥在忙吗")  # 不同文本 → 完整效果
         # A10: 两条消息在同一 30 分钟阻尼窗口内 → 第 2 次同向加成 ×0.5 → energy +5（而非 +10）
