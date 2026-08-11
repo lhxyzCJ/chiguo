@@ -284,7 +284,12 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         if anx_bonus > 0 and mood["mood"] in ("low", "distressed"):
             raw_anx = raw_anx * (1.0 + anx_bonus * mood["intensity"])
 
-    w_anx = raw_anx / (raw_anx + anx_baseline) if raw_anx + anx_baseline > 0 else 0.0
+    # B2 (#137): A4 must_send 标定矛盾修复 —— 原归一化 w=raw/(raw+baseline) 把 w_anx
+    # 钳在 max≈0.664 < must_send_activation(0.75)，anxiety 单源永远到不了高段必发。
+    # 改为 w=raw/(raw+baseline*(1-raw))：raw→1 时 w→1（高焦虑可达 must_send 高段），
+    # 中低段基本保持（anx=40 → ≈0.187 vs 原 0.171，仍 < anxiety_min_weight 0.3 不成候选）。
+    denom_anx = raw_anx + anx_baseline * (1 - raw_anx)
+    w_anx = raw_anx / denom_anx if denom_anx > 0 else 0.0
     if w_anx > anx_min_weight:
         weighted_candidates.append({
             "trigger": Trigger(type="anxiety", intensity="medium"),

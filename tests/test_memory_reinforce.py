@@ -25,14 +25,17 @@ from memory.base import MemoryBackend  # noqa: E402
 
 
 class FakeMem0:
-    """mem0 Memory 最小模拟 + update 记录（C2 写回断言）。
+    """mem0 Memory 最小模拟 + update/get 记录 + metadata 持久化（C2 写回与跨进程累积断言）。
 
     update 签名对齐真实 mem0 2.x：update(memory_id, text=None, metadata=None)。
+    get(memory_id) 返回当前（含已 merge 的 metadata）记录，模拟真实 mem0 读回；
+    _meta 模拟 mem0 持久化存储（update 的 metadata 为 merge 语义写回 _meta）。
     """
 
     def __init__(self, results):
         self._results = list(results)
         self.updated: list[tuple] = []
+        self._meta = {r.get("id"): dict(r.get("metadata") or {}) for r in self._results}
 
     def search(self, query, filters=None, top_k=10):
         return {"results": list(self._results)}
@@ -43,8 +46,20 @@ class FakeMem0:
     def add(self, messages, user_id=None, metadata=None):
         return {"results": []}
 
+    def get(self, memory_id):
+        """模拟 mem0 Memory.get(memory_id)：返回当前（含已 merge 的 metadata）记录。"""
+        for r in self._results:
+            if r.get("id") == memory_id:
+                return {**r, "metadata": dict(self._meta.get(memory_id, {}))}
+        return None
+
     def update(self, memory_id, text=None, metadata=None):
-        self.updated.append((memory_id, metadata))
+        self.updated.append((memory_id, metadata or {}))
+        # 模拟 mem0 update 的 metadata merge 语义：写回持久化存储（跨进程累积数据源）
+        if memory_id in self._meta:
+            self._meta[memory_id].update(metadata or {})
+        else:
+            self._meta[memory_id] = dict(metadata or {})
 
 
 def _row(text="哥哥喜欢喝美式咖啡", importance=0.9, mem_id="m1",
@@ -57,12 +72,12 @@ def _row(text="哥哥喜欢喝美式咖啡", importance=0.9, mem_id="m1",
             "user_id": "chiguo"}
 
 
-def _backend(results, tmp: Path, **kw) -> Mem0Backend:
+def _backend(results, tmp: Path, fake: FakeMem0 = None, **kw) -> Mem0Backend:
     b = Mem0Backend(qdrant_path=str(tmp / "qdrant"), history_db=str(tmp / "h.db"),
                     **kw)
     b._available = True
     b._last_probe = time.time() + 3600  # 缓存恒命中，永不真实探测
-    b._m = FakeMem0(results)
+    b._m = fake if fake is not None else FakeMem0(results)
     return b
 
 
@@ -190,6 +205,54 @@ def test_note_recalled_persists_via_backend():
     print("  OK test_note_recalled_persists_via_backend")
 
 
+# ── A2 跨进程累积（Issue #133）──────────────────────────
+
+def test_recall_count_accumulates_across_processes():
+    """A2 跨进程累积：同一 mem0 后端（共享 FakeMem0 持久化）先后由两个独立
+    MemoryBackend 实例各 note_recalled 同 memory_id → 第二次持久化 recall_count === 2。
+
+    当前 bug：cron 每 15 分钟新进程，_recall_counts dict 从空开始，
+    counts.get(mid, 0)+1 → 第二次把持久化旧值覆盖成 1，加权永不累积。"""
+    with tempfile.TemporaryDirectory() as td:
+        fake = FakeMem0([_row(mem_id="m1")])
+        b1 = _backend([_row(mem_id="m1")], Path(td), fake=fake,
+                      reinforce_enabled=True, reinforce_bonus=0.1)
+        b2 = _backend([_row(mem_id="m1")], Path(td), fake=fake,
+                      reinforce_enabled=True, reinforce_bonus=0.1)
+        # 进程 1：新实例 dict 空 → 读持久化 0 → 写 1
+        assert b1.note_recalled(["m1"]) == 1
+        assert fake.get("m1")["metadata"]["recall_count"] == 1
+        # 进程 2：新实例 dict 空 → 必须读回持久化 1 再 +1（当前 bug：覆盖写 1）
+        assert b2.note_recalled(["m1"]) == 1
+        assert fake.get("m1")["metadata"]["recall_count"] == 2
+    print("  OK test_recall_count_accumulates_across_processes")
+
+
+def test_mock_backend_cross_process_accumulates():
+    """A2 mock 后端覆盖：MemoryBackend 子类模拟共享持久化存储，
+    两个独立实例各 note_recalled 同 memory_id → 第二次持久化 recall_count === 2。"""
+    store: dict[str, int] = {}
+
+    class _SharedPersistBackend(MemoryBackend):
+        def _persist_recall(self, memory_id, count):
+            store[memory_id] = count
+
+        def _load_recall_count(self, memory_id):
+            return store.get(memory_id, 0)
+
+    b1 = _SharedPersistBackend()
+    b2 = _SharedPersistBackend()
+    for b in (b1, b2):
+        b._reinforce_enabled = True
+        b._reinforce_bonus = 0.1
+    assert b1.note_recalled(["m1"]) == 1
+    assert store["m1"] == 1
+    # 新实例 dict 空：读持久化 1 → 写 2（当前 bug：覆盖写 1）
+    assert b2.note_recalled(["m1"]) == 1
+    assert store["m1"] == 2
+    print("  OK test_mock_backend_cross_process_accumulates")
+
+
 # ── 召回即强化（read 侧接线） ────────────────────────────
 
 def test_search_with_forgetting_records_recall():
@@ -258,6 +321,8 @@ if __name__ == "__main__":
         test_effective_importance_caps_at_one,
         test_persist_recall_writes_recall_count,
         test_note_recalled_persists_via_backend,
+        test_recall_count_accumulates_across_processes,
+        test_mock_backend_cross_process_accumulates,
         test_search_with_forgetting_records_recall,
         test_search_with_forgetting_noop_when_disabled,
         test_random_memory_with_forgetting_records_recall,

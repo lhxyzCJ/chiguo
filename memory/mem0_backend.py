@@ -428,6 +428,31 @@ class Mem0Backend(MemoryBackend):
             return
         upd(memory_id, metadata={"recall_count": count})
 
+    def _load_recall_count(self, memory_id: str) -> int:
+        """读回 mem0 已持久化的 recall_count（A2 跨进程累积数据源）。
+
+        cron 每 15 分钟新进程，base.note_recalled 计数基数必须来自持久化旧值而非
+        进程内空 dict。mem0 有 get(memory_id)（返回含 metadata 的记录）时读 metadata
+        .recall_count；无该 API / 读取失败 / 非法值 → 0（退化为进程内计数，
+        写侧只 +1 不覆盖旧值，跨进程累积不失效）。
+        """
+        getter = getattr(self._m, "get", None)
+        if getter is None:
+            return 0
+        try:
+            rec = getter(memory_id)
+        except Exception as e:
+            import logging
+            logging.warning("mem0 %s failed: %r", "get_recall_count", e)
+            return 0
+        meta = (rec or {}).get("metadata") or {}
+        if not isinstance(meta, dict):
+            return 0
+        try:
+            return int(meta.get("recall_count") or 0)
+        except (TypeError, ValueError):
+            return 0
+
     # ── 内部 ──────────────────────────────────────────────
 
     def _all_rows(self, min_importance: float = 0.0,

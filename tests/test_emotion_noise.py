@@ -158,6 +158,91 @@ def test_tick_enabled_does_not_pollute_global_rng():
         assert expected == actual, "噪声不得消费全局 random 序列"
 
 
+# ── A4: loop 常驻模式噪声增量语义（防重复累加漂移） ──────────────
+
+def test_noise_loop_delta_increment_semantics():
+    """A4 修复回归：loop 常驻模式连续 tick 时，加到 emotion 的是"本次增量"
+    而非"完整 OU 状态"。OU 内存态 x 是累积的（x += θ(0−x)Δt + σ√Δt·ε），
+    bug 版每 tick 把完整 x_i 加上 → 前 N-1 次噪声被重复累加 → 漂移放大。
+
+    用 spy 捕获传给 noise_cap 的 raw 噪声值，断言 telescoping 恒等：
+    Σ delta_i = x_final − x_0 = x_final（x_0=0），即每 tick 传的是
+    x_i − x_{i-1} 而非完整 x_i。bug 版 Σ raw = Σ x_i ≠ x_N → 本测试失败。"""
+    import chiguo_state as cs
+    orig = cs.noise_cap
+    calls = []
+
+    def spy(step_magnitude, raw_noise):
+        calls.append(raw_noise)
+        return orig(step_magnitude, raw_noise)
+
+    cs.noise_cap = spy
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            st = _make_state(td)
+            st.config["emotion"]["noise_enabled"] = 1
+            st.config["emotion"]["noise_seed"] = 42
+            now = datetime(2026, 8, 9, 12, 0, tzinfo=CST)
+            st.emotion.loneliness = 60.0
+            st.emotion.anxiety = 50.0
+            n_ticks = 200
+            for i in range(n_ticks):
+                st.tick(0.25, now + timedelta(minutes=15 * i))
+            # 每 tick 恰好 2 次 noise_cap（loneliness + anxiety）
+            assert len(calls) == 2 * n_ticks, \
+                f"expect {2 * n_ticks} noise_cap calls, got {len(calls)}"
+            lo_raw = calls[0::2]
+            anx_raw = calls[1::2]
+            # telescoping 恒等：Σ delta_i = x_final − x_0，x_0=0
+            assert abs(sum(lo_raw) - st._noise_x["loneliness"]) < 1e-9, \
+                f"loneliness 应传增量（telescoping 到最终 OU 状态）：Σ={sum(lo_raw)}, x_N={st._noise_x['loneliness']}"
+            assert abs(sum(anx_raw) - st._noise_x["anxiety"]) < 1e-9, \
+                f"anxiety 应传增量：Σ={sum(anx_raw)}, x_N={st._noise_x['anxiety']}"
+            # 增量有正有负（均值回归，非单调漂移）
+            assert any(v < 0 for v in lo_raw), "loneliness 增量应为可正可负（均值回归）"
+            assert any(v < 0 for v in anx_raw), "anxiety 增量应为可正可负（均值回归）"
+    finally:
+        cs.noise_cap = orig
+
+
+def test_noise_loop_total_does_not_scale_with_tick_count():
+    """A4 行为守卫：修复后 loop 常驻模式的累积噪声量随 tick 数平稳有界
+    （OU 平稳分布，σ=0.3 → 噪声量级 < 1），而非随 tick 数放大。
+    固定 seed 下 N=100 与 N=400 的累积原始噪声都远小于 bug 版量级
+    （bug 版 Σ完整 x_i ≈ 0.15×N：N=200 即 ~29 漂移；修复版 = x_N ≈ 0.3 级）。"""
+    import chiguo_state as cs
+    orig = cs.noise_cap
+
+    def run(n_ticks):
+        calls = []
+
+        def spy(step_magnitude, raw_noise):
+            calls.append(raw_noise)
+            return orig(step_magnitude, raw_noise)
+
+        cs.noise_cap = spy
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                st = _make_state(td)
+                st.config["emotion"]["noise_enabled"] = 1
+                st.config["emotion"]["noise_seed"] = 42
+                now = datetime(2026, 8, 9, 12, 0, tzinfo=CST)
+                st.emotion.loneliness = 60.0
+                st.emotion.anxiety = 50.0
+                for i in range(n_ticks):
+                    st.tick(0.25, now + timedelta(minutes=15 * i))
+                return sum(calls[0::2])
+        finally:
+            cs.noise_cap = orig
+
+    s100 = run(100)
+    s400 = run(400)
+    # 修复版：Σdelta = x_N，|x_N| 为 OU 平稳值（std≈0.3，远小于 3.0）。
+    # bug 版：Σx_i ≈ 0.15×N → N=400 时 ~58，必爆。3.0 是 10σ 安全边界。
+    assert abs(s100) < 3.0 and abs(s400) < 3.0, \
+        f"累积噪声应平稳有界（OU 平稳级），而非随 tick 放大: s100={s100}, s400={s400}"
+
+
 if __name__ == "__main__":
     tests = [
         test_ou_step_zero_dt_identity, test_ou_step_deterministic_seed,
@@ -165,6 +250,8 @@ if __name__ == "__main__":
         test_noise_cap_bounds,
         test_tick_disabled_identity, test_tick_enabled_stays_in_bounds,
         test_tick_enabled_does_not_pollute_global_rng,
+        test_noise_loop_delta_increment_semantics,
+        test_noise_loop_total_does_not_scale_with_tick_count,
     ]
     for t in tests:
         t()
