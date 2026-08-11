@@ -70,6 +70,35 @@ t('detect: M月D日要XX（无年份）→ 推断年份（已过→明年）', (
     assert.strictEqual(year, y + 1, '已过日期应推断到明年')
   }
 })
+// ── Issue #130: 一次性提醒/纪念日正则误吞日常问句/否定句（语义反转）──
+t('#130: "2026年8月11日要不要一起吃饭"（全年份问句）→ null 放行 agent', () => {
+  assert.strictEqual(detectSpecialCommand('2026年8月11日要不要一起吃饭'), null)
+})
+t('#130: "8月11日要不要一起吃饭"（月日问句）→ null 放行 agent', () => {
+  assert.strictEqual(detectSpecialCommand('8月11日要不要一起吃饭'), null)
+})
+t('#130: 其他征求/疑问语气不拦截（全年份+月日提醒分支）', () => {
+  assert.strictEqual(detectSpecialCommand('2026年8月11日能不能一起吃饭'), null)
+  assert.strictEqual(detectSpecialCommand('2026年8月11日是不是要考试'), null)
+  assert.strictEqual(detectSpecialCommand('2026年8月11日好不好去爬山'), null)
+  assert.strictEqual(detectSpecialCommand('8月11日要不要去爬山'), null)
+  assert.strictEqual(detectSpecialCommand('8月11日要考试行不行'), null)
+})
+t('#130: 纪念日分支同样不误吞问句', () => {
+  assert.strictEqual(detectSpecialCommand('记住5月11日要不要一起吃饭'), null)
+  assert.strictEqual(detectSpecialCommand('记住5月11日是不是生日'), null)
+})
+t('#130: 正例保持——"2026年12月25日要考试" 仍 reminder_added、label 含考试', () => {
+  const r = detectSpecialCommand('2026年12月25日要考试')
+  assert.strictEqual(r.action, 'reminder_added')
+  assert.ok(r.daemon[1].includes('考试'), r.daemon[1])
+})
+t('#130: 正例保持——"8月11日要考试"（月日版本）仍 reminder_added、label 含考试', () => {
+  const r = detectSpecialCommand('8月11日要考试')
+  assert.strictEqual(r.action, 'reminder_added')
+  assert.ok(r.daemon[1].includes('考试'), r.daemon[1])
+})
+
 t('inferYear: 边界——过去/未来日期', () => {
   const now = new Date(Date.now() + 8 * 3600 * 1000)
   const y = now.getUTCFullYear()

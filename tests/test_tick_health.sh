@@ -322,4 +322,22 @@ test_replan_tick_path() {
 }
 test_replan_tick_path
 
+# ── 用例 8（Issue #135）: daemon --compact 崩溃 → 非零退出 + stderr 告警（不得静默吞掉）──
+# 放在最末尾：替换 fake daemon 为崩溃版，不影响前面各用例依赖的 send 输出
+cat > "$REPO/chiguo_daemon.py" <<'PY'
+import sys
+if "--compact" in sys.argv:
+    print("崩溃啦", file=sys.stderr)
+    sys.exit(3)
+sys.exit(0)
+PY
+CRASH_LOG="$TMP/tick_crash.log"
+set +e
+CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>"$CRASH_LOG"
+RC=$?
+set -e
+[ "$RC" != 0 ] || fail "daemon --compact 崩溃时 tick 应非零退出（当前被 || true 吞掉）, 实得 $RC"
+grep -q "chiguo-tick" "$CRASH_LOG" || fail "daemon 崩溃应输出 [chiguo-tick] 告警到 stderr: $(cat "$CRASH_LOG")"
+pass "daemon --compact 崩溃 → tick 非零退出 + stderr 告警（不再静默）"
+
 echo "test_tick_health: 全部通过"
