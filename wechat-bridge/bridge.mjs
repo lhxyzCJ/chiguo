@@ -30,7 +30,7 @@ import { WeChatBot } from '@wechatbot/wechatbot'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
-import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand } from './command-detect.mjs'
 // #99 A 路：askAgent（agent-run.mjs 统一入口）由阶段 4 集成接入；当前保留原 spawn 调用结构
@@ -59,6 +59,9 @@ export function warnIfNoToken() {
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 // 仓库根 = 本文件位置推导（可移植，随仓库克隆到任何路径）
 const REPO = resolveRepo(import.meta.url)
+// bridge 运行目录（wechat-bridge.sh 启动 cwd）：会话目录编码与 pi 进程 cwd 锚定于此。
+// 不得依赖 process.cwd()（直接 node bridge.mjs 时 cwd 可能是任意目录，导致 /new /status 找错会话文件）。
+const BRIDGE_DIR = join(REPO, 'wechat-bridge')
 const DAEMON_PY = process.env.WECHAT_BRIDGE_DAEMON_PY ?? `${REPO}/.venv/bin/python`
 const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? `${REPO}/chiguo_daemon.py`
 // schedule 运行时文件锚定 daemon 所在目录（跟随 WECHAT_BRIDGE_DAEMON 覆盖；测试隔离依赖），与 REPO 仅默认相等
@@ -205,6 +208,13 @@ async function runAgentRun({ mode, prompt, facts }, runOverride = null) {
       { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
     const raw = parseNdjson(stdout)
     return { text: raw ? raw.replace(/<<RECALL>>[\s\S]*?<<END>>/, '').trim() : null }
+  }
+  // 函数形式注入（与 firstAnalysis 对称）：deps.askAgent 为纯函数（无 .exec）时同样接管第二趟，
+  // 不得回落真实 spawn（绕过注入）。默认 askAgent 契约是 analysis-mode 而非 recall，故排除，走下方真实 spawn。
+  if (runOverride && runOverride !== askAgent && typeof runOverride === 'function') {
+    const res = await runOverride({ mode, prompt, facts })
+    const raw = typeof res === 'string' ? res : res?.text
+    return raw != null ? { text: raw.replace(/<<RECALL>>[\s\S]*?<<END>>/, '').trim() } : null
   }
   const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, ...args], {
     timeout: 180_000,
@@ -388,7 +398,9 @@ export async function handleAgentPrompt(payload, res, queue = fallbackTurnQueue)
  *  仅本地回环来源(#84 鉴权)+ 可选 token。 */
 function startSendServer(bot, queue) {
   const server = createServer((req, res) => {
+    res.on('error', () => {})  // 客户端断开后 res 被销毁 → 吸收 error 事件，防未处理异常
     const deny = (status, error) => {
+      if (res.writableEnded || res.destroyed) return
       res.writeHead(status, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ ok: false, error }))
     }
@@ -430,14 +442,18 @@ function startSendServer(bot, queue) {
       if (to !== OWNER_ID) { deny(403, 'forbidden recipient'); return }
       try {
         await withTimeout(bot.send(to, text), 30_000)   // #84 send 超时兜底,不挂死请求
-        console.log(`[send] ${to}: ${text.slice(0, 80)}`)
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ ok: true }))
+        console.log(`[send] ${to}: ${text.length} chars`)  // 脱敏：不落正文（仅长度）
+        if (!res.writableEnded && !res.destroyed) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true }))
+        }
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
         console.error('[send error]', reason)
-        res.writeHead(500, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ ok: false, error: reason }))
+        if (!res.writableEnded && !res.destroyed) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: reason }))
+        }
       }
     })
   })
@@ -568,7 +584,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     return 'agent'
   }
 
-  await recordUserMsg(text)   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 450s 继承)
+  await queue.run(() => recordUserMsg(text))   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 450s 继承)
 
   // 澄清检查:有待澄清记录且非退出词 → 路由回提取(词表命中=新命令;否则合并"原意+回答")
   // B3 兜底:readClarify 内部 rmSync 已容错,防御性再包一层——记录损坏/目录占位等极端情况不阻塞回复流
@@ -579,8 +595,8 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     const wordIntent = detectScheduleIntent(text)          // 词表命中 = 新命令
     const isNewCommand = wordIntent && wordIntent.intent !== 'extract'
     const original = isNewCommand ? text : `${clarify.original}\n(补充回答:${text})`
-    const released = await handleScheduleCommand(original, msg, bot,
-      { ...deps, repoRoot, clarify, extractAgent, verifyAgent, runDaemon, now })
+    const released = await queue.run(() => handleScheduleCommand(original, msg, bot,
+      { ...deps, repoRoot, clarify, extractAgent, verifyAgent, runDaemon, now }))
     if (released !== 'chat') return released
     await askChat(text, msg, bot, queue, askAgentFn)   // ⑥ 放行回聊天链:消息必须获得回复(不静默丢弃)
     return 'chat'
@@ -595,12 +611,13 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   if (slash) {
     await queue.run(async () => {
       try {
-        const r = await executeSlashCommand(spawn, slash, process.cwd())
-        // /new 后常驻 agent 仍持有旧会话句柄 → 重启,下一轮 prompt 重载最新 chiguo-main
+        // #192: /new 先重启常驻 agent(await 子进程退出、释放旧会话文件),再备份会话文件——
+        // 否则备份的是旧进程仍持有的会话文件,时序错乱。
         if (slash.action === 'new_session' && AGENT_RPC_ENABLED && globalThis.__agentRpc) {
-          globalThis.__agentRpc.restart()
+          await globalThis.__agentRpc.restart()
           console.log('[slash] agent-rpc 已重启(新会话)')
         }
+        const r = await executeSlashCommand(spawn, slash, BRIDGE_DIR)
         console.log(`[slash] ${slash.action} → ok=${r.ok}`)
         await bot.reply(msg, r.reply)
       } catch (err) {
@@ -666,7 +683,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
         }
         if (!recalled) {
           await upgradeAnalysis(text, analysis)  // recv_dedup 升级语义，不重复记账
-          console.log(`[out] ${reply.slice(0, 80)}`)
+          console.log(`[out] ${(reply ?? '').slice(0, 80)}`)
           await bot.reply(msg, reply).catch((e) => console.error('[reply error]', e))
         }
       } catch (err) {
@@ -685,9 +702,22 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
 
 async function main() {
   warnIfNoToken()   // B1: 生产无 token 零鉴权 → 启动即醒目警告(stderr)
+  // #191: 未设置共享 token 时 /send 与 /agent/prompt 零鉴权(同机任意进程可冒充 owner)→ 拒绝启动。
+  // wechat-bridge.sh 已自动生成并注入 token,故此处仅命中「直接 node bridge.mjs 绕过启动脚本」的场景。
+  if (!BRIDGE_TOKEN) {
+    console.error(
+      '[FATAL] WECHAT_BRIDGE_TOKEN 未设置:HTTP 端点(/send 与 /agent/prompt)零鉴权,拒绝启动。\n' +
+      '       请通过 wechat-bridge.sh 启动,或手动生成 token 写入 .env:\n' +
+      '      echo "WECHAT_BRIDGE_TOKEN=$(openssl rand -hex 16)" >> .env\n')
+    process.exit(1)
+  }
+  // 登录态目录含微信登录凭证 → 强制 0o700,防同机其他用户读取会话/凭证文件(umask 宽松时兜底)
+  const storageDir = process.env.WECHAT_BRIDGE_STORAGE ?? DEFAULT_STORAGE
+  mkdirSync(storageDir, { recursive: true, mode: 0o700 })
+  chmodSync(storageDir, 0o700)
   const bot = new WeChatBot({
     storage: 'file',
-    storageDir: process.env.WECHAT_BRIDGE_STORAGE ?? DEFAULT_STORAGE,
+    storageDir,
     logLevel: 'info',
     inboundDebounce: {
       windowMs: DEBOUNCE_MS,
@@ -696,7 +726,9 @@ async function main() {
     loginCallbacks: {
       onQrUrl: (url) => {
         console.log('\n=== 微信扫码登录 ===')
-        console.log(url)
+        // 二维码链接含登录凭证,默认打印;WECHAT_BRIDGE_QR_LOG=0 可关闭(日志分享/CI 场景防泄漏)
+        if (process.env.WECHAT_BRIDGE_QR_LOG === '0') console.log('[QR 隐藏] 设 WECHAT_BRIDGE_QR_LOG!=0 可打印二维码链接')
+        else console.log(url)
         console.log('====================\n')
       },
       onScanned: () => console.log('已扫码，等待确认…'),
@@ -709,7 +741,7 @@ async function main() {
   bot.onMessage(async (msg) => {
     const text = msg.text
     if (!text?.trim()) return
-    console.log(`[in] ${msg.userId}: ${text.slice(0, 80)}`)
+    console.log(`[in] ${msg.userId}: ${text.length} chars`)  // 脱敏：不落正文（仅长度）
     await handleMessage(text, msg, bot, queue, makeScheduleDeps(REPO_ROOT))
   })
 

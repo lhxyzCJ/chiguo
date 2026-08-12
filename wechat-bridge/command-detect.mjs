@@ -13,7 +13,6 @@
  *   buildReply(action, result) → string（daemon JSON → 迟菓风确认文案）
  */
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { mkdirSync, readdirSync, renameSync, statSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 
@@ -34,6 +33,13 @@ export function inferYear(month, day) {
   return year
 }
 
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+/** 月/日范围校验（2 月按 29 容忍闰年）：非法日期（13月/2月30日）→ false，调用方放行 agent。 */
+function isValidMonthDay(month, day) {
+  return month >= 1 && month <= 12 && day >= 1 && day <= DAYS_IN_MONTH[month - 1]
+}
+
 /**
  * 检测特殊命令。返回 { action, daemon, hint }；非命令返回 null。
  * daemon: 拼好的 daemon argv（如 ['--anniversary', 'add anniversary 05-11 迟菓生日']）。
@@ -47,7 +53,7 @@ export function detectSpecialCommand(text) {
 
   // 1) 纪念日：记住X月X日(是|为)?XX → add anniversary MM-DD <name>（哥哥/主人 前缀兼容）
   let m = t.match(/^(?:哥哥|主人)?记住\s*(\d{1,2})月(\d{1,2})日\s*(?:是|为)?\s*(.+)$/)
-  if (m) {
+  if (m && isValidMonthDay(Number(m[1]), Number(m[2]))) {
     const mm = String(Number(m[1])).padStart(2, '0')
     const dd = String(Number(m[2])).padStart(2, '0')
     const name = m[3].replace(/[。！!～~，,、了]+$/, '').trim()
@@ -62,7 +68,7 @@ export function detectSpecialCommand(text) {
 
   // 2) 一次性提醒(6c:countdown 废弃 → 写 reminder,经 --schedule-change;显式日期直转写,确定性链路)
   m = t.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日\s*(?:是|为|要)?\s*(.+)$/)
-  if (m) {
+  if (m && isValidMonthDay(Number(m[2]), Number(m[3]))) {
     const name = m[4].replace(/[。！!～~，,、]+$/, '').trim()
     if (name && !isAskOrNegate(name)) {
       const date = `${m[1]}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`
@@ -74,7 +80,7 @@ export function detectSpecialCommand(text) {
     }
   }
   m = t.match(/^(\d{1,2})月(\d{1,2})日\s*要\s*(.+)$/)
-  if (m) {
+  if (m && isValidMonthDay(Number(m[1]), Number(m[2]))) {
     const name = m[3].replace(/[。！!～~，,、了]+$/, '').trim()
     if (name && !isAskOrNegate(name)) {
       const year = inferYear(Number(m[1]), Number(m[2]))
