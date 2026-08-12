@@ -38,7 +38,7 @@ EOF
 NODE="${CHIGUO_NODE-$(command -v node || true)}"
 
 ollama_health() {
-  curl -s -m 3 http://127.0.0.1:11434/api/tags 2>/dev/null | grep -q '"models"'
+  curl -s -m 3 --noproxy '*' http://127.0.0.1:11434/api/tags 2>/dev/null | grep -q '"models"'
 }
 
 systemd_active() {
@@ -67,22 +67,24 @@ stop_systemd() {
 
 write_unit() {
   local tmp="$BRIDGE_UNIT.tmp"
-  cat > "$tmp" <<EOF
-[Unit]
-Description=Chiguo WeChat Bridge
-After=network-online.target ollama.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=$BRIDGE_DIR
-EnvironmentFile=$ENV_FILE
-ExecStart=$NODE bridge.mjs
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
+  # 逐行 printf（不用未加引号的 heredoc）：变量值只作 %s 参数原样插入，
+  # 避免 $BRIDGE_DIR/$ENV_FILE 含特殊字符时被 shell 二次展开或 printf 格式串注入
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=Chiguo WeChat Bridge' \
+    'After=network-online.target ollama.service' \
+    'Wants=network-online.target' \
+    '' \
+    '[Service]' \
+    'Type=simple' \
+    "WorkingDirectory=$BRIDGE_DIR" \
+    "EnvironmentFile=$ENV_FILE" \
+    "ExecStart=$NODE bridge.mjs" \
+    'Restart=on-failure' \
+    '' \
+    '[Install]' \
+    'WantedBy=multi-user.target' \
+    > "$tmp"
   if [ -f "$BRIDGE_UNIT" ] && cmp -s "$tmp" "$BRIDGE_UNIT"; then
     rm -f "$tmp"
     say "systemd unit 已存在且一致"
