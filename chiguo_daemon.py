@@ -1122,7 +1122,11 @@ class DecisionEngine:
         """daemon 对话后自动写入 mem0（LLM 提取事实；见 memory/mem0_backend.py）。
         B2: [memory].emotion_tagging=True（默认 False 恒等）时，把当前情绪快照
         （loneliness/affection/anxiety/energy 离散档 + user_mood）写进 metadata 的
-        emotion_tag——供读侧按情绪相近加权（emotion_tag_weight）。"""
+        emotion_tag——供读侧按情绪相近加权（emotion_tag_weight）。
+        设 CHIGUO_MEM0_AUTOWRITE=0 可跳过自动写入（部署验证/测试用途，防止
+        验证消息混入生产记忆库）。"""
+        if os.environ.get("CHIGUO_MEM0_AUTOWRITE", "1") != "1":
+            return  # 部署验证/测试可设 0 防污染生产记忆库
         if len(text.strip()) < 8:
             return  # 短消息（寒暄/无信息量）不写，也避免无谓的可用性探测
         try:
