@@ -5,12 +5,17 @@ __pycache__/
 .venv/
 
 # Runtime state files — 隐私数据（状态/决策/对话）本地保留不进 git（历史已重写清除）；
-# 监控/健康类（netease_health/pi_health/audit）仍跟踪供分析
+# 运行时状态（netease_health/state_audit/watchdog/pi_health）不跟踪：git reset 会回滚陈旧状态、工作树恒脏；
+# 分析历史从 git 历史/归档取
 chiguo_state.json
 chiguo_state.json.bak
 chiguo_state.json.tmp
 chiguo_state.json.tmp.*
 chiguo_loop.pid
+netease/netease_health.json
+chiguo_state_audit.jsonl
+chiguo_watchdog_state.json
+pi_health.json
 *.lock
 !uv.lock
 
