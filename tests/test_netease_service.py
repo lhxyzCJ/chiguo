@@ -545,6 +545,20 @@ def test_check_health_non_dict_resp_degrades():
         h = b.check_health()
         assert h["api_alive"] is True and h["logged_in"] is False
         assert h["user_id"] is None and h["nickname"] == "" and h["vip_type"] == 3
+        # api-enhanced 嵌套格式 {data:{code,account,profile}} → 正常登录解析（v1.15 bug fix）
+        b._api_get = lambda *a, **k: {"data": {"code": 200,
+            "account": {"id": 100, "vipType": 11}, "profile": {"nickname": "n"}}}
+        h = b.check_health()
+        assert h["api_alive"] is True and h["logged_in"] is True
+        assert h["user_id"] == 100 and h["nickname"] == "n" and h["vip_type"] == 11  # vipType 在 account 内
+        # 嵌套格式登录失败（code!=200）→ api_error 透传（原 bug 下读到 None 误判 login_expired）
+        b._api_get = lambda *a, **k: {"data": {"code": 301}}
+        h = b.check_health()
+        assert h["api_alive"] is True and h["logged_in"] is False and h["api_error"] == 301
+        # 顶层失败响应（上游失败不包 data）→ fallback 分支，api_error 透传
+        b._api_get = lambda *a, **k: {"code": 301, "message": "需要登录"}
+        h = b.check_health()
+        assert h["api_alive"] is True and h["logged_in"] is False and h["api_error"] == 301
     print("  OK test_check_health_non_dict_resp_degrades")
 
 
