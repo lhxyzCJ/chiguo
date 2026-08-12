@@ -4,7 +4,7 @@
 # 人格与情绪正交但相互作用：情绪快速变化，人格缓慢演变
 # ============================================================
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 
 
 @dataclass
@@ -71,9 +71,13 @@ class PersonalityTraits:
                 setattr(self, field_name, val + (base - val) * rate)
 
     def clamp(self):
-        """钳位到 [10, 90]（人格不会极端到 0 或 100）。"""
+        """钳位到 [10, 90]（人格不会极端到 0 或 100）。
+        非数值字段 float() 强转失败回退默认，防 max/min TypeError。"""
         for field_name in self.__dataclass_fields__:
-            val = getattr(self, field_name)
+            try:
+                val = float(getattr(self, field_name))
+            except (TypeError, ValueError):
+                val = float(self.__dataclass_fields__[field_name].default)
             setattr(self, field_name, max(10.0, min(90.0, val)))
 
     def evolve(self, delta: 'PersonalityDelta'):
@@ -152,13 +156,14 @@ class PersonalityDelta:
     attachment_style: float = 0.0
 
     def evolve(self, other: 'PersonalityDelta'):
-        """累加另一个增量的非零字段。"""
+        """累加另一个增量的非零字段，返回新实例（不改 self）。
+        防类级预设（PersonalityDeltas.*）被就地修改污染。"""
+        updates = {}
         for field_name in self.__dataclass_fields__:
             change = getattr(other, field_name, 0.0)
             if change != 0.0:
-                current = getattr(self, field_name)
-                setattr(self, field_name, current + change)
-        return self
+                updates[field_name] = getattr(self, field_name) + change
+        return replace(self, **updates)
 
 
 # ── 人格变化预设 ──
@@ -230,7 +235,15 @@ def personality_to_dict(p: PersonalityTraits) -> dict:
 
 
 def personality_from_dict(d: dict) -> PersonalityTraits:
-    """从字典恢复。缺失字段用默认值。"""
+    """从字典恢复。缺失字段用默认值；非数值字段 float() 强转，
+    失败回退默认并钳位 [10,90]（防损坏状态字符串化导致 clamp TypeError）。"""
     defaults = asdict(default_personality())
     defaults.update(d)
-    return PersonalityTraits(**{k: defaults[k] for k in PersonalityTraits.__dataclass_fields__})
+    traits = {}
+    for field_name in PersonalityTraits.__dataclass_fields__:
+        try:
+            val = float(defaults[field_name])
+        except (TypeError, ValueError):
+            val = float(PersonalityTraits.__dataclass_fields__[field_name].default)
+        traits[field_name] = max(10.0, min(90.0, val))
+    return PersonalityTraits(**traits)
