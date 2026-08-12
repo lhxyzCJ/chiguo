@@ -44,7 +44,6 @@ def create_backend(config: dict | None = None, base_dir: str | Path | None = Non
         max_rows=cfg.get("mem0_max_rows"),
         strength=strength, min_weight=min_weight,
         # ── C1/C2: 记忆巩固 & 复习强化（默认关闭恒等）──
-        consolidate_enabled=cfg.get("consolidate_enabled", False),
         consolidate_sim_threshold=cfg.get("consolidate_sim_threshold"),
         consolidate_min_importance=cfg.get("consolidate_min_importance"),
         consolidate_max_age_hours=cfg.get("consolidate_max_age_hours"),
@@ -54,7 +53,9 @@ def create_backend(config: dict | None = None, base_dir: str | Path | None = Non
 
 
 def _resolve_path(raw: str, base_dir: Path | None) -> str:
-    """相对路径锚定 base_dir（缺省 cwd）；绝对路径/~ 原样保留。"""
+    """相对路径锚定 base_dir（缺省 cwd）；绝对路径/~ 原样保留；None/空 → base_dir。"""
+    if not raw:
+        return str(base_dir or Path.cwd())
     p = Path(os.path.expanduser(raw))
     if p.is_absolute():
         return str(p)

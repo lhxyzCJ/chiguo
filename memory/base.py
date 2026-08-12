@@ -12,6 +12,7 @@
 
 import math
 import random
+import time
 from datetime import datetime, timezone, timedelta
 
 from chiguo_math import jaccard_3gram  # C1: 文本相似度（零新依赖，3-gram Jaccard）
@@ -89,15 +90,6 @@ class MemoryBackend:
             return 0.0
         return 0.0 if math.isnan(f) else f
 
-    @staticmethod
-    def normalize_ts(ts: float) -> datetime:
-        """timestamp may be epoch ms or epoch s. Normalize to datetime."""
-        if ts > 1e12:
-            return datetime.fromtimestamp(ts / 1000, tz=CST)
-        elif ts > 0:
-            return datetime.fromtimestamp(ts, tz=CST)
-        return datetime(1970, 1, 1, tzinfo=CST)
-
     # ── C1: 确定性记忆巩固（无 LLM 的 Letta dreaming / Deep Dream 版）──
 
     @staticmethod
@@ -146,6 +138,8 @@ class MemoryBackend:
             for other in ordered[i + 1:i + 1 + max(pair_scan, 1)]:
                 if other.get("id") in demoted_ids:
                     continue
+                if other.get("_consolidated") or other.get("consolidated_with"):
+                    continue  # 上次巩固已降权（标记读回），跳过二次降权
                 sim = jaccard_3gram(keeper.get("text", ""), other.get("text", ""))
                 if sim >= sim_threshold:
                     other["_consolidated"] = True
@@ -216,8 +210,11 @@ class MemoryBackend:
             counts[mid] = cnt
             try:
                 self._persist_recall(mid, cnt)
-            except Exception:
-                pass  # 写回失败不阻断召回记录
+            except Exception as e:
+                import logging
+                logging.warning("memory note_recalled persist failed for %s: %r",
+                                mid, e)
+                self._last_error = (time.time(), "note_recalled", str(e))
             n += 1
         return n
 
