@@ -13,7 +13,6 @@ import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
 PROJ_DIR = Path(__file__).resolve().parent
 CST = timezone(timedelta(hours=8))
 
@@ -120,7 +119,7 @@ class Demo:
             active = [b for b in breaks if b.get("active")]
             detail = ""
             if active:
-                detail = " | " + ", ".join(b.get("note", b["start"]) for b in active)
+                detail = " | " + ", ".join(b.get("note") or b.get("start", "?") for b in active)
             print(f"{Color.B}{Color.MAG}║{Color.R} {Color.YEL}🏖 假期模式: {br}{detail}{Color.R}")
         # 节假日行（优先级最高）
         hol = s.get("holiday", {})
@@ -177,15 +176,15 @@ class Demo:
             if cmd == "q": break
             elif cmd == "t":
                 try: m = float(arg)
-                except: m = 30
+                except (ValueError, TypeError): m = 30
                 self.tick(m); self.render()
             elif cmd == "h":
                 try: m = float(arg) * 60
-                except: m = 60
+                except (ValueError, TypeError): m = 60
                 self.tick(m); self.render()
             elif cmd == "d":
                 try: m = float(arg) * 1440
-                except: m = 1440
+                except (ValueError, TypeError): m = 1440
                 self.tick(m); self.render()
             elif cmd == "m":
                 self.user_msg(arg or "在吗"); self.tick(2); self.render()
@@ -207,4 +206,5 @@ class Demo:
 
 
 if __name__ == "__main__":
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))  # 仅 CLI 运行锚定 cwd，导入期无副作用
     Demo().run()
