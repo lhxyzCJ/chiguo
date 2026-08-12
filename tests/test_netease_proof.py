@@ -614,11 +614,11 @@ def test_evaluate_play_proof_suppresses_sleeping_confidence():
         engine.state._sync_quiet_window()
         _sleeping_state(engine, datetime.now(CST))  # 相对真实时刻,避免时钟倒退/未来时间戳
         # 对照: 无播放证据 → sleeping 门控阻塞
-        engine._check_play_proof = lambda now: False
+        engine._apply_play_proof = lambda now, plays: False
         d = engine.evaluate()
         assert d["action"] == "idle" and d.get("reason") in ("user_sleeping", "sleeping_guard"), d
         # 有播放证据 → effective 0.8×0.5=0.4 ≤ 0.5 → 不被 sleeping 阻塞
-        engine._check_play_proof = lambda now: True
+        engine._apply_play_proof = lambda now, plays: True
         d = engine.evaluate()
         assert d["action"] == "send" or d.get("reason") not in ("user_sleeping", "sleeping_guard"), d
     print("  OK test_evaluate_play_proof_suppresses_sleeping_confidence")
@@ -633,7 +633,7 @@ def test_toml_sleeping_confidence_factor_drives_effective():
         engine.config["schedule"]["quiet_end"] = 0
         engine.state._sync_quiet_window()
         _sleeping_state(engine, datetime.now(CST))
-        engine._check_play_proof = lambda now: True
+        engine._apply_play_proof = lambda now, plays: True
         d = engine.evaluate()
         assert d["action"] == "idle" and d.get("reason") in ("user_sleeping", "sleeping_guard"), d
     print("  OK test_toml_sleeping_confidence_factor_drives_effective")
@@ -694,7 +694,7 @@ def test_evaluate_syncs_quiet_window_to_current_bucket():
         expected = {"weekday": (0, 5), "weekend": (2, 7)}[expected_bucket]
         # evaluate 前手动设成另一桶窗口 → 证明 evaluate 内被刷新
         st.cooldown.set_quiet_window(*({"weekday": (2, 7), "weekend": (0, 5)}[expected_bucket]))
-        engine._check_play_proof = lambda now: False  # 不拉取听歌
+        engine._apply_play_proof = lambda now, plays: False  # 不应用听歌反证
         # 近期消息 → can_send False(min_interval 阻塞),走 idle 分支,不污染 send 状态
         st.cooldown.last_message_at = (real_now - timedelta(minutes=10)).isoformat()
         st.cooldown.current_date = real_now.strftime("%Y-%m-%d")
@@ -740,7 +740,7 @@ def test_evaluate_play_proof_bypasses_quiet_window():
     会被 _load 复位)。"""
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
-        real_cpp = engine._check_play_proof
+        real_cpp = engine._apply_play_proof
         real_now = datetime.now(CST)
         qs = (real_now.hour - 1) % 24
         qe = (real_now.hour + 1) % 24
@@ -750,11 +750,11 @@ def test_evaluate_play_proof_bypasses_quiet_window():
         assert engine.state.cooldown.quiet_window() == (qs, qe)
         assert in_quiet_window(real_now, qs, qe)
         # 对照: 无播放证据 → 窗口内 can_send 被 quiet 门禁拦截 → idle(quiet_hours)
-        engine._check_play_proof = lambda now: False
+        engine._apply_play_proof = lambda now, plays: False
         d = engine.evaluate()
         assert d["action"] == "idle" and d.get("reason") == "quiet_hours", d
         # 有播放证据(窗口内 1h 前播放)→ quiet_ok=True 绕过门禁 → 不再 idle(quiet_hours)
-        engine._check_play_proof = real_cpp
+        engine._apply_play_proof = real_cpp
         orig, calls = _patch_engine_fetch(
             engine, [{"playTime": int((real_now - timedelta(hours=1)).timestamp() * 1000),
                       "name": "夜曲", "artist": "周杰伦"}])

@@ -543,6 +543,16 @@ class DecisionEngine:
             print(f"[warn] netease play proof apply failed: {e}", file=sys.stderr)
             return False
 
+    def _check_play_proof(self, now: datetime) -> bool:
+        """兼容入口：完整播放反证检查（锁外 fetch + apply），返回 bool。
+
+        evaluate 主路径为锁外 _fetch_play_proof + 锁内 _apply_play_proof 拆分
+        （#163），不经过此入口；此方法供测试与单次调用使用，语义等价于拆分前
+        的 _check_play_proof(now)。
+        """
+        plays = self._fetch_play_proof(now)
+        return self._apply_play_proof(now, plays)
+
     def _emit_idle(self, reason: str, now, user_state, data_warning: bool) -> dict:
         """idle 决策统一出口：概率累积（no_trigger/user_busy）+ 落盘。"""
         # C1: 空闲静默路径确定性记忆巩固（config 门控默认关闭；失败不阻断主链路）
