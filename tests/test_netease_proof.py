@@ -424,6 +424,8 @@ def _make_engine(tmp, factor=None):
     cfg_path.write_text(txt)
     engine = chiguo_daemon.DecisionEngine(str(cfg_path), str(Path(tmp) / "decisions.jsonl"))
     engine.state.cooldown.set_quiet_window(0, 8)  # 固定测试窗口,不受 circadian 学习影响
+    # A3: fetch_play_proof 拉取后按 _should_reprobe 刷新 health;桩 check_health 防真实网络
+    engine.netease_service.bridge.check_health = lambda: {"api_alive": True, "logged_in": True}
     return engine
 
 
