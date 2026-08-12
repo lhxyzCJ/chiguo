@@ -7,6 +7,7 @@
 
 import argparse
 import json
+import math
 import random
 import re
 import sys
@@ -14,6 +15,17 @@ import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+
+
+def _to_float(value, default: float) -> float:
+    """composer 配置权重解析：非数值/NaN/inf 回退默认（不钳制，负值由调用处 max(0.0,·) 兜底）。"""
+    try:
+        fv = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(fv):
+        return default
+    return fv
 
 
 class MessageComposer:
@@ -197,21 +209,21 @@ class MessageComposer:
 
         # combo 尺寸权重（选几层组合）
         self.size_weights = {
-            1: self.config.get("size_1_weight", 0.20),
-            2: self.config.get("size_2_weight", 0.50),
-            3: self.config.get("size_3_weight", 0.30),
+            1: max(0.0, _to_float(self.config.get("size_1_weight", 0.20), 0.20)),
+            2: max(0.0, _to_float(self.config.get("size_2_weight", 0.50), 0.50)),
+            3: max(0.0, _to_float(self.config.get("size_3_weight", 0.30), 0.30)),
         }
 
         # cue 基础权重（会被 personality 调制）
         self.cue_weights = {
-            "tsundere_classic": self.config.get("cue_tsundere_weight", 0.40),
-            "tsundere_soft": self.config.get("cue_tsundere_soft_weight", 0.20),
-            "tsundere_cool": self.config.get("cue_tsundere_cool_weight", 0.05),
-            "dere_dere": self.config.get("cue_dere_weight", 0.05),
-            "playful_bubbly": self.config.get("cue_playful_weight", 0.15),
-            "anxious_clingy": self.config.get("cue_anxious_weight", 0.10),
-            "caring_gentle": self.config.get("cue_caring_weight", 0.10),
-            "trade_tsundere": self.config.get("cue_trade_weight", 0.15),
+            "tsundere_classic": max(0.0, _to_float(self.config.get("cue_tsundere_weight", 0.40), 0.40)),
+            "tsundere_soft": max(0.0, _to_float(self.config.get("cue_tsundere_soft_weight", 0.20), 0.20)),
+            "tsundere_cool": max(0.0, _to_float(self.config.get("cue_tsundere_cool_weight", 0.05), 0.05)),
+            "dere_dere": max(0.0, _to_float(self.config.get("cue_dere_weight", 0.05), 0.05)),
+            "playful_bubbly": max(0.0, _to_float(self.config.get("cue_playful_weight", 0.15), 0.15)),
+            "anxious_clingy": max(0.0, _to_float(self.config.get("cue_anxious_weight", 0.10), 0.10)),
+            "caring_gentle": max(0.0, _to_float(self.config.get("cue_caring_weight", 0.10), 0.10)),
+            "trade_tsundere": max(0.0, _to_float(self.config.get("cue_trade_weight", 0.15), 0.15)),
         }
 
         # personality toml 接线（Task 7）：cue ↔ 原著台词模板
@@ -302,10 +314,11 @@ class MessageComposer:
         intent = random.choice(intents)
 
         # Step 2: 确定 combo 尺寸
-        k = random.choices(
-            [1, 2, 3],
-            weights=[self.size_weights[1], self.size_weights[2], self.size_weights[3]],
-        )[0]
+        size_weights = [self.size_weights[1], self.size_weights[2], self.size_weights[3]]
+        if sum(size_weights) > 0:
+            k = random.choices([1, 2, 3], weights=size_weights)[0]
+        else:
+            k = random.choices([1, 2, 3], weights=[0.20, 0.50, 0.30])[0]
 
         # Step 3: 选择 Cue（如果 k≥2）
         cue = None
@@ -545,8 +558,9 @@ def _fallback_text(combo: dict, trigger_type: str = "") -> str:
         # 含 {content} 等占位符的模板行（零 LLM 直发会原样泄漏给用户）→ 跳过
         if "{" in line:
             continue
-        # 剥结尾注释：中文全角（…）或半角 (…) 括号组（原著行号/风格标注）
-        line = re.sub(r"\s*[（(][^（）()]*[）)]\s*$", "", line).strip()
+        # 剥结尾注释：仅当括号组内容为行号/纯数字形态（如 （L1069 报单风早安）、（L10856））
+        # 才剥除；非数字括号组（如 （笑）/（原著风））保留为台词内容。
+        line = re.sub(r"\s*[（(]\s*(?:L\d+(?:-\d+)?|\d+)[^（）()]*[）)]\s*$", "", line).strip()
         if line:
             cleaned.append(line)
     if not cleaned:
@@ -577,6 +591,9 @@ def _cli_main(argv=None) -> int:
                 decision = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             print(f"composer fallback: 决策文件不可读: {e}", file=sys.stderr)
+            return 1
+        if not isinstance(decision, dict):
+            print("composer fallback: decision JSON 非对象", file=sys.stderr)
             return 1
         trigger_type = decision.get("trigger")
         if not trigger_type:
