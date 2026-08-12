@@ -14,7 +14,7 @@
 | 仓库 | 用途 | 落点 | 由谁安装 |
 |------|------|------|----------|
 | github.com/lhxyzCJ/wechatbot（wechatbot iLink SDK 的个人 fork） | 微信登录/收发 SDK | `$HOME/wechatbot` | `wechat-bridge.sh install` 自动 clone + npm 安装 |
-| github.com/NeteaseCloudMusicApiEnhanced/api-enhanced（锁 v4.39.0 tag） | 网易云数据源（可选） | `/opt/netease-api` | `netease-api.sh install` |
+| github.com/NeteaseCloudMusicApiEnhanced/api-enhanced（跟随上游最新 tag） | 网易云数据源（可选） | `/opt/netease-api` | `netease-api.sh install` |
 
 wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
