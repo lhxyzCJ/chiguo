@@ -317,17 +317,21 @@ class NeteaseBridge:
             print("[error] 响应结构异常: resp 非 dict", file=sys.stderr)
             return {"api_alive": True, "logged_in": False, "profile": None}
 
-        code = status.get("code")
-        if code != 200:
-            print(f"[error] API 返回错误: code={code} message={status.get('message', '?')}", file=sys.stderr)
-            if code == 301:
-                print("[hint] 可能需要重新登录: uv run python -m netease.bridge --login", file=sys.stderr)
-            return {"api_alive": True, "logged_in": False, "profile": None, "api_error": code}
-
+        # api-enhanced 成功响应把 code/account/profile 包在 data 内（{data:{code,...}}，
+        # vipType 位于 data.account）；失败响应为顶层 {code,...}（不包装）。
+        # data.code 优先、顶层 code 回退，恰好覆盖这两种真实形态（并对旧格式防御性兜底）。
         data = status.get("data", {})
         if not isinstance(data, dict):
             print("[error] 响应结构异常: data 非 dict", file=sys.stderr)
             return {"api_alive": True, "logged_in": False, "profile": None}
+        code = data.get("code")
+        if code is None:
+            code = status.get("code")
+        if code != 200:
+            print(f"[error] API 返回错误: code={code} message={(data or status).get('message', '?')}", file=sys.stderr)
+            if code == 301:
+                print("[hint] 可能需要重新登录: uv run python -m netease.bridge --login", file=sys.stderr)
+            return {"api_alive": True, "logged_in": False, "profile": None, "api_error": code}
 
         account = data.get("account", {}) or {}
         if not isinstance(account, dict):
@@ -342,7 +346,7 @@ class NeteaseBridge:
             "logged_in": logged_in,
             "user_id": account.get("id"),
             "nickname": profile.get("nickname", ""),
-            "vip_type": data.get("vipType", 0),
+            "vip_type": account.get("vipType", data.get("vipType", 0)),
         }
 
     def fetch_daily_songs(self, limit=10, force_refresh=False):

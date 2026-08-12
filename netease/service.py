@@ -168,8 +168,8 @@ class NeteaseService:
         elif not h.get("logged_in"):
             self._health["api_alive"] = True
             self._health["logged_in"] = False
-            # code!=200 等 API 异常（api_error 非空）≠ 登录失效，避免误报 login_expired
-            reason = "api_error" if h.get("api_error") is not None else "login_expired"
+            # 301=需重新登录（login_expired）；其余 code!=200 才是 api_error（API 异常 ≠ 登录失效）
+            reason = "login_expired" if h.get("api_error") in (None, 301) else "api_error"
             self._set_faulty(reason, now)
         else:
             self._health["api_alive"] = True
