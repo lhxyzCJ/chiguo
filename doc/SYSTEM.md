@@ -2,6 +2,8 @@
 
 > 版本: v1.15（`chiguo_version.py` VERSION=1.15,规则: MINOR+1 次版本步进（1.9→1.10→1.11→1.12→1.13→1.14→1.15,非十进制加法）;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
 
+> 本文档为**系统架构唯一权威**（吸收原 CLAUDE_CODE_RULES.md 架构描述，重组去重）。agent 后端集成细节见 `doc/AGENT_INTEGRATION.md`，部署见 `doc/DEPLOYMENT.md`，使用见 `doc/README.md`。
+
 ## 一、架构总览
 
 ```
@@ -30,10 +32,10 @@
                              │ stdout JSON
                              ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│        agent 后端（消息生成 + 发送，Phase 4 寄主）                     ││
+│        agent 后端（消息生成 + 发送，Phase 4 寄主）                     │
 │                                                                    │
 │  发送侧: 系统 crontab chiguo-tick.sh(15分钟,零模型门控) 读 daemon 输出 │
-│  → action=send → agent-run.mjs (SUN2.md) 生成消息                     │
+│  → action=send → agent-run.mjs（人格注入 迟菓人格-精简版.md）生成消息  │
 │  → curl POST wechat-bridge /send (127.0.0.1:18790) 发送           │
 │  → daemon.py --record-send 回传发送结果（v6 反馈闭环）              │
 │  回复侧: bridge askAgent（分析+回复）→ daemon --user-msg/--analysis    │
@@ -54,9 +56,9 @@
 chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_state.py     → 5-dimension emotion engine + 8-dim personality + Bayesian inference + schedule + holidays + memory
   │                       （v1.12 B1 事件类型化情绪 delta + B2 情绪-记忆耦合）
-  │     ├─ chiguo_math.py      → 纯数学库：sigmoid / decay / recover / Hawkes / longing
-  │     ├─ chiguo_personality.py → Big Five + 角色特质（8 维人格）(v4 NEW)
-  │     ├─ chiguo_bayesian.py  → Bayesian 用户状态推断（6 状态，在线学习；v1.12 A1 转移矩阵+前向滤波 + A3 信息增益门控）(v4 NEW)
+  │     ├─ chiguo_math.py      → 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix
+  │     ├─ chiguo_personality.py → Big Five + 角色特质（8 维人格）+ 自适应 + 基线回归
+  │     ├─ chiguo_bayesian.py  → Bayesian 用户状态推断（6 状态，在线学习；A1 转移矩阵+前向滤波 + A3 信息增益门控）
   │     ├─ schedule/ 包    → 课表/假期/纪念日/安排（数据面 parser.py / 纯解析 parsing.py / 策略
   │     │                    query.py；节假日 holiday.py；纪念日 anniversary.py；覆盖/计划/澄清
   │     │                    存储 override_store.py / plan_store.py / api.py；检索与安排 sources.py /
@@ -65,25 +67,26 @@ chiguo_daemon.py (DecisionEngine)
   │     ├─ memory/ 包         → 记忆后端抽象（mem0 唯一后端）+ Ebbinghaus 遗忘
   │     │                       （v1.12 C1 确定性巩固 / C2 复习强化 / C3 死 metadata 清理 / C4 写全轮次 + B2 情绪标签）
   │     └─ chiguo_circadian.py → 生物钟学习（双作息双桶分桶学习：工作日/周末独立窗口 + 置信度，
-  │                             听歌活跃合并计数）(v7 NEW, v8 双桶)
+  │                             听歌活跃合并计数）
   ├─ netease/ 包 → 数据面 bridge.py（NeteaseBridge 实例）+ 策略层 service.py（NeteaseService DI）：
   │              健康探针/登录失效检测/降级链/共享日配额/随机选源/播放反证单入口 fetch_play_proof；
   │              fetch_recent_play 最近播放记录（睡眠窗口内夜间活跃反证，netease/recent_play_cache.json
-  │              缓存）(v8) 与 fetch_daily_songs 每日推荐（_api_get 有限重试：瞬时/5xx 重试 retry_count 次
-  │              + 退避，4xx/解析失败直接 None + schema 过滤，v9）+ QR 登录；音乐话题素材组装
+  │              缓存）与 fetch_daily_songs 每日推荐（_api_get 有限重试：瞬时/5xx 重试 retry_count 次
+  │              + 退避，4xx/解析失败直接 None + schema 过滤）+ QR 登录；音乐话题素材组装
   │              （netease/netease_health.json，零 LLM 输出结构化话题 dict；peek/consume 两阶段接口——
-  │              未选中不消费配额）(v9 NEW)；运行时文件锚定 <base_dir>/netease/，随仓库迁移
-  ├─ chiguo_trigger.py  → sigmoid 加权随机触发（14 种类型（情绪类 8 + 仪式类 6，含 v7 follow_up 接话茬、v1.11 comfort 安慰）+ v6 逃生阀直接触发 + v1.12 A2 回复率反馈闭环）
-  ├─ chiguo_topics.py   → 8 源话题选择器（v9 含 netease 委托）+ 人格调制 + Ebbinghaus 加权
-  ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 (v4 NEW)
+  │              未选中不消费配额）；运行时文件锚定 <base_dir>/netease/，随仓库迁移
+  ├─ chiguo_trigger.py  → sigmoid 加权随机触发（14 种类型（情绪类 8 + 仪式类 6，含 follow_up 接话茬、
+  │                      comfort 安慰）+ 逃生阀直接触发 + A2 分类型回复率反馈闭环）
+  ├─ chiguo_topics.py   → 8 源话题选择器（含 netease 委托）+ 人格调制 + Ebbinghaus 加权 + A9 内容级防复读
+  ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 + 生成失败兜底 CLI
   ├─ solar_terms.py     → 24 节气
-  ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康；v1.12 D1 主动消息效果评估 proactive_stats）
-  └─ chiguo_rotation.py → 对话日志轮转与归档 + 告警持久化 + 索引查询（v5 NEW）
+  ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康；D1 主动消息效果评估 proactive_stats）
+  └─ chiguo_rotation.py → 对话日志轮转与归档 + 告警持久化 + 索引查询
 
   输出: chiguo_decisions.jsonl（追加式结构化日志）
   对话归档: chiguo_messages.jsonl（完整对话记录）
   告警持久: chiguo_alerts.json（告警生命周期管理）
-  状态: chiguo_state.json（原子写入: tmp → os.replace）
+  状态: chiguo_state.json（原子写入: tmp → os.replace + SHA256 校验 + 审计日志 chiguo_state_audit.jsonl）
 ```
 
 ---
@@ -102,7 +105,9 @@ chiguo_daemon.py (DecisionEngine)
 | `energy` | 0-100 | 85 | 元气值。太低无法发消息，太高触发 playful |
 | `tsundere_index` | 10-95 | 70 | 傲娇度。高→嘴硬，低→直率 |
 
-### 2.2 三层人格（SUN2.md）
+### 2.2 人格模型（dominant_layer 三层 + 人格文件双版本）
+
+**dominant_layer（情绪驱动的人格层）**——由情绪快照实时映射的「外壳/中层/内核」三态：
 
 ```
 shell（外壳/活泼）  ─→  低孤独/低不安 → 元气活泼，语气词泛滥
@@ -118,6 +123,14 @@ emo.dominant_layer:
   loneliness > 50                  → "middle"
   else                             → "shell"
 ```
+
+**人格文件双版本体系**（v1.15 对齐；toml `[character]` 注释原话「人格: 迟菓人格-精简版.md（双版本体系,详版/archive 为参考）」）：
+
+| 角色 | 文件 | 用途 |
+|------|------|------|
+| 运行时注入（赛博少女） | `personality/迟菓人格-精简版.md` | **实际注入 agent 的文件**：`scripts/agent-run.mjs` 读 `AGENTRUN_PERSONALITY`（默认该文件）；daemon 输出 `context.personality_source` 与 `instruction` 均指向它 |
+| 角色本质源料（原著《日光雨》） | `personality/archive/SUN2.md` | 存档参考，不直接注入 |
+| 历史参考版本 | `personality/archive/迟菓人格-详版.md`、`迟菓人格-精简版-根目录版.md`、`迟菓语言技巧指南.md` | 双版本体系的详版/根目录版等参考 |
 
 **人格模板接线（Task 7）**：`personality/tsundere.toml`（迟菓，七类 trigger_templates 全为原著例句）与 `deredere.toml`（迟菓-融化，仅内核崩溃层）由 `MessageComposer._load_cue_templates()` 启动时加载（tomllib，`personality/` 相对本文件定位，缺文件/解析失败跳过不阻断）；`tsundere_*` cue → tsundere.toml，`dere_dere` cue → deredere.toml。选中 cue 时按触发类型取关联模板（`TRIGGER_TO_TEMPLATE` 映射）作为「台词示范」注入 `compose_situation` 的风格指引；`cue_meta(key)` 按 cue 名或 toml id 查询 meta（name/id/description）。
 
@@ -266,24 +279,31 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 
 ### 2.6 触发决策（sigmoid 权重 + 加权随机）
 
-14 种触发类型：
+**14 种触发类型 = 情绪类 8 + 仪式类 6**（`chiguo_trigger.py` `EMOTION_TRIGGERS` frozenset；仪式类豁免 A3 日程乘数 / A4 高段必选 / A5 退场禁发）。
+
+**仪式类（6 种）**：
 
 | 触发 | 权重计算 | 说明 |
 |------|---------|------|
-| `special` | weight=3.0 | 特殊日期（生日 5/11、11/3） |
+| `special` | weight=3.0 | 特殊日期：数据源 = `schedule/anniversary.py` `get_today()` 当天匹配 anniversary（默认「迟菓生日 05-11」；原 toml `special_dates` 键已废弃 → `anniversaries.json`，见 §九） |
 | `morning` | weight=2.5 × 10%随机 | 8:00-10:00 早安窗口 |
 | `night` | weight=2.0 × 12%随机 | 20:00-21:00 晚安窗口 |
 | `meal` | weight=0.8 × 5%随机 | 饭点（上课时跳过） |
-| `memory` (JSON) | weight=2.0 | 手动记忆/习惯提醒到期 |
-| `memory` (mem0) | weight=1.5 × 8%随机 | 沉默>6h时随机浮现 |
+| `memory` | weight=2.0（JSON 到期）/ 1.5 × 8%随机（mem0 浮现） | 单一触发类型、双数据源：手动记忆/习惯提醒到期（data/chiguo_memories.json）；mem0 沉默>6h 时随机浮现 |
+| `follow_up` | `follow_up_weight` × 年龄钟形 exp(-((age-peak)/σ)²) | 接话茬：pending 话题年龄 [2h, 48h]（峰值 4h, σ=3h, 基础 0.35）+ 近期用户相关记忆兜底 |
+
+**情绪类（8 种）**：
+
+| 触发 | 权重计算 | 说明 |
+|------|---------|------|
 | `lonely_low` | sigmoid(lo, k=0.20, mid=38) × (1+0.3tsun) × rate_factor | 轻松试探 |
 | `lonely_mid` | sigmoid(lo, k=0.18, mid=55) × (1+0.5tsun) × rate_factor | 嘴硬联系 |
 | `lonely_high` | sigmoid(lo, k=0.15, mid=78) × (1-0.4tsun) × rate_factor × repeat 阻尼（A6） | 防线崩溃 |
-| `anxiety` | sigmoid(anx, k=0.12, mid=58) | 确认被需要 |
+| `anxiety` | sigmoid(anx, k=0.12, mid=58) 归一化（raw/(raw+0.5)），>0.3 才成候选 | 确认被需要 |
 | `playful` | 0.15 × energy/100 × aff_factor × pers_extra_factor | 元气过剩，调皮分享 |
-| `reflect` (v4) | 0.08 × affection/100 × (1-neuroticism/100) × energy/100 | 角色内省（高好感+低沉默+高元气+低神经质） |
-| `longing` (v4) | min(0.5, (acc_lam / base_lambda - 1) × 0.3) | 概率累积溢出（held_count>3 且 λ 够高） |
-| `follow_up` (v7) | `follow_up_weight` × 年龄钟形 exp(-((age-peak)/σ)²) | 接话茬：pending 话题年龄 [2h, 48h]（峰值 4h, σ=3h, 基础 0.35）+ 近期用户相关记忆兜底 |
+| `reflect` | 0.08 × affection/100 × (1-neuroticism/100) × energy/100 | 角色内省（高好感+低沉默+高元气+低神经质） |
+| `longing` | min(0.5, (acc_lam / base_lambda - 1) × 0.3) | 概率累积溢出（held_count>3 且 λ 够高） |
+| `comfort` | comfort_weight_base（默认 0 关闭）× 归一化 raw/(raw+comfort_baseline=0.5)，>comfort_min_weight(0.03) 成候选 | v1.11 安慰：user_mood=fresh 且低落（low/distressed）时激活；入 EMOTION_TRIGGERS → 自动继承 A3/A4/A5/A6 |
 
 傲娇调制：高傲娇 → 嘴硬触发增强、崩溃触发抑制；低傲娇 → 相反。
 
@@ -336,7 +356,7 @@ escape_valve 豁免（v6 逃生阀不走本层）。
 can_send(now):
   ├─ 00:00-08:00        → False（静默时段/睡眠窗口）
   ├─ 今日 ≥ max_daily   → False（活跃时4条/沉默时2条，longing 可破例多发一条）
-│                         （v6: 逃生阀触发额外破例，不受日限额限制）
+  │                         （v6: 逃生阀触发额外破例，不受日限额限制）
   ├─ 距上次 < 30分钟    → False（最小间隔）
   ├─ energy < 12        → 检查 rate_energy_override
   │   └─ loneliness_rate > rate_energy_threshold（默认 5.0）AND energy >= rate_energy_min（默认 5）
@@ -358,7 +378,7 @@ can_send(now):
 ```
 evaluate():
   ① tick(hours, now)
-     ├─ recover 所有情绪（A1 弹性衰减）→ A2 交互矩阵
+     ├─ recover 所有情绪（A1 弹性衰减）→ A2 交互矩阵 → A13 OU 噪声
      ├─ 节假日/周末/课表 修正焦虑半衰期
      ├─ _check_daily_reset（跨天清零）
      └─ 清理 CooldownState.event_timestamps / drop_events 窗口外旧事件
@@ -369,6 +389,8 @@ evaluate():
      ├─ 在线学习（BayesianLearner EMA 调优似然表）；v1.11+R3：似然缓存随 chiguo_state.json
      │   持久化（save 仅在进程创建过 estimator 时写入 "bayesian" 字段），
      │   跨进程还原 EMA 调优——修复前纯内存、每次 cron tick 即丢弃，在线学习在产线是死代码
+     ├─ v1.12 A1 状态转移矩阵 + 前向滤波（transition_enabled=True 时 prev_posterior 参与先验）
+     ├─ v1.12 A3 信息增益门控（后验熵 ≥ 阈值 → utility 上调 + 放行探询）
      └─ sleeping 状态 confidence > min_confidence_for_block（v7: [bayesian] 段，默认 0.5，daemon 与 availability 同源）→ 强制阻塞
 
   ③ can_send(now)
@@ -394,7 +416,7 @@ evaluate():
      ├─ layer_guidance（人格层语气指引）
      ├─ emotion（数值快照）
      ├─ schedule_hint（课表/节假日上下文）
-      ├─ instruction（生成指令）
+      ├─ instruction（生成指令，指向 personality/迟菓人格-精简版.md）
       ├─ hawkes_intensity（当前 Hawkes 强度 λ_effective）
       ├─ bayesian（用户状态推断结果）（v4）
       ├─ composer（Intent × Cue × Vibe 三层组合）（v4）
@@ -523,7 +545,7 @@ evaluate(now)
 
 **健康与降级链**：`netease_health.json` 健康文件（tmp→os.replace 原子写，缺失/损坏/非 dict → 默认重建不崩溃）；`refresh_health(now)` 真实探针（api_alive=False → faulty=unreachable；api_alive 且未登录 → faulty=login_expired；均 OK → 恢复并清 last_failure）；faulty 且未到 `reprobe_minutes`（默认 30）→ 跳过网络直出故障话题；`_sync_success` 拉取成功即恢复。`chiguo_monitor` 只读健康文件展示，**不触发探针**。
 
-**热重载**：`_maybe_reload_config()` 检测到 toml mtime 变化后同步重建 `NeteaseService` 与 TopicPicker（chiguo_daemon.py:121-124，重试/配额参数可能被改）——非法 `retry_count` 会在此路径抛异常（见 §十七 已知局限）。
+**热重载**：`_maybe_reload_config()` 检测到 toml mtime 变化后同步重建 `NeteaseService` 与 TopicPicker（chiguo_daemon.py:121-124，重试/配额参数可能被改）——非法 `retry_count` 会在此路径抛异常（见 §十三 已知局限）。
 
 **素材安全**：fault/daily/recent 话题 data 仅 `{source, reason}` / `{source, name, artist}`，不含 share_url/链接（链接由发送层按需拼接）。
 
@@ -577,7 +599,7 @@ on_break:
 - `semester_end` 在 `chiguo_proactive.toml` `[schedule]` 段配置
 - 日期区间通过 CLI 管理：`--break add YYYY-MM-DD YYYY-MM-DD [备注]`
 - 手动覆盖：`--break on`（无限期）/ `--break off`（清空）
-- bridge 检测到"放假了/放暑假了"→ `--break on`；检测到"开学了"→ `--break off`（Phase 4 规则化接管，见 §十一特殊命令）
+- bridge 检测到"放假了/放暑假了"→ `--break on`；检测到"开学了"→ `--break off`（bridge 规则化接管，见 §11.1）
 - 区间管理：`--break add 2026-01-12 2026-02-22 寒假` / `--break remove 0`
 
 ### 3.1 availability 决策
@@ -624,11 +646,9 @@ data/xskb.xlsx（替换即更新）
   → query(now) → {in_class, current_course, class_load, ...}
 ```
 
-xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂移不会静默空课表）。v10.1 起数据文件统一收进 `data/` 子目录：课表源文件 `data/xskb.xlsx`、手动记忆 `data/chiguo_memories.json`、网易云二维码 `netease/netease_qr.png`（重构后随 netease/ 包迁移）；toml 中的相对路径（如 `xlsx_path = "data/xskb.xlsx"`、`manual_path = "data/chiguo_memories.json"`）与代码默认值均经 `_anchored`（`_base_dir` + 相对路径拼接，绝对路径原样保留）解析为项目根下路径，与 cwd 无关。解析失败（xlsx 损坏等）降级空课表但**不覆盖已有有效缓存**：`_parse()` 返回 bool，仅成功才 `_save_cache()`。
+xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂移不会静默空课表）。数据文件统一收进 `data/` 子目录：课表源文件 `data/xskb.xlsx`、手动记忆 `data/chiguo_memories.json`、网易云二维码 `netease/netease_qr.png`；toml 中的相对路径（如 `xlsx_path = "data/xskb.xlsx"`、`manual_path = "data/chiguo_memories.json"`）与代码默认值均经 `_anchored`（`_base_dir` + 相对路径拼接，绝对路径原样保留）解析为项目根下路径，与 cwd 无关。解析失败（xlsx 损坏等）降级空课表但**不覆盖已有有效缓存**：`_parse()` 返回 bool，仅成功才 `_save_cache()`。
 
 缓存带 `cache_version=2`：旧版本缓存（含合并单元格吞课的脏数据）启动时强制重解析（`_parsed_at=0`）；`_parse_cell` 按 2+ 连续空白拆分课程段，合并课存 `alternates`，`_parse_weeks` 支持后缀单双周。
-
-> 现网缓存已于 2026-07-31 手工迁移 v2（xskb.xlsx 缺失，自动重解析无法自愈）：v1 原文件备份为 `schedule_cache.json.v1.bak`，20 条脏条目（10 个合并 cell × 2 节次）按 `_parse_cell` 逻辑重建为 20 主课 + 32 alternates（52 门课实例），location 全干净。已知遗留（v1 吞掉 `-` 分隔符，无法无猜恢复）：周一 7/8 节 `安全教育(理论)` 周次存为 `1016(双)周`（推断应为 `10-16(双)周`）、周五 3/4 节 `大学英语（二）(理论)` 周次存为 `24,6-7,9-10,12-15,17周`（推断应为 `2-4,6-7,9-10,12-15,17周`），需人工确认后修正（或恢复 xskb.xlsx 后重新解析自愈）。
 
 周数计算：`(now.date() - semester_start).days // 7 + 1`
 
@@ -638,7 +658,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
 
 ```
 三层记忆:
-  ① JSON 手动（data/chiguo_memories.json，v10.1 起收进 data/，相对路径经 `_anchored` 解析）
+  ① JSON 手动（data/chiguo_memories.json，相对路径经 `_anchored` 解析）
      类型: reminder（定时）/ habit（习惯窗口）
      → daemon 直接读取
 
@@ -694,7 +714,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 | netease | 0.12 | NeteaseService (netease/service.py) | v9: 网易云音乐话题（策略层委托） |
 
 - `chiguo_topics.py`: TopicPicker 类，`pick(now)` → weighted_trigger_choice
-- v9: `TopicPicker.__init__(state, config, netease_service=None)` — 策略层可注入可省略（None → 静默跳过，向后兼容）；daemon 构造（chiguo_daemon.py:73-75）与热重载分支（:121-124）均已注入 `NeteaseService`（v9 已接线）；`_netease_music_topic(now)` 计算上课/睡眠门控（schedule_status + cooldown.quiet_window + `in_quiet_window` 跨午夜语义；门控信息异常 → fail-closed 不发）后委托 `peek_music_topic`（不消费配额），抽选命中 netease_music/netease_fault 后才 consume——配额只在真正发出时消耗；未注入/异常 → 返回 None 不阻塞话题选择；委托细节见 §2.12
+- v9: `TopicPicker.__init__(state, config, netease_service=None)` — 策略层可注入可省略（None → 静默跳过，向后兼容）；daemon 构造与热重载分支均已注入 `NeteaseService`；`_netease_music_topic(now)` 计算上课/睡眠门控（schedule_status + cooldown.quiet_window + `in_quiet_window` 跨午夜语义；门控信息异常 → fail-closed 不发）后委托 `peek_music_topic`（不消费配额），抽选命中 netease_music/netease_fault 后才 consume——配额只在真正发出时消耗；未注入/异常 → 返回 None 不阻塞话题选择；委托细节见 §2.12
 - 连续 3 次孤独触发 → 强制注入话题
 - `topic_probability=0.70` 控制注入概率
 - v4: 人格调制话题多样性。高开放性（openness）→ 更多 memory/anniversary 话题；低开放性 → 更多 schedule/general 话题
@@ -707,20 +727,20 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 ### 4.3 纪念日
 
 `schedule/anniversary.py`（AnniversaryManager）管理 `anniversaries.json`（原子写：tmp → os.replace）。一种类型：
-- **anniversary**: 每年重复，存 "MM-DD"（一次性倒计时 6c 起废弃，经 `--schedule-change` 写 reminder）
-- **形状防御（R12）**：`anniversaries.json` 顶层非 dict（list 等历史脏形状）→ 视同损坏置 `_corrupt`、合并默认纪念日，不崩 daemon 启动（原 `data.get` 对 list 抛 AttributeError 逃逸 try）
+- **anniversary**: 每年重复，存 "MM-DD"（默认内置「迟菓生日 05-11」；一次性倒计时已废弃，经 `--schedule-change` 写 reminder）
+- **形状防御（R12）**：`anniversaries.json` 顶层非 dict（list 等历史脏形状）→ 视同损坏置 `_corrupt`、合并默认纪念日，不崩 daemon 启动
 
-**路径锚定（2026-07-31）**：无参构造时，若 cwd 已存在同名 `anniversaries.json` 则沿用（兼容旧版/隔离目录），否则锚定模块目录（项目根），防止从其他 cwd（如 /tmp）运行把数据写散；显式传绝对路径仍原样生效。
+**路径锚定**：无参构造时，若 cwd 已存在同名 `anniversaries.json` 则沿用（兼容旧版/隔离目录），否则锚定模块目录（项目根），防止从其他 cwd（如 /tmp）运行把数据写散；显式传绝对路径仍原样生效。
 
 CLI CRUD：`--anniversary "add anniversary 11-03 用户生日"` 等。
 
-bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / X月X日要XX / 有哪些纪念日"→ 自动调用 CLI 记录并回复确认（Phase 4 起不经 agent；详见 AGENT_INTEGRATION.md §五）。
+bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / X月X日要XX / 有哪些纪念日"→ 自动调用 CLI 记录并回复确认（bridge 规则化接管，不经 agent；详见 AGENT_INTEGRATION.md §五）。
 
 ---
 
 ## 五、LLM 内容分析
 
-用户回复时，agent 后端（Phase 4 迁移后）调用 LLM 分析消息内容，产出 `--analysis` 参数实现差异化情绪变化。所有 LLM 调用统一走 `scripts/agent-run.mjs`（发送侧生成 + 回复侧分析）。
+用户回复时，agent 后端（Phase 4 迁移后）调用 LLM 分析消息内容，产出 `--analysis` 参数实现差异化情绪变化。所有 LLM 调用统一走 `scripts/agent-run.mjs`（发送侧生成 + 回复侧分析）。本文件只描述 daemon 侧的 `--analysis` 契约；agent 侧 prompt/接入细节见 `doc/AGENT_INTEGRATION.md`。
 
 ### 5.1 分析维度
 
@@ -731,7 +751,7 @@ bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / 
 | `attention` | 0.0~1.0 | 对迟菓的关注度 |
 | `user_mood` | calm\|low\|distressed\|happy\|angry | 主人此刻情绪（v1.11，可选；缺失/非法 → calm 零效果） |
 | `user_mood_intensity` | 0.0~1.0 | 情绪强度（v1.11，可选；缺失/非数值 → 0） |
-| `recall` | 文本 | 记忆检索词（涉及登记事实/过去日期时给，否则省略；v9，5.1 表补记） |
+| `recall` | 文本 | 记忆检索词（涉及登记事实/过去日期时给，否则省略；v9） |
 
 ### 5.2 情绪映射
 
@@ -792,11 +812,7 @@ python3 chiguo_daemon.py --user-msg "开会去了回头聊" \
 - `can_send()` 检查 `is_busy_suppressed()` → True 时禁止触发
 - 若已有抑制期 → 取两者中较晚的截止时间
 
-agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准：
-- 表达忙碌/有事（"在忙""开会""有事""上课"）→ `suppress_hours: 2-4`
-- 表达结束对话（"晚安""睡了""bye""先这样"）→ `suppress_hours: 8`
-- 表达暂时离开（"回头聊""等一下""等会"）→ `suppress_hours: 1-2`
-- 其他情况 → 不传或 0
+agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准（表达忙碌/结束对话/暂时离开 → 传 2-8h；其他不传）——prompt 细节见 AGENT_INTEGRATION.md。
 
 ### 5.6 人格自适应（v4，v10 加基线回归）
 
@@ -813,7 +829,7 @@ agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准：
 **Intent (A)** × **Cue (B)** × **Vibe (C)** 三层组合：
 
 - **Intent**: 对话意图——"为什么发这条消息"。按触发类型分组（lonely_low 有 5 种意图，lonely_mid 有 5 种，lonely_high 有 4 种等）
-- **Cue**: 人格面具——"用什么风格发"。8 种 cue（tsundere, tsundere_soft, tsundere_cool, dere, playful, anxious, caring, cool），按 personality + trigger_type 调制权重
+- **Cue**: 人格面具——"用什么风格发"。8 种 cue（tsundere, tsundere_soft, tsundere_cool, dere, playful, anxious, caring, cool, trade），按 personality + trigger_type 调制权重
 - **Vibe**: 时间/情境氛围——"在什么环境下发"。按时段（清晨/上午/午休/下午/傍晚/深夜）、周末、考试周、假日选择
 
 Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 层（Intent × Cue × Vibe）30%。
@@ -824,9 +840,137 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 ## 六、文件清单
 
-| 文件 | 职责 | 依赖 |
-|------|------|------|
+### 6.1 决策引擎核心（仓库根目录 `*.py`）
 
+| 文件 | 行数 | 职责 |
+|------|:--:|------|
+| `chiguo_daemon.py` | 1984 | 决策引擎入口：DecisionEngine / evaluate 决策链路 / can_send 门控 / CLI / 配置热重载 / loop 常驻 |
+| `chiguo_state.py` | 2280 | ChiguoState：5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线 + 状态持久化（原子写/SHA256/审计日志） |
+| `chiguo_monitor.py` | 1186 | 流式 JSONL 分析：统计/告警/健康 + D1 proactive_stats |
+| `chiguo_trigger.py` | 621 | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
+| `chiguo_composer.py` | 605 | Intent × Cue × Vibe 三层组合 + A8 生成失败兜底 CLI |
+| `chiguo_bayesian.py` | 602 | Bayesian 用户状态推断（6 状态在线学习 + A1 转移矩阵 + A3 信息增益门控） |
+| `chiguo_topics.py` | 436 | 8 源话题选择器 TopicPicker + 人格调制 + Ebbinghaus 加权 + A9 防复读 + netease 委托 |
+| `chiguo_math.py` | 439 | 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix |
+| `chiguo_envcheck.py` | 357 | 环境检查（python/依赖/bridge/agent/crontab） |
+| `chiguo_circadian.py` | 249 | 生物钟学习（双作息双桶 + 听歌活跃合并） |
+| `chiguo_personality.py` | 236 | 8 维人格（Big Five + 角色特质）+ 自适应 + 基线回归 |
+| `chiguo_demo.py` | 210 | 交互式 Demo |
+| `chiguo_rotation.py` | 175 | 对话日志轮转归档 + 告警持久化 + 索引查询 |
+| `update_holidays.py` | 316 | 节假日数据跨年合并生成（R22 防覆盖） |
+| `solar_terms.py` | 85 | 24 节气近似日期（±1 天窗口命中，零依赖） |
+| `memory_bridge.py` | 79 | 兼容门面（`MemoryBridge = Mem0Backend` 别名 + CLI，经工厂创建） |
+| `chiguo_version.py` | 11 | VERSION = "1.15"（MINOR+1 次版本步进） |
+
+### 6.2 `schedule/` 包（课表/假期/纪念日/安排）
+
+| 文件 | 行数 | 职责 |
+|------|:--:|------|
+| `api.py` | 513 | 安排中心 CLI 门面（attention/recall/change 子命令） |
+| `override_store.py` | 262 | 安排覆盖存储（schedule_overrides.json，原子写） |
+| `replan.py` | 233 | 当日计划复盘（replan，--check 只读） |
+| `holiday.py` | 231 | 节假日解析（2026 内置 + holidays.json 覆盖 + update_holidays 归组） |
+| `anniversary.py` | 209 | 纪念日管理（anniversaries.json，默认「迟菓生日 05-11」+ 形状防御） |
+| `day_plan.py` | 189 | 当日安排生成（含 needs_care ×1.2 频率通道） |
+| `resolve_when.py` | 148 | 「明天/下周/几号」自然语言时间解析 |
+| `parser.py` | 144 | 课表 xlsx 解析（mtime 检测 + cache_version=2 + 单双周） |
+| `parsing.py` | 137 | 纯解析函数（与 I/O 解耦） |
+| `recall.py` | 112 | 安排回忆检索（--schedule-recall） |
+| `attention.py` | 102 | 注意力快照（T1/T2/T3 + 情感快照） |
+| `sources.py` | 93 | 话题/查询数据源聚合 |
+| `confirm.py` | 57 | 写前确认 |
+| `query.py` | 50 | 纯函数状态查询（in_class/remaining → availability 门面） |
+| `plan_store.py` | 45 | 当日计划存储（schedule_plan.json） |
+
+### 6.3 `memory/` 包（记忆后端抽象，mem0 唯一后端）
+
+| 文件 | 行数 | 职责 |
+|------|:--:|------|
+| `mem0_backend.py` | 491 | Mem0Backend：LLM 事实提取写入 + 向量语义检索 + qdrant 嵌入式存储 + C1 巩固执行 |
+| `base.py` | 464 | MemoryBackend 抽象基类：Ebbinghaus 包装 + consolidate_plan + user_relevant 等通用逻辑 |
+| `factory.py` | 61 | `create_backend(config, base_dir)` 工厂（backend 仅 mem0/auto 合法） |
+
+### 6.4 `netease/` 包（网易云联动）
+
+| 文件 | 行数 | 职责 |
+|------|:--:|------|
+| `bridge.py` | 647 | NeteaseBridge 数据面：健康探针/登录失效检测/播放/推荐/QR 登录/降级链 |
+| `service.py` | 313 | NeteaseService 策略层（DI）：fetch_play_proof 单入口 + peek/consume 两阶段 + 配额 |
+
+### 6.5 `scripts/`（部署与运维）
+
+| 文件 | 行数 | 职责 |
+|------|:--:|------|
+| `agent-run.mjs` | 422 | agent 后端统一入口（发送生成/回复分析/recall 等；人格注入 `personality/迟菓人格-精简版.md`） |
+| `install_agent.sh` | 401 | agent 环境/crontab/systemd 安装（三模式，幂等 + 备份） |
+| `agent_health.py` | 173 | agent 假死状态机（agent_health.json，`[health] fail_threshold`） |
+| `wechat-bridge.sh` | 185 | 微信桥服务管理 |
+| `service.sh` | 255 | systemd 服务管理 |
+| `netease-api.sh` | 159 | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced v4.39.0） |
+| `chiguo-tick.sh` | 159 | cron 门控入口（零模型，读 daemon 输出 → send → record-send → composer 兜底） |
+| `ci-test.sh` | 85 | 全量测试链（59 py + 13 script，CI stub 自举） |
+| `dev-sync.sh` | 33 | 开发同步 |
+| `agent-auth.sh` | 18 | agent 认证 |
+| `replan-tick.sh` | 10 | loop 形态 replan 判脏轮询 |
+| `chiguo-daemon.service` | — | systemd 单元（loop 常驻形态） |
+
+### 6.6 `wechat-bridge/`（微信桥 Node 服务）
+
+| 文件 | 行数 | 职责 |
+|------|:--:|------|
+| `bridge.mjs` | 733 | HTTP 服务：askAgent + /send + /agent/prompt + TurnQueue 串行 + 鉴权 |
+| `command-detect.mjs` | 365 | 特殊命令规则化检测（纪念日/假期 → CLI，不经 agent） |
+| `agent-rpc.mjs` | 322 | 常驻 agent RPC（analysis chiguo-main / send chiguo-send 双会话） |
+| `package.json` | 10 | file: 本地依赖 @wechatbot/wechatbot（CI stub 自举） |
+
+### 6.7 `personality/`（人格文件）
+
+| 文件 | 用途 |
+|------|------|
+| `迟菓人格-精简版.md` | **运行时注入**人格（agent-run.mjs 默认 / daemon personality_source 指向） |
+| `tsundere.toml` / `deredere.toml` | composer cue 台词模板（trigger_templates，tomllib 加载） |
+| `工具用法.md` / `记忆用法.md` | 人格文件配套说明 |
+| `archive/SUN2.md` | 角色本质源料（原著《日光雨》），存档参考不注入 |
+| `archive/迟菓人格-详版.md` 等 | 双版本体系的历史参考版本 |
+
+### 6.8 配置
+
+| 文件 | 说明 |
+|------|------|
+| `chiguo_proactive.toml` | 470 行 / 22 段配置（`[wechat][memory][character][emotion][sigmoid][trigger][poisson][topic_picker][schedule][circadian][netease][hawkes][cooldown][personality][bayesian][composer][safety][monitor][logging][host][loop][health]`），配置热重载（mtime 检测） |
+
+### 6.9 运行时文件（gitignore，生成于仓库根 / data/）
+
+| 文件 | 说明 |
+|------|------|
+| `chiguo_state.json` | 状态持久化（原子写 tmp→os.replace + SHA256 校验 + 审计 `chiguo_state_audit.jsonl`） |
+| `chiguo_decisions.jsonl` | 决策日志（追加式，monitor/轮转/索引消费） |
+| `chiguo_messages.jsonl` | 完整对话归档 |
+| `data/chiguo_memories.json` | 手动记忆（reminder/habit） |
+| `holidays.json` | 节假日覆盖（update_holidays.py 生成） |
+| `break_state.json` | 寒暑假状态 |
+| `schedule_cache.json` | 课表解析缓存（cache_version=2） |
+| `anniversaries.json` | 纪念日（默认「迟菓生日 05-11」） |
+| `schedule_overrides.json` / `schedule_plan.json` / `schedule_clarify.json` | 安排覆盖/当日计划/澄清（原 `special_dates`/`exam_weeks` toml 键已迁移至此） |
+| `netease/netease_health.json` / `netease/recent_play_cache.json` | 网易云健康文件 / 播放缓存 |
+| `agent_health.json` | agent 假死状态 |
+| `chiguo_alerts.json` | 告警持久化（生命周期 active→acknowledged→resolved） |
+| `data/mem0/` | mem0 记忆库（qdrant 嵌入式向量库 + history.db） |
+| `archive/` | 轮转归档（decisions_YYYY-MM.jsonl / messages_YYYY-MM.jsonl） |
+
+### 6.10 测试（`tests/`）
+
+59 个 py + 8 个 mjs + 5 个 sh（另有 fixture：`_loop_worker.py`、`fake-agent-rpc.mjs`），统一入口 `scripts/ci-test.sh`。详见 §十 与 AGENT_INTEGRATION.md §测试。
+
+### 6.11 文档（`doc/`）
+
+| 文件 | 职责 |
+|------|------|
+| `SYSTEM.md` | 本文档——系统架构唯一权威 |
+| `AGENT_INTEGRATION.md` | agent 后端集成指南（命名契约/安装/agent-run 契约/tick/bridge/provider/自定义 agent/故障排查） |
+| `DEPLOYMENT.md` | 部署指南（v1.15） |
+| `README.md` | 使用文档 |
+| `微信命令.md` / `日光雨.md` | 命令参考 / 原著 |
 
 ---
 
@@ -872,7 +1016,7 @@ python3 chiguo_daemon.py --health            # 检测 daemon 最近是否正常�
 python3 chiguo_daemon.py --send-result msg_xxx --send-status success
 python3 chiguo_daemon.py --send-result msg_xxx --send-status failed --error "WeChat API timeout"
 
-# 安排子命令（schedule-center，6a-6c）
+# 安排子命令（schedule-center）
 python3 chiguo_daemon.py --attention            # 注意力快照（T1/T2/T3 + 情感快照，轻量读零写）
 python3 chiguo_daemon.py --schedule-recall "明天"  # 安排回忆检索（日期或关键词）
 python3 chiguo_daemon.py --schedule-change '{"kind":"reminder","when":{"date":"2026-08-08"},"label":"体检"}'
@@ -934,7 +1078,7 @@ uv run python -m schedule.holiday 2026-10-01
 
 ### memory/ 包（记忆后端抽象，v1.9）
 
-v1.8 起记忆模块解耦为 `memory/` 包，mem0 为唯一记忆后端（chiguo_state.py 经 `create_backend(mem_cfg, base_dir)` 接入）：
+记忆模块解耦为 `memory/` 包，mem0 为唯一记忆后端（chiguo_state.py 经 `create_backend(mem_cfg, base_dir)` 接入）：
 
 - `memory/base.py` — `MemoryBackend` 抽象基类：四原语 `available`/`search()`/`random_memory()`/`stats()`（子类实现）；
   Ebbinghaus 遗忘包装（`ebbinghaus_weight`/`search_with_forgetting`/`user_relevant_with_forgetting`/`random_memory_with_forgetting`）
@@ -1008,7 +1152,7 @@ python3 chiguo_monitor.py --report
   "intensity": "medium",
   "context": {
     "character": "迟菓",
-    "personality_source": "/root/chiguo/personality/SUN2.md",
+    "personality_source": "/root/chiguo/personality/迟菓人格-精简版.md",
     "situation": "哥哥已经12小时没发消息了。菓菓开始焦虑不安。用嘴硬的方式联系……",
     "schedule_hint": "哥哥正在上工程测量实训（到14:45）。不要在上课时发消息。",
     "layer": "middle",
@@ -1027,7 +1171,7 @@ python3 chiguo_monitor.py --report
     "composer_intent": "嘴硬关心——用攻击性语言包装的关心",
     "composer_cue": "tsundere",
     "composer_vibe": "afternoon_silent",
-    "instruction": "请以迟菓（SUN2.md 设定）的身份，用上述语气发一条微信消息给哥哥。1-3句话。自然。"
+    "instruction": "请以迟菓（/root/chiguo/personality/迟菓人格-精简版.md 设定）的身份，用上述语气发一条微信消息给哥哥。1-3句话。自然。"
   },
   "state": { ... },
   "bayesian": {
@@ -1077,99 +1221,69 @@ idle reason 枚举：
 
 ## 九、配置参考（chiguo_proactive.toml）
 
+全量配置 **470 行 / 22 段**：`[wechat][memory][character][emotion][sigmoid][trigger][poisson][topic_picker][schedule][circadian][netease][hawkes][cooldown][personality][bayesian][composer][safety][monitor][logging][host][loop][health]`。以下为关键参数摘录（按真实文件顺序）。
+
 ```toml
 [wechat]     # 微信发送目标（chiguo-tick.sh / wechat-bridge.sh 按 key 名读取发送目标）
-wechat_recipient = "owner@im.wechat"     # 发送目标占位符：登录后自动注入真实 openid；也可手动配真实值（tick/bridge 管理脚本按 key 名读取）
+wechat_recipient = "owner@im.wechat"     # 发送目标占位符：登录后自动注入真实 openid；也可手动配真实值
 
-[host]       # agent 调用配置（Phase 4；scripts/agent-run.mjs 读取；AGENTRUN_* 环境变量可覆盖）
-provider = "opencode-go"                 # agent provider（= auth.json 键名；支持任意 agent provider，见 AGENT_INTEGRATION.md 七）
-model = "deepseek-v4-flash"
-runner = "agent"                            # v1.8 agent runner 抽象：agent（默认，agent 后端二进制）/ command（任意 CLI agent）
-agent_command = ["node", "/path/to/agent.mjs"]  # runner=command 必填（数组：命令+固定参数）；agent 模式忽略；AGENTRUN_RUNNER/AGENTRUN_AGENT_COMMAND 覆盖
-thinking_level = "high"                  # off/minimal/low/medium/high/xhigh/max
-session_id = "chiguo-main"               # 回复侧会话（bridge askAgent）
-send_session_id = "chiguo-send"          # 主动发送会话（chiguo-tick.sh）——与回复会话分离，消除跨进程并发 turn
-wechat_bridge_url = "http://127.0.0.1:18790/send"  # 主动发送端点（tick curl 目标，--noproxy '*'）
-
-[character]
-name = "迟菓"
-age = 16
-identity = "住在VPS里的外卖少女，哥哥的傲娇助手"
-
-[memory]
-backend = "mem0"                       # v1.9 记忆后端：mem0 唯一后端（仅 mem0 / auto（遗留同义），其他值抛 ValueError）
-mem0_user_id = "chiguo"                  # mem0 命名空间（user_id）
+[memory]     # 记忆后端抽象（v1.9；mem0 唯一后端）
+backend = "mem0"                          # mem0 唯一后端（仅 mem0 / auto（遗留同义），其他值抛 ValueError）
+mem0_user_id = "chiguo"                   # mem0 记忆命名空间（user_id）
+mem0_collection = "chiguo"                # qdrant collection 名
 mem0_qdrant_path = "data/mem0/qdrant"     # 本地向量库（qdrant 嵌入式，无需 docker）
 mem0_history_db = "data/mem0/history.db"  # mem0 操作历史（SQLite）
 mem0_llm_model = "deepseek-v4-flash"      # 事实提取 LLM（OpenAI 兼容）
+mem0_llm_base_url = "https://opencode.ai/zen/go/v1"
 mem0_embedder_model = "qwen3-embedding:0.6b"  # 本地 embedding（ollama）
-ebbinghaus_strength = 168               # 记忆强度 S（小时），168h=7天（v4；Ebbinghaus 在 MemoryBackend 基类）
-ebbinghaus_min_weight = 0.1             # 最低权重，不彻底遗忘（v4）
+mem0_embedder_base_url = "http://localhost:11434"
+mem0_embedder_dims = 1024                 # qwen3-embedding:0.6b 输出维度
+ebbinghaus_strength = 168                 # 记忆强度 S（小时），168h=7天
+ebbinghaus_min_weight = 0.1               # 最低权重，不彻底遗忘
+emotion_tagging = false                   # B2 写侧：情绪快照打标进 metadata.emotion_tag
+emotion_tag_weight = 0.0                  # B2 读侧：情绪相近记忆加权系数（0=关闭恒等）
+consolidate_enabled = false               # C1 空闲期确定性记忆巩固
+consolidate_sim_threshold = 0.85          # jaccard_3gram 相似度阈值
+consolidate_min_importance = 0.3          # 低重要度 + 超龄 → 过期候选
+consolidate_max_age_hours = 720.0         # 720=30天
+consolidate_idle_silent_hours = 24.0      # 清醒沉默门槛
+consolidate_min_interval_hours = 168.0    # 两次巩固最小间隔
+reinforce_enabled = false                 # C2 Ebbinghaus 复习强化
+reinforce_bonus = 0.0                     # 每次召回 importance ×(1 + bonus×count)
+write_full_turns = false                  # C4 写全对话轮次（user+assistant 两轮）
 
-# v1.12: B2 情绪-记忆耦合（默认关闭恒等，可灰度）
-emotion_tagging = false      # 写侧：daemon 对话写入 mem0 时把情绪快照打标进 metadata.emotion_tag（{loneliness/affection/anxiety/energy: low|mid|high + user_mood}）
-emotion_tag_weight = 0.0     # 读侧：检索时对情绪相近记忆的加权系数 ×(1+weight×sim)（0=关闭恒等）
+[character]  # 人设元数据：供 agent 读取生成消息，代码引擎不使用
+name = "迟菓"
+age = 14
+identity = "住在VPS里的赛博少女，哥哥的傲娇助手"
+# 人格: 迟菓人格-精简版.md（双版本体系,详版/archive 为参考）
 
-# v1.12: C1 空闲期确定性记忆巩固（对标 Letta dreaming / Deep Dream 无 LLM 版；默认关闭恒等）
-consolidate_enabled = false            # 开启后 daemon 空闲静默路径自动触发 consolidate（也可手动 chiguo_daemon.py --consolidate 接入 cron）
-consolidate_sim_threshold = 0.85       # 记忆 text 的 jaccard_3gram 相似度阈值，≥ 视为近似重复 → 保留重要一条、另一条降权
-consolidate_min_importance = 0.3       # 低于此重要度且超龄 → 过期候选（删除）
-consolidate_max_age_hours = 720.0      # 低重要度记忆的超龄阈值（小时，720=30天）
-consolidate_idle_silent_hours = 24.0   # idle 且清醒沉默 ≥ 此小时数才触发巩固（防频繁打扰记忆库）
-consolidate_min_interval_hours = 168.0 # 两次巩固最小间隔（小时，防每 tick 重复）
-
-# v1.12: C2 Ebbinghaus 复习强化（对标 FSRS；默认关闭恒等）
-reinforce_enabled = false              # 记忆被召回（search_with_forgetting/random_memory_with_forgetting 返回）时记录 recall_count
-reinforce_bonus = 0.0                  # 每次召回 importance ×(1 + bonus×count)；0=关闭恒等
-
-# v1.12: C4 写全对话轮次（默认单条 user 写入恒等）
-write_full_turns = false               # 写入 mem0 时带上最近一条 assistant 回复（user+assistant 两轮，LLM 提取上下文更全）
-
-[emotion]
-# 初始值
-loneliness = 15.0
+[emotion]    # 5 维情绪
+loneliness = 15.0        # 初始值
 affection = 55.0
 anxiety = 40.0
 energy = 85.0
-
-# 自然半衰期（小时）
-loneliness_gain_half_life = 40.0
+loneliness_gain_half_life = 40.0   # 自然半衰期（小时）
 anxiety_gain_half_life = 30.0
 affection_loss_half_life = 500.0
 energy_regen_half_life = 8.0
-
-# v1.10: 弹性衰减（A1）与情绪交互矩阵（A2）
-elastic_baseline = 100.0               # 弹性基准（情绪值域）；effective_hl = half_life / (1 + |gap|/baseline)
-interaction_affection_anxiety = 1.0    # affection>60 → anxiety 恢复加速（anxiety *= 1 - 0.02*k*affection/100）
-interaction_energy_loneliness = 1.0    # energy<30 → loneliness 恢复加速（loneliness *= 1 + 0.02*k*(30-energy)/30）
-interaction_anxiety_energy = 1.0       # anxiety>70 → energy 恢复减速（energy *= 1 - 0.01*k）
-
-# 事件半衰期（小时）
-loneliness_decay_on_reply = 0.35       # 收到回复：21分钟减半
-anxiety_decay_on_reply = 0.5           # 收到回复：30分钟减半
-loneliness_decay_on_send = 2.0         # 自己发：2小时减半
-anxiety_gain_on_send = 2.0             # 自己发：不安小幅上升
-energy_cost_per_message = 20.0         # 发一条消耗元气
-energy_bonus_on_reply = 10.0           # 收到回复元气奖励
-
-# 变化率对 λ 的影响系数
-lambda_lo_rate_factor = 0.4     # 孤独变化率放大因子
-lambda_anx_rate_factor = 0.3    # 不安变化率放大因子
-
-# 好感变化
+loneliness_decay_on_reply = 0.35   # 事件半衰期（小时）
+anxiety_decay_on_reply = 0.5
+loneliness_decay_on_send = 2.0
+anxiety_gain_on_send = 2.0
+energy_cost_per_message = 20.0     # 发一条消耗元气
+energy_bonus_on_reply = 10.0       # 收到回复元气奖励
+lambda_lo_rate_factor = 0.4        # 变化率对 λ 的影响系数
+lambda_anx_rate_factor = 0.3
 affection_gain_per_interaction = 0.8
-
-# LLM 分析微调系数
-affection_warmth_factor = 1.5
+affection_warmth_factor = 1.5      # LLM 分析微调系数
 energy_warmth_factor = 4.0
 anxiety_warmth_recovery = 3.0
 affection_effort_factor = 1.0
 tsundere_effort_factor = 2.0
 energy_attention_factor = 4.0
 anxiety_ignore_factor = 2.0
-
-# 回复速度分级（小时）
-reply_fast_threshold = 0.08           # ≤5分钟 = 秒回
+reply_fast_threshold = 0.0833      # 回复速度分级（小时，≤5分钟=秒回）
 reply_slow_threshold = 1.0
 reply_very_slow_threshold = 6.0
 reply_fast_affection_mult = 1.5
@@ -1178,24 +1292,40 @@ reply_fast_tsundere_extra = 2.0
 reply_slow_affection_mult = 0.7
 reply_very_slow_affection_mult = 0.4
 reply_very_slow_anxiety_rebound = 3.0
+rate_energy_override = true        # 能量覆写（孤独变化率暴涨时允许低元气发送）
+rate_energy_threshold = 5.0
+rate_energy_min = 5.0
+urgency_rate_threshold = 3.0       # 紧迫通知阈值
+urgency_anx_threshold = 2.0
+elastic_baseline = 100.0           # A1 弹性衰减基准
+interaction_affection_anxiety = 1.0   # A2 情绪交互矩阵（1.0=关闭恒等）
+interaction_energy_loneliness = 1.0
+interaction_anxiety_energy = 1.0
+impact_inertia_positive = 0.0      # A11 回复影响惯性阻尼（0=关闭恒等）
+impact_inertia_negative = 0.0
+impact_inertia_affection_mod = 0.0
+noise_enabled = 0                  # A13 情绪自然波动（OU 噪声；0=关闭恒等）
+noise_loneliness_sigma = 0.3
+noise_anxiety_sigma = 0.3
+noise_theta = 0.5
+noise_seed = 42
+baseline_drift_rate = 0.0          # A14 情绪基线长期漂移（0=关闭恒等）
+baseline_shift_loneliness = 0.15
+baseline_shift_anxiety = 0.15
+baseline_shift_affection = 0.15
+baseline_max_drift = 20.0
+baseline_forget_half_life = 720.0
+user_mood_low_anxiety_factor = 0.0   # A12 用户情绪感知系数（0=关闭恒等）
+user_mood_low_affection_factor = 0.0
+user_mood_distressed_anxiety_factor = 0.0
+user_mood_distressed_affection_factor = 0.0
+user_mood_happy_energy_factor = 0.0
+user_mood_happy_affection_factor = 0.0
+user_mood_angry_anxiety_factor = 0.0
+user_mood_angry_affection_factor = 0.0
+event_delta_enabled = false        # B1 事件类型化情绪 delta（默认关闭恒等）
 
-# 能量覆写（孤独变化率暴涨时允许低元气发送）
-rate_energy_override = true            # 是否允许覆写
-rate_energy_threshold = 5.0            # 孤独变化率阈值（Δ/h > 5 触发覆写）
-rate_energy_min = 5                    # 覆写时最低允许元气值
-
-# 紧迫通知阈值
-urgency_rate_threshold = 3.0           # 孤独变化率 > 3 → 添加紧迫注解
-urgency_anx_threshold = 2.0            # 不安变化率 > 2 → 添加紧迫注解
-
-# v1.12: B1 事件类型化情绪 delta（默认关闭恒等，可灰度）
-# 命中规则表（EVENT_DELTA：praise/criticism/contradiction/comfort/new_topic/question/complaint
-# → {loneliness/affection/anxiety} 直接加减）时按事件直接改情绪（不走 impact_inertia 阻尼）。
-# 事件类型从 analysis 宽松提取（event_type/event 键 + warmth/user_mood/topic 信号推断）。
-event_delta_enabled = false
-
-[sigmoid]
-# 触发概率 sigmoid 参数
+[sigmoid]    # 触发概率 sigmoid 参数
 loneliness_low_k = 0.20
 loneliness_low_mid = 38
 loneliness_mid_k = 0.18
@@ -1206,168 +1336,138 @@ anxiety_k = 0.12
 anxiety_mid = 58
 
 [trigger]
-# v7: anxiety 触发候选归一化（与孤独三级同款 softmax"不触发基线"模式）
-# w = raw / (raw + anxiety_baseline * (1 - raw))，归一化权重 > anxiety_min_weight 才成为候选。
-# 默认态 anxiety=40 → w≈0.187 < 0.3 → 不再确定性触发 anxiety 刷满日限额。
-# v1.13 B2(#137)：原 w = raw/(raw+baseline) 把 w_anx 钳在 max≈0.664 < must_send_activation(0.75)，
-# 高焦虑永远到不了 A4 高段必发；补 (1-raw) 项后 raw→1 时 w→1（高焦虑可达 must_send），
-# 中低段基本保持（anx=40 → 0.187 vs 原 0.171）。
-anxiety_baseline = 0.5
-anxiety_min_weight = 0.3
+anxiety_baseline = 0.5             # anxiety 候选归一化（raw/(raw+baseline×(1-raw))）
+anxiety_min_weight = 0.3           # > 此权重才成为候选
+follow_up_weight = 0.35            # 接话茬(follow_up)参数
+follow_up_min_age_hours = 2.0
+follow_up_max_age_hours = 48.0
+follow_up_peak_hours = 4.0
+follow_up_sigma_hours = 3.0
+follow_up_min_weight = 0.03
+free_multiplier = 1.2              # A3 日程乘数（空闲）
+min_activation = 0.08              # A4 低段阈值
+must_send_activation = 0.75        # A4 高段必发阈值
+repeat_decay = 0.6                 # A6 repeat 阻尼
+repeat_cap = 3
+user_mood_ttl_minutes = 360.0      # A12 user_mood 感知窗口（6h）
+user_mood_anxiety_bonus = 0.0      # 低落时 anxiety 权重加成（0=关闭）
+user_mood_note_enabled = 0         # 语气注解开关（0=关闭恒等）
+comfort_weight_base = 0.0          # comfort 基础权重（0=关闭；>0 时低落在窗口内可触发安慰）
+comfort_baseline = 0.5             # comfort 归一化"不触发"基线
+comfort_min_weight = 0.03
+reply_feedback_enabled = 0         # A2 分类型回复率反馈闭环（0=关闭恒等）
+reply_feedback_damp = 0.0
+reply_feedback_boost = 0.0
+reply_feedback_low_rate = 0.3
+reply_feedback_high_rate = 0.7
+reply_feedback_min_samples = 3
 
-# v7: 接话茬(follow_up)参数
-follow_up_weight = 0.35         # 基础权重(乘年龄钟形调制)
-follow_up_min_age_hours = 2.0   # 话题最早可接续年龄(小时)
-follow_up_max_age_hours = 48.0  # 超过此年龄过期清理(小时)
-follow_up_peak_hours = 4.0      # 钟形权重峰值年龄(小时)
-follow_up_sigma_hours = 3.0     # 钟形宽度(小时)
-follow_up_min_weight = 0.03     # 低于此权重不成为候选
-
-# v1.10: A3 日程乘数 / A4 三段激活 / A6 repeat 阻尼
-free_multiplier = 1.2            # 空闲（节假日/周末/课间）时情绪类候选乘数（建议 1.0~1.4）
-min_activation = 0.08            # activation < 此值 → 情绪类退出竞争（低能量沉默，仪式类照发）
-must_send_activation = 0.75      # activation ≥ 此值 → 情绪类加权随机必选（must_send 进 decision JSON）
-# 注：activation = 情绪维度族取 max（孤独三级互斥 → 族内求和；其余情绪单源），
-#     抖动前计算、逐状态确定性（R7 修正：0.75 按单源标定，#79）。
-repeat_decay = 0.6               # 同类型触发历史计数 n → 候选 weight ×= repeat_decay^n
-repeat_cap = 3                   # repeat 计数封顶（超过不再继续衰减）
-
-# v1.12: A2 分类型回复率反馈闭环（enabled=0 关闭 → 行为恒等，可灰度）
-# 统计源 = 状态持久化的 cooldown.reply_stats（daemon 发送时 sent+1、--user-msg 收到回复时 replied+1）
-reply_feedback_enabled = 0      # 0=关闭（恒等）；1=开启
-reply_feedback_damp = 0.0       # 低回复率类型权重 ×(1-damp)（0=关闭恒等；1=归零）
-reply_feedback_boost = 0.0      # 高回复率类型权重 ×(1+boost)（0=关闭恒等）
-reply_feedback_low_rate = 0.3   # 回复率低于此 → 阻尼
-reply_feedback_high_rate = 0.7  # 回复率高于此 → 微加成
-reply_feedback_min_samples = 3  # 样本数下限（<此数不调整，防冷启动误伤）
-
-[poisson]
-base_lambda = 0.25                     # 基础事件率（μ 的一部分）
+[poisson]    # Poisson 过程参数（μ 的基础部分）
+base_lambda = 0.25                 # 基础事件率（次/小时）
 lambda_loneliness_mid = 50
 lambda_loneliness_k = 0.08
 lambda_anxiety_mid = 45
 lambda_anxiety_k = 0.06
 
-[hawkes]
-enabled = true
-alpha = 0.3                            # 自激系数
-beta = 0.5                             # 事件影响衰减率
-window_hours = 24                      # 事件窗口（小时）
-
 [topic_picker]
-# 话题选择器权重
-schedule_weight = 0.30
+schedule_weight = 0.30             # 话题选择器权重（见 §4.1）
 memory_weight = 0.25
 weather_season_weight = 0.20
 general_weight = 0.25
 solar_terms_weight = 0.10
 anniversary_weight = 0.15
 preference_followup_weight = 0.10
-netease_weight = 0.12                   # v9: 音乐话题源权重
-netease_daily_quota = 2                 # v9: 音乐话题日配额（每日推荐+播放历史共享）
-netease_source_weights = [0.5, 0.5]     # v9: 每日推荐 vs 播放历史 随机选源权重
-netease_fault_daily_quota = 1           # v9: 故障提及日配额
-
-topic_probability = 0.70               # 孤独触发时注入话题的概率
-force_topic_threshold = 3              # 连续 N 次孤独触发 → 强制注入
-trigger_history_max = 6                # 触发历史记录最大长度
-
-# v1.10 A9: 内容级防复读（3-gram Jaccard 相似度弃用候选）
-repeat_jaccard_threshold = 0.6         # 相似度阈值（0~1），≥ 此值视为复读弃用
-repeat_history_n = 5                   # 对比最近 N 条已发送消息（chiguo_messages.jsonl 倒序）
+netease_weight = 0.12              # v9: 音乐话题源权重
+netease_daily_quota = 2            # v9: 音乐话题日配额
+netease_source_weights = [0.5, 0.5]
+netease_fault_daily_quota = 1
+topic_probability = 0.70           # 孤独触发时注入话题的概率
+force_topic_threshold = 3          # 连续 N 次孤独触发 → 强制注入
+trigger_history_max = 6
+repeat_jaccard_threshold = 0.6     # A9 内容级防复读（3-gram Jaccard）
+repeat_history_n = 5
 
 [schedule]
+enabled = true                     # 可选来源：false 时不解析课表（缺 xlsx 亦自动禁用）
 quiet_start = 0
 quiet_end = 8
 morning_start = 8
 morning_end = 10
 night_start = 20
 night_end = 21
-special_dates = ["05-11", "11-03"]     # 菓菓生日, 用户生日
-xlsx_path = "data/xskb.xlsx"              # 课表文件
-semester_start = "2026-02-23"          # 学期起始日
-semester_end = "2026-07-04"            # 学期结束日，之后自动视为假期
-exam_weeks = []                        # 考试周日期范围，如 ["2026-06-22,2026-07-03"]
+# ── schedule-center: exam_weeks/special_dates 已废弃,迁移至 schedule_overrides.json/anniversaries.json ──
+# 旧键:exam_weeks = []   → override kind=exam_week(label="from toml 考试周")
+# 旧键:special_dates = ["05-11", "11-03"] → anniversaries.json(迟菓生日默认;其余 name="特殊日期 MM-DD")
+xlsx_path = "data/xskb.xlsx"       # 课表文件，直接替换即可更新
+semester_start = "2026-02-23"      # 学期起始日期
+semester_end = "2026-07-04"        # 学期结束日期，之后自动视为假期
 
-[circadian]
-# v7/v8: 生物钟学习 — 从用户回复时间学习睡眠时段,动态调整静默窗口
-# v8: 双作息双桶（weekday/weekend 两套窗口独立估计与应用），以下参数两桶共用
-history_days = 14        # 回复记录滚动窗口(天)
-min_sample_days = 7      # 最少有数据天数才计算学习窗口（每桶各自判断）
-min_confidence = 0.5     # 学习置信度低于此值 → 回退配置默认窗口(0-8)
-min_width = 5            # 学习窗口最小宽度(小时)
-max_width = 12           # 学习窗口最大宽度(小时)
+[circadian]  # v7/v8: 生物钟学习（双作息双桶）
+history_days = 14
+min_sample_days = 7
+min_confidence = 0.5
+min_width = 5
+max_width = 12
 
 [netease]
-# v8: 听歌状态双向联动（夜间活跃反证）——睡眠窗口内最近有播放 → 用户醒着
-play_cache_ttl_minutes = 15     # 播放记录缓存 TTL（分钟）
-play_proof_window_hours = 2.0   # 播放证据时间窗（距评估时点的小时数）
-sleeping_confidence_factor = 0.5  # sleeping 置信度压制系数（有播放证据时 effective = raw × 此值）
-# v9: 策略层（netease/service.py）
-retry_count = 1                # 瞬时失败重试次数
-retry_backoff_seconds = 2.0    # 重试退避（秒）
-reprobe_minutes = 30           # 登录失效后重探间隔（分钟）
+enabled = true                     # 可选来源：false 时完全不拉取/告警
+play_cache_ttl_minutes = 15        # v8: 播放记录缓存 TTL
+play_proof_window_hours = 2.0      # 播放证据时间窗
+sleeping_confidence_factor = 0.5   # sleeping 置信度压制系数
+retry_count = 1                    # v9: 瞬时失败重试次数
+retry_backoff_seconds = 2.0
+reprobe_minutes = 30               # 登录失效后重探间隔
+
+[hawkes]     # Hawkes 自激过程
+enabled = true
+alpha = 0.3                        # 自激系数
+beta = 0.5                         # 事件影响衰减率
+window_hours = 24                  # 事件窗口（小时）
 
 [cooldown]
-max_daily_active = 4                   # 用户活跃时日上限
-max_daily_silent = 2                   # 用户沉默时日上限
-min_interval_minutes = 30              # 最小发送间隔
-no_reply_lambda_decay = 0.7            # 无回复 λ 衰减因子
-# v1.10 A5: 未回复退场状态机（backoff_level）
-backoff_start = 3                      # messages_without_reply ≥ 此值 → backing_off（情绪类禁发、仪式类照发）
-backoff_silent = 5                     # ≥ 此值 → silent（全禁发，escape_valve longing 破防豁免）
-# v1.10 A10: 回复饱和阻尼（30 分钟窗口内同向回复事件计数抑制加成）
-drop_damp_window_minutes = 30          # 同向计数窗口；<=0 关闭阻尼
-drop_damp_factor = 0.5                 # 第 n 次同向回复 → 加成 × factor^n
-drop_damp_max = 3                      # 计数上限（min(n, max) 饱和）
-# v4: 概率累积参数
-longing_growth_factor = 0.08           # 每次 held λ 增长量
-anxiety_block_threshold = 70.0         # 焦虑大于此 → 不累积
-max_lambda_multiplier = 5.0            # λ 最大倍数
-longing_decay_factor = 0.5             # 用户回复后 λ 回退系数
-# v6: 溢出逃生阀
-longing_break_enabled = true             # 是否启用逃生阀（焦虑阻塞时强制 longing 发送）
-longing_break_min_silence_hours = 72     # 逃生阀激活所需的最小墙钟沉默时长
-longing_break_cooldown_days = 3          # 逃生阀冷却期（天内最多触发一次）
-ritual_weight_scale = 1.0                # 仪式触发权重缩放（特殊日期/早安/晚安/用餐/记忆等固定事件权重的乘数，调低可减少仪式触发对情绪触发的压制）
+max_daily_active = 4               # 用户活跃时日上限
+max_daily_silent = 2               # 用户沉默时日上限
+min_interval_minutes = 30          # 最小发送间隔
+no_reply_lambda_decay = 0.7        # 无回复 λ 衰减因子
+backoff_start = 3                  # A5 未回复退场状态机
+backoff_silent = 5
+longing_growth_factor = 0.08       # v4: 概率累积参数
+anxiety_block_threshold = 70.0
+max_lambda_multiplier = 5.0
+longing_decay_factor = 0.5
+longing_break_enabled = true       # v6: 溢出逃生阀
+longing_break_min_silence_hours = 72
+longing_break_cooldown_days = 3
+ritual_weight_scale = 1.0          # 仪式触发权重缩放
+drop_damp_window_minutes = 30      # A10 回复饱和阻尼
+drop_damp_factor = 0.5
+drop_damp_max = 3
 
-[personality]
-# v4: 多维人格初始值（0-100 量表）
-openness = 55.0                        # 开放性
-conscientiousness = 65.0               # 尽责性
-extraversion = 60.0                    # 外向性（小太阳人设）
-agreeableness = 65.0                   # 宜人性（毒舌但善良）
-neuroticism = 60.0                     # 神经质
-tsundere_intensity = 75.0              # 傲娇强度
-playfulness = 55.0                     # 贪玩程度
-attachment_style = 60.0                # 依恋风格（高=焦虑型，低=回避型）
+[personality]  # v4: 8 维人格初始值（0-100 量表）
+openness = 55.0
+conscientiousness = 65.0
+extraversion = 60.0
+agreeableness = 65.0
+neuroticism = 60.0
+tsundere_intensity = 75.0
+playfulness = 55.0
+attachment_style = 60.0
+regress_rate = 0.01                # 基线回归速率（0=关闭）
 
-[bayesian]
-# v4: Bayesian 用户状态推断参数
-learning_rate = 0.05                   # 在线学习率（越小越保守）
-min_confidence_for_block = 0.5         # 置信度高于此才阻塞发送
-utility_threshold = 0.4                # 加权效用高于此推荐发送
-escape_valve_sleep_block = 0.9         # v7: 逃生阀豁免睡觉门控时，睡觉置信度 ≥ 此值仍降级 sleeping_guard
+[bayesian]   # v4: Bayesian 用户状态推断
+learning_rate = 0.05               # 在线学习率
+min_confidence_for_block = 0.5     # 置信度高于此才阻塞发送
+utility_threshold = 0.4            # 加权效用高于此推荐发送
+escape_valve_sleep_block = 0.9     # 逃生阀睡觉置信度阈值
+transition_enabled = false         # v1.12 A1 状态转移矩阵 + 前向滤波（默认关闭恒等）
+info_gain_threshold = 0.0          # v1.12 A3 信息增益门控（0=关闭）
+info_gain_utility_bonus = 0.1
 
-# v1.12: A1 状态转移矩阵 + 前向滤波（默认关闭恒等，可灰度）
-# transition_enabled=True 时 infer 用 prev_posterior × TRANSITIONS 作转移先验，
-# 与时间先验 0.5/0.5 线性混合（状态持续性平滑 + 时段分布兜底）。
-# 逐行覆盖（可选）：transition_<state> = { chatting = 0.4, browsing = 0.3, ... }（整行替换 + 归一化）。
-transition_enabled = false
-
-# v1.12: A3 信息增益门控「不确定才发」（默认关闭恒等，可灰度）
-# 后验熵 ≥ info_gain_threshold 时（状态不确定）utility +info_gain_utility_bonus 并放行
-# should_send_bayesian——提高探询型消息发送概率。threshold=0 关闭。
-info_gain_threshold = 0.0        # 熵门槛（bits，6 状态最大熵 ≈ 2.585；0=关闭）
-info_gain_utility_bonus = 0.1    # 熵达门槛时的 utility 上调量（放行探询）
-
-[composer]
-# v4: 消息组合系统参数
-size_1_weight = 0.20                   # 仅 Intent 概率
-size_2_weight = 0.50                   # Intent × Cue 概率
-size_3_weight = 0.30                   # Intent × Cue × Vibe 概率
-# Cue 基础权重（被 personality 调制；Task 6 原著对齐：经典傲娇为主/温柔关心降权/新增交易式撒娇）
-cue_tsundere_weight = 0.40
+[composer]   # v4: 消息组合系统
+size_1_weight = 0.20               # 仅 Intent
+size_2_weight = 0.50               # Intent × Cue
+size_3_weight = 0.30               # Intent × Cue × Vibe
+cue_tsundere_weight = 0.40         # Cue 基础权重（被 personality 调制）
 cue_tsundere_soft_weight = 0.20
 cue_tsundere_cool_weight = 0.05
 cue_dere_weight = 0.05
@@ -1377,25 +1477,42 @@ cue_caring_weight = 0.10
 cue_cool_weight = 0.00
 cue_trade_weight = 0.15
 
-[safety]
-# v4: 安全阀
+[safety]     # v4: 安全阀
 enabled = true
-crash_cooldown_hours = 24              # lonely_high 触发后冷却时间
-crash_window_hours = 48                # 统计窗口
-crash_max_in_window = 2                # 窗口内 ≥2 次崩溃 → 强制温和模式
+crash_cooldown_hours = 24          # lonely_high 触发后冷却时间
+crash_window_hours = 48
+crash_max_in_window = 2            # 窗口内 ≥2 次崩溃 → 强制温和模式
 
 [monitor]
-disk_warn_mb = 500                     # 磁盘剩余小于此 → warn
-disk_critical_mb = 100                 # 磁盘剩余小于此 → critical
-memory_warn_mb = 500                   # 进程 RSS 大于此 → warn
-memory_critical_mb = 1000              # 进程 RSS 大于此 → critical
+disk_warn_mb = 500                 # 磁盘剩余小于此 → warn
+disk_critical_mb = 100
+memory_warn_mb = 500               # 进程 RSS 大于此 → warn
+memory_critical_mb = 1000
+proactive_eval = false             # v1.12 D1 主动消息效果评估（默认关闭恒等）
+replied_within_hours = 24.0
 
-# v1.12: D1 主动消息效果评估（对标 ProactiveEval；默认关闭恒等，不新增输出键）
-proactive_eval = false     # 开启后 stats()/report() 聚合输出 proactive_stats（按 trigger 分组的发送/回复统计 + overall）
-replied_within_hours = 24.0  # 发送后此小时数内收到首条 user-msg 视为已回复
+[logging]    # v5: 日志轮转 & 对话存档
+retention_months = 12              # 归档保留月数（0 = 永不删除）
+archive_dir = "archive"            # 归档目录（相对路径锚定项目根，绝对路径原样保留）
 
-[memory]        # 记忆后端抽象（v1.9；mem0 唯一后端）
-backend = "mem0"                          # mem0 唯一后端（仅 mem0 / auto（遗留同义），其他值抛 ValueError）
+[host]       # agent 调用配置（Phase 4；scripts/agent-run.mjs 读取；AGENTRUN_* 环境变量可覆盖）
+provider = "opencode-go"           # agent provider（= auth.json 键名；支持任意 agent provider，见 AGENT_INTEGRATION.md 七）
+model = "deepseek-v4-flash"
+thinking_level = "high"
+reply_thinking_level = "high"      # 回复侧独立档位（交互及时性）
+session_id = "chiguo-main"         # 回复侧会话（bridge askAgent）
+send_session_id = "chiguo-send"    # 主动发送会话（chiguo-tick.sh）——与回复会话分离
+wechat_bridge_url = "http://127.0.0.1:18790/send"  # 主动发送端点（tick curl 目标，--noproxy '*'）
+runner = "agent"                   # v1.8 agent runner 抽象：agent（默认）/ command（任意 CLI agent）
+# agent_command = ["node", "/path/to/agent.mjs"]  # runner=command 必填；agent 模式忽略
+
+[loop]       # v1.11: daemon --loop 常驻（发送侧内聚）
+bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 服务地址（含 /agent/prompt 与 /send 端点）
+bridge_token = ""                       # 与 bridge WECHAT_BRIDGE_TOKEN 同源；空=不带头
+agent_timeout_ms = 125000               # /agent/prompt 超时
+
+[health]
+fail_threshold = 3   # agent 假死判定：连续失败次数 ≥ 此值 → 告警（<1 视为无效回退 3）
 ```
 
 ---
@@ -1444,7 +1561,7 @@ python3 chiguo_monitor.py --health
 | health | last_tick_age | 距上次 tick 小时数 |
 | health | log_recent | 日志最近 12h 有写入 |
 | health | config_ok | 配置文件存在 |
-| health | disk | 磁盘剩余/总量/已用 (MB)（锚定项目目录 `Path(__file__).resolve().parent`，防 cwd 漂移假阴性，R23） |
+| health | disk | 磁盘剩余/总量/已用 (MB)（锚定项目目录 `Path(__file__).resolve().parent`，防 cwd 漂移假阴性） |
 | health | memory | 进程 RSS 内存 (MB) |
 | health | mem0_direct | mem0 直连状态 (True/False/None) |
 | mem0 | likely_available | mem0 是否可能可用 |
@@ -1473,11 +1590,11 @@ python3 chiguo_monitor.py --health
 
 - **零新依赖** — 纯 stdlib
 - **流式解析** — O(n) 时间, O(1) 内存（除 daily_counts）
-- **优雅降级** — 文件缺失 → 空统计，不抛异常；`AlertManager._load` 容错覆盖 `JSONDecodeError/OSError/UnicodeDecodeError`（告警文件含非法 UTF-8 字节也回退空，不崩溃，R21）
+- **优雅降级** — 文件缺失 → 空统计，不抛异常；`AlertManager._load` 容错覆盖 `JSONDecodeError/OSError/UnicodeDecodeError`（告警文件含非法 UTF-8 字节也回退空，不崩溃）
 - **防御式解析** — `state=None` / `emotion=None` / `cooldown=None` / 损坏行 → 自动规范化（`_normalize_entry`，stats() 与 alerts() 共用同一归一化，保证口径一致），不崩溃
 - **回复率口径** — 相邻 send 的 `messages_without_reply` 双方均为数值才比较，None/非数值视为未知不计为回复变化（stats 与 alerts B5 一致）
 - **配置回退** — `[monitor]` 配置相对路径在当前 cwd 找不到时回退模块目录，避免从其他 cwd 运行阈值静默回落默认值（与 health() 的 config 检测一致）；`mem0_qdrant_path`/`mem0_history_db` 优先 `[monitor]`，未定义时回退 `[memory]`；路径值一律 `expanduser`（`~` 展开）
-- **磁盘锚定** — health() 磁盘检查锚定项目目录 `Path(__file__).resolve().parent`，不依赖 cwd（防 cron/别名 cwd 漂移导致误报磁盘告警，R23）
+- **磁盘锚定** — health() 磁盘检查锚定项目目录 `Path(__file__).resolve().parent`，不依赖 cwd（防 cron/别名 cwd 漂移导致误报磁盘告警）
 - **独立可运行** — `python3 chiguo_monitor.py`
 
 ### 10.7 对话日志与归档 (v5)
@@ -1575,16 +1692,11 @@ archive/
 
 ```toml
 [logging]
-rotate_enabled = true               # 是否启用日志轮转
-rotate_interval = "monthly"         # 轮转间隔（monthly）
-archive_dir = "archive"             # 归档目录（相对路径锚定模块目录，绝对路径原样保留）
-decisions_log = "chiguo_decisions.jsonl"   # 决策日志路径
-messages_log = "chiguo_messages.jsonl"     # 对话日志路径
-alerts_log = "chiguo_alerts.json"          # 告警日志路径
-max_archive_files = 24              # 最多保留归档文件数（超出删除最旧）
+retention_months = 12        # 归档保留月数（0 = 永不删除）
+archive_dir = "archive"      # 归档目录（相对路径锚定项目根，绝对路径原样保留）
 ```
 
-**路径锚定（2026-07-31）**：相对 `archive_dir`（如 `"archive"`）一律锚定 `chiguo_rotation.py` 所在目录（项目根），绝对路径原样保留——从任意 cwd 运行 `force_rotate`/`rotate_if_needed`/`--rotate` 都不会把日志移出项目（曾发生从 /tmp 运行把日志移进 /tmp/archive 的故障）。
+**路径锚定**：相对 `archive_dir`（如 `"archive"`）一律锚定 `chiguo_rotation.py` 所在目录（项目根），绝对路径原样保留——从任意 cwd 运行 `force_rotate`/`rotate_if_needed`/`--rotate` 都不会把日志移出项目。
 
 轮转在 daemon tick 时自动触发（`_maybe_rotate_logs()`），每次 tick 前检查。
 
@@ -1699,13 +1811,13 @@ python3 chiguo_daemon.py --record-send msg_20260628_143205_a1b2c3 \   # 记录�
   --text "谁、谁关心你了！" \
   --trigger lonely_mid --intensity medium   # 可选: 触发类型/消息强度
 
-# 日志轮转（v7 补充: 锚定 base_dir，从任意工作目录运行都轮转项目文件）
+# 日志轮转（锚定 base_dir，从任意工作目录运行都轮转项目文件）
 python3 chiguo_daemon.py --rotate                    # 手动触发日志轮转
 python3 chiguo_daemon.py --rotate --force            # 强制轮转（忽略月份检查）
 
 # 告警管理
 python3 chiguo_daemon.py --alerts-all                # 列出所有告警（含历史）
-python3 chiguo_daemon.py --ack ALT_ID                # 确认指定告警（v7 补充: 不带 --alerts 时自动联动开启）
+python3 chiguo_daemon.py --ack ALT_ID                # 确认指定告警（不带 --alerts 时自动联动开启）
 python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 ```
 
@@ -1721,7 +1833,7 @@ python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
 
 ## 十一、LLM 集成（agent 后端抽象，Phase 4）
 
-详见 `AGENT_INTEGRATION.md`（当前架构）。关键链路：
+详见 `AGENT_INTEGRATION.md`（当前架构）。本文件只保留架构层概述。
 
 v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runner（toml `[host].runner`，默认 `agent`）：
 - `runner = "agent"`（默认）：agent 后端二进制，provider/model/session 见 `[host]` 与 AGENT_INTEGRATION.md 七
@@ -1731,29 +1843,29 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 - bridge 的 RPC 常驻模式仅 `runner=agent` 且 `WECHAT_BRIDGE_AGENT_RPC=1` 时启用；`chiguo_envcheck.py` 的 check_agent
   支持 runner/agent_command 参数按 runner 检查
 
-1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_agent.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/agent-run.mjs`（`AGENTRUN_SESSION=chiguo-send`）按 SUN2.md 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
-2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（SUN2.md 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，450s 窗口内只补分析微调不重复记账，覆盖 agent 分析往返与 recall 两趟路径）→ 回复文本发回微信
+1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_agent.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/agent-run.mjs`（`AGENTRUN_SESSION=chiguo-send`）按 `personality/迟菓人格-精简版.md` 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
+2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（`personality/迟菓人格-精简版.md` 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，450s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
 
 ### 11.1 特殊命令（纪念日/假期，bridge 规则化）
 
-纪念日/假期指令由 `wechat-bridge/command-detect.mjs` 确定性接管（agent 纯文本调用无工具权限）：
+纪念日/假期指令由 `wechat-bridge/command-detect.mjs` 确定性接管（agent 纯文本调用无工具权限），完整规则表见 `AGENT_INTEGRATION.md §五`。要点：
 
 | 哥哥说 | 执行 |
 |--------|------|
-| (哥哥/主人)记住X月X日(是)XX | `--anniversary "add anniversary MM-DD <名称>"`（名称尾缀 `了`/标点剥离） |
-| YYYY年X月X日(是/为/要)XX / X月X日要XX | `--schedule-change {"kind":"reminder","when":{"date":"YYYY-MM-DD"},"label":"<名称>"}`（一次性提醒；6c 起 countdown 废弃 → reminder，显式日期直转写；无年份推断：今年已过 → 明年，CST） |
+| (哥哥/主人)记住X月X日(是)XX | `--anniversary "add anniversary MM-DD <名称>"` |
+| YYYY年X月X日(是/为/要)XX / X月X日要XX | `--schedule-change {"kind":"reminder",...}`（一次性提醒） |
 | 有哪些纪念日 / 纪念日列表 | `--anniversary list` |
-| 放假了 / 放暑假了 / 我放假了 | `--break on`（**无限期** manual_override，误触发 `--break off` 关闭） |
+| 放假了 / 放暑假了 / 我放假了 | `--break on`（**无限期** manual_override） |
 | 开学了 / 我开学了 | `--break off` |
 
-防误伤约束：消息 ≤40 字、非问句（末尾 吗/？/? 不拦截）、非 `你/您` 开头、`今天放假了` 等一天性陈述不拦截（交 agent 自然回复）；列表两分支均锚定开头（"今天是纪念日列表" 不命中）。执行后回迟菓风确认文案（daemon JSON 驱动，add/list 输出 shape 经真实 daemon 实测固化）。
+防误伤约束：消息 ≤40 字、非问句、非 `你/您` 开头、一天性陈述不拦截；执行后回迟菓风确认文案（daemon JSON 驱动）。
 
 ### 11.2 会话与并发模型
 
 - `chiguo-main`：回复侧会话（bridge 进程内 `TurnQueue` 串行 agent 调用，防同会话交错）
 - `chiguo-send`：主动发送会话（tick 经 `AGENTRUN_SESSION` 注入；决策 JSON 自足，无需对话连续性）
-- `/agent/prompt` 发送侧端点（R20）：与 askAgent 共用同一 `TurnQueue` 串行化 —— 原实现直接调 `__agentRpc.prompt()` 绕过队列，并发 HTTP turn 会交错同一会话的 RPC 调用，现由 `startSendServer(bot, queue)` 透传队列统一约束
-- 两条链路**永不共享会话** → 消除跨进程并发 turn 风险（同会话并发在 agent 侧可能交错/上下文竞争）
+- `/agent/prompt` 发送侧端点：与 askAgent 共用同一 `TurnQueue` 串行化（原实现直接调 `__agentRpc.prompt()` 绕过队列，并发 HTTP turn 会交错同一会话的 RPC 调用，现由 `startSendServer(bot, queue)` 透传队列统一约束）
+- 两条链路**永不共享会话** → 消除跨进程并发 turn 风险
 
 agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
 
@@ -1762,14 +1874,14 @@ agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].p
 ## 十二、维护指南
 
 ### 更新课表
-直接替换 `xskb.xlsx` 文件。下次 tick 检测到 mtime 变化 → 自动重解析。
+直接替换 `data/xskb.xlsx` 文件。下次 tick 检测到 mtime 变化 → 自动重解析。
 
 ### 更新学期
 修改 `chiguo_proactive.toml` 中 `semester_start` 日期。`semester_end` 之后的日期自动视为假期。
 
 ### 更新节假日（2027+）
 - 方式 A：修改 `schedule/holiday.py` 中的 `HOLIDAYS` 和 `MAKEUP_WORKDAYS` 字典
-- 方式 B：创建 `holidays.json` 文件，`HolidayParser(data_path="holidays.json")` 自动加载
+- 方式 B：创建 `holidays.json` 文件（或 `python3 update_holidays.py` 跨年自动合并），`HolidayParser(data_path="holidays.json")` 自动加载
 
 holidays.json 格式：
 ```json
@@ -1784,7 +1896,7 @@ holidays.json 格式：
 ```
 
 ### 添加手动记忆
-编辑 `chiguo_memories.json`：
+编辑 `data/chiguo_memories.json`：
 ```json
 [
   {
@@ -1840,4 +1952,6 @@ rm <仓库根目录>/chiguo_state.json
 
 ---
 
+## 已知局限（原 CCR §十七）
 
+- netease 热重载路径：非法 `retry_count`（负数/非数值）会在 `_maybe_reload_config` 重建 `NeteaseService` 时抛异常（§2.12 热重载）；属配置错误即快速失败语义

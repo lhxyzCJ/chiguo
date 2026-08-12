@@ -44,7 +44,7 @@ Zero-LLM math decision engine · LLM message generation · WeChat delivery
 
 ## 🎀 Who Is She
 
-Chiguo comes from the *Tricolour Lovestory* series (a Chinese galgame by 绘恋企划屋 / HL-Galgame). Her personality and speech style are aligned line-by-line with the official sequel's script; `personality/SUN2.md` is the single authoritative persona definition.
+Chiguo comes from the *Tricolour Lovestory* series (a Chinese galgame by 绘恋企划屋 / HL-Galgame). Her personality and speech style are aligned line-by-line with the official sequel's script. Persona authority has **two layers**: the **character essence** has its single authoritative definition in `personality/archive/SUN2.md` (aligned line-by-line with the original *日光雨* script); the **runtime spec** is `personality/迟菓人格-精简版.md`, the run manual that agent-run.mjs actually injects (see [🎭 Persona (Fixed)](#-persona-fixed)).
 
 > ⚠️ **Compliance notice**: this project is an **unofficial fan re-imagining of an official IP**, unrelated to 绘恋企划屋 / Shanybai Culture. The script text is bundled for personal study and fan-community reference only; character and script copyrights belong to the original creators. If the rights holders object, the project will remove the relevant material upon notice.
 
@@ -174,7 +174,7 @@ Decision JSON (single `chiguo_daemon.py` run; msg_id/timestamp are fake):
 }
 ```
 
-Example messages (generated in the `personality/SUN2.md` style — **examples, not real conversations**):
+Example messages (generated in the style of the runtime persona `personality/迟菓人格-精简版.md` — **examples, not real conversations**):
 
 > **Daily care** (proactive, weather topic triggered): "…The forecast says it's getting cold tomorrow. Hmph, it's not like I care — I just don't want you freezing your brain off and leaving my messages unread. …Anyway. Wear a jacket."
 >
@@ -186,7 +186,7 @@ Example messages (generated in the `personality/SUN2.md` style — **examples, n
 
 ## 🚀 Quick Start
 
-Requires **Python 3.14+** (managed by uv). The core has zero third-party dependencies (pure stdlib); memory/schedule enhancements are optional.
+Requires **Python 3.14+** (managed by uv). The core has zero third-party dependencies (pure stdlib); the mem0 memory layer is a required dependency (`uv sync --all-extras` installs it), and schedule parsing needs openpyxl.
 
 Deployment comes in three tiers — pick what you need:
 
@@ -206,7 +206,7 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: 59 py + 13 script standalone runners)
+# Core tests (full suite: 59 py + 13 script standalone runners — 59 Python + 8 Node(.mjs) + 5 Shell(.sh))
 bash scripts/ci-test.sh   # same entry point as GitHub Actions; any failure exits non-zero
 ```
 
@@ -246,7 +246,7 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 ### Memory system (memory backend abstraction)
 
-**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. This is a **memory backend abstraction**: the `memory/` package provides the `MemoryBackend` abstract base class + the `create_backend` factory (`memory_bridge.py` is now a compatibility facade), specified via `[memory].backend` in `chiguo_proactive.toml` — `mem0` (the only backend, the [mem0ai](https://github.com/mem0ai/mem0) memory layer; only `mem0`/`auto` (legacy synonym) are valid). In mem0 mode, the daemon **auto-writes** after conversations (`_mem0_autowrite`, LLM fact extraction via deepseek-v4-flash through the opencode gateway); retrieval uses **vector semantic search** (local ollama `qwen3-embedding:0.6b`, zero API cost) over an embedded qdrant store (`data/mem0/`, no docker) plus a SQLite operation history. The decision engine recalls **read-only** (semantic search + Ebbinghaus weighting), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
+**Role**: Chiguo's long-term memory — "remembering" that outlasts mood. This is a **memory backend abstraction**: the `memory/` package provides the `MemoryBackend` abstract base class (`base.py`) + the `create_backend` factory (`factory.py`), and the root-level `memory_bridge.py` is now a compatibility facade, specified via `[memory].backend` in `chiguo_proactive.toml` — `mem0` (the only backend, the [mem0ai](https://github.com/mem0ai/mem0) memory layer; only `mem0`/`auto` (legacy synonym) are valid). In mem0 mode, the daemon **auto-writes** after conversations (`_mem0_autowrite`, LLM fact extraction via deepseek-v4-flash through the opencode gateway); retrieval uses **vector semantic search** (local ollama `qwen3-embedding:0.6b`, zero API cost) over an embedded qdrant store (`data/mem0/`, no docker) plus a SQLite operation history. The decision engine recalls **read-only** (semantic search + Ebbinghaus weighting), as one of the 8 topic sources: random old-story floats and memory injection into trigger context. Recall is weighted by an **Ebbinghaus forgetting curve** — older memories weigh less but never fully vanish (floor weight 0.1); `importance` filters out irrelevant rows. If the store is unavailable, probing retries every 60s, self-healing after recovery.
 
 **Setup**: `uv sync` (mem0ai + ollama client are required dependencies); the store lives at `data/mem0/` (embedded qdrant + history.db; paths/LLM/embedder are configured by the `[memory]` `mem0_*` keys; the LLM key defaults to the opencode-go entry of `~/.pi/agent/auth.json`).
 
@@ -300,17 +300,28 @@ Detailed steps: [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) §7 "接入
 
 ## 🎭 Persona (Fixed)
 
-Chiguo's persona is **fixed** — the entire system is designed around this one character and cannot be swapped for another. The persona is defined entirely in text:
+Chiguo's persona is **fixed** — the entire system is designed around this one character and cannot be swapped for another. The persona is defined entirely in text, with authority in **two layers**:
+
+- **Character essence (authoritative)**: `personality/archive/SUN2.md` — aligned line-by-line with the original *日光雨* script (`doc/日光雨.md`, 17099 lines); defines layered persona / identity / relations / boundaries
+- **Runtime spec**: `personality/迟菓人格-精简版.md` — the run manual that `scripts/agent-run.mjs` actually injects every turn (a cyber-girl living inside 哥哥's VPS); it is the only runtime persona spec
+
+The remaining files in `archive/` (the detailed version, the speech-style manual, and the just-archived root-directory version) are all original-source material — reference only for future edits to the concise version, not used at runtime:
 
 ```
 personality/
-├── SUN2.md                 # single authoritative persona definition (layers/identity/relations/boundaries)
-├── 迟菓语言技巧指南.md      # speech-style manual (L1 tone words → L6 self-check) (Chinese)
-├── tsundere.toml           # tsundere phrasing material
-└── deredere.toml           # sweet phrasing material (combined with tsundere, not a switch)
+├── 迟菓人格-精简版.md              # runtime-only persona spec (injected by agent-run.mjs)
+├── archive/                       # original-source material (not used at runtime, reference only)
+│   ├── SUN2.md                    # character essence authority (aligned with 日光雨 script)
+│   ├── 迟菓人格-详版.md            # detailed original-scene version (source material)
+│   ├── 迟菓语言技巧指南.md          # speech-style manual (L1 tone words → L6 self-check) (Chinese)
+│   └── 迟菓人格-精简版-根目录版.md  # just-archived root-directory historical version
+├── tsundere.toml                  # tsundere phrasing material
+├── deredere.toml                  # sweet phrasing material (combined with tsundere, not a switch)
+├── 工具用法.md                     # available tools & when to call them (Chinese)
+└── 记忆用法.md                     # long-term memory usage spec (Chinese)
 ```
 
-Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (368 lines, hot-reloaded in `--loop` mode) — no code changes needed.
+Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (470 lines / 22 sections, hot-reloaded in `--loop` mode) — no code changes needed.
 
 ---
 
@@ -351,7 +362,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 | [doc/SYSTEM.md](doc/SYSTEM.md) | Full system documentation: architecture, business logic, config reference, CLI, file list (Chinese) |
 | [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | Full deployment guide: tiered paths / prerequisites / landing map / migration / verification |
 | [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) | agent backend integration guide: model backend, WeChat bridge, deployment (Chinese) |
-| [doc/日光雨.md](doc/日光雨.md) | The official sequel script (persona reference) (Chinese) |
+| [doc/日光雨.md](doc/日光雨.md) | The official sequel script, 17099 lines (persona reference) (Chinese) |
 | [AGENTS.md](AGENTS.md) | AI-assistant conventions, including the full test suite (Chinese) |
 
 Any contribution is welcome — especially ones that help *her* grow:
@@ -373,7 +384,7 @@ She originates from the official *Tricolour Lovestory* series (see [🎀 Who Is 
 `[memory].backend` is `mem0` only: `uv sync` installs everything required (mem0ai+ollama are required dependencies) plus local ollama qwen3-embedding and an LLM key for full functionality; the deployment check is hard — mem0ai not installed → `envcheck` reports critical (blocks deployment); no LLM key / no ollama → reports warn (memory topic sources shrink, non-fatal), and at runtime an unavailable store self-heals via 60s reprobing.
 
 **How do I change the persona / personality?**
-Chiguo's persona is fixed (the system is designed around a single character) — it cannot be replaced. Want to adjust her behavior? Change the parameters in `chiguo_proactive.toml` — `SUN2.md` is the single authoritative definition and the speech manual shapes tone.
+Chiguo's persona is fixed (the system is designed around a single character) — it cannot be replaced. Want to adjust her behavior? Change the parameters in `chiguo_proactive.toml` — the character essence authority is `personality/archive/SUN2.md`, the runtime spec is `personality/迟菓人格-精简版.md` (actually injected by agent-run.mjs), and tone comes from `personality/archive/迟菓语言技巧指南.md`.
 
 **Do I need to change code to switch models?**
 No. Change `[host].provider` / `[host].model` in `chiguo_proactive.toml` and configure the key; custom OpenAI-compatible endpoints see [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md).
@@ -395,21 +406,31 @@ Just say it in WeChat: "明天停课" / "下周三开始考试周" / "8月20号�
 ## 📁 Project Layout
 
 ```
-chiguo_proactive.toml    # main config (all parameters, hot-reloaded)
-chiguo_daemon.py         # decision engine (main entry, zero LLM)
-chiguo_state.py          # emotion engine + persona + Bayesian + schedule facade + circadian
-chiguo_math.py           # pure math library (sigmoid / elastic decay / interaction matrix / damping / Hawkes / Jaccard)
-chiguo_composer.py       # Intent×Cue×Vibe composer + fallback CLI (generation fallback)
-memory/                  # memory backend (mem0 only; base/mem0_backend/factory; memory_bridge.py facade)
+chiguo_proactive.toml    # main config (470 lines / 22 sections, all parameters, hot-reloaded)
+chiguo_daemon.py         # decision engine (main entry, zero LLM; 1984 lines)
+chiguo_state.py          # emotion engine + persona + Bayesian + schedule facade + circadian (2280 lines)
+chiguo_monitor.py        # structured monitoring (stats/alerts/health patrol; 1186 lines)
+chiguo_trigger.py        # 14 trigger-type evaluation (sigmoid + 3-stage activation; 621 lines)
+chiguo_composer.py       # Intent×Cue×Vibe composer + fallback CLI (generation fallback; 605 lines)
+chiguo_bayesian.py       # online user-state inference (6 states; 602 lines)
+chiguo_topics.py         # 8 topic-source injection (436 lines)
+chiguo_math.py           # pure math library (sigmoid / elastic decay / interaction matrix / damping / Hawkes / Jaccard; 439 lines)
+chiguo_envcheck.py       # env readiness check (357 lines)
+chiguo_circadian.py      # circadian learning (dual-schedule buckets; 249 lines)
+chiguo_personality.py    # persona loading & adaptation (236 lines)
+chiguo_demo.py           # interactive demo (templates only, no LLM; 210 lines)
+chiguo_rotation.py       # log rotation & conversation archive (175 lines)
+memory_bridge.py         # memory compatibility facade (repo root; implementation migrated into memory/)
+memory/                  # memory backend abstraction (mem0 only backend; base/mem0_backend/factory)
 schedule/                # schedule center (holiday/anniversary/override_store/plan_store/
-                         #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan)
+                         #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan/parser/parsing/query)
 scripts/                 # tick/replan crontab entries + agent runner abstraction (agent-run.mjs, agent default)
                          #   + env installer + liveness detection (agent_health.py)
-wechat-bridge/           # WeChat bridge (bridge.mjs + command-detect.mjs)
-personality/             # persona files (SUN2.md + speech manual + phrasing-material tomls)
-doc/                     # system docs (SYSTEM.md / AGENT_INTEGRATION.md / 日光雨 script)
-tests/                   # tests (standalone runners)
-data/                    # data files (schedule / memories / NetEase QR, never committed)
+wechat-bridge/           # WeChat bridge (bridge.mjs + command-detect.mjs + agent-rpc.mjs)
+personality/             # persona files (迟菓人格-精简版.md runtime spec + archive/ source material + toml material + tool/memory guides)
+doc/                     # system docs (SYSTEM.md / DEPLOYMENT.md / AGENT_INTEGRATION.md / 日光雨 script 17099 lines)
+tests/                   # tests (59 Python + 8 Node(.mjs) + 5 Shell(.sh) standalone runners)
+data/                    # data files (schedule / mem0 store / NetEase QR, never committed)
 ```
 
 Detailed list: [doc/SYSTEM.md §6 File List](doc/SYSTEM.md#六文件清单) (Chinese).

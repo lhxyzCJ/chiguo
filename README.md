@@ -44,7 +44,7 @@
 
 ## 🎀 她是谁
 
-迟菓出自《三色△绘恋》系列（绘恋企划屋出品的国产 Galgame）人格设定与台词风格以续作剧本为基准逐条对齐，`personality/SUN2.md` 是唯一权威设定。
+迟菓出自《三色△绘恋》系列（绘恋企划屋出品的国产 Galgame），人格设定与台词风格以续作剧本为基准逐条对齐。人格权威分**两层**：**角色本质**以 `personality/archive/SUN2.md` 为唯一权威设定（与原著《日光雨》剧本逐行对齐）；**运行时**由 `personality/迟菓人格-精简版.md` 这份运行手册注入（agent-run.mjs 实际加载，见 [🎭 人格设定](#-人格设定)）。
 
 > ⚠️ **合规声明**：本项目为官方 IP 的**非官方同人二次演绎**，与绘恋企划屋/山百合文化无关。剧本全文仅作个人学习与同人交流参考，角色形象与剧本文本版权归原作者所有；如权利方提出异议，本项目将按通知移除相关素材。
 > 
@@ -77,7 +77,7 @@
 | ✍️ 消息组合系统 | Intent × Cue × Vibe 三层组合，风格可人格化 |
 | 🏖 寒暑假模式 | 节假日/寒假暑假手动或自动切换 |
 | 🗓 时间安排中心 | 课表/节假日/寒暑假/例外/考试周/纪念日/提醒日统一管理;考试周自动降频;微信一句话登记安排 |
-| 📊 结构化监控 | stats / alerts / health + 独立看门狗进程 |
+| 📊 结构化监控 | stats / alerts / health |
 | 💗 假死检测 | 真实流量记账 + 微信告警/恢复通知（零额外调用） |
 | ⚖️ 弹性情绪引擎 | 弹性衰减（偏离越远回弹越快）+ 情绪交互矩阵 + 回复饱和阻尼 + 回复惯性阻尼 |
 | 🚦 智能触发层 | 三段激活 + 日程乘数 + repeat 阻尼 + 未回复退场状态机 + comfort 安慰触发 |
@@ -97,7 +97,7 @@
 
 **主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh`（或 `CHIGUO_DAEMON_LOOP=1` 常驻，见 [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)）→ 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/agent-run.mjs --send-mode`（agent 抽象，默认 agent 后端）让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）；agent 生成失败时由 `chiguo_composer.py` 模板池兜底直出文本（零 LLM，成功照常发送 + fallback 标记，composer 也失败才 fail）。
 
-**被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假/开学）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `agent-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `agent-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
+**被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `agent-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `agent-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
 
 **共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 唯一 mem0）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 agent 调用成败都记入 `agent_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
@@ -174,7 +174,7 @@ flowchart LR
 }
 ```
 
-消息示例（按 `personality/SUN2.md` 风格生成，**示例，非真实对话**）：
+消息示例（按运行时人格 `personality/迟菓人格-精简版.md` 风格生成，**示例，非真实对话**）：
 
 > **日常关心**（主动，天气话题触发）："……天气预报说明天要降温。哼，才不是关心你——是怕你冻傻了没人回我消息。……总之、记得加外套。"
 >
@@ -206,7 +206,7 @@ uv run python chiguo_demo.py         # 交互式 Demo（纯模板，无 LLM）
 uv run python chiguo_daemon.py       # 单次决策 → 输出 JSON
 uv run python chiguo_daemon.py --status   # 查看当前状态
 
-# 核心测试（完整测试链：59 py + 13 script 独立 runner）
+# 核心测试（完整测试链：59 py + 13 script 独立 runner，即 59 Python + 8 Node(.mjs) + 5 Shell(.sh)）
 bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败退出非零
 ```
 
@@ -246,7 +246,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 ### 记忆系统（记忆后端抽象）
 
-**作用**：迟菓的长期记忆——比情绪更持久的"记得"。它是**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类 + `create_backend` 工厂（`memory_bridge.py` 降为兼容门面），由 `chiguo_proactive.toml` 的 `[memory].backend` 指定——`mem0`（唯一后端，[mem0ai](https://github.com/mem0ai/mem0) 记忆层；仅 `mem0`/`auto`（遗留同义）合法）。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
+**作用**：迟菓的长期记忆——比情绪更持久的"记得"。它是**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类（`base.py`）+ `create_backend` 工厂（`factory.py`），根目录 `memory_bridge.py` 降为兼容门面，由 `chiguo_proactive.toml` 的 `[memory].backend` 指定——`mem0`（唯一后端，[mem0ai](https://github.com/mem0ai/mem0) 记忆层；仅 `mem0`/`auto`（遗留同义）合法）。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
 
 **安装/配置**：`uv sync`（mem0ai + ollama 客户端为必需依赖），记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db；路径/LLM/embedding 由 `[memory]` 段 `mem0_*` 键配置，LLM key 缺省读 `~/.pi/agent/auth.json` 的 opencode-go 条目）。
 
@@ -300,17 +300,28 @@ model = "gpt-5"
 
 ## 🎭 人格设定
 
-迟菓的人格是**固定的**——系统的全部设计围绕这一角色，不支持替换成其他角色。人格完全由文本定义：
+迟菓的人格是**固定的**——系统的全部设计围绕这一角色，不支持替换成其他角色。人格完全由文本定义，权威分**两层**：
+
+- **角色本质权威**：`personality/archive/SUN2.md`——与原著《日光雨》剧本逐条对齐（`doc/日光雨.md`，17099 行），定义分层人格/身份/关系/边界
+- **运行时规范**：`personality/迟菓人格-精简版.md`——`scripts/agent-run.mjs` 每轮实际注入的运行手册（赛博少女，住在哥哥的 VPS 里），是运行时唯一人格规范
+
+`archive/` 内的其余文件（详版、语言技巧指南、刚归档的根目录版）均为原著素材，仅作后续修改精简版的参考，不参与运行：
 
 ```
 personality/
-├── SUN2.md                 # 唯一权威人格设定（分层人格/身份/关系/边界）
-├── 迟菓语言技巧指南.md      # 语气操作手册（L1 语气词 → L6 自查）
-├── tsundere.toml           # 傲娇措辞素材
-└── deredere.toml           # 娇羞措辞素材（与 tsundere 组合使用，非切换开关）
+├── 迟菓人格-精简版.md              # 运行时唯一人格规范（agent-run.mjs 实际注入）
+├── archive/                       # 原著素材（不参与运行，仅参考）
+│   ├── SUN2.md                    # 角色本质权威（与原著《日光雨》逐条对齐）
+│   ├── 迟菓人格-详版.md            # 原著场景详版（素材参考）
+│   ├── 迟菓语言技巧指南.md          # 语气操作手册（L1 语气词 → L6 自查）
+│   └── 迟菓人格-精简版-根目录版.md  # 刚归档的根目录历史版本（原著素材）
+├── tsundere.toml                  # 傲娇措辞素材
+├── deredere.toml                  # 娇羞措辞素材（与 tsundere 组合使用，非切换开关）
+├── 工具用法.md                     # 可用工具与调用时机
+└── 记忆用法.md                     # 长期记忆使用规范
 ```
 
-想调整她的行为？所有参数集中在 `chiguo_proactive.toml`（368 行，`--loop` 模式热重载），无需改代码。
+想调整她的行为？所有参数集中在 `chiguo_proactive.toml`（470 行 / 22 段，`--loop` 模式热重载），无需改代码。
 
 ---
 
@@ -351,7 +362,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 | [doc/SYSTEM.md](doc/SYSTEM.md) | 完整系统文档（架构、业务逻辑、配置参考、CLI、文件清单） |
 | [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | 完整部署指南（分级路径/前提条件/落点地图/迁移/验证） |
 | [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) | agent 后端集成指南（模型后端、微信桥、部署） |
-| [doc/日光雨.md](doc/日光雨.md) | 官方续作《三色绘恋S》剧本全文（人格设定基准） |
+| [doc/日光雨.md](doc/日光雨.md) | 官方续作《三色绘恋S》剧本全文（17099 行，人格设定基准） |
 | [AGENTS.md](AGENTS.md) | AI 开发助手约定（含完整测试链） |
 
 欢迎任何形式的贡献——尤其是"她"的成长：
@@ -373,7 +384,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 `[memory].backend` 唯一 `mem0`：`uv sync` 即装齐（mem0ai+ollama 为必需依赖）+ ollama 本地 qwen3-embedding + LLM key 时全功能；部署硬性检查——mem0ai 未装 → `envcheck` 报 critical（阻塞部署）；无 LLM key/ollama 未启动 → 报 warn（记忆话题源减少，不影响运行），运行中不可用则 60 秒节流自愈。
 
 **怎么换人格/调性格？**
-迟菓的人格是固定的（系统围绕单一角色设计），不可替换角色。想调整行为？改 `chiguo_proactive.toml` 的参数即可——`SUN2.md` 是唯一权威设定，语感在《迟菓语言技巧指南》。
+迟菓的人格是固定的（系统围绕单一角色设计），不可替换角色。想调整行为？改 `chiguo_proactive.toml` 的参数即可——角色本质以 `personality/archive/SUN2.md` 为权威，运行时规范是 `personality/迟菓人格-精简版.md`（agent-run.mjs 实际注入），语感在 `personality/archive/迟菓语言技巧指南.md`。
 
 **换模型要改代码吗？**
 不用。改 `chiguo_proactive.toml` 的 `[host].provider/model` + 配 key 即可；自定义 OpenAI 兼容端点见 [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)。
@@ -395,21 +406,31 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 ## 📁 文件结构
 
 ```
-chiguo_proactive.toml    # 主配置（所有参数，热重载）
-chiguo_daemon.py         # 决策引擎（主入口，零 LLM）
-chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian
-chiguo_math.py           # 纯数学库（sigmoid/弹性衰减/交互矩阵/饱和阻尼/Hawkes/Jaccard）
-chiguo_composer.py       # Intent×Cue×Vibe 消息组合 + 兜底 CLI（生成失败回退）
-memory/                  # 记忆后端（mem0 唯一；base/mem0_backend/factory；memory_bridge.py 兼容门面）
+chiguo_proactive.toml    # 主配置（470 行 / 22 段，所有参数，热重载）
+chiguo_daemon.py         # 决策引擎（主入口，零 LLM；1984 行）
+chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian（2280 行）
+chiguo_monitor.py        # 结构化监控（stats/alerts/health 巡检；1186 行）
+chiguo_trigger.py        # 14 种触发评估（sigmoid + 三段激活；621 行）
+chiguo_composer.py       # Intent×Cue×Vibe 消息组合 + 兜底 CLI（生成失败回退；605 行）
+chiguo_bayesian.py       # 用户状态在线推断（6 状态；602 行）
+chiguo_topics.py         # 8 大话题来源注入（436 行）
+chiguo_math.py           # 纯数学库（sigmoid/弹性衰减/交互矩阵/饱和阻尼/Hawkes/Jaccard；439 行）
+chiguo_envcheck.py       # 环境就绪检查（357 行）
+chiguo_circadian.py      # 生物钟学习（双作息分桶；249 行）
+chiguo_personality.py    # 人格加载与适配（236 行）
+chiguo_demo.py           # 交互式 Demo（纯模板，无 LLM；210 行）
+chiguo_rotation.py       # 日志轮转 & 对话存档（175 行）
+memory_bridge.py         # 记忆兼容门面（根目录；实现已迁移 memory/ 包）
+memory/                  # 记忆后端抽象（mem0 唯一后端；base/mem0_backend/factory）
 schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
-                         #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan）
+                         #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan/parser/parsing/query）
 scripts/                 # tick/replan crontab 入口 + agent runner 抽象（agent-run.mjs，默认 agent）
                          #   + 环境安装 + 假死检测（agent_health.py）
-wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs）
-personality/             # 人格设定（SUN2.md + 语言指南 + 措辞素材 toml）
-doc/                     # 系统文档（SYSTEM.md / AGENT_INTEGRATION.md / 日光雨剧本）
-tests/                   # 测试（独立 runner）
-data/                    # 数据文件（课表/手动记忆/网易云二维码，不进 git）
+wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs + agent-rpc.mjs）
+personality/             # 人格（迟菓人格-精简版.md 运行时规范 + archive/ 原著素材 + 措辞 toml + 工具/记忆用法）
+doc/                     # 系统文档（SYSTEM.md / DEPLOYMENT.md / AGENT_INTEGRATION.md / 日光雨剧本 17099 行）
+tests/                   # 测试（59 Python + 8 Node(.mjs) + 5 Shell(.sh) 独立 runner）
+data/                    # 数据文件（课表/记忆库 data/mem0/ 等，不进 git）
 ```
 
 详细清单见 [doc/SYSTEM.md 六、文件清单](doc/SYSTEM.md#六文件清单)。

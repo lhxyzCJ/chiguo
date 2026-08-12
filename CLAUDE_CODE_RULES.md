@@ -1,338 +1,96 @@
-# Claude Code Rules — Chiguo Proactive Message System
+# Claude Code 开发规则 — Chiguo Proactive Message System
 
-> Auto-generated 2026-07-02 from full codebase audit; refreshed 2026-08-09 (v1.11). 44 py + 13 script runners, zero framework, pure Python stdlib.
+> 定位：纯 Claude Code 开发规则（构建、测试、约定、gotchas）。版本 v1.15。
+> 架构（文件依赖树、evaluate() 决策流、5 维情绪引擎、触发系统、话题注入、消息 composer、Ship of Theseus 配置参数、决策输出 schema、运行时数据文件归属）详见 **doc/SYSTEM.md**。
+> agent 后端集成（LLM Host、send/reply 侧、SUN2.md 人格宪法、skill 文件边界）详见 **doc/AGENT_INTEGRATION.md**。
+> 测试 59 py + 8 node + 5 shell 独立 runner（合计 13 script，清单 scripts/ci-test.sh）；zero framework，纯 Python stdlib。
 > **Iron law**: decision/generation separation. Daemon outputs JSON. agent backend generates messages (Phase 4).
 
 ---
 
-## 1. Build & Test
+## 1. 构建与测试 (Build & Test)
 
 ```bash
-# Run ALL tests: 44 py + 13 script runners (every runner exits non-zero on failure)
-node tests/test_agent_run.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && \
-node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
-bash tests/test_install_agent.sh && bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
-bash tests/test_tick_health.sh && \
-uv run python tests/test_chiguo_math.py && uv run python tests/test_holiday_parser.py && \
-uv run python tests/test_schedule_parser.py && \
-uv run python tests/test_integration.py && uv run python tests/test_monitor.py && \
-uv run python tests/test_eventbus.py && uv run python tests/test_personality.py && \
-uv run python tests/test_bayesian.py && uv run python tests/test_composer.py && \
-uv run python tests/test_ebbinghaus.py && uv run python tests/test_longing.py && \
-uv run python tests/test_escape_valve.py && uv run python tests/test_feedback.py && \
-uv run python tests/test_trigger.py && uv run python tests/test_topics.py && \
-uv run python tests/test_circadian.py && uv run python tests/test_followup.py && \
-uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
-uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
-uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
-uv run python tests/test_adapt_personality.py && uv run python tests/test_agent_health.py && \
-uv run python tests/test_anniversary.py && uv run python tests/test_schedule_override.py && \
-uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
-uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
-uv run python tests/test_trigger_scale.py && uv run python tests/test_isolation.py && \
-uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py && uv run python tests/test_docs_sync.py
+# 全量测试：59 py + 8 node + 5 shell 独立 runner（任一失败退出非零；清单权威入口）
+bash scripts/ci-test.sh
 
-# Single file
+# 单文件
 python3 tests/test_monitor.py
 
-# Decision engine (single eval → JSON to stdout)
+# 决策引擎（单次 eval → JSON 到 stdout）
 python3 chiguo_daemon.py
 
-# Interactive demo (no LLM, templates only)
+# 交互式 demo（无 LLM，仅模板）
 python3 chiguo_demo.py
 
-# Monitoring
-python3 chiguo_daemon.py --stats 7     # 7-day stats
-python3 chiguo_daemon.py --alerts      # anomaly detection
-python3 chiguo_daemon.py --monitor     # full report
-python3 chiguo_daemon.py --stats      # structured stats
-python3 chiguo_monitor.py --health     # system health check
-python3 chiguo_monitor.py --alerts     # alert list
-python3 chiguo_monitor.py --alerts-all # incl. resolved
-python3 chiguo_watchdog.py             # standalone health (exit 0/1/2)
+# 监控 / 健康
+python3 chiguo_daemon.py --stats 7      # 7 日统计
+python3 chiguo_daemon.py --alerts       # 异常检测
+python3 chiguo_daemon.py --monitor      # 完整报告
+python3 chiguo_daemon.py --stats        # 结构化统计
+python3 chiguo_monitor.py --health      # 系统健康检查
+python3 chiguo_monitor.py --alerts      # 告警列表
+python3 chiguo_monitor.py --alerts-all  # 含已解决
 
-# Maintenance
-python3 update_holidays.py 2027 --solar --force  # generate holiday data
+# 维护
+python3 update_holidays.py 2027 --solar --force  # 生成节假日数据
 
-# Log rotation (auto-called by daemon init)
+# 日志轮转（daemon 初始化时自动调用）
 python3 chiguo_rotation.py --force
 ```
 
-**No build step. No pip install.** Python 3.14-only (PEP 758 bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`). Optional: `openpyxl` (schedule), `mem0ai` + `ollama` (memory layer). Note: `memory/mem0_backend.py` (`Mem0Backend`) lazy-imports `mem0` inside `available` probing; when absent it runs with `available=False` and memory queries degrade gracefully — the daemon never crashes on missing mem0.
+**No build step. No pip install.** Python 3.14-only（PEP 758 无括号 `except E1, E2:`、延迟注解——禁止加 `from __future__ import annotations`）。可选依赖：`openpyxl`（schedule）、`mem0ai` + `ollama`（记忆层）。`memory/mem0_backend.py`（`Mem0Backend`）在 `available` 探测内**惰性导入** `mem0`；缺失时 `available=False` 优雅降级，记忆查询软降级返回空，daemon 不会因缺 mem0 崩溃。
+
+### daemon CLI（34 个参数）
+`--ack --alerts --alerts-all --analysis --analysis-file --anniversary --attention --break --compact --consolidate --conversation --conversation-days --error --export --fallback --health --intensity --loop --memory-search --monitor --record-send --rotate --schedule-change --schedule-recall --send-result --send-status --stats --status --text --trigger --tune --user-msg --user-msg-file --version`
+
+各参数语义见 doc/SYSTEM.md CLI 章节。
 
 ---
 
-## 2. Architecture — File Dependency Tree
+## 2. 架构与集成（指向权威文档）
 
-```
-chiguo_daemon.py (DecisionEngine — 1580 lines)
-├── chiguo_math.py          Pure functions: sigmoid, decay, recover, dynamic_lambda, Hawkes, longing, v1.11 impact_inertia/user_mood_impact/ou_step/baseline_shift_of
-├── chiguo_state.py         ChiguoState + ChiguoEmotion + CooldownState (1701 lines)
-│   ├── chiguo_personality.py  PersonalityTraits (8 dims) + PersonalityDelta + Deltas (231 lines)
-│   ├── v1.11: impact_inertia 阻尼 + user_mood 感知（CooldownState.user_mood）+ OU 噪声 + baseline_* 漂移（ChiguoEmotion 字段，默认关闭恒等）
-│   ├── chiguo_bayesian.py     UserStateEstimator (6 states) + BayesianLearner
-│   ├── schedule/ 包        schedule 数据面 parser.py (xskb.xlsx → schedule_cache.json → query) + parsing.py 纯解析 + query.py 策略 + holiday.py (节假日) + anniversary.py (纪念日) + override_store/plan_store/api (覆盖/计划/澄清存储) + sources/day_plan/resolve_when/attention/recall (检索与安排) + confirm + replan
-│   ├── memory/ 包            MemoryBackend abstraction (v1.8): base.py (available/search/random_memory/stats primitives + base-class Ebbinghaus) / mem0_backend.py Mem0Backend (mem0ai: LLM fact extraction + ollama embedding + qdrant embedded, lazy import, available=False degrade, CHIGUO_MEM0_DISABLED=1 test hook) / factory.py create_backend; memory_bridge.py kept as compat facade (MemoryBridge alias + CLI)
-│   └── chiguo_circadian.py    dual-bucket sleep-window learning (weekday/weekend + active-time merging)
-├── chiguo_trigger.py       evaluate_triggers() → 14 trigger types (incl. v7 follow_up + v1.11 comfort), sigmoid-weighted
-├── chiguo_topics.py        TopicPicker — 8 sources (incl. v9 netease), Ebbinghaus-weighted memory
-├── chiguo_composer.py      MessageComposer — Intent × Cue × Vibe (389 lines)
-├── chiguo_rotation.py      Monthly log rotation → archive/
-├── chiguo_version.py       Project version single source (VERSION="1.11", MINOR +1 per round: 1.9→1.10→1.11, not decimal addition)
-└── chiguo_monitor.py       ChiguoMonitor + AlertManager + DecisionIndex (1196 lines)
-
-Supporting (not imported by daemon):
-├── chiguo_demo.py          Interactive terminal demo (template-only, no LLM) (191 lines)
-├── chiguo_watchdog.py      Standalone health checks (cron/systemd timer)
-├── chiguo_envcheck.py      Read-only env readiness check (Python/agent/ollama/auth/mem0/netease/data, exit 0/1/2)
-├── netease/                Netease package: bridge.py (NeteaseBridge 数据面, upstream: api-enhanced v4.39.0, localhost:3000) + service.py (NeteaseService 策略层 DI) + 运行时文件(锚定 <base_dir>/netease/)
-├── solar_terms.py          24 solar terms lookup (±1 day window) (85 lines)
-└── update_holidays.py      Generate holidays.json + solar_terms.json for any year
-```
+- 文件依赖树、evaluate() 决策流、5 维情绪引擎、触发系统、话题注入、消息 composer、配置参数（Ship of Theseus）、决策输出 schema → **doc/SYSTEM.md**
+- LLM Host Integration（agent runner 抽象、send/reply 侧、SUN2.md 人格宪法、skill 文件安全边界）→ **doc/AGENT_INTEGRATION.md**
 
 ---
 
-## 3. Core Decision Flow (chiguo_daemon.py evaluate())
+## 3. 关键模式与约定 (Key Patterns & Conventions)
 
-```
-evaluate(now)
-├── _maybe_reload_config()     Check TOML mtime → hot-reload
-├── _tick(now)                 Wall-clock → state.tick(hours)
-│   ├── Monotonic clock guard  (backward jump returns without tick(); forward >24h → dampen 50%)
-│   └── Naive datetime → CST   (_parse_tz helper)
-├── Bayesian infer             state.infer_user_state(now) → should_send_bayesian (happens in evaluate(), not can_send())
-├── can_send() gate
-│   ├── Daily limit            (max 4 active / 2 silent)
-│   ├── Min interval           30 min default
-│   ├── Energy check           primary gate 12, override min 5 via rate_energy_override
-│   ├── Quiet hours            00:00-8:00
-│   ├── Busy suppression       user busy → suppress_hours
-│   ├── Bayesian block         evaluated in evaluate(), not can_send()
-│   └── Longing overflow       held_count>3 + acc_lam>=base*1.5 + anxiety<threshold → allow
-├── If CANNOT send → idle
-│   ├── longing_accumulate()   Only runs for "no_trigger" and "user_busy" idle reasons (not all idle)
-│   ├── save state
-│   └── return idle decision + next_evaluation_at
-├── If CAN send → evaluate_triggers(state, now)
-│   ├── Ritual: special(3.0), morning(2.5), night(2.0), memory(2.0)
-│   ├── Emotion: lonely_low/mid/high (softmax normalized), anxiety, playful, reflect, longing
-│   ├── Weighted random choice (sigmoid weights)
-│   └── Safety valve: lonely_high→lonely_mid (level 1), all→soft (level 2)
-├── If trigger fires → build_context() + on_character_message() + save + log
-│   ├── Composer: select_combo(trigger_type, now) → Intent + Cue + Vibe
-│   ├── Topic injection: 70% chance for lonely triggers, forced at 3 consecutive
-│   └── character_rules: ⑦ in code (⑧⑨ only in condensed context dict); kernel layer pauses rule ①
-└── _dynamic_sleep_interval()  Compute optimal next check (for --loop mode)
-```
+### 状态持久化
+- **原子写**：`.tmp` 文件 → 校验 JSON → `os.replace()` 覆盖目标
+- **备份**：覆盖前 `.bak` 副本
+- **校验和**：`_checksum` 字段 SHA256（校验但不因 mismatch 拒绝）
+- **审计日志**：`chiguo_state_audit.jsonl` 记录损坏/恢复事件
+- **tick_seq**：单调递增 tick 计数器（写盘前 CAS 保护，磁盘领先则内存跟随），用于检测遗漏 tick
+- **PID 锁**：`chiguo_loop.pid` 防止 `--loop` 模式双启动
 
----
+### 流式 JSONL 解析
+- `_iter_decisions()` 逐行读取 — O(n) 时间、O(1) 内存
+- 缺失文件/空文件/损坏行不崩溃
+- `DecisionIndex` 构建字节偏移索引，按 trigger/date/action O(1) 查询
 
-## 4. 5-Dimension Emotion Engine (chiguo_state.py)
+### 配置热重载
+- `_maybe_reload_config()` 每次 `evaluate()` 前检查 TOML mtime
+- 重建状态对象，`_bayesian_estimator` 重置为 None（惰性重初始化）
+- 仅 `--loop` 模式有意义；cron 每次起新进程
 
-| Dimension | Initial | Equilibrium | Half-life | User reply effect |
-|-----------|---------|-------------|-----------|-------------------|
-| loneliness | 15 | → 100 | 40h | decay drop (0.35h) |
-| affection | 55 | → 0 | 500h | Mild gain |
-| anxiety | 40 | → 100 | 30h | decay drop (0.5h) |
-| energy | 85 | → 100 | 8h | Mild gain |
-| tsundere_index | 70 | → personality baseline | — | Drops on reply |
+### 测试隔离
+- `tests/test_monitor.py` 用 `tempfile.TemporaryDirectory`；其余为纯函数测试，无共享状态
+- 无测试框架：裸 `assert` + `if __name__ == "__main__"` runner
+- `sys.path.insert(0, ...)` 找兄弟模块
+- `random.seed(42)` 保证集成测试确定性
+- 固定时间用显式 `datetime(..., tzinfo=CST)`
 
-**Personality layers** (dominant_layer property):
-- **Shell** (loneliness≤50, anxiety≤70): Genki, bright, active. Rule ① active.
-- **Middle** (loneliness>50, anxiety≤70): Stubborn, mouth-hard. Rule ① active.
-- **Kernel** (anxiety>70 or loneliness>80): Fragile, vulnerable. Rule ① PAUSED.
-
-**Key formulas**:
-- Decay: `value * 2^(-t/half_life)`
-- Recovery: `current + gap * (1 - 2^(-t/half_life))`
-- Event rate: `current_lambda()` — base × sigmoid(loneliness) × sigmoid(anxiety) × availability × Hawkes × no-reply backoff
-- Dynamic lambda: `base * sigmoid(loneliness) * sigmoid(anxiety) * availability * modifiers`
-- Hawkes: `base_mu + Σ(alpha * exp(-beta * (t - t_i)))`
-- Longing accumulate: `new_lambda += growth_factor * max(held_count, 1)`, capped at `base_lambda * max_lambda_multiplier`; blocked if `anxiety >= anxiety_block_threshold`
+### 命名约定
+- 测试函数 `test_` 前缀，成功打印 `"  OK test_name"`
+- dataclass 字段有默认值；可变默认值用 `field(default_factory=...)`
+- 私有方法 `_` 前缀
+- CLI：argparse 模式，JSON 到 stdout、诊断到 stderr
 
 ---
 
-## 5. Trigger System (chiguo_trigger.py)
-
-14 trigger types (v7: + follow_up 接话茬; v1.11: + comfort 安慰), all sigmoid-weighted random selection (no hard thresholds):
-
-| Trigger | Weight | Condition |
-|---------|--------|-----------|
-| special | 3.0 × ritual_scale | Today is special date (birthdays) |
-| morning | 2.5 × ritual_scale | 8-10am, 10% random gate, not sent today |
-| night | 2.0 × ritual_scale | 8-9pm, 12% probability, not sent today |
-| json_memory | 2.0 × ritual_scale | JSON memory with trigger_at in ±10min window |
-| mem0_memory | 1.5 × ritual_scale | 8% random gate when silent>6h |
-| meal | 0.8 × ritual_scale | 11-12,17-19h, 5% probability |
-| lonely_low | softmax(loneliness) | sigmoid gate at midpoint 38 |
-| lonely_mid | softmax(loneliness) | sigmoid gate at midpoint 55 |
-| lonely_high | softmax(loneliness) | sigmoid gate at midpoint 78 |
-| anxiety | softmax(anxiety) | sigmoid gate at midpoint 58 |
-| playful | extraversion-modulated | energy>70, 2h<silent<48h, free time |
-| reflect | neuroticism-gated | affection>70, silent<2h, energy>60, neuroticism<70 gate |
-| longing | overflow signal | is_longing_overflow() condition |
-
-**Personality modulation**: tsundere INCREASES lonely_low/mid weights, DECREASES lonely_high (no direct effect on anxiety); extraversion boosts playful; neuroticism (<70) gates reflect.
-
----
-
-## 6. Topic Injection (chiguo_topics.py)
-
-8 sources, weighted random, triggered on lonely triggers (70% chance, forced at 3 consecutive):
-
-| Source | Weight | Description |
-|--------|--------|-------------|
-| schedule | 0.30 | Class schedule, holiday, weekend status |
-| memory | 0.25 | mem0 with Ebbinghaus forgetting re-ranking |
-| general | 0.25 | Time-of-day generic topics |
-| weather_season | 0.20 | Month-based season hints |
-| anniversary | 0.15 | Today's anniversaries + upcoming within 7 days |
-| solar_terms | 0.10 | ±1 day window around 24 solar terms |
-| preference_followup | 0.10 | mem0 user preference category memories |
-| netease | 0.12 | NeteaseService strategy layer (v9): music topic, peek/consume quota |
-
-**Ebbinghaus**: `R = e^(-t / (strength * importance))`, clamped to `[min_weight, 1.0]`. Default strength=168h (7-day half-life), min_weight=0.1.
-
----
-
-## 7. Message Composer (chiguo_composer.py)
-
-Intent × Cue × Vibe three-layer system:
-
-- **Layer 1 (Intent)** — 20%: What to express (~36 intents across 14 trigger types)
-- **Layer 2 (Intent + Cue)** — 50%: How to express (8 personality styles: tsundere_classic/soft/cool, dere_dere, playful_bubbly, anxious_clingy, caring_gentle, cool_mysterious)
-- **Layer 3 (Intent + Cue + Vibe)** — 30%: Atmosphere (13 vibes: early_morning, morning, noon, afternoon, evening, night, late_night, weekend variants, holiday, rainy, sunny, exam_season)
-
-**Cue selection modulated by**: tsundere_intensity, extraversion, neuroticism, agreeableness, trigger_type.
-
----
-
-## 8. Key Patterns & Conventions
-
-### State Persistence
-- **Atomic write**: `.tmp` file → validate JSON → `os.replace()` to target
-- **Backup**: `.bak` copy before overwrite
-- **Checksum**: SHA256 in `_checksum` field (validates but doesn't reject on mismatch)
-- **Audit log**: `chiguo_state_audit.jsonl` records corruption events
-- **tick_seq**: Monotonic counter, watchdog compares for forward progress
-- **PID lock**: `chiguo_loop.pid` prevents double-start in `--loop` mode
-
-### Streaming JSONL Parser
-- `_iter_decisions()` reads line-by-line — O(n) time, O(1) memory
-- Handles missing files, empty files, corrupted lines without crashing
-- `DecisionIndex` builds byte-offset index for O(1) query by trigger/date/action
-
-### Config Hot-Reload
-- `_maybe_reload_config()` checks TOML mtime before each `evaluate()`
-- Recreates state objects, resets `_bayesian_estimator` to None (lazy re-init)
-- Only matters for `--loop` mode; cron spawns fresh processes
-
-### Test Isolation
-- `tests/test_monitor.py` uses `tempfile.TemporaryDirectory`; other test files are pure-function tests with no shared state
-- No test framework: plain `assert` statements, `if __name__ == "__main__"` runner
-- `sys.path.insert(0, ...)` to find sibling modules
-- `random.seed(42)` for determinism in integration tests
-- Fixed times via explicit `datetime(..., tzinfo=CST)`
-
-### Naming Conventions
-- Test functions: `test_` prefix, print `"  OK test_name"` on success
-- Dataclass fields have defaults; mutable defaults use `field(default_factory=...)`
-- Private methods: `_` prefix
-- CLI: argparse patterns, JSON to stdout, diagnostics to stderr
-
----
-
-## 9. Ship of Theseus — Config Parameters (chiguo_proactive.toml)
-
-277 lines, 20 sections: 遗留 section（已废弃，Task 14；仅 wechat_recipient 仍读取）`[memory]`（v1.9 记忆后端：backend=mem0 + mem0_user_id/mem0_collection/mem0_qdrant_path/mem0_history_db/mem0_llm_*/mem0_embedder_*/ebbinghaus_*）`[character]` `[emotion]` `[sigmoid]` `[trigger]` `[poisson]` `[topic_picker]` `[schedule]` `[circadian]` `[netease]` `[hawkes]` `[cooldown]` `[personality]` `[bayesian]` `[composer]` `[safety]` `[monitor]` `[logging]` `[host]`（agent 调用配置：runner/agent_command/provider/model/…，见 §11）。Key tunables:
-
-| Section | Key params | Effect |
-|---------|-----------|--------|
-| `[emotion]` | half_life values, event deltas, v1.11 impact_inertia_*/user_mood_*/noise_*/baseline_*（全部默认关闭） | Emotion dynamics speed + 惯性阻尼/情绪感知/波动/基线漂移 |
-| `[sigmoid]` | k, midpoint per dimension | Trigger probability curves |
-| `[poisson]` | base_lambda (0.25/h) | Message frequency baseline |
-| `[hawkes]` | alpha=0.3, beta=0.5 | Self-excitation strength/decay |
-| `[cooldown]` | max sends, min interval, longing params | Send gating |
-| `[topic_picker]` | 8 source weights | Topic distribution |
-| `[circadian]` | confidence threshold, window params | Sleep-window learning (v7/v8) |
-| `[netease]` | retry, quotas, source weights | Netease strategy layer (v9) |
-| `[composer]` | combo size probs, 8 cue weights | Message composition |
-| `[personality]` | 8-dim initial values | Character baseline |
-| `[bayesian]` | learning_rate, thresholds | User state inference |
-| `[safety]` | crash cooldown 24h, max 2/48h | Crash protection |
-| `[schedule]` | quiet hours, semester dates, special dates | Time gating |
-
----
-
-## 10. Decision Output Schema (chiguo_decisions.jsonl)
-
-**Send decision**:
-```json
-{
-  "action": "send", "version": "1", "msg_id": "12-char hex",
-  "trigger": "trigger_type", "intensity": "soft|medium|strong",
-  "context": {
-    "layer_guidance": "...", "character_rules": "...", "instruction": "...",
-    "emotion": {...}, "personality_profile": "...", "personality_source": "...",
-    "character": "迟菓", "schedule_hint": "...", "situation": "...", "layer": "...",
-    "combo": {"combo_string": "..."},
-    "silent_hours": 0.0, "poisson_lambda": 0.0, "accumulated_lambda": 0.0,
-    "trigger_type": "...", "intensity": "..."
-  },
-  "emotion": {"loneliness": 0.0, "affection": 0.0, "anxiety": 0.0, "energy": 0.0, "tsundere_index": 0.0},
-  "cooldown": {"messages_without_reply": 0, "messages_today": 0},
-  "personality": {"tsundere_intensity": 70, ...}
-}
-```
-
-**Idle decision**: `action: "idle"` (also carries top-level `version`), adds `reason` (idle reason: user_sleeping/user_busy/daily_limit/low_energy/min_interval/quiet_hours/no_trigger/busy_suppressed/sleeping_guard), `next_evaluation_at`, and `state`/`bayesian`.
-
----
-
-## 11. LLM Host Integration (Phase 4 — agent backend)
-
-> Current architecture: system crontab `chiguo-tick.sh` (send side, session `chiguo-send`) + wechat-bridge
-> `askAgent` (reply side, session `chiguo-main`) + `scripts/agent-run.mjs` + `scripts/install_agent.sh`.
-> See `doc/AGENT_INTEGRATION.md`.
->
-> v1.8 agent runner abstraction: `[host].runner` = `agent` (default, agent backend binary) or `command` (any CLI agent
-> via `[host].agent_command` array). In command mode agent-run.mjs executes
-> `<agent_command> --prompt <full prompt> --mode <analysis|send|extract|verify|recall|replan>` and parses
-> stdout JSON `{ok,text,analysis?,parsed?,raw?}` (NDJSON compatible); prompts are built from agent-run.mjs
-> per-mode templates. The RPC persistent mode stays agent-only (`WECHAT_BRIDGE_AGENT_RPC=1`).
-
-### Send side — trigger-script gate (zero model calls on idle)
-1. **Cron**: system crontab `*/15 * * * *` runs `scripts/chiguo-tick.sh` (send side, session `chiguo-send`; registered by `scripts/install_agent.sh`)
-2. Trigger script runs `<repo>/.venv/bin/python chiguo_daemon.py --compact` with no model execution
-3. `action: "idle"` → `{fire: false}` (~90% of evaluations never wake the agent)
-4. `action: "send"` → `{fire: true, message: <decision JSON>}` → agent generates 1-3 sentence WeChat message using **SUN2.md** personality + daemon context → sends via `curl --noproxy '*' -X POST http://127.0.0.1:18790/send` (wechat-bridge) → writes back `--record-send <msg_id> --text <text> [--trigger <trigger>] [--intensity <intensity>]` (or `--send-result` on failure)
-
-### Reply side — bridge askAgent
-1. WeChat message arrives → `bridge.mjs` runs deterministic `--user-msg` on arrival; special-command detection (`command-detect.mjs`: anniversary/break rules, no agent) → otherwise `askAgent` (`agent-run.mjs --prompt <原文> --analysis-mode`, session `chiguo-main`)
-2. Agent analyzes emotion (warmth/effort/attention/suppress_hours) → updates daemon via `--user-msg --analysis`
-3. Agent replies naturally using SUN2.md personality. Recording: bridge deterministically runs `--user-msg` (no analysis) on arrival; the askAgent `--user-msg --analysis` call is deduped by daemon `recv_dedup` (same text within 450s → analysis-only upgrade, no double counting; 窗口覆盖 agent 分析往返与 recall 两趟路径)
-
-### Schedule-center CLI (daemon subcommands, schedule/ 包)
-- `chiguo_daemon.py --attention` — T1/T2/T3 注意力快照（回复侧注入，零写；失败降级继续 askAgent）
-- `chiguo_daemon.py --schedule-recall <query>` — 安排回忆检索（日期或关键词，A4 形状）
-- `chiguo_daemon.py --schedule-change <json>` — 写安排（reminder/add/cancel/move/exam_week/remove；畸形 JSON → bad_json 不写入；ApiRejection → H5 文案）
-- `python -m schedule.replan --check` — 复盘只读检查明日计划；`python -m schedule.holiday [YYYY-MM-DD]` — 节假日查询
-
-### SUN2.md Personality Constitution (283 lines)
-- **3-layer structure**: 喧闹外壳 → 倔强中层 → 脆弱内核
-- **3-stage tsundere protocol**: Push away (MANDATORY) → Accept + belittle → Quiet truth leak
-- **Signature**: 哼 is core particle. ~ on 30-40% dialogue. 喵 only for cats. 嘻嘻 extremely rare (10/17000 lines).
-- **Anti-patterns table**: 15 forbidden behaviors with correct alternatives
-- **Self-check**: 15-item role consistency checklist
-
-### Skill files (allowed security boundary)
-- **Repo**（Phase 4 起唯一权威）：`personality/SUN2.md`、`personality/迟菓语言技巧指南.md`（随仓库部署，agent-run 注入）
-
-Note: v4 residue `scripts/on-user-msg.sh` and `.claude/settings.json` UserPromptSubmit hooks have been removed (backed up to `.bak`).
-
----
-
-## 12. Runtime Files (privacy data — login state/conversation logs/personal data — is never committed; kept locally only)
+## 4. 运行时文件（隐私数据——登录态/会话日志/个人数据永不入库，仅本机保留）
 
 Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl`/`chiguo_decisions.jsonl`, `data/` personal files) is **never committed** — kept locally only, history rewritten (2026-08-02 security pass).
 
@@ -345,7 +103,6 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | `chiguo_messages.jsonl` | chiguo_daemon.py | Human-readable conversation log (v5) |
 | `chiguo_state_audit.jsonl` | chiguo_state.py | Corruption/recovery audit trail (v5) |
 | `chiguo_alerts.json` | chiguo_monitor.py | AlertManager persisted state |
-| `chiguo_watchdog_state.json` | chiguo_watchdog.py | Last seen tick_seq for stall detection |
 | `chiguo_loop.pid` | chiguo_daemon.py | PID lock file |
 | `schedule_cache.json` | schedule/parser.py | Parsed xskb.xlsx cache |
 | `schedule_overrides.json` | schedule/override_store.py | Manual schedule overrides (atomic 0600) |
@@ -362,7 +119,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 
 ---
 
-## 13. Known Design Decisions (not bugs)
+## 5. 已知设计决策（非 bug）
 
 - **M3**: Config hot-reload resets Bayesian estimator → conservative, prevents stale config
 - **M5**: Ritual trigger weights (2.5-3.0) dominate emotion weights (0.01-0.9) → by design; tune `ritual_weight_scale` to adjust
@@ -372,57 +129,30 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 
 ---
 
-## 14. Pitfalls & Gotchas
+## 6. 陷阱与 Gotchas
 
 1. **File already read**: Edit tool requires Read first. When Read hook blocks (claude-mem down), use Bash/python for edits.
 2. **Timezone**: Always use `CST = timezone(timedelta(hours=8))`. Naive datetimes get auto-completed via `_parse_tz()`.
 3. **TOML types**: `rate_energy_min = 5.0` must be float. Comments must match values.
-4. **mem0 optional**: All memory queries gracefully degrade to `[]`. Tests mock or skip (`CHIGUO_MEM0_DISABLED=1` for deterministic unavailable).
-5. **xskb.xlsx missing**: Schedule fallback → availability=0.85 (treated as free time).
+4. **mem0 惰性导入 + 60s 节流**: mem0 缺失时 `available=False` 优雅降级（记忆查询返回空；测试 mock/skip，`CHIGUO_MEM0_DISABLED=1` 确定性不可用）。故障驱动自愈：置不可用后至少间隔 `_RETRY_SECONDS=60` 才重新探测（memory/mem0_backend.py）。
+5. **xskb.xlsx 缺失 / schedule 解析失败**: `refresh_schedule_cache` 返回 available=False → 按空闲处理（availability=1.0，tier=unavailable）；解析失败（`openpyxl` 缺失/文件损坏）保留旧缓存、不覆盖落盘（schedule/parser.py）。
 6. **Test order**: Integration tests need `chiguo_proactive.toml` in CWD. Run from the repo root.
 7. **Ritual weight scale**: `evaluate_triggers()` multiplies all ritual weights by `ritual_weight_scale`. Set to 0.3 to balance with emotion weights.
 8. **character_rules ⑦ vs condensed**: Full rules (guidance variable) missing 喵/嘻嘻. Condensed version (context dict) has them. Both now fixed (2026-07-02).
-10. **Bayesian normalization**: `update_from_label()` normalizes cached P(obs|state) to sum=1.0. Uncached values default to 0.05 but are not in the normalization group.
+9. **Bayesian normalization**: `update_from_label()` normalizes cached P(obs|state) to sum=1.0. Uncached values default to 0.05 but are not in the normalization group.
+10. **time-bomb 测试不修**: 部分测试锚定真实日期/真实时钟（如 tests/test_topics.py 的 on_break 用 `datetime.now()` 与 semester_end 比较，测试固定 semester_end 为过去日期取确定分支）。这类"时间炸弹"在真实日期越过时可能失效——约定是不预先修补，等其失败时再更新锚定。
 
 ---
 
-## 15. File Quick Reference
-
-| File | Lines | Purpose | Key exports |
-|------|-------|---------|-------------|
-| chiguo_math.py | 167 | Pure math | sigmoid, decay, recover, dynamic_lambda, hawkes_intensity, longing_*, weighted_trigger_choice |
-| chiguo_state.py | 1701 | State engine | ChiguoState, ChiguoEmotion, CooldownState |
-| chiguo_daemon.py | 1580 | Orchestrator | DecisionEngine, main() |
-| chiguo_trigger.py | 370 | Trigger selection | evaluate_triggers(), Trigger |
-| chiguo_topics.py | 372 | Topic injection | TopicPicker |
-| chiguo_composer.py | 389 | Message composition | MessageComposer |
-| chiguo_personality.py | 231 | Personality system | PersonalityTraits, PersonalityDelta, PersonalityDeltas |
-| chiguo_bayesian.py | 474 | User inference | UserStateEstimator, BayesianLearner |
-| chiguo_monitor.py | 1196 | Analytics | ChiguoMonitor, AlertManager, DecisionIndex |
-| chiguo_watchdog.py | 294 | Health checks | run_all_checks(), cli() |
-| chiguo_rotation.py | 165 | Log rotation | rotate_if_needed(), force_rotate() |
-| chiguo_demo.py | 191 | Interactive demo | Demo class |
-| chiguo_version.py | 5 | Project version | VERSION |
-| memory/ 包 | — | Memory abstraction | base.py: MemoryBackend (available/search/random_memory/stats + base-class Ebbinghaus); mem0_backend.py: Mem0Backend; factory.py: create_backend; memory_bridge.py: compat facade (MemoryBridge=Mem0Backend alias + CLI) |
-| schedule/ 包 | — | Schedule/holiday/anniversary/arrangements | parser.py: refresh_schedule_cache; parsing.py; query.py(current_period/PERIOD_TIMES); holiday.py: HolidayParser; anniversary.py: AnniversaryManager; override_store.py; plan_store.py; api.py; sources.py; day_plan.py; resolve_when.py; attention.py; recall.py; confirm.py; replan.py |
-| solar_terms.py | 85 | Solar terms | SolarTerms |
-| netease/ | 939 | Netease package | bridge.py: NeteaseBridge (login/fetch_recent_play/fetch_daily_songs); service.py: NeteaseService (DI) |
-| chiguo_envcheck.py | 178 | Env readiness | run_checks() |
-| update_holidays.py | 234 | Holiday gen | generate() |
-| chiguo_proactive.toml | 277 | Config | All parameters |
-
----
-
-## 16. Security Boundary
+## 7. 安全边界 (Security Boundary)
 
 **R/W**: `data/mem0/` mem0 store (embedded qdrant + history.db) — accessed via `memory/mem0_backend.py` (`Mem0Backend`, default `[memory].backend=mem0`). LLM key: `~/.pi/agent/auth.json` opencode-go (never committed).
 
 ---
 
-## 17. Post-Change Checklist
+## 8. 改动后检查清单 (Post-Change Checklist)
 
 After ANY code change:
 1. Run affected test files
 2. Run full suite if touching math/state/daemon
 3. Update `doc/SYSTEM.md` if architecture/CLI/config changed
-4. Update relevant memory files in `/root/.claude/projects/-root-character-test/memory/`

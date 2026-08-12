@@ -9,6 +9,9 @@
 7. 架构决策看长期，别用临时凑合用的过渡方案
 8. 参考成熟产品的验证方案，别从零发明
 
+## 测试
+- 全量测试：`bash scripts/ci-test.sh`（59 py + 13 script 独立 runner，任一失败退出非零，与 GitHub Actions 同一入口）
+
 ## Git 工作流（代码改动）
 - 代码改动（refactor:/fix:/feat:）一律走分支 + PR：分支名 `simplify/<issue-N>-<slug>`；每分支对应一个 GitHub Issue（`gh issue create`），PR 正文 `Closes #N`；出口条件 = CI 全链绿 + 子代理自审 + 用户批准 → squash merge。
 - docs:/chore: 小改动可直接 main（CI 仍自动验证）。
