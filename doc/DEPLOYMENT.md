@@ -44,7 +44,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 ### 2. 全量自检
 
-`bash scripts/ci-test.sh`：42 个 Python + 10 个脚本测试，任一失败即中止。验证：看输出「全部测试通过 ✓」。
+`bash scripts/ci-test.sh`：59 py + 13 script（59 个 Python + 8 node + 5 shell 测试），任一失败即中止。验证：看输出「全部测试通过 ✓」。
 
 该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot` 与 `data/xskb.xlsx`（`ci-test.sh` 自动自举 stub 与最小课表 fixture），因此本地与 CI 结果一致。
 
@@ -114,7 +114,19 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 - 新机器：clone → 拷贝上述 → `bash deploy.sh`（自动接入；agent key 100% 迁移可用；微信/网易云跨设备自动重登兜底）
 - 微信登录态跨设备实测可复用：迁移后轮询正常，但首次**主动发送**可能被服务端拒（`[send error] prepare failed`，context_token 过期）——从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
 
-## 十、常见问题
+## 十、从旧版本（<v1.15）升级
+
+> 覆盖旧版本原地升级到 v1.15。从零部署见「四、分级部署路径」。项目不保留向后兼容（过时路径直接删），升级按「旧代码不兼容、删旧上新」执行，涉及**覆盖式**操作，务必按序备份。
+
+1. **备份本地定制与运行时文件**：`git fetch && git reset --hard origin/main` 会覆盖工作区全部改动。先备份仓库内运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`netease_health.json`、`chiguo_state_audit.jsonl`、`chiguo_watchdog_state.json` 等，会被 reset 回滚）与本地定制的 `chiguo_proactive.toml`；`~/.chiguo/auth/`（登录态）与 `~/.pi/agent/`（agent key）在仓库外不受影响。
+2. **`.env` 键名迁移**：v1.7 的 `WECHAT_BRIDGE_PI_RUN` 已废弃，v1.15 需改用 `WECHAT_BRIDGE_AGENT_RUN`（agent 运行脚本路径）+ `WECHAT_BRIDGE_AGENT_RPC`（回复链 RPC 常驻开关，`=1` 启用）。升级后必须重跑 `bash scripts/wechat-bridge.sh install`（幂等，保留登录态与 token，不必重新扫码）。
+3. **显式重启服务**：`service.sh autostart` 只注册开机自启、**不重启已运行的实例**；升级后显式 `systemctl restart chiguo-bridge`。
+4. **crontab 会被恢复**：`bash scripts/install_agent.sh` 会重写 crontab——若之前手动注释禁用过 chiguo-tick/replan-tick，升级后会恢复，注意核对。
+5. **网易云两套登录态需分别重登**：chiguo cookie（`~/.chiguo/auth/netease_cookie.txt`）与 `/opt/netease-api` 内部登录态各自独立，升级后分别扫码：`uv run python -m netease.bridge --login` 与 `bash scripts/netease-api.sh` 对应流程。
+6. **记忆不迁移**：v1.7 的 pi/lancedb 记忆**不迁移**，v1.15 起 mem0 从零开始；如需保留旧记忆先备份旧记忆库目录。
+7. **部署验证建议 `CHIGUO_MEM0_AUTOWRITE=0`**：防验证消息写入生产记忆库（对应 v1.15 A8 改动），确认无误后再放开。
+
+## 十一、常见问题
 
 - 微信桥装好了但收不到消息？（看桥日志 `logs/wechat-bridge.log`，路径见 `bash scripts/wechat-bridge.sh start` 输出；扫码态失效 → `bash scripts/wechat-bridge.sh login` 重登）
 - tick 跑过没消息？（看 `logs/cron-tick.log`；决策门控正常——深夜/静默窗口不发）
