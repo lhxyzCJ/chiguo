@@ -222,7 +222,10 @@ def mood_fresh(mood: dict | None, now, ttl_minutes: float = 360.0) -> bool:
         return False
     if at.tzinfo is None:
         at = at.replace(tzinfo=_CST)
-    age_minutes = (now - at).total_seconds() / 60.0
+    try:
+        age_minutes = (now - at).total_seconds() / 60.0
+    except TypeError:
+        return False
     return 0 <= age_minutes <= ttl_minutes
 
 
@@ -294,17 +297,18 @@ def dynamic_lambda(
 # ── 加权随机选择 ─────────────────────────────────────────
 # 多个触发候选时，按 sigmoid 概率加权选择而非硬排序
 
-def weighted_trigger_choice(candidates: list[dict]) -> dict | None:
+def weighted_trigger_choice(candidates: list[dict], rng=random) -> dict | None:
     """
     candidates: [{"type": str, "weight": float}, ...]
     按 weight 加权随机选一个。weights 不需要归一化。
+    rng: 随机源(默认全局 random 模块),可注入 random.Random 实例防全局序列污染。
     """
     if not candidates:
         return None
     total = sum(c["weight"] for c in candidates)
     if total <= 0:
-        return random.choice(candidates)
-    return random.choices(candidates, weights=[c["weight"] for c in candidates], k=1)[0]
+        return rng.choice(candidates)
+    return rng.choices(candidates, weights=[c["weight"] for c in candidates], k=1)[0]
 
 
 # ── Hawkes 自激过程 ─────────────────────────────────────
@@ -334,6 +338,8 @@ def hawkes_intensity(
     intensity = base_mu
     if isinstance(now, str):
         now = _dt.fromisoformat(now)
+    if isinstance(now, _dt) and now.tzinfo is None:
+        now = now.replace(tzinfo=_CST)
     for ev in events:
         ev_time = ev.get("time")
         if isinstance(ev_time, str):
@@ -371,7 +377,7 @@ def longing_accumulate(
     """
     概率累积机制。
 
-    - 正常：λ_new = λ_old + growth_factor × held_count（累积增长）
+    - 正常：λ_new = λ_old + growth_factor × max(held_count, 1)（累积增长，至少按 1 份计）
     - 焦虑超高（anxiety > anxiety_block_threshold）：不累积
       （"生气了不会主动找你"，需用户回复重置）
     - λ 上限 = base_lambda × max_lambda_multiplier
