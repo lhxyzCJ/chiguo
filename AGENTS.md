@@ -66,12 +66,11 @@ bash scripts/ci-test.sh   # full suite (59 py + 13 script) — 本地与 GitHub 
 ## Git 工作流（代码改动）
 
 - 代码改动（refactor:/fix:/feat:）一律走分支 + PR：
-  - 分支名 `simplify/<issue-N>-<slug>`（如 `simplify/12-composer-cue`）
+  - 分支名 依据修改内容自定
   - 每分支对应一个 GitHub Issue（`gh issue create`），PR 正文 `Closes #N`
   - 出口条件：CI 全链绿 + 子代理自审 + 用户批准 → squash merge
 - docs:/chore: 小改动可直接 main（CI 仍自动验证）。
 - 简化单元跟踪：从审查报告（~/chiguo-meta/audit/）拆出的每单元建 Issue，
-  标题 `[simplify] <模块>: <改动>`，正文含文件清单、改动内容、删行预估、依赖单元。
 
 ## After any code change
 

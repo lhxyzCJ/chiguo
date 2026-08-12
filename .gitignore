@@ -83,3 +83,6 @@ reasonix.toml
 
 # claude-mem SQLite 记忆库（运行态数据，不入库）
 .open-mem/
+
+# OMC 运行态目录（会话/任务台账，不入库）
+.omc/
