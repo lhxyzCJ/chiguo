@@ -603,7 +603,7 @@ class DecisionEngine:
         门控：consolidate_enabled + 清醒沉默 ≥ consolidate_idle_silent_hours +
         距上次巩固 ≥ consolidate_min_interval_hours（持久化 cooldown.consolidate_last_at）。
         consolidate() 内部对不可用/无写能力的后端只出报告不写库，双保险不碰主链路。
-        也可手动 `chiguo_daemon.py --consolidate` 接入 cron（注释：每 N 天跑一次即可）。
+        也可手动 `chiguo_daemon.py --consolidate`（停机维护专用——勿与常驻进程并行，见 #181）。
         """
         mem_cfg = self.config.get("memory", {})
         if not mem_cfg.get("consolidate_enabled", False):
@@ -651,6 +651,22 @@ class DecisionEngine:
         提取的用户私聊事实，重定向到日志文件会泄露完整对话内容（自动路径本就只打计数）。
         阈值走 Mem0Backend.consolidate 内的 _finite_float 兜底，字符串/NaN 配置不崩。
         """
+        # #181: 停机维护守卫——daemon --loop 常驻进程持有嵌入式 qdrant 单进程锁，
+        # 并发 --consolidate 会争锁导致巩固静默失效。检测 loop PID 文件，进程存活则拒绝。
+        pid_path = self._base_dir / "chiguo_loop.pid"
+        loop_pid = None
+        try:
+            loop_pid = int(pid_path.read_text().strip())
+        except (FileNotFoundError, ValueError, OSError):
+            pass  # 无 pid 文件 / 损坏 → 视为未运行
+        if loop_pid is not None:
+            try:
+                os.kill(loop_pid, 0)
+                print(f"[error] daemon 常驻进程运行中 (PID {loop_pid})，"
+                      f"--consolidate 仅停机维护使用", file=sys.stderr)
+                return 1
+            except OSError:
+                pass  # 进程已退出 → 过期 pid 文件，忽略
         mem_cfg = self.config.get("memory", {})
         bridge = self.state.memory_bridge
         if not getattr(bridge, "consolidate", None):
@@ -1643,7 +1659,7 @@ def main():
                         help="完整监控报告（stats + alerts + health）")
     # ── C1: 确定性记忆巩固 ──
     parser.add_argument("--consolidate", action="store_true",
-                        help="确定性记忆巩固（去重降权+过期；零 LLM；可接入 cron）")
+                        help="确定性记忆巩固（去重降权+过期；零 LLM；停机维护专用）")
     # ── v5: 对话日志 & 归档 ──
     parser.add_argument("--conversation", type=str, default=None,
                         metavar="DATE",
@@ -1832,7 +1848,7 @@ def main():
             }, ensure_ascii=False, indent=2))
         return
 
-    # ── C1: 确定性记忆巩固（零 LLM；[memory].consolidate_* 参数；可接入 cron）──
+    # ── C1: 确定性记忆巩固（零 LLM；[memory].consolidate_* 参数；停机维护专用）──
     if args.consolidate:
         sys.exit(DecisionEngine().cli_consolidate())
 
