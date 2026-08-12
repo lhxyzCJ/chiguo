@@ -8,7 +8,7 @@ update_holidays.py — 节假日数据更新脚本
 用法:
   python3 update_holidays.py 2027              # 生成 2027 holidays.json
   python3 update_holidays.py 2027 --solar      # 同时生成节气数据
-  python3 update_holidays.py 2027 --force      # 覆盖已有文件
+  python3 update_holidays.py 2027 --force      # 覆盖同年数据(保留其它年份)
 """
 
 import json
@@ -250,15 +250,15 @@ def generate(year: int, force: bool = False, with_solar: bool = False):
         holiday_data["_generated_for"] = str(year)
 
     # 写入 holidays.json
-    if holidays_path.exists() and not force:
+    if holidays_path.exists():
         try:
             existing = json.loads(holidays_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             existing = None
-        if _file_covers_year(existing, year):
+        if _file_covers_year(existing, year) and not force:
             print(f"❌ {holidays_path} 已含 {year} 年数据。用 --force 覆盖。")
         elif isinstance(existing, dict):
-            # 跨年自动合并:保留旧年份,追加新年份(loader 按 name@year 归组,R22)
+            # 跨年自动合并(force 亦仅覆盖同年,保留旧年份;loader 按 name@year 归组,R22)
             merged = dict(existing)
             merged["holidays"] = _merge_holidays(
                 existing.get("holidays") or {}, year, holiday_data["holidays"])
@@ -272,7 +272,14 @@ def generate(year: int, force: bool = False, with_solar: bool = False):
             tmp = Path(str(holidays_path) + ".tmp")
             tmp.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
             os.replace(tmp, holidays_path)
-            print(f"✅ {holidays_path} 已跨年合并:追加 {year} 年数据(保留旧年份)")
+            print(f"✅ {holidays_path} 已合并 {year} 年数据(保留旧年份)")
+        elif force:
+            # 文件不可解析 + --force:无旧数据可保留,直接覆盖
+            tmp = Path(str(holidays_path) + ".tmp")
+            tmp.write_text(json.dumps(holiday_data, indent=2, ensure_ascii=False) + "\n")
+            os.replace(tmp, holidays_path)
+            tag = "⚠ 估算" if is_estimated else "✅ 精确"
+            print(f"{tag} {holidays_path} 已生成 ({year} 年, {len(holidays)} 个假期)")
         else:
             print(f"❌ {holidays_path} 已存在(不可解析)。用 --force 覆盖。")
     else:
@@ -293,6 +300,8 @@ def generate(year: int, force: bool = False, with_solar: bool = False):
                     json.dumps(terms, indent=2, ensure_ascii=False) + "\n"
                 )
                 print(f"📅 {solar_path} 已生成 ({len(terms)} 个节气)")
+        else:
+            print(f"{year} 年节气已内置，无需生成 solar_terms.json")
 
 
 # ═══════════════════════════════════════════════════════════

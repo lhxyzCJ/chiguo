@@ -21,7 +21,7 @@ PERIOD_TIMES = {
 
 
 def current_period(now: datetime) -> int | None:
-    """根据当前时间返回所在节次"""
+    """根据当前时间返回所在节次；课间与课后返回 None。"""
     current_minutes = now.hour * 60 + now.minute
     for period, (start_str, end_str) in PERIOD_TIMES.items():
         sh, sm = map(int, start_str.split(":"))
@@ -31,7 +31,7 @@ def current_period(now: datetime) -> int | None:
         if start <= current_minutes <= end:
             return period
 
-        # 课间：如果在两节课之间，返回前一节
+        # 课间（本节结束与下节开始之间，或最后一节结束后）→ 不在上课
         next_start = None
         if period + 1 in PERIOD_TIMES:
             ns = PERIOD_TIMES[period + 1][0]
@@ -39,10 +39,6 @@ def current_period(now: datetime) -> int | None:
             next_start = nsh * 60 + nsm
 
         if end < current_minutes and (next_start is None or current_minutes < next_start):
-            # 在课间休息中
-            return None  # 课间视为不在上课
-
-        if period == max(PERIOD_TIMES.keys()) and current_minutes > end:
             return None
 
     return None

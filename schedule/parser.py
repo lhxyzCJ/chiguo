@@ -41,7 +41,7 @@ def _parse(xp: Path) -> dict:
     """解析 xlsx，提取每节课信息。失败（openpyxl 缺失/文件损坏/空表）返回空 dict。"""
     try:
         import openpyxl
-        wb = openpyxl.load_workbook(str(xp))
+        wb = openpyxl.load_workbook(str(xp), read_only=True, data_only=True)
         if not wb.sheetnames:
             raise ValueError("xlsx has no sheets")
         ws = wb[wb.sheetnames[0]]
