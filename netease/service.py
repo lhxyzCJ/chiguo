@@ -217,10 +217,10 @@ class NeteaseService:
 
     def peek_music_topic(self, now: datetime, in_class: bool = False,
                          in_quiet_window: bool = False) -> dict | None:
-        """与 music_topic 相同逻辑,但不消费配额。
+        """探测候选话题,但不消费配额。
         供 TopicPicker 在加权抽选前探测候选;选中后须调 consume_music_topic/consume_fault_topic
         确认消费。拉取成功仍同步健康恢复(_sync_success 只改健康态不消费配额);
-        两源全失败仍走 refresh_health 探针(与 music_topic 一致)。
+        两源全失败仍走 refresh_health 探针。
         时段门禁优先于故障分支:上课/睡眠窗口恒 None(故障话题也受时段约束,R13)。
         enabled=False → 直接 None(不拉取不消费,与 fetch_play_proof 一致,A3)。"""
         if not self.enabled:
@@ -267,7 +267,7 @@ class NeteaseService:
         consume=False(peek 路径):跳过 _consume_music,但拉取成功仍 _sync_success
         恢复健康(拉取成功=API 正常是事实,且该操作不消费配额)。
         两源全失败后调用 refresh_health(now) 真实探针判定健康态:
-        API 宕机/登录失效 → 置 faulty(下一次 peek/music_topic 走故障话题分支,受 fault 配额约束);
+        API 宕机/登录失效 → 置 faulty(下一次 peek 走故障话题分支,受 fault 配额约束);
         探针 healthy(如每日推荐为空但 API 正常)→ 保持静默回退(数据空不是故障)。"""
         total = self.source_weights[0] + self.source_weights[1]
         r = random.random() * total
