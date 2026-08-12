@@ -128,7 +128,7 @@ cat <<EOF
 ────────────────── 部署完成 ──────────────────
  微信桥:        $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态本地保留不进 git; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && start 排查）")
  agent 后端:       $( [ "$AGENT_OK" = 1 ] && echo "已由本脚本自动完成（crontab + provider key，随 toml [host].provider）" || echo "未安装或未完全安装（bash scripts/install_agent.sh --dry-run 排查）")
- 网易云 API:    $( [ "$NETEASE_OK" = 1 ] && echo "已安装并常驻（api-enhanced v4.39.0，systemd: netease-api.service；bash scripts/netease-api.sh status）" || echo "未安装/未就绪（bash scripts/netease-api.sh install 排查；--skip-netease 跳过）")
+ 网易云 API:    $( [ "$NETEASE_OK" = 1 ] && echo "已安装并常驻（api-enhanced 跟随上游最新 tag，systemd: netease-api.service；bash scripts/netease-api.sh status）" || echo "未安装/未就绪（bash scripts/netease-api.sh install 排查；--skip-netease 跳过）")
   手动重跑/排查: bash scripts/install_agent.sh --dry-run（扫描）| --yes（自动修复）
   端到端冒烟:   bash scripts/chiguo-tick.sh（tick 手动触发 → 微信收到）
 

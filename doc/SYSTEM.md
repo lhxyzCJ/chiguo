@@ -549,7 +549,7 @@ evaluate(now)
 
 **素材安全**：fault/daily/recent 话题 data 仅 `{source, reason}` / `{source, name, artist}`，不含 share_url/链接（链接由发送层按需拼接）。
 
-**上游与部署**：网易云数据来自本地自建的第三方 Node.js API 服务 **NeteaseCloudMusicApiEnhanced/api-enhanced**（原 Binaryify/NeteaseCloudMusicApi 因版权 2024-04 归档后的社区继承版，锁 `v4.39.0` tag），由 `scripts/netease-api.sh` 安装、systemd（`netease-api.service`）托管常驻 `localhost:3000`（`NETEASE_API_BASE` 可覆盖，默认即此）；deploy.sh 第 5.6 步可选接入（`--skip-netease` 跳过）。chiguo 侧仅依赖 6 个端点路径与 `{code,data,...}` 响应包装，契约不匹配时按既有降级链处理。
+**上游与部署**：网易云数据来自本地自建的第三方 Node.js API 服务 **NeteaseCloudMusicApiEnhanced/api-enhanced**（原 Binaryify/NeteaseCloudMusicApi 因版权 2024-04 归档后的社区继承版，install 默认跟随上游最新 tag），由 `scripts/netease-api.sh` 安装、systemd（`netease-api.service`）托管常驻 `localhost:3000`（`NETEASE_API_BASE` 可覆盖，默认即此）；deploy.sh 第 5.6 步可选接入（`--skip-netease` 跳过）。chiguo 侧仅依赖 6 个端点路径与 `{code,data,...}` 响应包装，契约不匹配时按既有降级链处理。
 
 ### 2.13 用户状态推断增强（A1 转移矩阵 + A3 信息增益门控，v1.12）
 
@@ -906,7 +906,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `agent_health.py` | 173 | agent 假死状态机（agent_health.json，`[health] fail_threshold`） |
 | `wechat-bridge.sh` | 185 | 微信桥服务管理 |
 | `service.sh` | 255 | systemd 服务管理 |
-| `netease-api.sh` | 159 | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced v4.39.0） |
+| `netease-api.sh` | 180 | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
 | `chiguo-tick.sh` | 159 | cron 门控入口（零模型，读 daemon 输出 → send → record-send → composer 兜底） |
 | `ci-test.sh` | 85 | 全量测试链（59 py + 13 script，CI stub 自举） |
 | `dev-sync.sh` | 33 | 开发同步 |

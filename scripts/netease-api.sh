@@ -12,7 +12,8 @@ set -uo pipefail
 
 NETEASE_API_DIR="${NETEASE_API_DIR:-/opt/netease-api}"
 NETEASE_API_REPO="${NETEASE_API_REPO:-https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced.git}"
-NETEASE_API_TAG="${NETEASE_API_TAG:-v4.39.0}"
+# 默认跟随上游最新 tag（install 时动态解析）；显式赋值 NETEASE_API_TAG=vX.Y.Z 可锁版本（测试注入/回滚）
+NETEASE_API_TAG="${NETEASE_API_TAG:-}"
 NETEASE_API_BASE="${NETEASE_API_BASE:-http://localhost:3000}"
 NETEASE_API_UNIT="${NETEASE_API_UNIT:-/etc/systemd/system/netease-api.service}"
 
@@ -22,6 +23,14 @@ fail() { printf '\033[1;31m[netease-api]\033[0m %s\n' "$*"; exit 2; }
 
 installed_version() {
   node -p "require('$NETEASE_API_DIR/package.json').version" 2>/dev/null || echo ""
+}
+
+# 解析上游最新 release tag（v\d+.\d+.\d+，sort -V 取最大）
+resolve_latest_tag() {
+  # timeout 兜底：网络黑洞/防火墙丢包时 git ls-remote 默认可挂起数分钟（同 curl -m 语义）
+  timeout 15 git ls-remote --tags --refs "$NETEASE_API_REPO" 2>/dev/null \
+    | grep -oE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's#refs/tags/##' \
+    | sort -V | tail -1
 }
 
 check_health() {
@@ -39,10 +48,11 @@ wait_healthy() {
 }
 
 write_unit() {
+  local tag="${1:-unknown}"
   local tmp="$NETEASE_API_UNIT.tmp"
   cat > "$tmp" <<EOF
 [Unit]
-Description=Netease Cloud Music API (api-enhanced $NETEASE_API_TAG)
+Description=Netease Cloud Music API (api-enhanced $tag)
 After=network-online.target
 Wants=network-online.target
 
@@ -76,30 +86,47 @@ do_install() {
   command -v node >/dev/null 2>&1 || { warn "缺少 node（api-enhanced 需要 Node.js）"; return 1; }
   command -v npm >/dev/null 2>&1 || { warn "缺少 npm"; return 1; }
 
-  local ver
+  local tag ver
+  # 默认跟随上游最新 tag；NETEASE_API_TAG 显式赋值时锁版本（测试注入/回滚）
+  tag="${NETEASE_API_TAG:-}"
+  if [ -z "$tag" ]; then
+    if ! tag="$(resolve_latest_tag)"; then
+      if [ -n "$(installed_version)" ]; then
+        # 离线/解析失败但已有有效安装 → 保持现有，不破坏已运行服务
+        warn "无法解析上游最新 tag（git ls-remote 失败），保持现有安装"
+        return 0
+      fi
+      warn "无法解析上游最新 tag（git ls-remote 失败）"
+      return 1
+    fi
+    say "跟随上游最新: $tag"
+  else
+    say "锁定版本: $tag"
+  fi
   ver="$(installed_version)"
-  if [ -n "$ver" ] && { [ "$ver" = "$NETEASE_API_TAG" ] || [ "v$ver" = "$NETEASE_API_TAG" ]; }; then
-    say "已安装 $NETEASE_API_TAG（$NETEASE_API_DIR），跳过安装"
+  if [ -n "$ver" ] && { [ "$ver" = "$tag" ] || [ "v$ver" = "$tag" ]; }; then
+    say "已安装 $tag（$NETEASE_API_DIR），跳过安装"
   else
     if [ ! -d "$NETEASE_API_DIR/.git" ]; then
       say "克隆 api-enhanced → $NETEASE_API_DIR ..."
-      git clone --depth 1 --branch "$NETEASE_API_TAG" "$NETEASE_API_REPO" "$NETEASE_API_DIR" \
+      git clone --depth 1 --branch "$tag" "$NETEASE_API_REPO" "$NETEASE_API_DIR" \
         || fail "git clone 失败（$NETEASE_API_REPO）"
     else
-      say "仓库已存在，拉取 tag $NETEASE_API_TAG ..."
-      git -C "$NETEASE_API_DIR" fetch origin tag "$NETEASE_API_TAG" --depth 1 \
+      say "仓库已存在，拉取 tag $tag ..."
+      git -C "$NETEASE_API_DIR" fetch origin tag "$tag" --depth 1 \
         || warn "fetch 失败（保持现有版本继续）"
-      git -C "$NETEASE_API_DIR" checkout "$NETEASE_API_TAG" \
-        || warn "checkout $NETEASE_API_TAG 失败（保持现有版本继续）"
+      if ! git -C "$NETEASE_API_DIR" checkout "$tag" 2>/dev/null; then
+        warn "checkout $tag 失败（保持现有版本继续），回落实际运行版本"
+        tag="v$(installed_version)"
+      fi
     fi
-    if [ ! -d "$NETEASE_API_DIR/node_modules" ]; then
-      say "安装 npm 依赖（无 lockfile，用 npm install）..."
-      ( cd "$NETEASE_API_DIR" && npm install --no-fund --no-audit >/dev/null ) \
-        || fail "npm install 失败"
-    fi
+    # 代码版本切换（首次安装或升级）依赖可能变化 → 总是 npm install 刷新，避免新代码跑旧依赖
+    say "安装/刷新 npm 依赖（代码版本切换时依赖可能变化）..."
+    ( cd "$NETEASE_API_DIR" && npm install --no-fund --no-audit >/dev/null ) \
+      || fail "npm install 失败"
   fi
 
-  write_unit
+  write_unit "$tag"
   systemctl daemon-reload || warn "daemon-reload 失败"
   systemctl enable --now netease-api || warn "enable/start 失败"
 
@@ -130,9 +157,19 @@ do_stop() {
 
 do_status() {
   local rc=0
-  local active ver
+  local active ver upstream
   active="$(systemctl is-active netease-api 2>/dev/null || true)"
   ver="$(installed_version)"
+  if [ -z "${NETEASE_API_TAG:-}" ]; then
+    upstream="$(resolve_latest_tag 2>/dev/null || true)"
+    if [ -n "$upstream" ]; then
+      if [ -n "$ver" ] && { [ "$ver" = "$upstream" ] || [ "v$ver" = "$upstream" ]; }; then
+        say "上游最新: $upstream（当前已是最新 $ver）"
+      else
+        say "上游最新: $upstream（当前 $ver；有新版: bash scripts/netease-api.sh install）"
+      fi
+    fi
+  fi
   if [ "$active" = "active" ]; then
     say "运行中 ✓（$NETEASE_API_DIR，version $ver）"
   else

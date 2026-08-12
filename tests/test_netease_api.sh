@@ -17,7 +17,11 @@ echo "git $*" >> "$GIT_LOG"
 if [ "$1" = clone ]; then
   DEST="${@: -1}"
   mkdir -p "$DEST/.git"
-  echo '{"name":"@neteasecloudmusicapienhanced/api","version":"4.39.0"}' > "$DEST/package.json"
+  echo '{"name":"@neteasecloudmusicapienhanced/api","version":"4.40.0"}' > "$DEST/package.json"
+elif [ "$1" = ls-remote ]; then
+  [ -n "${FAKE_LSREMOTE_FAIL:-}" ] && exit 128
+  echo "dummyhash	refs/tags/v4.39.0"
+  echo "dummyhash	refs/tags/v4.40.0"
 fi
 STUB
 cat > "$TMP/bin/node" <<'STUB'
@@ -81,9 +85,11 @@ pass "非 root → 退出 1 且不 clone"
 
 # ── 用例 2: 首次 install → clone + npm install + unit 写入 + enable --now ──
 unset FAKE_UID
-set +e; bash scripts/netease-api.sh install >/dev/null 2>&1; RC=$?; set -e
+INSTALL_OUT="$TMP/install.out"
+set +e; bash scripts/netease-api.sh install >"$INSTALL_OUT" 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "install 期望 0 实得 $RC"
-grep -q "git clone --depth 1 --branch v4.39.0" "$GIT_LOG" || fail "未按预期 clone（--branch v4.39.0）"
+grep -q "跟随上游最新: v4.40.0" "$INSTALL_OUT" || fail "未按预期解析上游最新 tag"
+grep -q "git clone --depth 1 --branch v4.40.0" "$GIT_LOG" || fail "未按预期 clone（跟随上游最新 --branch v4.40.0）"
 grep -q "npm install --no-fund --no-audit" "$NPM_LOG" || fail "npm install 参数不对"
 [ -d "$TMP/api/node_modules" ] || fail "node_modules 未生成"
 [ -f "$TMP/unit/netease-api.service" ] || fail "systemd unit 未写入"
@@ -93,11 +99,11 @@ grep -q "systemctl enable --now netease-api" "$SYS_LOG" || fail "未 enable --no
 grep -q "systemctl daemon-reload" "$SYS_LOG" || fail "未 daemon-reload"
 pass "首次 install：clone + npm + unit + enable --now"
 
-# ── 用例 3: 重跑 install 幂等 → 不重复 clone ──
+# ── 用例 3: 重跑 install 幂等 → 不重复 clone（ls-remote 解析最新 tag 属正常） ──
 : > "$GIT_LOG"
 set +e; bash scripts/netease-api.sh install >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "幂等重跑期望 0 实得 $RC"
-[ ! -s "$GIT_LOG" ] || fail "版本匹配不应再 clone"
+grep -q "clone" "$GIT_LOG" && fail "版本匹配不应再 clone"
 pass "重跑 install 幂等：版本匹配跳过 clone"
 
 # ── 用例 4: status 服务未运行 → 退出 1 ──
@@ -128,3 +134,24 @@ unset FAKE_CURL_FAIL_FILE
 [ "$RC" = 0 ] || fail "start 重试期望 0 实得 $RC"
 [ "$(wc -l < "$CURL_LOG")" -ge 3 ] || fail "start 应重试 ≥3 次 curl，实得 $(wc -l < "$CURL_LOG") 次"
 pass "start 重试：首次失败后重试成功"
+
+# ── 用例 7: 显式 NETEASE_API_TAG 锁版本 → clone 指定 tag 且不调 ls-remote ──
+: > "$GIT_LOG"
+rm -rf "$TMP/api" && mkdir -p "$TMP/api"
+export NETEASE_API_TAG=v4.39.0
+set +e; bash scripts/netease-api.sh install >/dev/null 2>&1; RC=$?; set -e
+unset NETEASE_API_TAG
+[ "$RC" = 0 ] || fail "锁版本 install 期望 0 实得 $RC"
+grep -q "git clone --depth 1 --branch v4.39.0" "$GIT_LOG" || fail "未按显式 NETEASE_API_TAG 克隆"
+grep -q "ls-remote" "$GIT_LOG" && fail "锁版本不应调 ls-remote"
+pass "显式 NETEASE_API_TAG 锁版本：clone 指定 tag、不解析上游"
+
+# ── 用例 8: ls-remote 失败（离线）且未安装 → install 退出 1 且不 clone ──
+: > "$GIT_LOG"
+rm -rf "$TMP/api" && mkdir -p "$TMP/api"
+export FAKE_LSREMOTE_FAIL=1
+set +e; bash scripts/netease-api.sh install >/dev/null 2>&1; RC=$?; set -e
+unset FAKE_LSREMOTE_FAIL
+[ "$RC" = 1 ] || fail "解析失败+未安装期望 1 实得 $RC"
+grep -q "clone" "$GIT_LOG" && fail "解析失败不应 clone"
+pass "ls-remote 失败且未安装 → 退出 1"
