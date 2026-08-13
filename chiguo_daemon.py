@@ -454,6 +454,22 @@ class DecisionEngine:
                 pass
             return
 
+        # ── v13 (#206): 持久化单调锚点封顶 NTP 前跳（cron 新进程无 _monotonic_at_save）──
+        # save() 每次写盘锚点对（chiguo_state.monotonic_anchor）。monotonic 显示只过了
+        # elapsed_real、而壁钟前跳很多 → 用真实流逝封顶。wall_anchor 非法 ISO → 视为
+        # 无锚点不加封顶；time.monotonic() < mono_anchor（系统重启单调钟归零）→ 不加
+        # 封顶走壁钟。min() 只在 elapsed_real 更小时收敛，正常时无感。
+        mono_anchor, wall_anchor = self.state.monotonic_anchor()
+        if mono_anchor is not None and wall_anchor is not None:
+            try:
+                datetime.fromisoformat(wall_anchor)
+            except (ValueError, TypeError):
+                pass  # wall_anchor 损坏 → 视为无锚点，不加封顶
+            else:
+                if time.monotonic() >= mono_anchor:
+                    elapsed_real = (time.monotonic() - mono_anchor) / 3600
+                    elapsed = min(elapsed, elapsed_real)
+
         if self._monotonic_at_save > 0:
             elapsed_mono = (time.monotonic() - self._monotonic_at_save) / 3600
             # 壁钟前进了超过 monotonic 的 2x + 1h → 信任 monotonic（NTP 跳变防护）

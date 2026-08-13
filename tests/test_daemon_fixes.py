@@ -140,6 +140,10 @@ def test_bug2_tick_uses_persisted_last_tick(cfg_path: Path):
     s.cooldown.last_message_at = (now - timedelta(hours=10)).isoformat()
     s.cooldown.last_user_message_at = (now - timedelta(hours=10)).isoformat()
     s.last_tick = None
+    # 清除持久化锚点：本测试验证 last_tick 重放，须排除锚点封顶干扰
+    # （先前测试 save 写盘的锚点对会把 elapsed 按单调流逝封顶到 ~0）
+    s.mono_anchor = None
+    s.wall_anchor = None
 
     # cron 进程 1：last_tick=None → 回退消息时间全量推进（10h）
     eng._tick(now)
@@ -179,6 +183,9 @@ def test_bug2_tick_save_reload_roundtrip(cfg_path: Path):
     s.emotion.loneliness = 10.0
     s.cooldown.last_message_at = (now - timedelta(hours=10)).isoformat()
     s.cooldown.last_user_message_at = (now - timedelta(hours=10)).isoformat()
+    # 清除构造时从磁盘加载的锚点对（先前测试写盘，单调流逝≈0 会把 10h 封顶成 0）
+    s.mono_anchor = None
+    s.wall_anchor = None
 
     # 进程 1：last_tick=None → 全量推进；随后 save 落盘 last_tick
     eng._tick(now)
@@ -188,6 +195,11 @@ def test_bug2_tick_save_reload_roundtrip(cfg_path: Path):
 
     # 进程 2：新 engine 从同一状态文件 _load → 恢复 last_tick 与情绪
     eng2 = make_engine(cfg_path)
+    # 进程1 的 save 写入了新锚点对（进程2 加载到的是「刚刚」写入的锚点，
+    # 单调流逝≈0 → 会把 15min 增量封顶成 0）；本测试验证 last_tick 重放，
+    # 清除锚点对以保持 15min 壁钟口径（锚点封顶由 test_tick_*_anchor 覆盖）
+    eng2.state.mono_anchor = None
+    eng2.state.wall_anchor = None
     lo_start2 = eng2.state.emotion.loneliness
     assert eng2.state.last_tick, "last_tick must survive save/reload roundtrip"
     assert abs(lo_start2 - (10.0 + full_inc)) < 0.01, \
@@ -224,6 +236,9 @@ def test_bug2_tick_corrupt_last_tick_falls_back(cfg_path: Path):
     s.cooldown.last_message_at = (now - timedelta(hours=10)).isoformat()
     s.cooldown.last_user_message_at = (now - timedelta(hours=10)).isoformat()
     s.last_tick = "not-a-timestamp"
+    # 清除持久化锚点：本测试验证 corrupt last_tick 回退，须排除锚点封顶干扰
+    s.mono_anchor = None
+    s.wall_anchor = None
 
     eng._tick(now)
     expected = elastic_recover(10.0, 100.0, 10.0, 40.0, 100.0)
@@ -652,6 +667,67 @@ def test_state_monotonic_anchor_missing_defaults(cfg_path: Path):
 
 
 # ═══════════════════════════════════════════════════════
+# Task 2 (#206): _tick 用真实流逝封顶 NTP 前跳（持久化单调锚点）
+# ═══════════════════════════════════════════════════════
+
+def test_tick_caps_wall_jump_via_persisted_anchor(cfg_path: Path):
+    """NTP 前跳模拟：壁钟 now 距最后消息 6h，但持久化 mono 锚点只过了 15 分钟
+    → min() 把 elapsed 收敛到 ~0.25h，情绪推进量对应 0.25h 而非 6h。"""
+    eng = make_engine(cfg_path)
+    now = dt(2026, 6, 15, 14, 0)
+    s = eng.state
+    s.emotion.loneliness = 10.0
+    s.cooldown.last_message_at = (now - timedelta(hours=6)).isoformat()
+    s.cooldown.last_user_message_at = (now - timedelta(hours=6)).isoformat()
+    s.last_tick = None  # 基准只用消息时间 → 壁钟 elapsed = 6h
+
+    MONO = 100000.0
+    # mono 锚点：15 分钟前（monotonic - 0.25h）；wall_anchor：6h 前（存在信号）
+    s.mono_anchor = MONO - 0.25 * 3600
+    s.wall_anchor = (now - timedelta(hours=6)).isoformat()
+
+    with mock.patch.object(time, "monotonic", return_value=MONO):
+        eng._tick(now)
+
+    inc = s.emotion.loneliness - 10.0
+    cap_15m = elastic_recover(10.0, 100.0, 0.25, 40.0, 100.0) - 10.0
+    full_6h = elastic_recover(10.0, 100.0, 6.0, 40.0, 100.0) - 10.0
+    assert abs(inc - cap_15m) < 0.01, (
+        f"wall jump should cap to ~0.25h anchor elapsed: inc={inc:.4f} "
+        f"cap_15m={cap_15m:.4f} full_6h={full_6h:.4f}")
+    assert inc < full_6h / 4, (
+        f"capped increment must be far below full 6h advance: inc={inc:.4f} full_6h={full_6h:.4f}")
+    print(f"  OK test_tick_caps_wall_jump_via_persisted_anchor: inc={inc:.4f} (0.25h cap)")
+
+
+def test_tick_no_cap_when_anchor_older_than_monotonic(cfg_path: Path):
+    """系统重启模拟：time.monotonic() 归零（< mono_anchor）→ 不加封顶，
+    elapsed 保持壁钟口径（6h 全量推进，与无锚点行为一致）。"""
+    eng = make_engine(cfg_path)
+    now = dt(2026, 6, 15, 14, 0)
+    s = eng.state
+    s.emotion.loneliness = 10.0
+    s.cooldown.last_message_at = (now - timedelta(hours=6)).isoformat()
+    s.cooldown.last_user_message_at = (now - timedelta(hours=6)).isoformat()
+    s.last_tick = None
+
+    MONO = 100000.0
+    # 重启后 monotonic 归零：mono_anchor（重启前读数）> 当前 monotonic → 条件不成立
+    s.mono_anchor = MONO + 3600.0
+    s.wall_anchor = (now - timedelta(hours=6)).isoformat()
+
+    with mock.patch.object(time, "monotonic", return_value=MONO):
+        eng._tick(now)
+
+    inc = s.emotion.loneliness - 10.0
+    full_6h = elastic_recover(10.0, 100.0, 6.0, 40.0, 100.0) - 10.0
+    assert abs(inc - full_6h) < 0.01, (
+        f"reboot (monotonic reset) must keep wall-clock elapsed: inc={inc:.4f} "
+        f"full_6h={full_6h:.4f}")
+    print(f"  OK test_tick_no_cap_when_anchor_older_than_monotonic: inc={inc:.4f} (wall 6h)")
+
+
+# ═══════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════
 
@@ -674,6 +750,8 @@ if __name__ == "__main__":
             test_memory_search_bad_backend_config,
             test_state_monotonic_anchor_persist_roundtrip,
             test_state_monotonic_anchor_missing_defaults,
+            test_tick_caps_wall_jump_via_persisted_anchor,
+            test_tick_no_cap_when_anchor_older_than_monotonic,
         ]
         for t in tests:
             t(cfg_path)
