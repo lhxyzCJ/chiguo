@@ -37,9 +37,7 @@ class ScheduleApi:
         self.anniversary_mgr = anniversary.AnniversaryManager(self.base_dir)
         self.plan_store = PlanStore(self.base_dir)
         self._migrated = False
-        # 迁移子项激活开关(批次注记):② 激活批次 = 6c(Task 14);③④ 激活批次 = 4(Task 10)
-        self._enable_countdown_migration = True  # 6c 激活(②)
-        self._enable_toml_migrations = True   # 批 4 激活(③④;② 已 6c 激活)
+        # 迁移已全部激活并跑完（②=6c Task14；③④=批 4 Task10），调用内联（历史开关结构已清理）
 
     # ── 迁移/物化守卫(惰性首执,只读子命令永不触发,H1)──
 
@@ -62,13 +60,11 @@ class ScheduleApi:
         # ①. anniversaries 损坏 → 重建为默认生日(视同缺失路径,N1)
         if self.anniversary_mgr._corrupt or not self.anniversary_mgr._path.exists():
             self._materialize_anniversaries()
-        # ②. countdown→reminder 防御迁移(激活 = 6c;幂等 label+date 去重,F4/N3)
-        if self._enable_countdown_migration:
-            self._migrate_countdown()
-        # ③④. toml 一次性迁移(激活 = 批 4,见 Task 10)
-        if self._enable_toml_migrations:
-            self._migrate_toml_exam_weeks()
-            self._migrate_toml_special_dates()
+        # ②. countdown→reminder 防御迁移(6c 激活;幂等 label+date 去重,F4/N3)
+        self._migrate_countdown()
+        # ③④. toml 一次性迁移(批 4 激活,见 Task 10)
+        self._migrate_toml_exam_weeks()
+        self._migrate_toml_special_dates()
 
     def _materialize_anniversaries(self):
         """① 与 api 首写物化共用:当前内存合并视图(默认 + 用户条目)落盘。

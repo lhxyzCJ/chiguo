@@ -46,16 +46,6 @@ const AGENT_RPC_ENABLED = RUNNER === 'agent' && process.env.WECHAT_BRIDGE_AGENT_
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 // #84 /send 共享 token:未设置时跳过 token 校验(向后兼容 tick.sh 等既有调用);设置后必须匹配
 const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
-/** B1:未配置共享 token 时 /send 与 /agent/prompt 零鉴权(仅 Host/Origin 本地回环把关)→ 启动醒目警告。
- *  校验逻辑本身保持向后兼容(未配置跳过,兼容 tick.sh 等既有调用),警告提示生成随机 token 写 .env。 */
-export function warnIfNoToken() {
-  if (process.env.WECHAT_BRIDGE_TOKEN) return
-  console.error(
-    '\n[WARN] WECHAT_BRIDGE_TOKEN 未设置:HTTP 端点(/send 与 /agent/prompt)无共享 token 鉴权,' +
-    '同机任意进程可冒充 owner 调用!\n' +
-    '      建议生成随机 token 并写入 .env:\n' +
-    '      echo "WECHAT_BRIDGE_TOKEN=$(openssl rand -hex 16)" >> .env\n')
-}
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 // 仓库根 = 本文件位置推导（可移植，随仓库克隆到任何路径）
 const REPO = resolveRepo(import.meta.url)
@@ -701,7 +691,6 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
 }
 
 async function main() {
-  warnIfNoToken()   // B1: 生产无 token 零鉴权 → 启动即醒目警告(stderr)
   // #191: 未设置共享 token 时 /send 与 /agent/prompt 零鉴权(同机任意进程可冒充 owner)→ 拒绝启动。
   // wechat-bridge.sh 已自动生成并注入 token,故此处仅命中「直接 node bridge.mjs 绕过启动脚本」的场景。
   if (!BRIDGE_TOKEN) {

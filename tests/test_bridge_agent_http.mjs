@@ -48,7 +48,7 @@ rl.on('line', (line) => {
 })
 `)
 
-const { handleAgentPrompt, warnIfNoToken, TurnQueue } = await import('../wechat-bridge/bridge.mjs')
+const { handleAgentPrompt, TurnQueue } = await import('../wechat-bridge/bridge.mjs')
 const { AgentRpc } = await import('../wechat-bridge/agent-rpc.mjs')
 
 let passed = 0
@@ -146,34 +146,6 @@ t('HTTP 路由:POST /agent/prompt 经真实 server → 200 + 非回环 Host 拒�
     globalThis.__agentRpc.dispose(); globalThis.__agentRpc = null
     await new Promise((r) => server.close(r))
   }
-})
-
-t('warnIfNoToken: 未配置 WECHAT_BRIDGE_TOKEN → stderr 醒目警告(零鉴权告警)', async () => {
-  const prev = process.env.WECHAT_BRIDGE_TOKEN
-  delete process.env.WECHAT_BRIDGE_TOKEN
-  const orig = process.stderr.write
-  let out = ''
-  process.stderr.write = (s) => { out += String(s); return true }
-  try { warnIfNoToken() } finally {
-    process.stderr.write = orig
-    if (prev !== undefined) process.env.WECHAT_BRIDGE_TOKEN = prev
-  }
-  assert(out.includes('WECHAT_BRIDGE_TOKEN'), `警告应提及环境变量: ${out}`)
-  assert(out.includes('WARN'), '应醒目标记')
-})
-
-t('warnIfNoToken: 已配置 token → 无警告', async () => {
-  const prev = process.env.WECHAT_BRIDGE_TOKEN
-  process.env.WECHAT_BRIDGE_TOKEN = 'test-secret'
-  const orig = process.stderr.write
-  let out = ''
-  process.stderr.write = (s) => { out += String(s); return true }
-  try { warnIfNoToken() } finally {
-    process.stderr.write = orig
-    if (prev === undefined) delete process.env.WECHAT_BRIDGE_TOKEN
-    else process.env.WECHAT_BRIDGE_TOKEN = prev
-  }
-  assert.strictEqual(out, '', '已配置不应有警告')
 })
 
 await runAll()
