@@ -13,8 +13,10 @@
 - 全量测试：`bash scripts/ci-test.sh`（59 py + 13 script 独立 runner，任一失败退出非零，与 GitHub Actions 同一入口）
 
 ## Git 工作流（代码改动）
-- 代码改动（refactor:/fix:/feat:）一律走分支 + PR：分支名 `simplify/<issue-N>-<slug>`；每分支对应一个 GitHub Issue（`gh issue create`），PR 正文 `Closes #N`；出口条件 = CI 全链绿 + 子代理自审 + 用户批准 → squash merge。
+- 代码改动（refactor:/fix:/feat:）一律走分支 + PR：分支名 需按照具体问题自定；每分支对应一个 GitHub Issue（`gh issue create`），PR 正文 `Closes #N`；出口条件 = CI 全链绿 + 子代理自审 + 用户批准 → squash merge。
 - docs:/chore: 小改动可直接 main（CI 仍自动验证）。
-- 简化单元跟踪：从审查报告（~/chiguo-meta/audit/）拆出的每单元建 Issue，标题 `[simplify] <模块>: <改动>`，正文含文件清单、改动内容、删行预估、依赖单元。
+- 简化单元跟踪：从审查报告（~/chiguo-meta/audit/）拆出的每单元建 Issue，标题 根据问题自定，正文含文件清单、改动内容、删行预估、依赖单元。
 每次修改代码后必须：
-1. 更新相关文档中受影响的章节
+
+
+每次代码更新需审计相关文档中受影响的章节
