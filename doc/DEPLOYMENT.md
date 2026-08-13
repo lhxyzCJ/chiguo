@@ -65,7 +65,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 `bash scripts/ci-test.sh`：59 个 Python + 13 个脚本测试（其中 8 个 Node `.mjs` + 5 个 Shell，独立 runner、无 pytest），任一失败即中止。验证：看输出「ALL TESTS PASSED」。
 
-该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot` 与 `data/xskb.xlsx`（`ci-test.sh` 自动自举 stub 与最小课表 fixture），因此本地与 CI 结果一致。
+该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot`（`ci-test.sh` 自动自举 stub）与 `data/xskb.xlsx`（课表 fixture 由 test_7/test_trigger 测试内自包含生成），因此本地与 CI 结果一致。
 
 ### 4. 环境检查
 
@@ -139,7 +139,7 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 - 备份/迁移清单：`~/.chiguo/auth/`（含 `agent-auth.json`）、`~/.pi/`、仓库内运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`schedule_overrides.json`、`schedule_plan.json`、`anniversaries.json`、`break_state.json`、`holidays.json`、`schedule_cache.json`）、`data/`（课表/记忆/手动数据）
 - 新机器：clone → 拷贝上述 → `bash deploy.sh`（自动接入；agent key 100% 迁移可用；微信/网易云跨设备自动重登兜底）
 - 微信登录态跨设备实测可复用：迁移后轮询正常，但首次**主动发送**可能被服务端拒（`[send error] prepare failed`，context_token 过期）——从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
-- 课表数据：仓库无 `data/` 目录，`chiguo_proactive.toml` 的 `xlsx_path = "data/xskb.xlsx"` 由部署者自行放入（最小 fixture 由 ci-test.sh 自动自举）。
+- 课表数据：仓库无 `data/` 目录，`chiguo_proactive.toml` 的 `xlsx_path = "data/xskb.xlsx"` 由部署者自行放入（最小课表 fixture 由 test_7/test_trigger 测试内自包含生成）。
 
 ## 十二、从旧版本（<v1.15）升级
 
