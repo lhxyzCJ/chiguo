@@ -34,7 +34,7 @@ resolve_latest_tag() {
 }
 
 check_health() {
-  curl -s -m 5 "$NETEASE_API_BASE/login/status" 2>/dev/null | grep -qE '"code":200([^0-9]|$)'
+  curl -s -m 5 "$NETEASE_API_BASE/login/status" 2>/dev/null | grep -qE '"code"[: ]+200([^0-9]|$)'
 }
 
 wait_healthy() {

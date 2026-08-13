@@ -529,16 +529,19 @@ def test_config_invalid_values_fallback():
 
 def test_check_health_non_dict_resp_degrades():
     """v9 审计 F-3:check_health 响应结构异常(status/data 非 dict)→ 降级不崩:
-    api_alive=True + logged_in=False 安全默认;account/profile 非 dict → 按未登录解析不崩"""
+    api_alive=True + logged_in=False 安全默认,api_error="malformed" 显式标记(不误判 login_expired);
+    account/profile 非 dict → 按未登录解析不崩"""
     with tempfile.TemporaryDirectory() as td:
         b = NeteaseBridge(td, cookie_path=os.path.join(td, "cookie.txt"))
         b._load_cookie = lambda: "MUSIC_U=test"
         b._api_get = lambda *a, **k: [1, 2, 3]  # status 非 dict
         h = b.check_health()
-        assert h == {"api_alive": True, "logged_in": False, "profile": None}, h
+        assert h == {"api_alive": True, "logged_in": False, "profile": None,
+                     "api_error": "malformed"}, h
         b._api_get = lambda *a, **k: {"code": 200, "data": [1, 2, 3]}  # data 非 dict
         h = b.check_health()
-        assert h == {"api_alive": True, "logged_in": False, "profile": None}, h
+        assert h == {"api_alive": True, "logged_in": False, "profile": None,
+                     "api_error": "malformed"}, h
         # account/profile 非 dict → 未登录降级,其余字段正常
         b._api_get = lambda *a, **k: {"code": 200, "data": {
             "account": "x", "profile": ["y"], "vipType": 3}}

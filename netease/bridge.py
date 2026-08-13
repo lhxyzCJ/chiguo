@@ -108,12 +108,13 @@ class NeteaseBridge:
             return None
 
     def _save_cookie(self, raw):
-        """Persist raw cookie to file (stores original for debugging)."""
+        """Persist raw cookie to file (stores original for debugging).
+        权限 0600 一步到位：os.open(O_CREAT, 0o600) 落盘即 0600，无先写后 chmod 的泄露窗口。"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         path = self._cookie_file()
-        with open(path, "w") as f:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             f.write(raw)
-        os.chmod(path, 0o600)
         print(f"[ok] Cookie saved to {path}", file=sys.stderr)
 
     # ── HTTP ─────────────────────────────────────────────────
@@ -225,7 +226,7 @@ class NeteaseBridge:
             elif code == 803:
                 print("  授权成功！")
 
-                cookie_str = resp.get("cookie", "")
+                cookie_str = resp.get("cookie") or (resp.get("data") or {}).get("cookie")
                 if not cookie_str:
                     print("[error] 登录失败: 响应中无 cookie 字段，无法完成认证", file=sys.stderr)
                     return False
@@ -291,16 +292,22 @@ class NeteaseBridge:
             return None
 
     def _save_cache(self, songs):
-        """Persist daily songs to cache file."""
+        """Persist daily songs to cache file (atomic tmp → os.replace;失败仅 warn)。"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         today = datetime.now(CST).strftime("%Y-%m-%d")
         fetched_at = datetime.now(CST).isoformat()
-        with open(self.cache_file, "w") as f:
-            json.dump({
-                "date": today,
-                "fetched_at": fetched_at,
-                "songs": songs,
-            }, f, ensure_ascii=False, indent=2)
+        tmp = f"{self.cache_file}.tmp"
+        try:
+            with open(tmp, "w") as f:
+                json.dump({
+                    "date": today,
+                    "fetched_at": fetched_at,
+                    "songs": songs,
+                }, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.cache_file)
+        except Exception as e:
+            print(f"[warn] 缓存写入失败: {e}", file=sys.stderr)
+            return
         print(f"[ok] 缓存已保存: {len(songs)} 首歌 → {self.cache_file}", file=sys.stderr)
 
     # ── Core API ─────────────────────────────────────────────
@@ -315,7 +322,7 @@ class NeteaseBridge:
 
         if not isinstance(status, dict):
             print("[error] 响应结构异常: resp 非 dict", file=sys.stderr)
-            return {"api_alive": True, "logged_in": False, "profile": None}
+            return {"api_alive": True, "logged_in": False, "profile": None, "api_error": "malformed"}
 
         # api-enhanced 成功响应把 code/account/profile 包在 data 内（{data:{code,...}}，
         # vipType 位于 data.account）；失败响应为顶层 {code,...}（不包装）。
@@ -323,7 +330,7 @@ class NeteaseBridge:
         data = status.get("data", {})
         if not isinstance(data, dict):
             print("[error] 响应结构异常: data 非 dict", file=sys.stderr)
-            return {"api_alive": True, "logged_in": False, "profile": None}
+            return {"api_alive": True, "logged_in": False, "profile": None, "api_error": "malformed"}
         code = data.get("code")
         if code is None:
             code = status.get("code")
@@ -333,10 +340,10 @@ class NeteaseBridge:
                 print("[hint] 可能需要重新登录: uv run python -m netease.bridge --login", file=sys.stderr)
             return {"api_alive": True, "logged_in": False, "profile": None, "api_error": code}
 
-        account = data.get("account", {}) or {}
+        account = data.get("account") or status.get("account") or {}
         if not isinstance(account, dict):
             account = {}
-        profile = data.get("profile", {}) or {}
+        profile = data.get("profile") or status.get("profile") or {}
         if not isinstance(profile, dict):
             profile = {}
 
@@ -346,7 +353,7 @@ class NeteaseBridge:
             "logged_in": logged_in,
             "user_id": account.get("id"),
             "nickname": profile.get("nickname", ""),
-            "vip_type": account.get("vipType", data.get("vipType", 0)),
+            "vip_type": account.get("vipType", data.get("vipType", status.get("vipType", 0))),
         }
 
     def fetch_daily_songs(self, limit=10, force_refresh=False):
@@ -367,7 +374,7 @@ class NeteaseBridge:
 
         resp = self._api_get(f"/recommend/songs?timestamp={int(time.time()*1000)}", cookie=cookie)
         if resp is None:
-            print("[warn] API 不可达，尝试使用过期缓存", file=sys.stderr)
+            print("[warn] API 不可达，尝试使用仍在 TTL 内的缓存", file=sys.stderr)
             cached = self._load_cache()
             return cached.get("songs") if cached else None
 
