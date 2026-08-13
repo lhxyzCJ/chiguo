@@ -3,7 +3,8 @@
 
 覆盖: DecisionEngine._mem0_autowrite 在 [memory].write_full_turns 开启时
 写入 user+assistant 两轮（assistant 文本取 recent_sent_texts），默认单条 user 恒等；
-短消息跳过、bridge 不可用跳过、无最近发送文本时降级单条。
+短消息跳过、bridge 不可用跳过、无最近发送文本时降级单条；
+CHIGUO_MEM0_AUTOWRITE=0 环境开关整体跳过自动写入（部署验证/测试防污染）。
 零 LLM、零网络（FakeBridge 注入，不触真实 mem0）。
 """
 
@@ -127,6 +128,39 @@ def test_config_missing_defaults_false():
     print("  OK test_config_missing_defaults_false")
 
 
+def test_autowrite_env_switch_disables_write():
+    """CHIGUO_MEM0_AUTOWRITE=0 → 自动写入被跳过（add_messages 不调用）。
+    部署验证/测试可设 0 防止验证消息写入生产 mem0 库。"""
+    saved = os.environ.get("CHIGUO_MEM0_AUTOWRITE")
+    os.environ["CHIGUO_MEM0_AUTOWRITE"] = "0"
+    try:
+        bridge = FakeBridge()
+        eng = _engine({"write_full_turns": False}, bridge, recent=[])
+        _call_autowrite(eng, "哥哥今天工作累吗？")
+        assert bridge.add_calls == [], bridge.add_calls
+    finally:
+        if saved is None:
+            os.environ.pop("CHIGUO_MEM0_AUTOWRITE", None)
+        else:
+            os.environ["CHIGUO_MEM0_AUTOWRITE"] = saved
+    print("  OK test_autowrite_env_switch_disables_write")
+
+
+def test_autowrite_env_default_enabled():
+    """未设 CHIGUO_MEM0_AUTOWRITE（默认）→ 正常写入（恒等）。"""
+    saved = os.environ.get("CHIGUO_MEM0_AUTOWRITE")
+    os.environ.pop("CHIGUO_MEM0_AUTOWRITE", None)
+    try:
+        bridge = FakeBridge()
+        eng = _engine({"write_full_turns": False}, bridge, recent=[])
+        _call_autowrite(eng, "哥哥今天工作累吗？")
+        assert len(bridge.add_calls) == 1
+    finally:
+        if saved is not None:
+            os.environ["CHIGUO_MEM0_AUTOWRITE"] = saved
+    print("  OK test_autowrite_env_default_enabled")
+
+
 if __name__ == "__main__":
     print("test_full_turns.py\n")
     tests = [
@@ -137,6 +171,8 @@ if __name__ == "__main__":
         test_short_message_skipped,
         test_unavailable_bridge_skipped,
         test_config_missing_defaults_false,
+        test_autowrite_env_switch_disables_write,
+        test_autowrite_env_default_enabled,
     ]
     failed = 0
     for t in tests:

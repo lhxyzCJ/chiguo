@@ -131,6 +131,9 @@ uv run python -m netease.bridge --test    # 可选
 uv run python chiguo_daemon.py --stats --alerts --monitor
 ```
 
+> 部署验证/端到端冒烟建议设 `CHIGUO_MEM0_AUTOWRITE=0`（如 `CHIGUO_MEM0_AUTOWRITE=0 bash scripts/chiguo-tick.sh`），
+> 防止验证消息（`--user-msg` 后的 mem0 自动写入）混入生产记忆库，与真实记忆无法区分。
+
 ## 十一、迁移与备份
 
 - 备份/迁移清单：`~/.chiguo/auth/`（含 `agent-auth.json`）、`~/.pi/`、仓库内运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`schedule_overrides.json`、`schedule_plan.json`、`anniversaries.json`、`break_state.json`、`holidays.json`、`schedule_cache.json`）、`data/`（课表/记忆/手动数据）
