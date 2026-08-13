@@ -263,6 +263,39 @@ def test_check_data_ok():
     print("  OK test_check_data_ok")
 
 
+def test_check_semester_missing_warn():
+    """semester_start 缺失 → warn（回退默认学期）"""
+    r = ec.check_semester({})
+    assert not r["ok"] and r["severity"] == "warn"
+    assert "缺失" in r["detail"]
+    print("  OK test_check_semester_missing_warn")
+
+
+def test_check_semester_invalid_warn():
+    """semester_start 非法 → warn"""
+    r = ec.check_semester({"schedule": {"semester_start": "not-a-date"}})
+    assert not r["ok"] and r["severity"] == "warn"
+    assert "非法" in r["detail"]
+    print("  OK test_check_semester_invalid_warn")
+
+
+def test_check_semester_ok():
+    """合法且未过期 → ok"""
+    r = ec.check_semester({"schedule": {"semester_start": "2026-02-23",
+                                        "semester_end": "2099-01-01"}})
+    assert r["ok"] and r["severity"] == "ok"
+    print("  OK test_check_semester_ok")
+
+
+def test_check_semester_expired_warn():
+    """semester_end 已过 → warn（学期过期）"""
+    r = ec.check_semester({"schedule": {"semester_start": "2020-02-23",
+                                        "semester_end": "2020-07-01"}})
+    assert not r["ok"] and r["severity"] == "warn"
+    assert "过期" in r["detail"]
+    print("  OK test_check_semester_expired_warn")
+
+
 def test_exit_code_mapping():
     assert ec.exit_code({"summary": {"ok": 5, "warn": 0, "critical": 0}}) == 0
     assert ec.exit_code({"summary": {"ok": 4, "warn": 1, "critical": 0}}) == 1
@@ -283,12 +316,12 @@ def test_run_checks_never_crashes():
         # #99: runner 值 pi→agent（契约），真实 toml 副本同步替换以保持 8 项检查路径
         cfg.write_text(re.sub(r"(?m)^runner\s*=.*$", 'runner = "agent"', cfg.read_text()))
         report = ec.run_checks(base_dir=td)
-        assert len(report["checks"]) == 7
-        assert report["summary"]["ok"] + report["summary"]["info"] + report["summary"]["warn"] + report["summary"]["critical"] == 7
+        assert len(report["checks"]) == 8
+        assert report["summary"]["ok"] + report["summary"]["info"] + report["summary"]["warn"] + report["summary"]["critical"] == 8
         # netease/ollama 检查会尝试连 localhost —— 只要求不崩(超时 5s 内失败 → warn)
         json.dumps(report)
         report2 = ec.run_checks(base_dir=td, skip_agent=True)
-        assert len(report2["checks"]) == 7
+        assert len(report2["checks"]) == 8
     print("  OK test_run_checks_never_crashes")
 
 
@@ -313,7 +346,7 @@ def test_run_checks_custom_backend_still_checks_mem0():
         names = [c["name"] for c in report["checks"]]
         assert "mem0" in names, names
         assert "memory_backend" not in names, names
-        assert len(report["checks"]) == 7
+        assert len(report["checks"]) == 8
     print("  OK test_run_checks_custom_backend_still_checks_mem0")
 
 
@@ -364,10 +397,14 @@ if __name__ == "__main__":
     test_check_netease_no_cookie_info()
     test_check_data_missing_info()
     test_check_data_ok()
+    test_check_semester_missing_warn()
+    test_check_semester_invalid_warn()
+    test_check_semester_ok()
+    test_check_semester_expired_warn()
     test_exit_code_mapping()
     test_run_checks_never_crashes()
     test_mem0_default_path_anchored()
     test_run_checks_custom_backend_still_checks_mem0()
     test_sanitize_url_strips_credentials()
     test_sanitize_url_bad_port_and_ipv6()
-    print(f"test_envcheck.py: ALL {23} TESTS PASSED")
+    print(f"test_envcheck.py: ALL {27} TESTS PASSED")

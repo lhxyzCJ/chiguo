@@ -3,7 +3,8 @@
 # chiguo_envcheck.py — 环境就绪检查(v10.3)
 # 检查:Python/uv 版本、pi-agent(pi --version)、
 #       ollama embedding(qwen3-embedding)、auth.json [host].provider 条目（缺省 opencode-go）、
-#       mem0 记忆层(qdrant 目录 + key + mem0ai)、网易云 API+登录、数据文件完整。
+#       mem0 记忆层(qdrant 目录 + key + mem0ai)、网易云 API+登录、数据文件完整、
+#       [schedule].semester_start 学期边界(缺失/非法/过期)。
 # 输出:JSON → stdout,汇总退出码 0=就绪 1=warn 2=critical(与 watchdog 一致)。
 # 只读:不建目录、不写缓存、不启动服务;网易云/ollama 检查仅发轻量健康请求
 #       (localhost 目标绕过系统代理,等价 curl --noproxy '*')。
@@ -22,6 +23,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date
 from pathlib import Path
 
 
@@ -300,8 +302,36 @@ def check_data(xlsx_path: Path, memories_path: Path) -> dict:
             "detail": f"课表/手动记忆 OK ({xlsx_path.name}, {memories_path.name})"}
 
 
+def check_semester(config: dict) -> dict:
+    """[schedule].semester_start 存在且合法；缺失/非法 → warn（课表周次/学期边界将回退默认，
+    部署环境 stderr 不可见，需在 envcheck 显式暴露）。"""
+    sched = config.get("schedule", {}) or {}
+    raw = sched.get("semester_start", "")
+    if not raw:
+        return {"name": "semester", "ok": False, "severity": "warn",
+                "detail": "[schedule].semester_start 缺失 → 回退 2026-02-23（课表周次/学期边界可能全错）"}
+    try:
+        ss = date.fromisoformat(str(raw))
+    except ValueError:
+        return {"name": "semester", "ok": False, "severity": "warn",
+                "detail": f"[schedule].semester_start 非法（{raw!r}）→ 回退 2026-02-23（课表周次/学期边界可能全错）"}
+    se = None
+    end_raw = sched.get("semester_end", "")
+    if end_raw:
+        try:
+            se = date.fromisoformat(str(end_raw))
+        except ValueError:
+            se = None
+    if se and date.today() > se:
+        return {"name": "semester", "ok": False, "severity": "warn",
+                "detail": f"semester_start={ss} 合法但 semester_end={se} 已过（今天 {date.today()}）→ "
+                          f"学期边界过期，请更新 chiguo_proactive.toml"}
+    return {"name": "semester", "ok": True, "severity": "ok",
+            "detail": f"semester_start={ss}" + (f"，semester_end={se}" if se else "")}
+
+
 def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = None) -> dict:
-    """按序执行 7 组检查。返回完整报告 dict。单项失败不中断。
+    """按序执行 8 组检查。返回完整报告 dict。单项失败不中断。
     skip_agent: deploy.sh --skip-agent 传入 → agent 缺失降为 warn,不阻塞部署。
     home: 测试注入用（默认 Path.home()）。"""
     base = base_dir or _BASE_DIR
@@ -330,6 +360,7 @@ def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = Non
     checks.append(
         check_netease(api_base, base / "netease" / "netease_cookie.txt", base / "netease" / "netease_health.json"),
     )
+    checks.append(check_semester(cfg))
     checks.append(check_data(xlsx, mem))
     summary = {"ok": 0, "info": 0, "warn": 0, "critical": 0}
     for c in checks:
