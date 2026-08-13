@@ -96,7 +96,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 
 | File | Writer | Purpose |
 |------|--------|---------|
-| `chiguo_state.json` | chiguo_state.py | Persistent emotion state + last_tick + tick_seq + checksum |
+| `chiguo_state.json` | chiguo_state.py | Persistent emotion state + last_tick + tick_seq + mono_anchor/wall_anchor (monotonic anchor pair) + checksum |
 | `chiguo_state.json.bak` | chiguo_state.py | Pre-write backup |
 | `chiguo_state.json.tmp` | chiguo_state.py | Atomic write staging |
 | `chiguo_decisions.jsonl` | chiguo_daemon.py | Append-only decision log |
