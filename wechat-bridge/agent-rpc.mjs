@@ -157,14 +157,15 @@ export class AgentRpc {
       ...buildBaseAgentArgs({ analysisMode: mode === 'analysis', sessionId: finalSession })]
     const proc = spawn(this.bin, args, { stdio: ['pipe', 'pipe', 'pipe'] })
     s.proc = proc
-    writeFileSync(this._pidFile(key), String(proc.pid))
+    // spawn 失败(如 bin 不存在)时 proc.pid 为 undefined——不得写入 'undefined' pidfile
+    if (proc.pid !== undefined) writeFileSync(this._pidFile(key), String(proc.pid))
     // C1: 所有监听器闭包捕获 proc,回调首行校验归属——restart(超时/dispose)后旧进程
     // SIGTERM 延迟退出时,旧 error/exit/data 回调不得动新会话(置 dead/删 pidfile/reject pending)。
     let readyReject = null
     proc.on('error', (e) => {
       if (s.proc !== proc) return  // 旧进程回调,忽略
       s.dead = true
-      this._cleanupPidIfOurs(key, proc)
+      this._cleanupPid(key)  // spawn 失败无真实 pid(_cleanupPidIfOurs 的 NaN!==undefined 校验会漏删 'undefined' pidfile)
       const p = s.pending
       s.pending = null
       if (p) p.reject(e)
@@ -232,6 +233,7 @@ export class AgentRpc {
         const p = s.pending
         s.pending = null
         p.reject(new Error(ev.error ?? 'prompt preflight 失败'))
+        this.restart({ key })  // preflight 失败 → 进程可能处于不确定态,重启让下轮干净启动
         return
       }
       // 回合完成仅以 agent_settled 为准（message_end 单独出现不代表回合结束）
@@ -285,33 +287,47 @@ export class AgentRpc {
   }
 
   /** /new 或 key 轮换后调用:杀指定会话(默认全部)进程,下一轮 prompt 自动重启。
-   *  R1: 内部支持直接按 key 重启(lineBuffer 溢出等内部触发的场景)。 */
-  restart({ mode, sessionId, key } = {}) {
+   *  R1: 内部支持直接按 key 重启(lineBuffer 溢出等内部触发的场景)。
+   *  #192: async——await 子进程退出(SIGTERM→3s 后 SIGKILL 兜底),调用方可确定「已不再持有会话文件」。
+   *  状态(proc=null/dead/lineHandlers/pidfile/pending)在 await 前同步置位,fire-and-forget 调用点语义不变。 */
+  async restart({ mode, sessionId, key } = {}) {
     const keys = key ? [key] : mode ? [this._key(mode, sessionId)] : [...this.sessions.keys()]
-    for (const key of keys) {
-      const s = this.sessions.get(key)
-      if (!s) continue
-      const proc = s.proc
-      try { proc?.kill('SIGTERM') } catch {}
+    await Promise.all(keys.map((k) => this._killSession(k)))
+  }
+
+  /** 杀单个会话进程并 await 其退出;绝不抛错(restart 永不 reject)。 */
+  async _killSession(key) {
+    const s = this.sessions.get(key)
+    if (!s) return
+    const proc = s.proc
+    s.proc = null
+    s.dead = true
+    s.lineHandlers = []  // M2: 旧握手 handler 作废,防跨轮残留空转
+    this._cleanupPid(key)
+    const p = s.pending
+    s.pending = null
+    if (p) p.reject(new Error('agent rpc restart'))
+    if (!proc || proc.pid === undefined) return
+    await new Promise((resolve) => {
+      let settled = false
       // M3: SIGTERM 后延迟复查,未退出补 SIGKILL——防 pi 卡死成孤儿进程
       // 与旧进程残留同写会话文件(pidfile 已删,下次启动也找不到它)。
-      if (proc) {
-        const pid = proc.pid
-        setTimeout(() => {
-          try {
-            process.kill(pid, 0)
-            try { proc.kill('SIGKILL') } catch {}
-          } catch {}  // 已退出/无权限 → 无需兜底
-        }, 3000).unref?.()
+      const t = setTimeout(() => {
+        try { proc.kill('SIGKILL') } catch {}
+        done()
+      }, 3000)
+      t.unref?.()
+      const done = () => {
+        if (settled) return
+        settled = true
+        clearTimeout(t)
+        resolve()
       }
-      s.proc = null
-      s.dead = true
-      s.lineHandlers = []  // M2: 旧握手 handler 作废,防跨轮残留空转
-      this._cleanupPid(key)
-      const p = s.pending
-      s.pending = null
-      if (p) p.reject(new Error('agent rpc restart'))
-    }
+      proc.once('exit', done)
+      proc.once('error', done)
+      if (proc.exitCode !== null || proc.signalCode !== null) { done(); return }
+      try { proc.kill('SIGTERM') } catch { done() }
+    })
   }
 
   dispose() {

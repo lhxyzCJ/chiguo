@@ -133,7 +133,7 @@ POST /send           {"to","text"}                        → {"ok":true}（bot.
 POST /agent/prompt   {"text","mode":"analysis|send"}      → {"ok":true,"text","analysis"?}
                      失败 → 503 {"ok":false,"error"}（调用方回退 spawn）
 # 鉴权：#84 仅本地回环来源（Host/Origin）+ 可选 X-Bridge-Token；
-#       WECHAT_BRIDGE_TOKEN 未配置时零鉴权（启动 WARN，建议 openssl rand -hex 16 生成）
+#       WECHAT_BRIDGE_TOKEN 未配置时启动即 exit 1（强制鉴权；wechat-bridge.sh 自动生成随机 token）
 ```
 
 ### 1.2 daemon 通信契约（Python↔Node 无 socket 常驻）
