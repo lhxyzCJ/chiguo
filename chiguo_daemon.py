@@ -306,7 +306,8 @@ class DecisionEngine:
                     sleeping_guard = True
 
             if not can_send:
-                reason = "sleeping_guard" if sleeping_guard else self._idle_reason(now, user_state)
+                reason = "sleeping_guard" if sleeping_guard else \
+                    self._idle_reason(now, user_state, quiet_ok=play_proof)
                 return self._emit_idle(reason, now, user_state, data_warning)
 
             # 3. 评估触发
@@ -713,7 +714,8 @@ class DecisionEngine:
                          default=str))
         return 0 if report.get("ok") else 1
 
-    def _idle_reason(self, now: datetime, user_state: dict = None) -> str:
+    def _idle_reason(self, now: datetime, user_state: dict = None,
+                     quiet_ok: bool = False) -> str:
         # ── v6 修复: 先报具体门禁（确定性约束），再报 Bayesian 状态（概率推断）。
         # 设计依据：① 门禁是"无论用户状态如何都会拦截"的确定性约束——当多个约束
         # 同时生效时，门禁才是真正的 binding constraint，且其 next_evaluation_at
@@ -753,10 +755,13 @@ class DecisionEngine:
             if not override_ok:
                 return "low_energy"
 
-        # 检查是否在静默时段
-        qs, qe = self.state.cooldown.quiet_window()
-        if in_quiet_window(now, qs, qe):
-            return "quiet_hours"
+        # 检查是否在静默时段（quiet_ok=播放反证成立时跳过，与 can_send 的
+        # `if not quiet_ok:` 判定对齐——否则播放反证成立但被其它 gate 拦下时
+        # reason 误报 quiet_hours，next_evaluation_at 失真）
+        if not quiet_ok:
+            qs, qe = self.state.cooldown.quiet_window()
+            if in_quiet_window(now, qs, qe):
+                return "quiet_hours"
 
         # ── v7: 忙碌抑制期（用户说"别烦我"）→ 独立 reason，抑制期不累积 longing ──
         if self.state.cooldown.is_busy_suppressed(now):
@@ -1320,6 +1325,10 @@ class DecisionEngine:
         bridge_url = str(loop_cfg.get("bridge_url", "http://127.0.0.1:18790")).rstrip("/")
         # token：env 优先（wechat-bridge.sh 生成，不进 git），回退 toml [loop]（向后兼容）
         token = os.environ.get("WECHAT_BRIDGE_TOKEN") or str(loop_cfg.get("bridge_token", "") or "")
+        # M-2: token 缺失时 /send 会 403 → 每轮显式告警（不改变发送行为，仅告知运维）
+        if not token:
+            print("[warn] _loop_send: 未配置 WECHAT_BRIDGE_TOKEN/[loop].bridge_token → bridge /send 将 403，"
+                  "请先装 bridge 或配置 token", file=sys.stderr)
         try:
             timeout = max(10.0, float(loop_cfg.get("agent_timeout_ms", 125000)) / 1000.0)
         except (TypeError, ValueError):

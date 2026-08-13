@@ -390,12 +390,22 @@ PYU
       say "chiguo-daemon.service 已是最新（跳过写入）"
       rm -f "$TMP_UNIT"
     elif confirm "写入 $DAEMON_UNIT 并启用 chiguo-daemon.service（loop 常驻）"; then
-      mkdir -p "$SYSTEMD_DIR"
-      mv "$TMP_UNIT" "$DAEMON_UNIT"
-      if "$SYSTEMCTL" daemon-reload && "$SYSTEMCTL" enable --now chiguo-daemon.service; then
-        say "chiguo-daemon.service 已启用并启动（loop 常驻；cron tick 已互斥跳过）"
+      # M-2: loop 形态依赖 bridge token——缺失时 /send 全 403 静默丢主动消息。
+      # enable 前校验 .env 或 toml [loop].bridge_token 有非空 token，缺失则告警跳过。
+      BRIDGE_ENV="$CHIGUO_REPO/wechat-bridge/.env"
+      LOOP_TOKEN_CFG="$(sed -n 's/^[[:space:]]*bridge_token[[:space:]]*=*[[:space:]]*"\([^"]*\)".*/\1/p' "$CHIGUO_REPO/chiguo_proactive.toml" 2>/dev/null | head -1 || true)"
+      ENV_TOKEN="$(sed -n 's/^WECHAT_BRIDGE_TOKEN=//p' "$BRIDGE_ENV" 2>/dev/null | head -1 || true)"
+      if [ -z "$ENV_TOKEN" ] && [ -z "$LOOP_TOKEN_CFG" ]; then
+        PENDING=1; warn "loop 常驻未配置 bridge token(.env 缺 WECHAT_BRIDGE_TOKEN 且 toml [loop].bridge_token 为空)→ /send 将 403;请先 bash deploy.sh 装 bridge 或配置 token 后再启用"
+        rm -f "$TMP_UNIT"
       else
-        PENDING=1; warn "systemctl 启用失败（请手工执行: systemctl daemon-reload && systemctl enable --now chiguo-daemon.service）"
+        mkdir -p "$SYSTEMD_DIR"
+        mv "$TMP_UNIT" "$DAEMON_UNIT"
+        if "$SYSTEMCTL" daemon-reload && "$SYSTEMCTL" enable --now chiguo-daemon.service; then
+          say "chiguo-daemon.service 已启用并启动（loop 常驻；cron tick 已互斥跳过）"
+        else
+          PENDING=1; warn "systemctl 启用失败（请手工执行: systemctl daemon-reload && systemctl enable --now chiguo-daemon.service）"
+        fi
       fi
     else
       rm -f "$TMP_UNIT"

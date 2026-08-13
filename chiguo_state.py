@@ -995,9 +995,17 @@ class ChiguoState:
         itype = interaction.get("type", "")
 
         if itype == "user_reply":
-            warmth = interaction.get("warmth", 0.0)
+            # M-10: LLM 分析可能给出字符串/None → 强转兜底（非数值回退默认），
+            # 防 TypeError 使整段人格演化/基线回归/演变历史被外层 except 静默跳过
+            try:
+                warmth = float(interaction.get("warmth", 0.0))
+            except (TypeError, ValueError):
+                warmth = 0.0
             lat_cat = interaction.get("latency_category", "normal")
-            msg_len = interaction.get("msg_length", 10)
+            try:
+                msg_len = int(interaction.get("msg_length", 10))
+            except (TypeError, ValueError):
+                msg_len = 10
 
             # 温暖回复
             if warmth > 0.3:
@@ -1761,8 +1769,9 @@ class ChiguoState:
                 "latency_category": lat_cat,
                 "msg_length": msg_length,
             })
-        except Exception:
-            pass
+        except Exception as e:
+            # M-10: 不再完全静默——人格演化异常记审计日志，便于排查（audit 失败不影响主流程）
+            self._audit("adapt_personality_error", repr(e))
 
         # ── v4: Bayesian 在线学习 ──
         try:

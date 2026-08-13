@@ -167,6 +167,11 @@ def _run_replan(base_dir: str, config: dict, sources) -> dict | None:
     except subprocess.TimeoutExpired:
         print("[schedule.replan] pi 超时 → 按失败处理,下轮重试", file=sys.stderr)
         return None
+    except (FileNotFoundError, OSError) as e:
+        # node 缺失/不可执行 → 裸 FileNotFoundError 穿透会每 15 分钟刷一条 traceback(M5)
+        print(f"[schedule.replan] node 执行失败({e}) → 按失败处理,保留旧 plan,下轮重试",
+              file=sys.stderr)
+        return None
     try:
         out = json.loads(res.stdout)
     except (json.JSONDecodeError, ValueError):

@@ -91,7 +91,12 @@ class HolidayParser:
             print(f"[schedule.holiday] holidays.json 顶层非 dict,忽略 override 仅用内嵌: {path}",
                   file=sys.stderr)
             return
-        for name, r in data.get("holidays", {}).items():
+        holidays = data.get("holidays", {})
+        if not isinstance(holidays, dict):
+            print(f"[schedule.holiday] holidays.json holidays 非 dict,忽略仅用内嵌: {path}",
+                  file=sys.stderr)
+            holidays = {}
+        for name, r in holidays.items():
             try:
                 s = date.fromisoformat(r["start"])
                 e = date.fromisoformat(r["end"])
@@ -110,7 +115,12 @@ class HolidayParser:
                     self._holidays[f"{name}@{s.year}"] = (s, e)   # 同名不同年 → 归组追加
             else:
                 self._holidays[name] = (s, e)
-        for d_str, reason in data.get("makeup_workdays", {}).items():
+        makeup = data.get("makeup_workdays", {})
+        if not isinstance(makeup, dict):
+            print(f"[schedule.holiday] holidays.json makeup_workdays 非 dict,忽略仅用内嵌: {path}",
+                  file=sys.stderr)
+            makeup = {}
+        for d_str, reason in makeup.items():
             try:
                 self._makeup[date.fromisoformat(d_str)] = reason
             except (ValueError, TypeError):

@@ -102,11 +102,26 @@ def _by_keyword(q: str, sources, today: date) -> list[dict]:
         label = ov.get("label") or ov.get("note") or (ov.get("course") or {}).get("course", "")
         if ql in label.lower():
             matches.append({"type": "override", "date": ov["date"], "label": label})
-    for name in sources.holiday.all_ranges():
+    # M6: 跨年关键词召回取最近年份——range_of(display) 精确优先会返回旧年份
+    # ("春节"与"春节@2027"并存时取 2026);改用 all_ranges 全量区间,display 匹配后
+    # 取 s.year >= today.year 的最小者(当年/将来),否则取最大年份(全为过去)。
+    best_display = None
+    best_rng = None
+    best_year = None
+    for name, rng in sources.holiday.all_ranges().items():
         display = name.split("@", 1)[0]
-        if ql in display.lower():
-            matches.append({"type": "holiday", "date": sources.holiday.range_of(display)[0].isoformat(),
-                            "label": display})
+        if ql not in display.lower():
+            continue
+        y = rng[0].year
+        if best_rng is None:
+            best_display, best_rng, best_year = display, rng, y
+        elif best_year >= today.year and y >= today.year and y < best_year:
+            best_display, best_rng, best_year = display, rng, y   # 当年/将来中取最小年份
+        elif best_year < today.year and y > best_year:
+            best_display, best_rng, best_year = display, rng, y   # 全为过去时取最大年份
+    if best_rng is not None:
+        matches.append({"type": "holiday", "date": best_rng[0].isoformat(),
+                        "label": best_display})
     return matches
 
 

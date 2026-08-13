@@ -13,7 +13,8 @@ cat > "$TMP/repo/chiguo_proactive.toml" <<'TOML'
 [wechat]
 wechat_recipient = "owner_test@im.wechat"
 TOML
-touch "$TMP/repo/.venv/bin/python" && chmod +x "$TMP/repo/.venv/bin/python"
+# venv python 桩：write_env 现用仓库 venv python 解析 auth.json（H-1），须是真实可执行解释器
+ln -sf "$(command -v python3)" "$TMP/repo/.venv/bin/python"
 
 cat > "$TMP/bin/git" <<'STUB'
 #!/usr/bin/env bash
@@ -48,7 +49,8 @@ export CHIGUO_REPO_OVERRIDE="$TMP/repo" WECHATBOT_DIR="$TMP/wechatbot" WECHAT_BR
 rm -rf "$TMP/repo/.venv"
 set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 2 ] && pass "缺 .venv → 退出 2" || fail "缺 .venv 期望 2 实得 $RC"
-mkdir -p "$TMP/repo/.venv/bin" && touch "$TMP/repo/.venv/bin/python" && chmod +x "$TMP/repo/.venv/bin/python"
+mkdir -p "$TMP/repo/.venv/bin" && # venv python 桩：write_env 现用仓库 venv python 解析 auth.json（H-1），须是真实可执行解释器
+ln -sf "$(command -v python3)" "$TMP/repo/.venv/bin/python"
 
 # ── 用例 2: 首次 install → clone wechatbot + npm install file: + .env 生成 ──
 set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e

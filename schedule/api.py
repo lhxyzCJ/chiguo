@@ -108,7 +108,12 @@ class ScheduleApi:
                 migrated += 1
         if migrated:
             kept = [it for it in items if it.get("type") != "countdown"]
-            p.write_text(json.dumps({"anniversaries": kept}, ensure_ascii=False, indent=2))
+            # M-9: 原子写（tmp + os.replace + 0600），防迁移中途崩溃写坏正式文件丢纪念日；
+            # 与 anniversary._save / plan_store._save 同款模式
+            tmp = Path(str(p) + ".tmp")
+            tmp.write_text(json.dumps({"anniversaries": kept}, ensure_ascii=False, indent=2))
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, p)
             self.anniversary_mgr._load()
 
     def _migrate_toml_exam_weeks(self):

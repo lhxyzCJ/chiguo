@@ -60,7 +60,12 @@ def load_sources(base_dir: str, config: dict, schedule_cache_dict: dict | None =
         except (ValueError, TypeError):
             pass
     base = Path(base_dir)
-    holiday = HolidayParser(str(base / "holidays.json"))
+    try:
+        holiday = HolidayParser(str(base / "holidays.json"))
+    except Exception:
+        # H-2 兜底:holidays.json override 意外异常 → 降级为仅内嵌节假日,不抛(replan 不被 traceback 中断)
+        print(f"[schedule.sources] holidays.json 解析异常,降级仅用内嵌节假日", file=sys.stderr)
+        holiday = HolidayParser()
     anniversaries = AnniversaryManager(str(base))
     overrides = OverrideStore(str(base))
     break_state = None

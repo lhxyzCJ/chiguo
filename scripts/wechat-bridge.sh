@@ -44,7 +44,7 @@ has_credentials() { [ -f "$WX_STORAGE/credentials.json" ]; }
 # #review: 默认生成随机共享 token（同机任意进程也能打 /agent/prompt 消耗 LLM 配额）。
 # 升级：#191 起未配置 token 直接 FATAL 拒绝启动（main() 校验），此处生成保证能启动。
 # 幂等：已配置的 token 保留（重跑 install 不覆盖）。调用方：tick.sh 读 .env、daemon _loop_send 读 env。
-BRIDGE_TOKEN="$(grep -oP '(?<=^WECHAT_BRIDGE_TOKEN=).*' "$ENV_FILE" 2>/dev/null | head -1 || true)"
+BRIDGE_TOKEN="$(sed -n 's/^WECHAT_BRIDGE_TOKEN=//p' "$ENV_FILE" 2>/dev/null | head -1 || true)"
 if [ -z "$BRIDGE_TOKEN" ]; then
   BRIDGE_TOKEN="$(openssl rand -hex 16 2>/dev/null || date +%s%N | md5sum | head -c 32)"
 fi
@@ -55,7 +55,9 @@ write_env() {
     # 无则回退 [host].provider 条目（install_agent.sh 写入）
     AGENT_FALLBACK_PROVIDER="$(sed -n 's/^[[:space:]]*provider *= *"\([^"]*\)".*/\1/p' "$PROJECT_DIR/chiguo_proactive.toml" | head -1 || true)"
     [ -n "$AGENT_FALLBACK_PROVIDER" ] || AGENT_FALLBACK_PROVIDER=opencode-go
-    AGENT_KEY="$(AGENT_FALLBACK_PROVIDER="$AGENT_FALLBACK_PROVIDER" python3 -c "
+    # H-1: 用仓库 venv python（do_install 已校验 .venv 存在），避免裸 python3 在
+    # 精简 PATH 下缺失 → key 静默为空；AGENT_KEY 空时从现有 .env 幂等回填，不覆盖旧有效值。
+    AGENT_KEY="$(AGENT_FALLBACK_PROVIDER="$AGENT_FALLBACK_PROVIDER" "$PROJECT_DIR/.venv/bin/python" -c "
 import json,os
 try:
     d=json.load(open(os.path.expanduser('~/.pi/agent/auth.json')))
@@ -63,6 +65,9 @@ try:
     print(key or '')
 except Exception: print('')
 " 2>/dev/null || true)"
+    if [ -z "$AGENT_KEY" ] && [ -f "$ENV_FILE" ]; then
+      AGENT_KEY="$(sed -n 's/^OPENCODE_API_KEY=//p' "$ENV_FILE" 2>/dev/null | head -1 || true)"
+    fi
     # umask 077：文件创建即为 600，避免 chmod 前窗口期 key 以默认权限落盘
     ( umask 077; cat > "$ENV_FILE" <<EOF
 WECHAT_BRIDGE_SEND_PORT=$SEND_PORT

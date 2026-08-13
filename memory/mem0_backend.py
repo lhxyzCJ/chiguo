@@ -19,6 +19,7 @@ import math
 import os
 import random
 import sys
+import threading
 import time as _time_module
 from datetime import datetime, timezone, timedelta
 
@@ -36,6 +37,38 @@ from memory.base import (
 os.environ.setdefault("MEM0_TELEMETRY", "false")
 
 _RETRY_SECONDS = 60.0  # available=False 后至少间隔这么久才重新探测
+
+# M4: mem0 读侧单次调用超时预算(秒)。mem0 2.x 的 OllamaEmbedding 硬编码
+# Client(host=...) 无超时(ollama-python timeout=None → httpx 无限阻塞),嵌入 HTTP
+# 是 daemon evaluate 锁内唯一无上限的网络 IO——持锁时长无上限会让并发进程 5s
+# 拿不到锁降级无锁、该轮 save 被拒写白跑。此处给 search 原语(含 available 探测)
+# 加线程超时兜底,超时按失败降级(置不可用 + 60s 节流重探自愈)。
+_MEM0_TIMEOUT = 10.0
+
+
+def _call_with_timeout(fn, timeout: float):
+    """在 daemon 线程执行 fn;超时返回 None(调用方按失败降级),异常原样重抛。
+
+    不侵入 mem0 内部:仅把我们这一侧的 `self._m.*` 调用圈进超时预算。超时后
+    放弃等待,遗留线程会在底层请求返回后自然结束(ollama 恢复即自愈);故障驱动
+    自愈(_available=False + _RETRY_SECONDS 节流)保证 60s 内最多遗留一个线程。
+    """
+    box = {}
+
+    def runner():
+        try:
+            box["v"] = fn()
+        except Exception as e:  # noqa: BLE001 —— 跨线程重抛,保持调用方异常语义
+            box["e"] = e
+
+    t = threading.Thread(target=runner, daemon=True, name="mem0-timeout")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return None
+    if "e" in box:
+        raise box["e"]
+    return box["v"]
 
 _DEFAULT_LLM_MODEL = "deepseek-v4-flash"
 _DEFAULT_LLM_BASE_URL = "https://opencode.ai/zen/go/v1"
@@ -191,7 +224,10 @@ class Mem0Backend(MemoryBackend):
             self._ensure_mem0()
             # 连通性探测：search 一次（走 embedder，覆盖 ollama 依赖；
             # get_all 只走 qdrant scroll 不触 embedder，ollama 故障探测不到）
-            self._m.search("probe", filters={"user_id": self.user_id}, top_k=1)
+            if _call_with_timeout(
+                lambda: self._m.search("probe", filters={"user_id": self.user_id}, top_k=1),
+                _MEM0_TIMEOUT) is None:
+                raise TimeoutError("mem0 探测超时")
             self._warn_missing_capabilities()  # D2: 探测成功时检查一次能力缺失，显式告警
             self._available = True
         except Exception as e:
@@ -262,9 +298,12 @@ class Mem0Backend(MemoryBackend):
             filters = {"user_id": self.user_id}
             if category:
                 filters["category"] = category  # mem0 原生支持 metadata 键过滤
-            results = self._m.search(
-                query, filters=filters, top_k=max(limit, 20)
-            ).get("results", [])
+            r = _call_with_timeout(
+                lambda: self._m.search(query, filters=filters, top_k=max(limit, 20)),
+                _MEM0_TIMEOUT)
+            if r is None:
+                raise TimeoutError("mem0 search 超时")
+            results = r.get("results", [])
         except Exception as e:
             import logging
             logging.warning("mem0 %s failed: %r", "search", e)

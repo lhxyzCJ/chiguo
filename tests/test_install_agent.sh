@@ -212,6 +212,9 @@ pass "auth.json 合并写入（保留旧条目 + chmod 600）+ .bak 不重复"
 
 # ── 用例 15: CHIGUO_DAEMON_LOOP=1 → 跳过 tick 注册 + 移除旧 tick 条目（防双发）──
 setup_ready
+# M-2: loop 启用前需 bridge token（缺失则 install 拒绝启用）→ 预置 .env 含 token
+mkdir -p "$CHIGUO_REPO_OVERRIDE/wechat-bridge"
+printf 'WECHAT_BRIDGE_TOKEN=test-loop-token\n' > "$CHIGUO_REPO_OVERRIDE/wechat-bridge/.env"
 set +e; OUT=$(CHIGUO_DAEMON_LOOP=1 PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "loop 模式期望 0 实得 $RC"
 grep -q 'chiguo-tick' "$CRON_STATE" && fail "loop 模式不应注册/保留 chiguo-tick" || true
