@@ -5,6 +5,10 @@
 # 用法: bash scripts/wechat-bridge.sh <install|start|stop|status|login>
 # 退出码: 0=OK  1=可恢复问题（如未登录）  2=严重问题
 # 幂等：install/start 重复运行安全。
+#
+# 安全：write_env 生成的 wechat-bridge/.env 含明文 LLM API key
+# （OPENCODE_API_KEY），仅 root 0600 权限；勿提交 git、勿进备份外传。
+# 如需变更 key，改 ~/.pi/agent/auth.json 的 opencode-go 条目并重跑 install。
 # ============================================================
 set -uo pipefail
 
@@ -68,6 +72,7 @@ WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs
 WECHAT_BRIDGE_AGENT_RPC=1
 WECHAT_BRIDGE_TOKEN=$BRIDGE_TOKEN
 WECHAT_BRIDGE_STORAGE=$WX_STORAGE
+# LLM API key（与 ~/.pi/agent/auth.json 的 opencode-go 条目相同；.env 仅为 bridge 兼容冗余，勿外传/勿进 git）
 OPENCODE_API_KEY=$AGENT_KEY
 EOF
     )
