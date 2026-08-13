@@ -549,7 +549,7 @@ evaluate(now)
 
 **健康与降级链**：`netease_health.json` 健康文件（tmp→os.replace 原子写，缺失/损坏/非 dict → 默认重建不崩溃）；`refresh_health(now)` 真实探针（api_alive=False → faulty=unreachable；api_alive 且未登录 → faulty=login_expired；均 OK → 恢复并清 last_failure）；faulty 且未到 `reprobe_minutes`（默认 30）→ 跳过网络直出故障话题；`_sync_success` 拉取成功即恢复。`chiguo_monitor` 只读健康文件展示，**不触发探针**。
 
-**热重载**：`_maybe_reload_config()` 检测到 toml mtime 变化后同步重建 `NeteaseService` 与 TopicPicker（chiguo_daemon.py:121-124，重试/配额参数可能被改）——非法 `retry_count` 会在此路径抛异常（见 §十三 已知局限）。
+**热重载**：`_maybe_reload_config()` 检测到 toml mtime 变化后同步重建 `NeteaseService` 与 TopicPicker（chiguo_daemon.py:121-124，重试/配额参数可能被改）——非法 `retry_count` 已由 `netease/service.py` `_cfg_int` 数值兜底回默认（不抛异常，配置错误不再快速失败）。
 
 **素材安全**：fault/daily/recent 话题 data 仅 `{source, reason}` / `{source, name, artist}`，不含 share_url/链接（链接由发送层按需拼接）。
 
@@ -1880,7 +1880,7 @@ agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].p
 直接替换 `data/xskb.xlsx` 文件。下次 tick 检测到 mtime 变化 → 自动重解析。
 
 ### 更新学期
-修改 `chiguo_proactive.toml` 中 `semester_start` 日期。`semester_end` 之后的日期自动视为假期。
+修改 `chiguo_proactive.toml` 中 `semester_start` 日期。`semester_end` 之后的日期自动视为假期。`chiguo_envcheck.py` 会检查 `semester_start` 缺失/非法/`semester_end` 过期（warn，退出码 1），学期更新后跑 `uv run python chiguo_envcheck.py` 验证。
 
 ### 更新节假日（2027+）
 - 方式 A：修改 `schedule/holiday.py` 中的 `HOLIDAYS` 和 `MAKEUP_WORKDAYS` 字典
@@ -1957,4 +1957,4 @@ rm <仓库根目录>/chiguo_state.json
 
 ## 已知局限（原 CCR §十七）
 
-- netease 热重载路径：非法 `retry_count`（负数/非数值）会在 `_maybe_reload_config` 重建 `NeteaseService` 时抛异常（§2.12 热重载）；属配置错误即快速失败语义
+- netease 热重载路径：非法 `retry_count`（负数/非数值）已由 `netease/service.py` `_cfg_int` 兜底为默认值（不抛异常）；配置错误不再快速失败，取值异常仅在日志可见
