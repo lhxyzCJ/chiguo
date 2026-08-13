@@ -38,10 +38,11 @@ def t2_block(sources, today: date, horizon: int = 14) -> list[str]:
     manual break(无日期区间)→ 仅"寒暑假模式中"(第X天公式不可算,N6)。"""
     lines = []
     for name, (s, e) in sources.holiday.all_ranges().items():
+        display = name.split("@", 1)[0]   # 跨年归组键剥年份后缀,与 holiday_name 同源
         if s <= today <= e:
-            lines.append(f"今天是放{name}第{(today - s).days + 1}天")
+            lines.append(f"今天是放{display}第{(today - s).days + 1}天")
         elif s > today and (s - today).days <= horizon:
-            lines.append(f"还有{(s - today).days}天放{name}")
+            lines.append(f"还有{(s - today).days}天放{display}")
     for it in sources.overrides.intervals():
         s = date.fromisoformat(it["date"])
         e = date.fromisoformat(it.get("end_date") or it["date"])

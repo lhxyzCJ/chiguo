@@ -29,7 +29,12 @@ def _parse_query_date(q: str, today: date) -> date | None:
                 return date(today.year + 1, mm, dd)
             except ValueError:
                 return None
-        return d if d >= today else date(today.year + 1, mm, dd)
+        if d >= today:
+            return d
+        try:
+            return date(today.year + 1, mm, dd)   # 02-29 且次年非闰年 → 无匹配
+        except ValueError:
+            return None
     return None
 
 
@@ -65,7 +70,8 @@ def _by_date(d: date, sources, today: date) -> list[dict]:
             matches.append({"type": "override", "date": ov["date"], "label": label})
     for name, (s, e) in sources.holiday.all_ranges().items():
         if s <= hi and e >= lo:
-            matches.append({"type": "holiday", "date": s.isoformat(), "label": name})
+            matches.append({"type": "holiday", "date": s.isoformat(),
+                            "label": name.split("@", 1)[0]})
     if sources.break_state:
         for b in sources.break_state.get("breaks", []):
             try:
@@ -97,9 +103,10 @@ def _by_keyword(q: str, sources, today: date) -> list[dict]:
         if ql in label.lower():
             matches.append({"type": "override", "date": ov["date"], "label": label})
     for name in sources.holiday.all_ranges():
-        if ql in name.lower():
-            matches.append({"type": "holiday", "date": sources.holiday.range_of(name)[0].isoformat(),
-                            "label": name})
+        display = name.split("@", 1)[0]
+        if ql in display.lower():
+            matches.append({"type": "holiday", "date": sources.holiday.range_of(display)[0].isoformat(),
+                            "label": display})
     return matches
 
 
