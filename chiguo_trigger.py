@@ -5,6 +5,7 @@
 
 import random
 import math
+import sys
 from datetime import datetime
 from dataclasses import dataclass, field
 
@@ -110,7 +111,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     weighted_candidates: list[dict] = []
 
     # 仪式触发权重缩放（默认为1.0，调低可减少仪式触发对情绪触发的压制）
-    ritual_scale = state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0)
+    ritual_scale = _to_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0)
 
     # ── 固定事件（权重固定，会概率性参与竞争） ──────────
 
@@ -264,8 +265,8 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # anxiety：与孤独三级同款 "不触发基线" softmax 归一化（raw / (raw + baseline)）
     # v7 修复：原 0.05 硬门槛在 anxiety=40（raw≈0.103）即恒候选，沉默期确定性发满日上限。
     # 归一化后 40 → ≈0.171 < anxiety_min_weight(0.3)，不再成为唯一候选；高焦虑仍强候选。
-    anx_baseline = trg_cfg.get("anxiety_baseline", 0.5)
-    anx_min_weight = trg_cfg.get("anxiety_min_weight", 0.3)
+    anx_baseline = _clamp01(trg_cfg.get("anxiety_baseline", 0.5), 0.5)
+    anx_min_weight = _clamp01(trg_cfg.get("anxiety_min_weight", 0.3), 0.3)
     raw_anx = state.trigger_weight("anxiety")
 
     # ── v1.11 ①: 用户情绪感知（user_mood） ──
@@ -281,8 +282,12 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             anx_bonus = max(0.0, float(anx_bonus))
         except (TypeError, ValueError):
             anx_bonus = 0.0
-        if anx_bonus > 0 and mood["mood"] in ("low", "distressed"):
-            raw_anx = raw_anx * (1.0 + anx_bonus * mood["intensity"])
+        if anx_bonus > 0 and mood.get("mood") in ("low", "distressed"):
+            raw_anx = raw_anx * (1.0 + anx_bonus * mood.get("intensity", 0.0))
+
+    # #169: bonus 放大可能让 raw_anx 超过 1.0，而 denom=raw+baseline*(1-raw) 假设 [0,1]
+    # → 先钳到 1.0 再归一化（无 bonus 时 raw 已为 sigmoid ∈ [0,1]，此钳制为 no-op）。
+    raw_anx = min(1.0, raw_anx)
 
     # B2 (#137): A4 must_send 标定矛盾修复 —— 原归一化 w=raw/(raw+baseline) 把 w_anx
     # 钳在 max≈0.664 < must_send_activation(0.75)，anxiety 单源永远到不了高段必发。
@@ -302,11 +307,11 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         comfort_base = float(comfort_base)
     except (TypeError, ValueError):
         comfort_base = 0.0
-    if mood_fresh_flag and comfort_base > 0 and mood["mood"] in ("low", "distressed"):
+    if mood_fresh_flag and comfort_base > 0 and mood.get("mood") in ("low", "distressed"):
         # 强度 × 好感调制（高好感更想哄）；softmax 归一化防恒候选（同 anxiety 模式）
-        raw_cf = comfort_base * mood["intensity"] * (1 + (emo.affection - 50) / 100)
-        cf_baseline = trg_cfg.get("comfort_baseline", 0.5)
-        cf_min = trg_cfg.get("comfort_min_weight", 0.03)
+        raw_cf = comfort_base * mood.get("intensity", 0.0) * (1 + (emo.affection - 50) / 100)
+        cf_baseline = _clamp01(trg_cfg.get("comfort_baseline", 0.5), 0.5)
+        cf_min = _clamp01(trg_cfg.get("comfort_min_weight", 0.03), 0.03)
         w_cf = raw_cf / (raw_cf + cf_baseline) if raw_cf + cf_baseline > 0 else 0.0
         if w_cf > cf_min:
             weighted_candidates.append({
@@ -347,7 +352,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # held_count 高 + accumulated_lambda 高 → "累积的想念终于溢出"
     held = getattr(state.cooldown, 'held_count', 0)
     acc_lam = state.cooldown.accumulated_lambda or 0
-    base_lambda = state.config.get("poisson", {}).get("base_lambda", 0.25)
+    base_lambda = _to_float(state.config.get("poisson", {}).get("base_lambda", 0.25), 0.25)
     if state.is_longing_overflow() and base_lambda > 0:
         w_longing = min(0.5, (acc_lam / base_lambda - 1) * 0.3)
         if w_longing > 0.03:
@@ -383,7 +388,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # A3 日程乘数 + 抖动：只作用于情绪类候选，仪式类（morning/night/meal/special/memory/follow_up）豁免。
     # 上课中 ×0.3；空闲（节假日/周末/课间）× free_multiplier（默认 1.2）；半忙 ×0.6。
     # 再乘 uniform(0.8, 1.2) 随机抖动防机械感。逃生阀已在函数首 return → 天然豁免。
-    free_mult = trg_cfg.get("free_multiplier", 1.2)
+    free_mult = _to_float(trg_cfg.get("free_multiplier", 1.2), 1.2)
     sched_mult = _schedule_multiplier(state, now, free_mult)
     for c in weighted_candidates:
         if c["trigger"].type in EMOTION_TRIGGERS:
@@ -391,7 +396,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
 
     # A6 统一 repeat 阻尼：trigger_history 按 type 计数 n，weight ×= repeat_decay ** min(n, cap)。
     # 对所有 trigger 类型统一生效（daemon 发送时 append history，本层只读不写）。
-    repeat_decay = trg_cfg.get("repeat_decay", 0.6)
+    repeat_decay = _clamp01(trg_cfg.get("repeat_decay", 0.6), 0.6)
     repeat_cap = trg_cfg.get("repeat_cap", 3)
     history = state.cooldown.trigger_history
     for c in weighted_candidates:
@@ -413,7 +418,8 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     if min_activation >= must_send_activation:
         print(f"[trigger] WARNING: min_activation({min_activation:.2f}) >= "
               f"must_send_activation({must_send_activation:.2f}), A4 高段必发失效"
-              f"（需 min < must，请检查 chiguo_proactive.toml [trigger]）")
+              f"（需 min < must，请检查 chiguo_proactive.toml [trigger]）",
+              file=sys.stderr)
     emo_cands = [c for c in weighted_candidates if c["trigger"].type in EMOTION_TRIGGERS]
     ritual_cands = [c for c in weighted_candidates if c["trigger"].type not in EMOTION_TRIGGERS]
     activation = _activation_score(emo_cands)
@@ -528,8 +534,8 @@ def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
     if not math.isfinite(peak) or not math.isfinite(sigma) or sigma <= 0:
         peak, sigma = 4.0, 3.0
     bell = math.exp(-((age - peak) / sigma) ** 2)
-    w = trg_cfg.get("follow_up_weight", 0.35) * bell
-    if w <= trg_cfg.get("follow_up_min_weight", 0.03):
+    w = _to_float(trg_cfg.get("follow_up_weight", 0.35), 0.35) * bell
+    if w <= _clamp01(trg_cfg.get("follow_up_min_weight", 0.03), 0.03):
         return None
     return {
         "trigger": Trigger(type="follow_up", intensity="soft",
