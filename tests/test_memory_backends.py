@@ -168,6 +168,24 @@ def test_stats():
     print("  OK test_stats")
 
 
+class _ColInfoStore:
+    """qdrant 风格 col_info → points_count"""
+    def __init__(self, n):
+        self._n = n
+    def col_info(self):
+        return type("CI", (), {"points_count": self._n})()
+
+
+def test_stats_qdrant_count():
+    """有 vector_store.col_info → total_memories 用精确计数（不回退全量）"""
+    with tempfile.TemporaryDirectory() as td:
+        b = _fake_backend([_mem0_row(), _mem0_row("第二条", "events", 0.7, mem_id="m2")], Path(td))
+        b._m.vector_store = _ColInfoStore(42)
+        s = b.stats()
+        assert s["available"] and s["total_memories"] == 42
+    print("  OK test_stats_qdrant_count")
+
+
 # ── 写入 ──────────────────────────────────────────────────
 
 def test_add_messages():
@@ -304,6 +322,26 @@ def test_available_throttle_retry():
     print("  OK test_available_throttle_retry")
 
 
+def test_capability_missing_warns_once():
+    """update/delete/get 缺失 → stderr 告警一次（capability_warned 置位后不再重复）"""
+    import io
+    b = _fake_backend([], Path("/tmp"))
+    b._m = type("NoApi", (), {"search": lambda *a, **k: {"results": []}},
+                )()  # 无 update/delete/get
+    buf = io.StringIO()
+    import sys
+    orig = sys.stderr
+    sys.stderr = buf
+    try:
+        b._warn_missing_capabilities()
+        b._warn_missing_capabilities()
+    finally:
+        sys.stderr = orig
+    out = buf.getvalue()
+    assert out.count("缺") == 1, f"应只告警一次: {out}"
+    print("  OK test_capability_missing_warns_once")
+
+
 if __name__ == "__main__":
     test_row_contract()
     test_row_defaults()
@@ -312,6 +350,7 @@ if __name__ == "__main__":
     test_search_unavailable()
     test_random_memory_weighted()
     test_stats()
+    test_stats_qdrant_count()
     test_add_messages()
     test_ebbinghaus_inherited()
     test_factory_mem0()
@@ -320,4 +359,5 @@ if __name__ == "__main__":
     test_factory_unknown_string()
     test_disabled_env_forced_unavailable()
     test_available_throttle_retry()
-    print(f"test_memory_backends.py: ALL 14 TESTS PASSED")
+    test_capability_missing_warns_once()
+    print(f"test_memory_backends.py: ALL 17 TESTS PASSED")
