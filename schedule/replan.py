@@ -123,7 +123,7 @@ def _lock(base_dir: str) -> bool:
 
 def replan_env(base: dict | None = None) -> dict:
     """replan 的 pi 子进程环境:注入独立 thinking 档位与超时,避免 [host].thinking_level=max
-    拖垮调用(埋埋实机 2 核 VPS 实测 max 单次 ~115s+,120s 必超时)。
+    拖垮调用(生产机实机 2 核 VPS 实测 max 单次 ~115s+,120s 必超时)。
     优先级:CHIGUO_REPLAN_THINKING(专用) > 环境 AGENTRUN_THINKING(显式) > 默认 high;
     AGENTRUN_TIMEOUT 与 replan_timeout() 同步(agent-run.mjs 内层超时读该变量)。"""
     env = dict(os.environ if base is None else base)

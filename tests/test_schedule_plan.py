@@ -77,7 +77,7 @@ def test_skip_and_validate():
 
 def test_replan_pi_env_and_timeout():
     """replan 的 agent 子进程环境/超时:独立 thinking 档位(默认 high,不被 [host] thinking=max 拖垮)
-    与可配超时(默认 240s,下限 60s)。埋埋实机:120s 硬编码 + thinking=max 必超时(F9);
+    与可配超时(默认 240s,下限 60s)。生产机实机:120s 硬编码 + thinking=max 必超时(F9);
     agent-run.mjs 内层超时读 AGENTRUN_TIMEOUT,须与 replan_timeout 同步,否则外层超时是死旋钮。"""
     # 档位优先级:CHIGUO_REPLAN_THINKING > 环境 AGENTRUN_THINKING > 默认 high
     assert replan_env({})["AGENTRUN_THINKING"] == "high", "无配置 → 默认 high"

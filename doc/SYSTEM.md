@@ -909,7 +909,6 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `netease-api.sh` | 180 | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
 | `chiguo-tick.sh` | 159 | cron 门控入口（零模型，读 daemon 输出 → send → record-send → composer 兜底） |
 | `ci-test.sh` | 85 | 全量测试链（59 py + 13 script，CI stub 自举） |
-| `dev-sync.sh` | 33 | 开发同步 |
 | `agent-auth.sh` | 18 | agent 认证 |
 | `replan-tick.sh` | 10 | loop 形态 replan 判脏轮询 |
 | `chiguo-daemon.service` | — | systemd 单元（loop 常驻形态） |

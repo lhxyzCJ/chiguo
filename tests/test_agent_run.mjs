@@ -122,7 +122,7 @@ t('run: piArgs 构造（provider/model/session/thinking/人格注入/--mode json
   const a = captured.args
   assert.strictEqual(a[0], '-p')
   // 期望值按真实 toml 推导（与 agent-run.mjs 同款:env ?? toml ?? 缺省）——部署机自定义
-  // provider/thinking 时测试不误挂（埋埋实机闭环验证发现;CI 默认 toml 仍验缺省值）
+  // provider/thinking 时测试不误挂（生产机实机闭环验证发现;CI 默认 toml 仍验缺省值）
   // 注意:env 键名(AGENTRUN_*)与 toml 键名(provider/model/...)不同,须分开传参
   const host = readToml(path.join(resolveRepo(import.meta.url), 'chiguo_proactive.toml')).host ?? {}
   const want = (envKey, hostKey, d) => process.env[envKey] ?? host[hostKey] ?? d

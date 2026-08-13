@@ -35,7 +35,7 @@ const PROVIDER = process.env.AGENTRUN_PROVIDER ?? HOST.provider ?? 'opencode-go'
 const MODEL = process.env.AGENTRUN_MODEL ?? HOST.model ?? 'deepseek-v4-flash'
 const THINKING = process.env.AGENTRUN_THINKING ?? HOST.thinking_level ?? 'high'
 // 回复侧独立档位(交互路径要快):env AGENTRUN_REPLY_THINKING ?? toml reply_thinking_level ?? 回退 THINKING。
-// 主动发送(send-mode)与命令/重分析路径保持 thinking_level,互不拖累(埋埋实机:max 单次 63s+,回复体验差)
+// 主动发送(send-mode)与命令/重分析路径保持 thinking_level,互不拖累(生产机实机:max 单次 63s+,回复体验差)
 const REPLY_THINKING = process.env.AGENTRUN_REPLY_THINKING ?? HOST.reply_thinking_level ?? THINKING
 // agent 调用超时(ms):默认 120s;replan 等长任务经 AGENTRUN_TIMEOUT 覆盖(replan.py replan_env 注入)
 export const AGENT_TIMEOUT = Number(process.env.AGENTRUN_TIMEOUT ?? 120_000)

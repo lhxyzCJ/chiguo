@@ -42,6 +42,9 @@ agent_health.json.tmp
 # AI 工具个人配置（开发机本地，不进仓库）
 .claude/
 
+# 个人开发运维工具（dev-sync.sh 已迁至 ~/chiguo-dev/，绑定生产机 SSH host，不进公开仓库）
+scripts/dev-sync.sh
+
 # 隐私数据（本地保留，不进 git——历史已重写清除）
 wechat-bridge/credentials/
 chiguo_decisions.jsonl
