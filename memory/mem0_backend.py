@@ -86,7 +86,6 @@ class Mem0Backend(MemoryBackend):
                  embedder_dims: int = None,
                  strength: float = None, min_weight: float = None,
                  max_rows: int = None,
-                 consolidate_enabled: bool = False,
                  consolidate_sim_threshold: float = None,
                  consolidate_min_importance: float = None,
                  consolidate_max_age_hours: float = None,
@@ -102,12 +101,12 @@ class Mem0Backend(MemoryBackend):
         self.llm_api_key = llm_api_key or _pi_api_key()
         self.embedder_model = embedder_model or _DEFAULT_EMBEDDER_MODEL
         self.embedder_base_url = embedder_base_url or _DEFAULT_EMBEDDER_BASE_URL
-        self.embedder_dims = int(embedder_dims or _DEFAULT_EMBEDDER_DIMS)
+        self.embedder_dims = int(_finite_float(embedder_dims or _DEFAULT_EMBEDDER_DIMS,
+                                               _DEFAULT_EMBEDDER_DIMS))
         self._strength = strength or 168.0
         self._min_weight = min_weight or 0.1
-        self.max_rows = int(max_rows or 1000)  # _all_rows get_all 的 top_k 上限
+        self.max_rows = int(_finite_float(max_rows or 1000, 1000))  # _all_rows get_all 的 top_k 上限
         # ── C1/C2: 记忆巩固 & 复习强化配置（默认关闭恒等，可灰度）──
-        self._consolidate_enabled = bool(consolidate_enabled)
         self._consolidate_sim_threshold = (
             consolidate_sim_threshold
             if consolidate_sim_threshold is not None
@@ -241,6 +240,9 @@ class Mem0Backend(MemoryBackend):
             # C2: 召回次数回读（_persist_recall 写进 metadata；跨进程 cron 部署下
             # _recall_counts 每次从空开始，读行内持久化值强化才不失效——审查 #2）
             "recall_count": recall_count,
+            # C1: 巩固去重标记回读（consolidate 写回 metadata.consolidated_with；
+            # consolidate_plan 据此跳过二次降权——审查 #159）
+            "consolidated_with": str(meta.get("consolidated_with") or ""),
         }
 
     # ── 原语 ──────────────────────────────────────────────
@@ -251,6 +253,8 @@ class Mem0Backend(MemoryBackend):
         """mem0 语义检索（向量 + BM25 融合，零 LLM）。不可用返回空列表。"""
         if not self.available:
             return []
+        limit = int(_finite_float(limit, 10))
+        min_importance = _finite_float(min_importance, 0.3)
         try:
             filters = {"user_id": self.user_id}
             if category:
@@ -308,10 +312,7 @@ class Mem0Backend(MemoryBackend):
                 "backend": "mem0",
                 "last_error": self._last_error,
             }
-        try:
-            total = len(self._all_rows(min_importance=0.0))
-        except Exception:
-            total = 0
+        total = len(self._all_rows(min_importance=0.0))
         return {
             "available": True,
             "total_memories": total,
@@ -392,7 +393,8 @@ class Mem0Backend(MemoryBackend):
                     upd = getattr(self._m, "update", None)
                     if upd is None:
                         continue  # mem0 无 update API → 仅报告降权计划
-                    upd(r["id"], metadata={"importance": r["importance"]})
+                    upd(r["id"], metadata={"importance": r["importance"],
+                                           "consolidated_with": r.get("consolidated_with")})
                 except Exception as e:
                     import logging
                     logging.warning("mem0 consolidate demote failed: %r", e)
@@ -486,6 +488,6 @@ class Mem0Backend(MemoryBackend):
 
 
 def _parse_iso_ts(s: str) -> float:
-    """ISO 时间戳 → epoch 秒（UTC→本地展示由 normalize_ts 处理）。"""
+    """ISO 时间戳 → epoch 秒。"""
     from datetime import datetime
     return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()

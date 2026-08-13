@@ -682,11 +682,11 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
 **B2 情绪-记忆耦合（v1.12）**：写侧 `emotion_tagging=True`（默认 False）时，daemon 对话写入 mem0 把当前情绪快照打标进 `metadata.emotion_tag`（`emotion_tag_snapshot()`：loneliness/affection/anxiety/energy → low/mid/high 三档（≤30 low / ≥70 high）+ `user_mood`）；读侧 `emotion_tag_weight > 0`（默认 0）时，`_apply_forgetting` 检索对带 `emotion_tag` 的记忆按情绪相近度加权——`_score *= (1 + emotion_tag_weight × sim)`（`emotion_tag_similarity`：记忆或请求任一缺 emotion_tag → 0 不加权）。对标情绪状态相关的记忆优先浮现。
 
 **C1 空闲期确定性记忆巩固（v1.12，零 LLM）**：对标 Letta dreaming / CowAgent Deep Dream，吸收思想不换库、不调 LLM——`MemoryBackend.consolidate_plan` 纯函数生成巩固计划（不写库）：
-- **去重**：按 text 的 `jaccard_3gram` 相似度 ≥ `consolidate_sim_threshold`（默认 0.85）找近似重复对，保留 importance 高/时间新的一条（排序靠前者），另一条 importance 减半 + `_consolidated` 标记 + `consolidated_with`
+- **去重**：按 text 的 `jaccard_3gram` 相似度 ≥ `consolidate_sim_threshold`（默认 0.85）找近似重复对，保留 importance 高/时间新的一条（排序靠前者），另一条 importance 减半 + `_consolidated`/`consolidated_with` 标记（持久化到 metadata，读侧回读，防重复降权）
 - **过期**：importance < `consolidate_min_importance`（默认 0.3）且年龄 > `consolidate_max_age_hours`（默认 720h=30 天）→ 标记 `_expired`（候选删除）；timestamp 缺失/非法 → 年龄未知不过期（防误删脏数据）
 - 返回报告 `{demoted, expired, kept}`
 
-`Mem0Backend.consolidate` 扫描全量记忆执行计划：降权经 mem0 `update_memory` 写 `metadata.importance`、过期经 `delete` 删除（mem0 无对应 API → 静默跳过仅报告）；`dry_run=True` 只出计划不写库；不可用 → 空报告。触发路径二选一：daemon 空闲静默路径 `_maybe_consolidate`（门控：`consolidate_enabled` + 清醒沉默 ≥ `consolidate_idle_silent_hours` 默认 24h + 距上次巩固 ≥ `consolidate_min_interval_hours` 默认 168h，`cooldown.consolidate_last_at` 持久化），或手动 `chiguo_daemon.py --consolidate`（可接入 cron 每 N 天跑一次）。
+`Mem0Backend.consolidate` 扫描全量记忆执行计划：降权经 mem0 `update_memory` 写 `metadata.importance` + `metadata.consolidated_with`、过期经 `delete` 删除（mem0 无对应 API → 静默跳过仅报告）；`dry_run=True` 只出计划不写库；不可用 → 空报告。触发路径二选一：daemon 空闲静默路径 `_maybe_consolidate`（门控：`consolidate_enabled` + 清醒沉默 ≥ `consolidate_idle_silent_hours` 默认 24h + 距上次巩固 ≥ `consolidate_min_interval_hours` 默认 168h，`cooldown.consolidate_last_at` 持久化），或手动 `chiguo_daemon.py --consolidate`（停机维护专用——daemon 运行期间会与常驻进程争用嵌入式 qdrant 单进程锁）。
 
 **C2 Ebbinghaus 复习强化（v1.12）**：对标 FSRS「成功召回 → 强度增大」——`note_recalled` 在记忆被召回（`search_with_forgetting`/`random_memory_with_forgetting` 返回）时 `recall_count+1`，`_effective_importance = importance × (1 + reinforce_bonus × recall_count)` 参与读侧加权（被反复成功召回的旧记忆不随遗忘曲线沉底）；写回经 `_persist_recall` 钩子（基类 no-op，Mem0Backend 覆写为 mem0 `update_memory` 写 `metadata.recall_count`，无该 API 仅内存侧）。`[memory].reinforce_enabled=false` / `reinforce_bonus=0.0`（默认关闭恒等）。
 
@@ -986,7 +986,7 @@ python3 chiguo_daemon.py
 python3 chiguo_daemon.py --version
 
 # 确定性记忆巩固（v1.12 C1；也可经 [memory].consolidate_enabled 挂空闲静默路径）
-python3 chiguo_daemon.py --consolidate   # 扫描全量记忆去重/降权/过期（零 LLM；可接入 cron 每 N 天跑一次）
+python3 chiguo_daemon.py --consolidate   # 扫描全量记忆去重/降权/过期（零 LLM；停机维护专用，勿与 daemon 常驻进程并行）
 
 # 紧凑模式（idle 输出最小单行 JSON {"action":"idle","version":...,"time":...}）
 python3 chiguo_daemon.py --compact
