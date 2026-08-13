@@ -41,8 +41,8 @@ def estimate_sleep_window(hour_counts: list[int], sample_days: int,
     从 24 小时回复频率中估计睡眠窗口(允许跨午夜)。
 
     算法:对 24 小时做环形滑动窗口(width ∈ [min_width, max_width]),
-    取回复总数最小的窗口;(sum, width, start) 元组最小者胜(字典序:
-    总数最小 → 宽度最小 → 起点最早),保证确定性。
+    取平均回复率(回复总数/宽度)最小的窗口;(mean, width, start) 元组最小者胜
+    (字典序:平均回复率最低 → 宽度最小 → 起点最早),保证确定性。
 
     置信度 = 数据完整度(sample_days/history_days) × 窗口安静度
     (1 - 窗口均回复/全天均回复)。
@@ -61,18 +61,17 @@ def estimate_sleep_window(hour_counts: list[int], sample_days: int,
     if total <= 0:
         return None
 
-    best: tuple | None = None  # (sum, width, start)
+    best: tuple | None = None  # (mean, width, start)
     for width in range(min_width, max_width + 1):
         for start in range(MIN_HOURS):
             s = sum(hour_counts[(start + i) % MIN_HOURS] for i in range(width))
-            key = (s, width, start)
+            key = (s / width, width, start)
             if best is None or key < best:
                 best = key
 
-    sum_w, width, start = best
+    window_mean, width, start = best
     end = (start + width) % MIN_HOURS
     avg_hour = total / MIN_HOURS
-    window_mean = sum_w / width
     quietness = 1.0 - min(1.0, window_mean / max(avg_hour, 1e-9))
     completeness = min(1.0, sample_days / max(1, history_days))
     confidence = round(completeness * quietness, 3)
@@ -133,9 +132,12 @@ def aggregate_hours(reply_days: list[dict], bucket: str | None = None) -> list[i
             continue
         for h in hours:
             try:
-                counts[int(h)] += 1
-            except (ValueError, TypeError, IndexError):
+                h = int(h)
+            except (ValueError, TypeError):
                 continue
+            if not (0 <= h < MIN_HOURS):
+                continue
+            counts[h] += 1
     return counts
 
 
@@ -202,6 +204,10 @@ class CircadianTracker:
         """
         result = None
         dates_all: set[str] = set()
+        if not isinstance(self.reply_days, list):
+            self.reply_days = []
+        if not isinstance(self.active_days, list):
+            self.active_days = []
         for bucket in BUCKETS:
             reply_dates = _bucket_dates(self.reply_days, bucket)
             active_dates = _bucket_dates(self.active_days, bucket)

@@ -79,7 +79,8 @@ def force_rotate(log_paths: list[str],
         archive_name = archive_path / f"{current_month}-{p.name}"
         # 防止重复调用覆盖已有归档
         if archive_name.exists():
-            archive_name = archive_path / f"{current_month}-{p.stem}-{int(datetime.now(CST).timestamp())}{p.suffix}"
+            stamp = datetime.now(CST).strftime("%Y%m%d%H%M%S%f")
+            archive_name = archive_path / f"{current_month}-{p.stem}-{stamp}{p.suffix}"
         try:
             os.rename(str(p), str(archive_name))
             p.touch()
@@ -94,7 +95,7 @@ def _rotate_one(file_path: Path, archive_dir: str, mtime: datetime):
     archive_name = archive_path / f"{mtime.strftime('%Y-%m')}-{file_path.name}"
     # 目标已存在 → 追加时间戳后缀，避免静默覆盖旧归档
     if archive_name.exists():
-        stamp = int(datetime.now(CST).timestamp())
+        stamp = datetime.now(CST).strftime("%Y%m%d%H%M%S%f")
         archive_name = archive_path / (
             f"{mtime.strftime('%Y-%m')}-{file_path.stem}-{stamp}{file_path.suffix}"
         )
@@ -119,6 +120,10 @@ def _load_config(config_path: str) -> dict:
 def _cleanup_archives(archive_dir: str, retention_months: int,
                       now: datetime):
     """删除超过保留期限的归档文件。retention_months=0 表示永不删除。"""
+    try:
+        retention_months = int(retention_months)
+    except (TypeError, ValueError):
+        retention_months = 12
     if retention_months <= 0:
         return
 

@@ -307,8 +307,10 @@ class UserStateEstimator:
         return "long"
 
     @staticmethod
-    def classify_silence(hours: float) -> str:
+    def classify_silence(hours: float | None) -> str:
         """沉默时长 → 分类。"""
+        if hours is None:
+            return "none"
         if hours <= 1:
             return "active"
         if hours <= 6:
@@ -520,6 +522,8 @@ class UserStateEstimator:
             except (TypeError, ValueError):
                 continue
             if not math.isfinite(val):
+                continue
+            if not (0.0 <= val <= 1.0):
                 continue
             self._likelihood_cache[(parts[0], parts[1], parts[2])] = val
         pp = data.get("_prev_posterior")
