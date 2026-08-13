@@ -136,7 +136,18 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 - 微信登录态跨设备实测可复用：迁移后轮询正常，但首次**主动发送**可能被服务端拒（`[send error] prepare failed`，context_token 过期）——从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
 - 课表数据：仓库无 `data/` 目录，`chiguo_proactive.toml` 的 `xlsx_path = "data/xskb.xlsx"` 由部署者自行放入（最小 fixture 由 ci-test.sh 自动自举）。
 
-## 十二、常见问题
+## 十二、从旧版本（<v1.15）升级
+
+> 覆盖旧版本原地升级到 v1.15。从零部署见「五、分级部署路径」。项目不保留向后兼容（过时路径直接删），升级按「旧代码不兼容、删旧上新」执行，涉及**覆盖式**操作，务必按序备份。
+
+1. **备份本地定制与运行时文件**：仓库内**跟踪**文件中的本地定制 `chiguo_proactive.toml` 会被 `git fetch && git reset --hard origin/main` 覆盖，先备份；运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`schedule_*.json`、`anniversaries.json`、`break_state.json`、`holidays.json`、`schedule_cache.json` 等，清单见「十一、迁移与备份」）**git 不跟踪**（见 .gitignore）——`git reset --hard` 不会动它们，但也没有版本保护，误删/损坏只能靠备份/拷贝恢复；`~/.chiguo/auth/`（登录态）与 `~/.pi/agent/`（agent key）在仓库外不受影响。
+2. **`.env` 键名迁移**：v1.7（pi 时代）的 `WECHAT_BRIDGE_PI_RUN` 等已废弃，v1.15 改用 `WECHAT_BRIDGE_AGENT_RUN`（agent 运行脚本路径）+ `WECHAT_BRIDGE_AGENT_RPC`（回复链 RPC 常驻开关，`=1` 启用）；完整 `PIRUN_*`/`PI_*` → `AGENTRUN_*`/`AGENT_*` 映射见 [AGENT_INTEGRATION.md「0.2 env 映射」](AGENT_INTEGRATION.md#02-env-映射)。升级后必须重跑 `bash scripts/wechat-bridge.sh install`（幂等，按新键名重写 `wechat-bridge/.env`，保留已配置 token 与登录态，不必重新扫码）。
+3. **显式重启服务**：`bash scripts/service.sh autostart` 只注册开机自启（`systemctl enable --now` 不会重启已运行实例）；升级后显式 `systemctl restart chiguo-bridge`，否则旧代码进程不换新。
+4. **crontab 会被恢复**：`bash scripts/install_agent.sh`（阶段 6/6b）会把 chiguo-tick 与 replan-tick 条目按当前路径整行替换/注册——若之前手动注释禁用或改过路径，升级后会被恢复为启用状态，注意核对（loop 形态反向切换还会停用 `chiguo-daemon.service`）。
+5. **网易云两套登录态**：chiguo 侧 cookie（`~/.chiguo/auth/netease_cookie.txt`）与 `/opt/netease-api`（api-enhanced）服务内部登录态各自独立、分别校验；升级后分别确认，失效则重扫 `uv run python -m netease.bridge --login`（经本地 API 服务完成，两处状态一起刷新）。
+6. **记忆不迁移**：v1.15 前的 pi/lancedb 记忆**不迁移**，v1.15 起 mem0 从零开始（唯一记忆后端）；如需保留旧记忆先备份旧记忆库目录。
+
+## 十三、常见问题
 
 - 微信桥装好了但收不到消息？（看桥日志：systemd 形态 `journalctl -u chiguo-bridge`；直接启动形态 `/tmp/opencode/wechat-bridge.log`；扫码态失效 → `bash scripts/wechat-bridge.sh login` 重登）
 - tick 跑过没消息？（看 `logs/cron-tick.log`；决策门控正常——深夜/静默窗口不发）
