@@ -19,13 +19,17 @@ from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 
 try:
-    import mem0 as _mem0
+    import mem0  # noqa: F401
     _HAS_MEM0 = True
 except ImportError:
-    _mem0 = None
     _HAS_MEM0 = False
 
 CST = timezone(timedelta(hours=8))
+
+
+def _num(v):
+    """数值守卫：非 int/float（损坏行 dict/list/str）→ 0，防比较 TypeError 崩溃。"""
+    return v if isinstance(v, (int, float)) else 0
 
 
 class ChiguoMonitor:
@@ -112,7 +116,7 @@ class ChiguoMonitor:
                         continue
                     try:
                         d = json.loads(line)
-                    except UnicodeDecodeError, json.JSONDecodeError:
+                    except json.JSONDecodeError:
                         continue
                     if not isinstance(d, dict):
                         continue  # 合法 JSON 但非 dict（形状漂移）→ 跳过，防 AttributeError
@@ -296,14 +300,14 @@ class ChiguoMonitor:
                 # D1: 收集发送事件（时间 + trigger）供 proactive_stats 分组统计
                 send_events.append((t, trigger))
 
-                intensity = entry.get("intensity", "?")
+                intensity = str(entry.get("intensity", "?") or "?")  # 防损坏行的 dict/list 值 → unhashable 崩溃
                 intensity_counts[intensity] += 1
 
                 hour_counts[t.hour] += 1
                 weekday_counts[t.weekday()] += 1
 
                 # 人格层
-                layer = state.get("dominant_layer", "?")
+                layer = str(state.get("dominant_layer", "?") or "?")  # 防损坏行的 dict/list 值 → unhashable 崩溃
                 layer_counts[layer] += 1
 
                 # 回复追踪：messages_without_reply
@@ -334,7 +338,7 @@ class ChiguoMonitor:
             elif action == "idle":
                 total_idles += 1
                 daily[date_key]["idles"] += 1
-                reason = entry.get("reason", "?")
+                reason = str(entry.get("reason", "?") or "?")  # 防损坏行的 dict/list 值 → unhashable 崩溃
                 idle_reasons[reason] += 1
                 daily[date_key]["idle_reasons"][reason] += 1
 
@@ -448,16 +452,21 @@ class ChiguoMonitor:
         if proactive_eval:
             per_trigger: dict[str, dict] = {}
             recv_ptr = 0
-            for s_time, trig in send_events:  # 决策日志时间序
+            n_sends = len(send_events)
+            for idx, (s_time, trig) in enumerate(send_events):  # 决策日志时间序
                 bucket = per_trigger.setdefault(trig, {"sent": 0, "replied": 0})
                 bucket["sent"] += 1
+                # 窗口上界收窄到下一条 send 时刻：离下一条更近的迟到回复不得串计给本条，
+                # 避免贪心 FIFO 把其实回复下一条 send 的 recv 错记给上一条。
+                if idx + 1 < n_sends:
+                    upper = min(send_events[idx + 1][0], s_time + timedelta(hours=replied_within_h))
+                else:
+                    upper = s_time + timedelta(hours=replied_within_h)
                 while recv_ptr < len(recv_times) and recv_times[recv_ptr] <= s_time:
                     recv_ptr += 1  # 跳过发送时刻之前的 user-msg（非本消息的回复）
-                if recv_ptr < len(recv_times):
-                    delta_h = (recv_times[recv_ptr] - s_time).total_seconds() / 3600.0
-                    if delta_h <= replied_within_h:
-                        bucket["replied"] += 1
-                        recv_ptr += 1  # 消费该回复：不重复计给更晚的 send
+                if recv_ptr < len(recv_times) and recv_times[recv_ptr] <= upper:
+                    bucket["replied"] += 1
+                    recv_ptr += 1  # 消费该回复：不重复计给更晚的 send
             for trig, b in per_trigger.items():
                 b["reply_rate"] = round(b["replied"] / b["sent"], 3) if b["sent"] else 0.0
             overall_sent = sum(b["sent"] for b in per_trigger.values())
@@ -476,7 +485,7 @@ class ChiguoMonitor:
                 "from": first_time.isoformat() if first_time else None,
                 "to": last_time.isoformat() if last_time else None,
                 "span_days": round(span_days, 1),
-                "total_entries": total_sends + total_idles,
+                "total_entries": total_sends + total_idles,  # 口径：send + idle 决策条数（不含 recv/send_result）
                 "unparsed_time_count": unparsed_time_count,
             },
             "activity": {
@@ -633,9 +642,9 @@ class ChiguoMonitor:
 
             if recent_sends_24h:
                 high_lo = sum(1 for e in recent_sends_24h
-                              if e.get("state", {}).get("emotion", {}).get("loneliness", 0) > 90)
+                              if _num(e.get("state", {}).get("emotion", {}).get("loneliness", 0)) > 90)
                 high_anx = sum(1 for e in recent_sends_24h
-                               if e.get("state", {}).get("emotion", {}).get("anxiety", 0) > 90)
+                               if _num(e.get("state", {}).get("emotion", {}).get("anxiety", 0)) > 90)
                 total_24h = len(recent_sends_24h)
                 if total_24h >= 3 and high_lo >= total_24h * 0.8:
                     results.append({
@@ -655,7 +664,7 @@ class ChiguoMonitor:
             # B3. 低元气卡住（复用 B2 的 recent_sends_24h，避免重复 _extract_time 调用）
             if recent_sends_24h:
                 low_energy = sum(1 for e in recent_sends_24h
-                                 if e.get("state", {}).get("emotion", {}).get("energy", 0) < 15)
+                                 if _num(e.get("state", {}).get("emotion", {}).get("energy", 0)) < 15)
                 if len(recent_sends_24h) >= 6 and low_energy >= len(recent_sends_24h) * 0.7:
                     results.append({
                         "severity": "info",
@@ -853,12 +862,13 @@ class ChiguoMonitor:
         if not pid_file.is_absolute():
             pid_candidates.append(Path(__file__).resolve().parent / pid_file)
         for cand in pid_candidates:
-            if cand.is_file():
-                try:
-                    daemon_pid = int(cand.read_text(encoding="utf-8").strip())
-                except (OSError, ValueError):
-                    daemon_pid = None
-                break
+            if not cand.is_file():
+                continue
+            try:
+                daemon_pid = int(cand.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                continue  # 解析失败 → 尝试下一候选（此前 break 会截断回退）
+            break
         status_paths = []
         if daemon_pid:
             status_paths.append(f"/proc/{daemon_pid}/status")
@@ -964,7 +974,7 @@ class ChiguoMonitor:
         if not self.messages_log_path.exists():
             return
         try:
-            with open(self.messages_log_path, encoding="utf-8") as f:
+            with open(self.messages_log_path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     stripped = line.strip()
                     if not stripped:
@@ -1034,8 +1044,8 @@ class AlertManager:
             tmp = Path(str(self.state_path) + ".tmp")
             tmp.write_text(data)
             os.replace(str(tmp), str(self.state_path))
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"[monitor] AlertManager._save 写入失败: {e}", file=sys.stderr)
 
     @staticmethod
     def _make_alert_id(alert_type: str) -> str:

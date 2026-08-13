@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -204,6 +205,9 @@ def check_agent_auth(auth_path: Path, provider: str = "opencode-go") -> dict:
     except Exception as e:
         return {"name": "agent_auth", "ok": False, "severity": "warn",
                 "detail": f"{_sanitize_path(auth_path)} 解析失败: {_truncate(e)}"}
+    if not isinstance(cfg, dict):
+        return {"name": "agent_auth", "ok": False, "severity": "warn",
+                "detail": f"{_sanitize_path(auth_path)} 非对象({type(cfg).__name__}) → {provider} key 缺失"}
     entry = cfg.get(provider)
     if isinstance(entry, dict) and entry.get("key"):
         return {"name": "agent_auth", "ok": True, "severity": "ok",
@@ -263,11 +267,10 @@ def check_netease(api_base: str, cookie_path: Path, health_path: Path) -> dict:
                                      headers={"User-Agent": "chiguo-envcheck"})
         with _urlopen(req, timeout=5) as resp:
             status = resp.status
-        if status == 200:
-            api_ok = True
-            issues.append(f"API OK({status})")
-        else:
-            issues.append(f"API HTTP {status}")
+        api_ok = True
+        issues.append(f"API OK({status})")
+    except urllib.error.HTTPError as e:
+        issues.append(f"API HTTP {e.code}")
     except Exception as e:
         issues.append(f"API 不可达: {_truncate(e)}")
     if cookie_path.is_file():
