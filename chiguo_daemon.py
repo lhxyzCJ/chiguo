@@ -436,7 +436,7 @@ class DecisionEngine:
         # → 情绪以设计速率 ~33 倍重复累积。last_tick 为 None 或解析失败 →
         # 回退现有逻辑（只用消息时间）。修复后 last_tick 由 evaluate 路径的
         # save() 更新；loop 模式 _monotonic_at_save 单调防护原样保留（cron
-        # 新进程无法用 monotonic 封顶 NTP 前跳——既有限制，非本次引入）。──
+        # 新进程的 NTP 前跳封顶改由下方 v13 持久化单调锚点（#206）承担）。──
         last_tick_dt = _parse_tz(self.state.last_tick) if self.state.last_tick else None
         if last_tick_dt is not None:
             last_time = max(last_time, last_tick_dt)
