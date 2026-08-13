@@ -583,6 +583,75 @@ def test_memory_search_bad_backend_config(cfg_path: Path):
 
 
 # ═══════════════════════════════════════════════════════
+# 单调锚点对（mono_anchor/wall_anchor 持久化）
+# ═══════════════════════════════════════════════════════
+
+def test_state_monotonic_anchor_persist_roundtrip(cfg_path: Path):
+    """save → 重新 load：mono_anchor 为 float、wall_anchor 为 CST ISO 字符串，
+    checksum 校验通过（往返不触发 checksum_mismatch 回退）。"""
+    eng = make_engine(cfg_path)
+    s = eng.state
+    for p in (s.state_path, Path(str(s.state_path) + ".bak"),
+              Path(str(s.state_path) + ".tmp")):
+        p.unlink(missing_ok=True)
+    assert s.save(), "save() should persist mono_anchor/wall_anchor"
+
+    # 新进程重新加载 → _apply_loaded_data 恢复锚点对（checksum 通过才会走到）
+    eng2 = make_engine(cfg_path)
+    s2 = eng2.state
+    mono, wall = s2.monotonic_anchor()
+    assert isinstance(mono, (int, float)) and not isinstance(mono, bool), (
+        f"mono_anchor should be a number, got {mono!r}")
+    assert isinstance(wall, str) and wall, f"wall_anchor should be a non-empty str, got {wall!r}"
+    try:
+        wall_dt = datetime.fromisoformat(wall)
+    except ValueError:
+        raise AssertionError(f"wall_anchor is not a valid ISO timestamp: {wall!r}")
+    assert wall_dt.utcoffset() is not None and wall_dt.utcoffset().total_seconds() == 8 * 3600, (
+        f"wall_anchor should be CST (+08:00): {wall!r}")
+
+    # 落盘 payload 顶层也应含这两个字段
+    raw = json.loads(s2.state_path.read_text())
+    assert isinstance(raw.get("mono_anchor"), (int, float)) and \
+        not isinstance(raw.get("mono_anchor"), bool), raw.get("mono_anchor")
+    assert isinstance(raw.get("wall_anchor"), str) and raw.get("wall_anchor"), \
+        raw.get("wall_anchor")
+    print("  OK test_state_monotonic_anchor_persist_roundtrip")
+
+
+def test_state_monotonic_anchor_missing_defaults(cfg_path: Path):
+    """旧 state（无新字段）与非法类型（bool/空串）→ 加载为 None，不抛异常。"""
+    eng = make_engine(cfg_path)
+    s = eng.state
+    for p in (s.state_path, Path(str(s.state_path) + ".bak"),
+              Path(str(s.state_path) + ".tmp")):
+        p.unlink(missing_ok=True)
+    # 旧格式 state：无 mono_anchor/wall_anchor 字段（无 _checksum → 跳过校验）
+    old_state = {
+        "_version": 10,
+        "emotion": {},
+        "cooldown": {},
+        "circadian": {},
+        "last_tick": "2026-06-15T14:00:00+08:00",
+        "tick_seq": 3,
+    }
+    s.state_path.write_text(json.dumps(old_state))
+
+    eng2 = make_engine(cfg_path)
+    assert eng2.state.mono_anchor is None, eng2.state.mono_anchor
+    assert eng2.state.wall_anchor is None, eng2.state.wall_anchor
+    assert eng2.state.monotonic_anchor() == (None, None)
+
+    # 非法类型（bool mono_anchor / 空串 wall_anchor）→ 同样回退 None
+    bad_state = dict(old_state, mono_anchor=True, wall_anchor="")
+    s.state_path.write_text(json.dumps(bad_state))
+    eng3 = make_engine(cfg_path)
+    assert eng3.state.mono_anchor is None, eng3.state.mono_anchor
+    assert eng3.state.wall_anchor is None, eng3.state.wall_anchor
+    print("  OK test_state_monotonic_anchor_missing_defaults")
+
+
+# ═══════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════
 
@@ -603,6 +672,8 @@ if __name__ == "__main__":
             test_bug5_record_user_message_upgrade_reloads_disk_state,
             test_memory_search_disabled_mem0_soft_degrade,
             test_memory_search_bad_backend_config,
+            test_state_monotonic_anchor_persist_roundtrip,
+            test_state_monotonic_anchor_missing_defaults,
         ]
         for t in tests:
             t(cfg_path)

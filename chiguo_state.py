@@ -383,6 +383,11 @@ class ChiguoState:
         self._rc_cache: dict = {}   # {date_str: resolved_classes}(availability/schedule_status 共享)
         self._scale_cache: dict = {}   # {date_str: trigger_scale}(计划修饰参数,每 tick 按日期缓存)
 
+        # ── 单调锚点对（持久化顶层字段；cron 模式 NTP 壁钟前跳封顶用）──
+        # 与 last_tick 同区初始化：_load/_apply_loaded_data 从磁盘恢复，缺失/损坏回退 None。
+        self.mono_anchor: float | None = None
+        self.wall_anchor: str | None = None
+
         self._load()
 
     # ── v6: 路径锚定。运行时文件基于 _base_dir（config 所在目录）解析，
@@ -549,6 +554,12 @@ class ChiguoState:
         pending = data.get("pending_topics")
         self.pending_topics = pending if isinstance(pending, list) else []
         self.last_tick = data.get("last_tick")
+        # ── 单调锚点对加载（类型校验；旧文件缺字段 → None 回退语义）──
+        mono = data.get("mono_anchor")
+        self.mono_anchor = (
+            mono if isinstance(mono, (int, float)) and not isinstance(mono, bool) else None)
+        wall = data.get("wall_anchor")
+        self.wall_anchor = wall if (isinstance(wall, str) and wall) else None
         # ── v5: tick_seq ──
         self.tick_seq = data.get("tick_seq", 0)
         # ── v4: 加载人格 ──
@@ -794,6 +805,8 @@ class ChiguoState:
                 "personality_baseline": dict(self.personality._baseline),
                 "personality_history": self.personality_history,
                 "last_tick": datetime.now(CST).isoformat(),
+                "mono_anchor": time_module.monotonic(),
+                "wall_anchor": datetime.now(CST).isoformat(),
                 "tick_seq": self.tick_seq,
             }
             # ── v1.11+R3: Bayesian 在线学习缓存持久化（本进程创建过或磁盘已有缓存
@@ -841,6 +854,10 @@ class ChiguoState:
             if lock_acquired:
                 self._lock_release(lock_path)
         return True
+
+    def monotonic_anchor(self) -> tuple[float | None, str | None]:
+        """返回持久化的单调锚点对 (mono, wall)，缺失/损坏为 None。"""
+        return self.mono_anchor, self.wall_anchor
 
     # ── v4：Bayesian 用户状态推断器（延迟初始化）────────────
 
