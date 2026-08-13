@@ -81,6 +81,8 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 **切换 loop 常驻**：`CHIGUO_DAEMON_LOOP=1 bash scripts/install_agent.sh --yes` → 移除 chiguo-tick crontab（防与常驻双发）+ 安装 systemd `chiguo-daemon.service`（`--loop 900 --compact`）。
 
+**手动停用 tick**：注释 crontab 中 `chiguo-tick.sh`/`replan-tick.sh` 行（行首加 `#`）即可停用自动推送。install_agent.sh 会把被注释条目识别为手动禁用并原样保留——不会删除/恢复（醒目提示；ask 模式额外确认后才继续处理活动旧条目）。
+
 ### 7. 网易云 API 服务（可选）
 
 `bash scripts/netease-api.sh install` → systemd `netease-api.service`（需 root）；扫码登录 `uv run python -m netease.bridge --login`。可 `--skip-netease`。

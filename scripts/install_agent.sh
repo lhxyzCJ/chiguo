@@ -234,25 +234,52 @@ PYJ
   fi
 fi
 
+# ── crontab 条目工具：区分「活动旧条目」与「被注释禁用的手动禁用条目」──
+# 被注释行（# 开头，可带前导空白）= 用户刻意停用：保留原样，不计入旧条目，
+# 绝不静默移除/恢复（issue #147：grep -v 连注释行一起删 → 静默重开被停用的自动推送）。
+cron_has_commented() {  # $1=标识符（chiguo-tick/replan-tick）；命中被注释行返回 0
+  printf '%s\n' "$CURRENT_CRON" | awk -v k="$1" '$0 ~ k && /^[[:space:]]*#/ { f=1 } END { exit f ? 0 : 1 }'
+}
+cron_has_active() {  # $1=标识符；命中活动旧条目（非注释行）返回 0
+  printf '%s\n' "$CURRENT_CRON" | awk -v k="$1" '$0 ~ k && !/^[[:space:]]*#/ { f=1 } END { exit f ? 0 : 1 }'
+}
+cron_filter_active() {  # 移除活动旧条目、保留被注释禁用行（stdin → stdout）
+  awk -v k="$1" '!($0 ~ k) || /^[[:space:]]*#/'
+}
+# 被注释禁用条目检测 → 醒目 warn + ask 模式额外 confirm；返回 0=可继续（无注释行，或已确认），
+# 1=ask 拒绝（confirm 已置 PENDING，调用方跳过整段处理）
+cron_check_commented() {
+  cron_has_commented "$1" || return 0
+  warn "检测到被注释禁用的 $1 crontab 条目——这是手动禁用，不会被自动移除/恢复"
+  if [ "$DRY" = 1 ]; then
+    PENDING=1
+    echo "  [dry-run] 被注释的 $1 条目将保持原样（手动禁用不干预）"
+    return 0
+  fi
+  confirm "检测到被注释禁用的 $1 条目（手动禁用）；确认仍继续处理 crontab？"
+}
+
 # ── 阶段 6: crontab 注册 chiguo-tick ───────────────────────
 # v1.11 C: CHIGUO_DAEMON_LOOP=1 → 决策引擎改 systemd 常驻（--loop，发送侧内聚），
 # 跳过 tick 条目（cron tick 与 loop 并存会双发消息，必须互斥）。
 if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
   say "CHIGUO_DAEMON_LOOP=1 → 跳过 chiguo-tick crontab（决策引擎改由 chiguo-daemon.service 常驻）"
   CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
-  if printf '%s\n' "$CURRENT_CRON" | grep -q 'chiguo-tick'; then
-    if [ "$DRY" = 1 ]; then
-      PENDING=1
-      echo "  [dry-run] 将移除旧 chiguo-tick crontab 条目（防与 loop 常驻双发）"
-    elif confirm "移除旧 chiguo-tick crontab 条目（已切换 loop 常驻）"; then
-      if printf '%s\n' "$CURRENT_CRON" | grep -v 'chiguo-tick' | crontab -; then
-        say "crontab 旧 chiguo-tick 条目已移除"
-      else
-        PENDING=1; warn "crontab 移除失败（请手工执行: crontab -l | grep -v chiguo-tick | crontab -）"
+  if cron_check_commented chiguo-tick; then
+    if cron_has_active chiguo-tick; then
+      if [ "$DRY" = 1 ]; then
+        PENDING=1
+        echo "  [dry-run] 将移除旧 chiguo-tick crontab 条目（防与 loop 常驻双发）"
+      elif confirm "移除旧 chiguo-tick crontab 条目（已切换 loop 常驻）"; then
+        if printf '%s\n' "$CURRENT_CRON" | cron_filter_active chiguo-tick | crontab -; then
+          say "crontab 旧 chiguo-tick 条目已移除（被注释禁用条目保持原样）"
+        else
+          PENDING=1; warn "crontab 移除失败（请手工执行: crontab -l | awk '!/chiguo-tick/ || /^[[:space:]]*#/' | crontab -）"
+        fi
       fi
+    else
+      say "crontab 无活动 chiguo-tick 条目（loop 模式预期）"
     fi
-  else
-    say "crontab 无 chiguo-tick 条目（loop 模式预期）"
   fi
 else
 say "阶段 6: crontab 注册 chiguo-tick..."
@@ -271,31 +298,33 @@ if [ -f "${CHIGUO_SYSTEMD_DIR:-/etc/systemd/system}/chiguo-daemon.service" ]; th
   fi
 fi
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
-if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$CRON_LINE"; then
-  say "crontab 已注册 chiguo-tick（$CRON_LINE）"
-elif printf '%s\n' "$CURRENT_CRON" | grep -q 'chiguo-tick'; then
-  # 旧条目（仓库路径/参数已变，仅 grep 名字发现不了）→ 按当前 CRON_LINE 整行替换
-  if [ "$DRY" = 1 ]; then
-    PENDING=1
-    echo "  [dry-run] crontab 有旧 chiguo-tick 条目（路径已变）→ 将替换为: $CRON_LINE"
-  elif confirm "替换旧 chiguo-tick 条目为: $CRON_LINE"; then
-    mkdir -p "$CHIGUO_REPO/logs"   # 重定向目标目录：缺目录 → cron 整条命令失败（tick 永不执行）
-    if ( printf '%s\n' "$CURRENT_CRON" | grep -v 'chiguo-tick' || true; echo "$CRON_LINE" ) | crontab -; then
-      say "crontab 旧条目已替换"
-    else
-      PENDING=1; warn "crontab 替换失败（请手工执行: (crontab -l | grep -v chiguo-tick; echo '$CRON_LINE') | crontab -）"
+if cron_check_commented chiguo-tick; then
+  if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$CRON_LINE"; then
+    say "crontab 已注册 chiguo-tick（$CRON_LINE）"
+  elif cron_has_active chiguo-tick; then
+    # 旧条目（仓库路径/参数已变，仅 grep 名字发现不了）→ 按当前 CRON_LINE 整行替换
+    if [ "$DRY" = 1 ]; then
+      PENDING=1
+      echo "  [dry-run] crontab 有旧 chiguo-tick 条目（路径已变）→ 将替换为: $CRON_LINE"
+    elif confirm "替换旧 chiguo-tick 条目为: $CRON_LINE"; then
+      mkdir -p "$CHIGUO_REPO/logs"   # 重定向目标目录：缺目录 → cron 整条命令失败（tick 永不执行）
+      if ( printf '%s\n' "$CURRENT_CRON" | cron_filter_active chiguo-tick || true; echo "$CRON_LINE" ) | crontab -; then
+        say "crontab 旧条目已替换（被注释禁用条目保持原样）"
+      else
+        PENDING=1; warn "crontab 替换失败（请手工执行: (crontab -l | awk '!/chiguo-tick/ || /^[[:space:]]*#/'; echo '$CRON_LINE') | crontab -）"
+      fi
     fi
-  fi
-else
-  if [ "$DRY" = 1 ]; then
-    PENDING=1
-    echo "  [dry-run] 将注册 crontab: $CRON_LINE"
-  elif confirm "注册 crontab: $CRON_LINE"; then
-    mkdir -p "$CHIGUO_REPO/logs"   # 重定向目标目录：缺目录 → cron 整条命令失败（tick 永不执行）
-    if ( printf '%s\n' "$CURRENT_CRON"; echo "$CRON_LINE" ) | crontab -; then
-      say "crontab 已注册"
-    else
-      PENDING=1; warn "crontab 注册失败（请手工执行: (crontab -l; echo '$CRON_LINE') | crontab -）"
+  else
+    if [ "$DRY" = 1 ]; then
+      PENDING=1
+      echo "  [dry-run] 将注册 crontab: $CRON_LINE"
+    elif confirm "注册 crontab: $CRON_LINE"; then
+      mkdir -p "$CHIGUO_REPO/logs"   # 重定向目标目录：缺目录 → cron 整条命令失败（tick 永不执行）
+      if ( printf '%s\n' "$CURRENT_CRON"; echo "$CRON_LINE" ) | crontab -; then
+        say "crontab 已注册"
+      else
+        PENDING=1; warn "crontab 注册失败（请手工执行: (crontab -l; echo '$CRON_LINE') | crontab -）"
+      fi
     fi
   fi
 fi
@@ -306,30 +335,32 @@ fi
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
 # cron 把命令段里的 % 当换行符 → 路径中的 % 必须转义为 \%
 REPLAN_LINE="*/15 * * * * ${CHIGUO_REPO//%/\\%}/scripts/replan-tick.sh >> ${CHIGUO_REPO//%/\\%}/logs/cron-replan.log 2>&1"
-if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$REPLAN_LINE"; then
-  say "crontab 已注册 replan-tick"
-elif printf '%s\n' "$CURRENT_CRON" | grep -q 'replan-tick'; then
-  if [ "$DRY" = 1 ]; then
-    PENDING=1
-    echo "  [dry-run] crontab 有旧 replan-tick 条目（路径已变）→ 将替换为: $REPLAN_LINE"
-  elif confirm "替换旧 replan-tick 条目为: $REPLAN_LINE"; then
-    mkdir -p "$CHIGUO_REPO/logs"
-    if ( printf '%s\n' "$CURRENT_CRON" | grep -v 'replan-tick' || true; echo "$REPLAN_LINE" ) | crontab -; then
-      say "crontab 旧 replan-tick 条目已替换"
-    else
-      PENDING=1; warn "crontab replan 替换失败（请手工执行: (crontab -l | grep -v replan-tick; echo '$REPLAN_LINE') | crontab -）"
+if cron_check_commented replan-tick; then
+  if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$REPLAN_LINE"; then
+    say "crontab 已注册 replan-tick"
+  elif cron_has_active replan-tick; then
+    if [ "$DRY" = 1 ]; then
+      PENDING=1
+      echo "  [dry-run] crontab 有旧 replan-tick 条目（路径已变）→ 将替换为: $REPLAN_LINE"
+    elif confirm "替换旧 replan-tick 条目为: $REPLAN_LINE"; then
+      mkdir -p "$CHIGUO_REPO/logs"
+      if ( printf '%s\n' "$CURRENT_CRON" | cron_filter_active replan-tick || true; echo "$REPLAN_LINE" ) | crontab -; then
+        say "crontab 旧 replan-tick 条目已替换（被注释禁用条目保持原样）"
+      else
+        PENDING=1; warn "crontab replan 替换失败（请手工执行: (crontab -l | awk '!/replan-tick/ || /^[[:space:]]*#/'; echo '$REPLAN_LINE') | crontab -）"
+      fi
     fi
-  fi
-else
-  if [ "$DRY" = 1 ]; then
-    PENDING=1
-    echo "  [dry-run] 将注册 crontab: $REPLAN_LINE"
-  elif confirm "注册 replan crontab: $REPLAN_LINE"; then
-    mkdir -p "$CHIGUO_REPO/logs"
-    if ( printf '%s\n' "$CURRENT_CRON"; echo "$REPLAN_LINE" ) | crontab -; then
-      say "crontab 已注册 replan-tick"
-    else
-      PENDING=1; warn "crontab replan 注册失败（请手工执行: (crontab -l; echo '$REPLAN_LINE') | crontab -）"
+  else
+    if [ "$DRY" = 1 ]; then
+      PENDING=1
+      echo "  [dry-run] 将注册 crontab: $REPLAN_LINE"
+    elif confirm "注册 replan crontab: $REPLAN_LINE"; then
+      mkdir -p "$CHIGUO_REPO/logs"
+      if ( printf '%s\n' "$CURRENT_CRON"; echo "$REPLAN_LINE" ) | crontab -; then
+        say "crontab 已注册 replan-tick"
+      else
+        PENDING=1; warn "crontab replan 注册失败（请手工执行: (crontab -l; echo '$REPLAN_LINE') | crontab -）"
+      fi
     fi
   fi
 fi
