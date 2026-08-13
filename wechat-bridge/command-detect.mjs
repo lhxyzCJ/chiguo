@@ -315,7 +315,10 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
         try {
           const lines = readFileSync(join(repo, 'logs', 'agent-run.log'), 'utf8').trim().split('\n')
           if (lines.length) tele = JSON.parse(lines[lines.length - 1])
-        } catch {}
+        } catch (err) {
+          console.error('[status] agent-run.log 末行 JSON 解析失败:',
+            err instanceof Error ? err.message : String(err))
+        }
         const usage = tele?.usage ?? {}
         const total = (usage.cacheRead ?? 0) + (usage.input ?? 0)
         let fileSize = 0

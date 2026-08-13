@@ -42,6 +42,7 @@ fail() { printf '\033[1;31m[wechat-bridge]\033[0m %s\n' "$*"; exit 2; }
 has_credentials() { [ -f "$WX_STORAGE/credentials.json" ]; }
 
 # #review: 默认生成随机共享 token（同机任意进程也能打 /agent/prompt 消耗 LLM 配额）。
+# 升级：#191 起未配置 token 直接 FATAL 拒绝启动（main() 校验），此处生成保证能启动。
 # 幂等：已配置的 token 保留（重跑 install 不覆盖）。调用方：tick.sh 读 .env、daemon _loop_send 读 env。
 BRIDGE_TOKEN="$(grep -oP '(?<=^WECHAT_BRIDGE_TOKEN=).*' "$ENV_FILE" 2>/dev/null | head -1 || true)"
 if [ -z "$BRIDGE_TOKEN" ]; then
