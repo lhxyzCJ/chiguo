@@ -16,6 +16,7 @@ export CHIGUO_PID_DIR="$TMP/pid"
 export HOME="$TMP/home"
 CALLS_LOG="$TMP/calls.log"
 export CALLS_LOG
+: > "$CALLS_LOG"   # 预创建，避免 dry-run 后（无调用写入）grep 报 No such file 噪音
 PATH="$TMP/bin:$PATH"
 
 # ── 假 id：root 视角（CI runner 非 root；用例 13 用 $TMP/nonroot 的 fake id 模拟非 root）──
@@ -92,12 +93,29 @@ grep -q "enable --now chiguo-bridge" "$CALLS_LOG" || fail "未 enable chiguo-bri
 : > "$CALLS_LOG"
 pass "autostart 写 unit + systemctl 调用链"
 
-# ── 用例 3: 幂等（重复 autostart 不重写 unit，两次调用间文件 mtime 不变）──
+# ── 用例 3: 幂等（重复 autostart 不重写 unit，两次调用间文件 mtime 不变，不 restart）──
 UNIT_MTIME="$(stat -c %Y "$TMP/systemd/chiguo-bridge.service")"
 sleep 1
 "$SERVICE" autostart >/dev/null 2>&1 || fail "重复 autostart 退出非 0"
 [ "$(stat -c %Y "$TMP/systemd/chiguo-bridge.service")" = "$UNIT_MTIME" ] || fail "unit 被重复重写"
-pass "autostart 幂等"
+grep -q "restart chiguo-bridge" "$CALLS_LOG" && fail "unit 一致时不应 restart"
+pass "autostart 幂等（一致不重写、不 restart）"
+
+# ── 用例 3b: unit 内容变更 → autostart 强制 restart（升级后加载新配置，Closes #146）──
+cat > "$TMP/bin/node2" <<'STUB'
+#!/usr/bin/env bash
+echo "$0 $*" >> "$CALLS_LOG"
+exec sleep 300
+STUB
+chmod +x "$TMP/bin/node2"
+UNIT_MTIME2="$(stat -c %Y "$TMP/systemd/chiguo-bridge.service")"
+: > "$CALLS_LOG"
+sleep 1
+CHIGUO_NODE="$TMP/bin/node2" "$SERVICE" autostart >/dev/null 2>&1 || fail "unit 变更后 autostart 退出非 0"
+grep -q "restart chiguo-bridge" "$CALLS_LOG" || fail "unit 变更后未 restart bridge"
+[ "$(stat -c %Y "$TMP/systemd/chiguo-bridge.service")" != "$UNIT_MTIME2" ] || fail "unit 内容变更未被重写"
+grep -q "ExecStart=$TMP/bin/node2 bridge.mjs" "$TMP/systemd/chiguo-bridge.service" || fail "unit 未更新为新 NODE 路径"
+pass "autostart unit 变更 → 重写 + restart"
 
 # ── 用例 4: temp 残留被杀（pidfile 指向存活进程时 autostart 清理）──
 sleep 300 & FAKE_TEMP_PID=$!

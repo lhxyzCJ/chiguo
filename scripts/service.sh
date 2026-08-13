@@ -66,6 +66,7 @@ stop_systemd() {
 }
 
 write_unit() {
+  # 返回码: 0=unit 已改写（mv 成功，需 restart 加载新配置） 1=已存在且一致（未改写） 2=dry-run（未写）
   local tmp="$BRIDGE_UNIT.tmp"
   # 逐行 printf（不用未加引号的 heredoc）：变量值只作 %s 参数原样插入，
   # 避免 $BRIDGE_DIR/$ENV_FILE 含特殊字符时被 shell 二次展开或 printf 格式串注入
@@ -88,16 +89,17 @@ write_unit() {
   if [ -f "$BRIDGE_UNIT" ] && cmp -s "$tmp" "$BRIDGE_UNIT"; then
     rm -f "$tmp"
     say "systemd unit 已存在且一致"
-    return 0
+    return 1
   fi
   if [ "$DRY" = 1 ]; then
     cat "$tmp"
     rm -f "$tmp"
     say "dry-run：unit 将写入 $BRIDGE_UNIT"
-    return 0
+    return 2
   fi
   mv "$tmp" "$BRIDGE_UNIT"
   say "systemd unit 已写入: $BRIDGE_UNIT"
+  return 0
 }
 
 require_root() {
@@ -133,9 +135,14 @@ do_autostart() {
   fi
   say "阶段 3: wechat-bridge unit..."
   write_unit
+  UNIT_CHANGED=$?
   "$SYSTEMCTL" daemon-reload
   "$SYSTEMCTL" enable --now chiguo-bridge 2>/dev/null \
     || { warn "chiguo-bridge enable/start 失败（bash scripts/wechat-bridge.sh status 排查）"; exit 1; }
+  if [ "$UNIT_CHANGED" = 0 ]; then
+    "$SYSTEMCTL" restart chiguo-bridge || warn "chiguo-bridge restart 失败"
+    say "unit 已变更，重启 bridge 加载新配置"
+  fi
   say "autostart 完成 ✓（开机自启: ollama + chiguo-bridge）"
 }
 
