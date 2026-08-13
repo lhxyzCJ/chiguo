@@ -25,7 +25,7 @@ from pathlib import Path
 from contextlib import contextmanager
 
 from chiguo_math import (
-    sigmoid, decay, recover, elastic_recover,
+    sigmoid, decay, elastic_recover,
     dynamic_lambda, hawkes_intensity, longing_decay,
     in_quiet_window,
     apply_interaction_matrix, drop_damp, impact_inertia,
@@ -751,6 +751,10 @@ class ChiguoState:
 
         lock_path = str(p) + ".lock"
         lock_acquired = self._lock_acquire(lock_path)
+        # ── #165: 锁获取失败（超时/降级）→ 不写盘，与 OSError 路径一致返回 False。
+        # 重入（本进程已持锁）时 _lock_acquire 返回 False 但 _in_lock() 为 True，仍正常写盘。
+        if not lock_acquired and not self._in_lock():
+            return False
         try:
             # ── v5: 写前备份 ──
             if _backup and p.exists():
@@ -956,29 +960,29 @@ class ChiguoState:
 
             # 温暖回复
             if warmth > 0.3:
-                delta.evolve(PersonalityDeltas.WARM_REPLY)
+                delta = delta.evolve(PersonalityDeltas.WARM_REPLY)
             # 冷淡回复
             elif warmth < -0.2:
-                delta.evolve(PersonalityDeltas.COLD_REPLY)
+                delta = delta.evolve(PersonalityDeltas.COLD_REPLY)
 
             # 回复速度
             if lat_cat == "fast":
-                delta.evolve(PersonalityDeltas.FAST_REPLY)
+                delta = delta.evolve(PersonalityDeltas.FAST_REPLY)
             elif lat_cat == "slow":
-                delta.evolve(PersonalityDeltas.SLOW_REPLY)
+                delta = delta.evolve(PersonalityDeltas.SLOW_REPLY)
             elif lat_cat == "very_slow":
-                delta.evolve(PersonalityDeltas.VERY_SLOW_REPLY)
+                delta = delta.evolve(PersonalityDeltas.VERY_SLOW_REPLY)
 
             # 长消息 → 更开放
             if msg_len > 30:
-                delta.evolve(PersonalityDeltas.LONG_MESSAGE)
+                delta = delta.evolve(PersonalityDeltas.LONG_MESSAGE)
 
         elif itype == "character_send":
             prev_send_was_replied = interaction.get("was_replied", False)
             if prev_send_was_replied:
-                delta.evolve(PersonalityDeltas.SENT_AND_REPLIED)
+                delta = delta.evolve(PersonalityDeltas.SENT_AND_REPLIED)
             else:
-                delta.evolve(PersonalityDeltas.SENT_NO_REPLY)
+                delta = delta.evolve(PersonalityDeltas.SENT_NO_REPLY)
 
         self.personality.evolve(delta)
 
@@ -1000,9 +1004,6 @@ class ChiguoState:
         })
         if len(self.personality_history) > 200:
             del self.personality_history[:-200]
-
-        # 情绪调制：缓存 anxiety_sensitivity 供 _apply_emotion_impact 使用
-        self.personality._cached_anxiety_sensitivity = self.personality.anxiety_sensitivity()
 
     # ── 寒暑假检测 ────────────────────────────────────────
 
@@ -1620,6 +1621,8 @@ class ChiguoState:
         if self.cooldown.last_message_at:
             try:
                 last_send = datetime.fromisoformat(self.cooldown.last_message_at)
+                if last_send.tzinfo is None:
+                    last_send = last_send.replace(tzinfo=CST)
                 latency_h = max(0.0, (now - last_send).total_seconds() / 3600)   # 负延迟钳 0(#83)
                 self.cooldown.reply_latencies.append(latency_h)
                 if len(self.cooldown.reply_latencies) > 20:
@@ -1754,6 +1757,10 @@ class ChiguoState:
         """A10: 30 分钟窗口内同向回复事件计数 → 饱和阻尼系数。
         recents = 窗口内已有同向事件数（不含本次）→ drop_damp(recents, factor, cap)。
         顺带清理窗口外事件（滚动窗口，防无限增长）；window_minutes <= 0 → 关闭（恒 1.0）。"""
+        try:
+            window_minutes = float(window_minutes)
+        except (TypeError, ValueError):
+            window_minutes = 30.0
         if window_minutes <= 0:
             # 关闭阻尼 → 事件无保留价值，清空防无限增长
             self.cooldown.drop_events = []
@@ -1876,7 +1883,7 @@ class ChiguoState:
                 (0.3 - attention) * cfg.get("anxiety_ignore_factor", 2.0), "neg")
 
         # ── v4: 人格 anxiety_sensitivity 调制不安变化幅度 ──
-        anx_sens = getattr(self.personality, '_cached_anxiety_sensitivity', 1.0)
+        anx_sens = self.personality.anxiety_sensitivity()
         if anx_sens != 1.0 and hasattr(self, '_anxiety_before_analysis'):
             delta = self.emotion.anxiety - self._anxiety_before_analysis
             if delta != 0:
