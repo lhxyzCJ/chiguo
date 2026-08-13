@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # install_agent.sh 桩测试：假 pi/curl/crontab + 临时 HOME，验证 dry-run 只读扫描、
 # 待办清单与退出码（0=完成/1=有待办/2=严重）、--skip-agent、--yes 写入产物断言、
-# auth.json 合并写入与两遍 --yes 幂等（不重复 .bak/crontab）、provider 去绑定（13 用例）
+# auth.json 合并写入与两遍 --yes 幂等（不重复 .bak/crontab）、provider 去绑定、
+# 被注释禁用（手动停用）的 tick 条目检测保留（issue #147）
 set -uo pipefail
 TMP="$(mktemp -d /tmp/chiguo-agent-test.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
@@ -104,7 +105,7 @@ setup_ready() {  # 预置全部已安装状态（auth/crontab 含 replan-tick �
   printf '*/15 * * * * %s/scripts/chiguo-tick.sh >> %s/logs/cron-tick.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" > "$CRON_STATE"
   printf '*/15 * * * * %s/scripts/replan-tick.sh >> %s/logs/cron-replan.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" >> "$CRON_STATE"
 }
-clean_home() { rm -rf "$HOME/.pi"; rm -f "$CRON_STATE"; }
+clean_home() { rm -rf "$HOME/.pi" "$HOME/.chiguo"; rm -f "$CRON_STATE"; }
 
 export PATH="$TMP/bin:$PATH"
 
@@ -269,5 +270,40 @@ set +e; OUT=$(env -u OPENCODE_API_KEY -u AGENT_API_KEY bash scripts/install_agen
 [ -f "$TMP/home/.pi/agent/auth.json" ] || fail "集中认证导入未生成 auth.json"
 grep -q "sk-migrated" "$TMP/home/.pi/agent/auth.json" || fail "导入的 key 不对: $(cat "$TMP/home/.pi/agent/auth.json")"
 pass "集中认证目录 agent-auth.json → auth.json 导入"
+
+# ── 用例 17: 被注释禁用的 chiguo-tick 条目 → dry-run 醒目提示 + 注释行保持原样 ──
+clean_home
+printf '# */15 * * * * %s/scripts/chiguo-tick.sh >> %s/logs/cron-tick.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" > "$CRON_STATE"
+set +e; OUT=$(bash scripts/install_agent.sh --dry-run 2>&1); RC=$?; set -e
+[ "$RC" = 1 ] || fail "被注释 chiguo-tick dry-run 期望 1 实得 $RC"
+echo "$OUT" | grep -q "被注释禁用" || fail "未醒目提示被注释禁用: $(echo "$OUT" | grep -o 'chiguo-tick[^ ]*' | head -1)"
+grep -q '^#' "$CRON_STATE" || fail "dry-run 不应改动被注释的 chiguo-tick 行"
+pass "被注释 chiguo-tick → dry-run 提示 + 注释行原样"
+
+# ── 用例 18: --yes 时被注释的 chiguo-tick/replan-tick 行保留原样，不当旧条目删，活动条目照常注册 ──
+clean_home
+printf '# */15 * * * * %s/scripts/chiguo-tick.sh >> %s/logs/cron-tick.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" > "$CRON_STATE"
+printf '# */15 * * * * %s/scripts/replan-tick.sh >> %s/logs/cron-replan.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" >> "$CRON_STATE"
+export OPENCODE_API_KEY=sk-cron
+set +e; OUT=$(bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "--yes 被注释条目期望 0 实得 $RC"
+grep -q '^#' "$CRON_STATE" || fail "被注释的 tick 行被删除: $(cat "$CRON_STATE")"
+[ "$(grep -c '^[^#].*chiguo-tick' "$CRON_STATE" || true)" = 1 ] || fail "活动 chiguo-tick 应恰好 1 条: $(cat "$CRON_STATE")"
+[ "$(grep -c '^[^#].*replan-tick' "$CRON_STATE" || true)" = 1 ] || fail "活动 replan-tick 应恰好 1 条: $(cat "$CRON_STATE")"
+echo "$OUT" | grep -q "被注释禁用" || fail "--yes 应醒目提示被注释禁用"
+unset OPENCODE_API_KEY AGENT_API_KEY
+pass "--yes 被注释 tick 行保留原样 + 活动条目照常注册"
+
+# ── 用例 19: loop 模式移除活动旧条目时，被注释的 chiguo-tick 行也保留原样 ──
+clean_home
+printf '*/15 * * * * %s/scripts/chiguo-tick.sh >> %s/logs/cron-tick.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" > "$CRON_STATE"
+printf '# 手动禁用：旧 chiguo-tick 路径（issue #147）\n' >> "$CRON_STATE"
+printf '*/15 * * * * %s/scripts/replan-tick.sh >> %s/logs/cron-replan.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" >> "$CRON_STATE"
+set +e; OUT=$(CHIGUO_DAEMON_LOOP=1 PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
+grep -q '^#' "$CRON_STATE" || fail "loop 模式不应删除被注释的 chiguo-tick 行: $(cat "$CRON_STATE")"
+[ "$(grep -c '^[^#].*chiguo-tick' "$CRON_STATE" || true)" = 0 ] || fail "loop 模式应移除活动 chiguo-tick 条目: $(cat "$CRON_STATE")"
+grep -q 'replan-tick' "$CRON_STATE" || fail "loop 模式应保留 replan-tick"
+echo "$OUT" | grep -q "被注释禁用" || fail "loop 模式应醒目提示被注释禁用"
+pass "loop 模式移除活动旧条目但保留被注释禁用行"
 
 echo "test_install_agent: 通过"
