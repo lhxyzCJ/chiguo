@@ -4,18 +4,20 @@ __pycache__/
 *.pyo
 .venv/
 
-# Runtime state files — 隐私数据（状态/决策/对话）本地保留不进 git（历史已重写清除）；
-# 监控/健康类（netease_health/pi_health/audit）仍跟踪供分析
+# Runtime state files — 隐私数据（状态/决策/对话）+ 监控/健康日志（audit/health）全部本地保留不进 git
 chiguo_state.json
 chiguo_state.json.bak
 chiguo_state.json.tmp
 chiguo_state.json.tmp.*
 chiguo_loop.pid
+chiguo_state_audit.jsonl
+agent_health.json
 *.lock
 !uv.lock
 
 # Netease music bridge — cookie is an auth token (keep ignored); cache is tracked
 netease/netease_cookie.txt
+netease/netease_health.json
 netease/netease_qr.png
 
 # Git worktrees
