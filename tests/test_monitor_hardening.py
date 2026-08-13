@@ -68,12 +68,12 @@ def test_state_file_bad_shape():
 
             mon = ChiguoMonitor(str(log), str(state))
 
-            # stats()：state_data.get("emotion")（385行）不得 AttributeError
+            # stats()：state_data.get("emotion")（stats() 内）不得 AttributeError
             s = mon.stats(days=7)
             assert s["activity"]["total_sends"] == 0
             assert s["emotions"]["current"] is None
 
-            # alerts()：state.get("last_tick")（476行）不得 AttributeError
+            # alerts()：state.get("last_tick")（alerts() 内）不得 AttributeError
             a = mon.alerts()
             # 形状错误等同「无状态」→ 应产生 no_state 告警而非崩溃
             no_state = [x for x in a if x["type"] == "no_state"]
@@ -101,7 +101,7 @@ def test_break_state_file_bad_shape():
 
             # break_state_path 是第 3 个构造参数
             mon = ChiguoMonitor(str(log), str(state), str(break_state))
-            a = mon.alerts()  # break_data.get("manual_override")（656行）不得 AttributeError
+            a = mon.alerts()  # break_data.get("manual_override")（alerts() 内）不得 AttributeError
             assert isinstance(a, list)
             assert all(x["type"] != "manual_break_active" for x in a)
     print("  OK test_break_state_file_bad_shape")

@@ -163,17 +163,21 @@ def test_6_holiday_availability(cfg):
 def test_7_in_class_availability(cfg):
     """上课中 → availability 极低（≤0.20）"""
     import copy
-    import shutil
     # 钉死 on_break 判定（不依赖真实日历）：semester_end 设为未来 + 注入空假期区间
     # 的 break_state.json → _on_break 恒 False，断言不再有 0.85 兜底分支
     cfg = copy.deepcopy(cfg)
     cfg["schedule"]["semester_end"] = "2099-12-31"
     # 批 3a:break 判定按 now(不再依赖真实今天),无课表缓存时走 unavailable→1.0,
-    # 无法锁定"上课中";故注入仓库真实课表文件 data/xskb.xlsx → 周一 08:30 第 1 节上课中
-    xlsx_src = Path("data/xskb.xlsx")
+    # 无法锁定"上课中";故生成最小课表 fixture → 周一 08:30 第 1 节上课中（自包含，
+    # 不依赖 gitignore 的 data/xskb.xlsx；openpyxl 由 schedule extra 提供）
+    from openpyxl import Workbook
     xlsx_dst = TMP_DIR / "data" / "xskb.xlsx"
     xlsx_dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(xlsx_src, xlsx_dst)
+    _wb = Workbook()
+    _ws = _wb.active
+    _ws.cell(row=5, column=1, value=1)
+    _ws.cell(row=5, column=2, value="高等数学BII(理论)-刘洋【2-17周】尚行楼")
+    _wb.save(str(xlsx_dst))
     cache_file = TMP_DIR / "schedule_cache.json"
     break_file = TMP_DIR / "break_state.json"
     try:
