@@ -160,10 +160,14 @@ class ScheduleApi:
 
     def _semester_dates(self) -> tuple[date, date | None]:
         sched = self.config.get("schedule", {})
+        raw = sched.get("semester_start", "")
         try:
-            ss = date.fromisoformat(str(sched.get("semester_start", "")))
+            ss = date.fromisoformat(str(raw))
         except ValueError:
             ss = date(2026, 2, 23)
+            print(f"[warn] [schedule].semester_start 缺失/非法（{str(raw)!r}），回退默认 {ss}；"
+                  f"课表周次/学期边界将基于回退值计算，请更新 chiguo_proactive.toml",
+                  file=sys.stderr)
         se = None
         try:
             if sched.get("semester_end"):
