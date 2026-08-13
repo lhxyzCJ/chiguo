@@ -753,6 +753,38 @@ def test_fetch_play_proof_naive_now_padded():
     print("  OK test_fetch_play_proof_naive_now_padded")
 
 
+def test_fetch_play_proof_refreshes_health_by_reprobe():
+    """A3: fetch_play_proof 拉取后按 _should_reprobe 门控刷新 health——
+    last_check 为空/越过重探周期 → 刷新 keep fresh;未到周期 → 不刷新(不放大探针频率)。"""
+    calls = {"health": 0}
+
+    def fh(*a, **k):
+        calls["health"] += 1
+        return {"api_alive": True, "logged_in": True}
+
+    td = tempfile.mkdtemp()
+    try:
+        svc = _make_service(td, recent=lambda *a, **k: _plays(), health=fh)
+        # last_check 为空(None)→ _should_reprobe True → 首次调用刷新
+        assert svc.health()["last_check"] is None
+        svc.fetch_play_proof(NOW)
+        assert svc.health()["last_check"] == NOW.isoformat()
+        assert calls["health"] == 1
+        # 同刻再调:last_check 刚刷新(0 分钟 < 30)→ 不重探,last_check 不变
+        svc.fetch_play_proof(NOW)
+        assert svc.health()["last_check"] == NOW.isoformat()
+        assert calls["health"] == 1, "未到重探周期不刷新"
+        # 越过 reprobe_minutes(40 分钟)→ 重探刷新
+        later = NOW + timedelta(minutes=40)
+        svc.fetch_play_proof(later)
+        assert svc.health()["last_check"] == later.isoformat()
+        assert calls["health"] == 2
+    finally:
+        import shutil
+        shutil.rmtree(td)
+    print("  OK test_fetch_play_proof_refreshes_health_by_reprobe")
+
+
 def test_bridge_default_injected():
     """不传 bridge → service 内部构造真实 NeteaseBridge,data_dir 锚定 <base>/netease"""
     td = tempfile.mkdtemp()
@@ -848,6 +880,7 @@ if __name__ == "__main__":
     test_fetch_play_proof_disabled_returns_none()
     test_fetch_play_proof_passes_ttl_and_returns_plays()
     test_fetch_play_proof_naive_now_padded()
+    test_fetch_play_proof_refreshes_health_by_reprobe()
     test_bridge_default_injected()
     test_save_cache_stdout_pure()
     test_save_cookie_stdout_pure()

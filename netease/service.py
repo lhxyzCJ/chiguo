@@ -205,13 +205,18 @@ class NeteaseService:
     # ── 播放反证单入口(daemon 专用) ──
     def fetch_play_proof(self, now: datetime) -> list | None:
         """daemon 播放反证专用:包装 bridge.fetch_recent_play。
-        enabled=False → None;naive now 补 CST。缓存锚定 <data_dir>/recent_play_cache.json。"""
+        enabled=False → None;naive now 补 CST;拉取后按 _should_reprobe 门控刷新
+        health(keep last_check fresh,不放大 API 调用频率)。
+        缓存锚定 <data_dir>/recent_play_cache.json。"""
         if not self.enabled:
             return None
         if now.tzinfo is None:
             now = now.replace(tzinfo=CST)
-        return self.bridge.fetch_recent_play(
+        plays = self.bridge.fetch_recent_play(
             limit=20, ttl_minutes=self.play_cache_ttl_minutes, now=now)
+        if self._should_reprobe(now):
+            self.refresh_health(now)
+        return plays
 
     # ── 话题入口(两阶段:peek 探测不消费 / consume 选中后确认) ──
 
