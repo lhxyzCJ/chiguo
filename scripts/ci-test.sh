@@ -17,23 +17,6 @@ export class WeChatBot { constructor() {} }
 EOF
 fi
 
-# CI fixture：tests/test_integration.py 的 test_7 注入仓库真实课表 data/xskb.xlsx
-# （本地课表文件，gitignore 不入库）→ 干净 checkout 由 ci-test.sh 自举最小课表。
-# 需解析成功（周一第 1 节，semester_start=2026-02-23 覆盖第 16 周）；data/ 不入库无污染。
-if [ ! -f data/xskb.xlsx ]; then
-  mkdir -p data
-  uv run python - <<'PY'
-from openpyxl import Workbook
-wb = Workbook()
-ws = wb.active
-ws.cell(row=5, column=1, value=1)
-ws.cell(row=5, column=2, value="高等数学BII(理论)-刘洋【2-17周】尚行楼")
-wb.save("data/xskb.xlsx")
-PY
-  # issue #85: 标记 CI 自举的假课表（区别于真实入库课表）
-  touch data/.ci-fixture
-fi
-
 if ! (
 node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && \
 node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && \

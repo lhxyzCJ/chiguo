@@ -26,7 +26,8 @@ check("ci-test.sh 运行 59 个 py 测试", len(py_tests) == 59, f"实际 {len(p
 check("ci-test.sh 运行 8 个 node 测试", len(mjs_tests) == 8, f"实际 {len(mjs_tests)}")
 check("ci-test.sh 运行 5 个 script 测试", len(sh_tests) == 5, f"实际 {len(sh_tests)}")
 check("ci-test.sh 含 test_docs_sync", "test_docs_sync.py" in citesh)
-for f in ["AGENTS.md", "CLAUDE.md", "README.md", "README_EN.md", "doc/DEPLOYMENT.md"]:
+for f in ["AGENTS.md", "CLAUDE.md", "README.md", "README_EN.md",
+          "doc/DEPLOYMENT.md", "doc/SYSTEM.md"]:
     txt = (ROOT / f).read_text()
     nums = re.findall(r"(\d+) py \+ (\d+) script", txt)
     check(f"{f} 计数为 59 py + 13 script", any((int(a), int(b)) == (59, 13) for a, b in nums), f"实际 {nums}")

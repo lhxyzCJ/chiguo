@@ -377,12 +377,15 @@ def test_memory_habit_window_probability():
 # ═══════════════════════════════════════════════════════════
 
 def _inject_xlsx(tmp: str) -> None:
-    """复制仓库真实课表到临时目录（与 test_integration.test_7 同手法）→ schedule 可用"""
-    import shutil
-    src = Path("data/xskb.xlsx")
+    """生成最小课表 fixture 到临时目录（与 test_integration.test_7 同手法，自包含）→ schedule 可用"""
+    from openpyxl import Workbook
     dst = Path(tmp) / "data" / "xskb.xlsx"
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src, dst)
+    _wb = Workbook()
+    _ws = _wb.active
+    _ws.cell(row=5, column=1, value=1)
+    _ws.cell(row=5, column=2, value="高等数学BII(理论)-刘洋【2-17周】尚行楼")
+    _wb.save(str(dst))
 
 
 def test_a3_schedule_multiplier_tiers():
