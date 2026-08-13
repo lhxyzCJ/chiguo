@@ -15,8 +15,29 @@ fail() { printf '\033[1;31m[chiguo]\033[0m %s\n' "$*"; exit 1; }
 
 # ── 1. Python 3.14 + uv ─────────────────────────────────────
 if ! command -v uv >/dev/null 2>&1; then
-    say "未找到 uv,正在安装(写入 \$HOME/.local/bin) ..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    say "未找到 uv,正在安装(固定版本 + SHA256 校验,写入 \$HOME/.local/bin) ..."
+    UV_VERSION="0.12.3"
+    # uv 发布物: uv-{target}.tar.gz（含 uv/uvx），同目录 *.sha256 内容为 "<hash>  <file>"
+    case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64)  UV_TARGET="x86_64-unknown-linux-gnu" ;;
+        Linux-aarch64) UV_TARGET="aarch64-unknown-linux-gnu" ;;
+        Darwin-x86_64) UV_TARGET="x86_64-apple-darwin" ;;
+        Darwin-arm64)  UV_TARGET="aarch64-apple-darwin" ;;
+        *) fail "不支持的平台 $(uname -s)-$(uname -m),请手动安装 uv(https://docs.astral.sh/uv/)" ;;
+    esac
+    UV_ARCHIVE="uv-${UV_TARGET}.tar.gz"
+    UV_TMP="$(mktemp -d "${TMPDIR:-/tmp}/uv-install-XXXXXX")"
+    curl -fsSL --retry 3 -o "$UV_TMP/$UV_ARCHIVE" "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/$UV_ARCHIVE"
+    curl -fsSL --retry 3 -o "$UV_TMP/$UV_ARCHIVE.sha256" "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/$UV_ARCHIVE.sha256"
+    if command -v sha256sum >/dev/null 2>&1; then
+        ( cd "$UV_TMP" && sha256sum -c "$UV_ARCHIVE.sha256" ) || fail "uv 下载校验失败(SHA256 不匹配)"
+    else
+        ( cd "$UV_TMP" && shasum -a 256 -c "$UV_ARCHIVE.sha256" ) || fail "uv 下载校验失败(SHA256 不匹配)"
+    fi
+    tar xzf "$UV_TMP/$UV_ARCHIVE" -C "$UV_TMP"
+    mkdir -p "$HOME/.local/bin"
+    install -m 755 "$UV_TMP/uv-${UV_TARGET}/uv" "$UV_TMP/uv-${UV_TARGET}/uvx" "$HOME/.local/bin/"
+    rm -rf "$UV_TMP"
     export PATH="$HOME/.local/bin:$PATH"
 fi
 uv python install 3.14 >/dev/null 2>&1 || true

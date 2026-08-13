@@ -28,7 +28,7 @@ OUT="$("$PY" "$REPO/chiguo_daemon.py" --compact 2>"$DAEMON_ERR_FILE")" || {
   exit 1
 }
 rm -f "$DAEMON_ERR_FILE"
-ACTION="$(printf '%s' "$OUT" | python3 -c 'import json,sys
+ACTION="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("action",""))
 except: print("")' 2>/dev/null || true)"
 [ "$ACTION" = "send" ] || exit 0
@@ -58,13 +58,13 @@ SEND_SESSION="$(grep -oP '(?<=send_session_id = ")[^"]+' "$REPO/chiguo_proactive
 record_health() {
   local out trans msg body
   out="$("$PY" "$REPO/scripts/agent_health.py" record --outcome "$1" --reason "${2:-}" 2>/dev/null || true)"
-  IFS='|' read -r trans msg <<< "$(printf '%s' "$out" | python3 -c 'import json,sys
+  IFS='|' read -r trans msg <<< "$(printf '%s' "$out" | "$PY" -c 'import json,sys
 try:
     d = json.load(sys.stdin)
     print(d.get("transition","") + "|" + d.get("message",""))
 except: print("|")' 2>/dev/null || true)"
   if [ -n "$trans" ] && [ "$trans" != "none" ] && [ -n "$msg" ]; then
-    body="$(python3 -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$msg")"
+    body="$("$PY" -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$msg")"
     curl -sf --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
       -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$body" >/dev/null 2>&1 \
       || echo "[chiguo-tick] 告警/恢复发送失败（transition=$trans），下个 tick 不再重发" >&2
@@ -81,15 +81,15 @@ fi
 # node agent-run.mjs --send-mode（既有路径），A8 composer 兜底链保持不变。
 RES=""
 if [ -n "$BRIDGE_URL" ]; then
-  RPC_URL="${BRIDGE_URL%/send}/agent/prompt"
+  RPC_URL="${BRIDGE_URL%%/send*}/agent/prompt"
   PROMPT_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-rpc-prompt-XXXXXX.json")"
   printf '%s' "$OUT" > "$PROMPT_FILE"
-  RPC_BODY="$(python3 -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read(), "mode": "send"}))' "$PROMPT_FILE" 2>/dev/null || true)"
+  RPC_BODY="$("$PY" -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read(), "mode": "send"}))' "$PROMPT_FILE" 2>/dev/null || true)"
   rm -f "$PROMPT_FILE"
   if [ -n "$RPC_BODY" ]; then
     RPC_RES="$(curl --max-time 125 --connect-timeout 5 --noproxy '*' -s -X POST "$RPC_URL" \
       -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$RPC_BODY" 2>/dev/null || true)"
-    RES="$(printf '%s' "$RPC_RES" | python3 -c 'import json,sys
+    RES="$(printf '%s' "$RPC_RES" | "$PY" -c 'import json,sys
 try:
     d = json.load(sys.stdin)
     print(json.dumps({"ok": True, "text": d["text"]}) if d.get("ok") and d.get("text") else "")
@@ -100,7 +100,7 @@ if [ -z "$RES" ]; then
   echo "[chiguo-tick] RPC 未产出,回退 spawn agent-run: $(printf '%s' "${RPC_RES:-}" | head -c 200)" >&2
   RES="$(CHIGUO_REPO="$REPO" AGENTRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/agent-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
 fi
-TEXT="$(printf '%s' "$RES" | python3 -c 'import json,sys
+TEXT="$(printf '%s' "$RES" | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("text",""))
 except: print("")' 2>/dev/null || true)"
 # ── A8: 生成失败确定性回退 ──
@@ -120,7 +120,7 @@ if [ -z "$TEXT" ]; then
   fi
 fi
 if [ -z "$TEXT" ]; then
-  FAIL_REASON="$(printf '%s' "$RES" | python3 -c 'import json,sys
+  FAIL_REASON="$(printf '%s' "$RES" | "$PY" -c 'import json,sys
 try: print((json.load(sys.stdin).get("error") or "")[:100])
 except: print("")' 2>/dev/null || true)"
   [ -n "$FAIL_REASON" ] || FAIL_REASON="tick agent-run 未生成消息"
@@ -129,13 +129,13 @@ except: print("")' 2>/dev/null || true)"
 fi
 # 消息已产出（agent 或 composer 兜底）→ 先记 success（发送失败不丢成功信号）；再发送
 record_health success
-BODY="$(python3 -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$TEXT")"
-MSG_ID="$(printf '%s' "$OUT" | python3 -c 'import json,sys
+BODY="$("$PY" -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$TEXT")"
+MSG_ID="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("msg_id",""))
 except: print("")' 2>/dev/null || true)"
 # A2: 把决策 JSON 的 trigger 传给 --record-send —— 否则 cron 主链路 record_send_text
 # 的 `if trigger:` 恒不成立，reply_stats 只有 replied 没有 sent，反馈闭环永不激活。
-TRIGGER="$(printf '%s' "$OUT" | python3 -c 'import json,sys
+TRIGGER="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("trigger",""))
 except: print("")' 2>/dev/null || true)"
 if ! curl -sf --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \

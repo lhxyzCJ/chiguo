@@ -45,9 +45,9 @@ const SESSION_ID = process.env.AGENTRUN_SESSION ?? HOST.session_id ?? 'chiguo-ma
 // 本次调用从全新会话开始。仅对默认回复会话生效(AGENTRUN_SESSION 显式指定时不移)。
 if (process.env.AGENTRUN_NEW_SESSION === '1' && !process.env.AGENTRUN_SESSION) {
   try {
-    const { backupSessionFile } = await import(pathToFileURL(join(REPO, 'wechat-bridge', 'command-detect.mjs')))
+    const { backupSessionFile } = await import(pathToFileURL(path.join(REPO, 'wechat-bridge', 'command-detect.mjs')))
     const { homedir } = await import('node:os')
-    const dst = backupSessionFile(process.cwd(), join(homedir(), '.chiguo', 'session-backups'))
+    const dst = backupSessionFile(process.cwd(), path.join(homedir(), '.chiguo', 'session-backups'))
     if (dst) console.error(`[new-session] 旧会话已备份: ${dst}`)
   } catch (err) {
     console.error('[new-session] 备份失败:', err instanceof Error ? err.message : String(err))
@@ -57,6 +57,25 @@ const PERSONALITY_DIR = HOST.personality_dir ?? `${REPO}/personality`
 const PERSONALITY = process.env.AGENTRUN_PERSONALITY ?? `${PERSONALITY_DIR}/迟菓人格-精简版.md`
 const GUIDE = process.env.AGENTRUN_GUIDE ?? `${PERSONALITY_DIR}/记忆用法.md`
 const TOOLS = process.env.AGENTRUN_TOOLS ?? `${PERSONALITY_DIR}/工具用法.md`
+
+/** 剥离行内注释：仅当 # 在引号外（且前导空白，与旧逻辑一致）时才视为注释起点，
+ *  避免误伤带 " #" 的字符串值（如 note = "a # b"）。 */
+function stripInlineComment(s) {
+  let inStr = false, esc = false
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+    } else if (ch === '"') {
+      inStr = true
+    } else if (ch === '#' && i > 0 && /\s/.test(s[i - 1])) {
+      return s.slice(0, i)
+    }
+  }
+  return s
+}
 
 export function readToml(p) {
   const out = {}
@@ -70,7 +89,7 @@ export function readToml(p) {
       if (!section) continue
       const m = t.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/)
       if (!m) continue
-      let v = m[2].replace(/\s+#.*$/, '').trim()
+      let v = stripInlineComment(m[2]).trim()
       const q = v.match(/^"(.*)"$/)
       if (q) v = q[1]
       else if (v === 'true') v = true

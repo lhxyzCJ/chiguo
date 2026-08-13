@@ -11,6 +11,8 @@ set -uo pipefail
 PROJECT_DIR="${CHIGUO_REPO_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRIDGE_DIR="$PROJECT_DIR/wechat-bridge"
 ENV_FILE="$BRIDGE_DIR/.env"
+# 精确匹配我们的 bridge.mjs 进程（绝对路径 + 转义 .）："node .*bridge.mjs" 正则过宽，会误匹配他项目同名脚本
+BRIDGE_PGREP="node .*${BRIDGE_DIR}/bridge\.mjs"
 LOG_FILE="${WECHAT_BRIDGE_LOG:-/tmp/opencode/wechat-bridge.log}"
 WECHATBOT_DIR="${WECHATBOT_DIR:-$HOME/wechatbot}"
 WECHATBOT_REPO="${WECHATBOT_REPO:-https://github.com/lhxyzCJ/wechatbot.git}"
@@ -56,7 +58,8 @@ try:
     print(key or '')
 except Exception: print('')
 " 2>/dev/null || true)"
-    cat > "$ENV_FILE" <<EOF
+    # umask 077：文件创建即为 600，避免 chmod 前窗口期 key 以默认权限落盘
+    ( umask 077; cat > "$ENV_FILE" <<EOF
 WECHAT_BRIDGE_SEND_PORT=$SEND_PORT
 WECHAT_BRIDGE_OWNER=$OWNER_ID
 WECHAT_BRIDGE_DAEMON_PY=$PROJECT_DIR/.venv/bin/python
@@ -67,6 +70,7 @@ WECHAT_BRIDGE_TOKEN=$BRIDGE_TOKEN
 WECHAT_BRIDGE_STORAGE=$WX_STORAGE
 OPENCODE_API_KEY=$AGENT_KEY
 EOF
+    )
     chmod 600 "$ENV_FILE"
 }
 
@@ -108,24 +112,25 @@ do_install() {
 }
 
 do_start() {
-    if pgrep -f "node .*bridge.mjs" >/dev/null 2>&1; then
-        say "bridge 已在运行（PID $(pgrep -f 'node .*bridge.mjs' | head -1)）"
+    if pgrep -f "$BRIDGE_PGREP" >/dev/null 2>&1; then
+        say "bridge 已在运行（PID $(pgrep -f "$BRIDGE_PGREP" | head -1)）"
         return 0
     fi
     [ -f "$ENV_FILE" ] || { warn "缺少 .env（先运行: bash scripts/wechat-bridge.sh install）"; return 1; }
     [ -d "$BRIDGE_DIR/node_modules/@wechatbot" ] || { warn "缺少 node_modules（先运行: bash scripts/wechat-bridge.sh install）"; return 1; }
     mkdir -p "$(dirname "$LOG_FILE")"
     say "启动 bridge（日志: $LOG_FILE）..."
-    ( cd "$BRIDGE_DIR" && setsid nohup node --env-file="$ENV_FILE" bridge.mjs >> "$LOG_FILE" 2>&1 < /dev/null & disown )
+    # 以绝对路径启动 → 进程 cmdline 含 "$BRIDGE_DIR/bridge.mjs"，供 BRIDGE_PGREP 精确匹配
+    ( cd "$BRIDGE_DIR" && setsid nohup node --env-file="$ENV_FILE" "$BRIDGE_DIR/bridge.mjs" >> "$LOG_FILE" 2>&1 < /dev/null & disown )
     for _ in 1 2 3 4 5; do
         sleep 1
-        pgrep -f "node .*bridge.mjs" >/dev/null 2>&1 && break
+        pgrep -f "$BRIDGE_PGREP" >/dev/null 2>&1 && break
     done
-    if ! pgrep -f "node .*bridge.mjs" >/dev/null 2>&1; then
+    if ! pgrep -f "$BRIDGE_PGREP" >/dev/null 2>&1; then
         warn "启动失败，请查看日志: tail -20 $LOG_FILE"
         return 1
     fi
-    say "bridge 已启动（PID $(pgrep -f 'node .*bridge.mjs' | head -1)）"
+    say "bridge 已启动（PID $(pgrep -f "$BRIDGE_PGREP" | head -1)）"
     if has_credentials; then
         say "复用已有登录态；若过期会自动打印新二维码"
     else
@@ -135,21 +140,21 @@ do_start() {
 
 do_stop() {
     local pids
-    pids="$(pgrep -f 'node .*bridge.mjs' || true)"
+    pids="$(pgrep -f "$BRIDGE_PGREP" || true)"
     if [ -z "$pids" ]; then
         say "bridge 未在运行"
         return 0
     fi
     kill $pids 2>/dev/null || true
     sleep 1
-    pgrep -f 'node .*bridge.mjs' >/dev/null 2>&1 && { pkill -9 -f 'node .*bridge.mjs' 2>/dev/null || true; }
+    pgrep -f "$BRIDGE_PGREP" >/dev/null 2>&1 && { pkill -9 -f "$BRIDGE_PGREP" 2>/dev/null || true; }
     say "bridge 已停止"
 }
 
 do_status() {
     local rc=0
-    if pgrep -f "node .*bridge.mjs" >/dev/null 2>&1; then
-        say "运行中（PID $(pgrep -f 'node .*bridge.mjs' | head -1)，端口 $SEND_PORT）"
+    if pgrep -f "$BRIDGE_PGREP" >/dev/null 2>&1; then
+        say "运行中（PID $(pgrep -f "$BRIDGE_PGREP" | head -1)，端口 $SEND_PORT）"
     else
         warn "未运行（bash scripts/wechat-bridge.sh start）"
         rc=1

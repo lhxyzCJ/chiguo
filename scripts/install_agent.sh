@@ -72,7 +72,8 @@ PYC
 AGENT_BIN="$(command -v pi || true)"
 AUTH="$HOME/.pi/agent/auth.json"
 TICK="$CHIGUO_REPO/scripts/chiguo-tick.sh"
-CRON_LINE="*/15 * * * * $TICK >> $CHIGUO_REPO/logs/cron-tick.log 2>&1"
+# cron 把命令段里的 % 当换行符 → 路径中的 % 必须转义为 \%（否则 tick 命令被截断）
+CRON_LINE="*/15 * * * * ${TICK//%/\\%} >> ${CHIGUO_REPO//%/\\%}/logs/cron-tick.log 2>&1"
 OLLAMA_BASE="${OLLAMA_BASE:-http://localhost:11434}"
 
 # ── 阶段 0: 环境探测 ───────────────────────────────────────
@@ -303,7 +304,8 @@ fi
 # ── 阶段 6b: crontab 注册 replan-tick（幂等,与 tick 条目同款逻辑）──
 # CURRENT_CRON 必须重读:tick 条目刚在阶段 6 写入,旧快照会致 replan 追加时覆盖整表
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
-REPLAN_LINE="*/15 * * * * $CHIGUO_REPO/scripts/replan-tick.sh >> $CHIGUO_REPO/logs/cron-replan.log 2>&1"
+# cron 把命令段里的 % 当换行符 → 路径中的 % 必须转义为 \%
+REPLAN_LINE="*/15 * * * * ${CHIGUO_REPO//%/\\%}/scripts/replan-tick.sh >> ${CHIGUO_REPO//%/\\%}/logs/cron-replan.log 2>&1"
 if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$REPLAN_LINE"; then
   say "crontab 已注册 replan-tick"
 elif printf '%s\n' "$CURRENT_CRON" | grep -q 'replan-tick'; then
@@ -337,17 +339,22 @@ if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
   SYSTEMD_DIR="${CHIGUO_SYSTEMD_DIR:-/etc/systemd/system}"
   SYSTEMCTL="${CHIGUO_SYSTEMCTL:-systemctl}"
   DAEMON_UNIT="$SYSTEMD_DIR/chiguo-daemon.service"
-  PY="$CHIGUO_REPO/.venv/bin/python"  # .venv 由 deploy.sh 保证；缺失时 systemd 启动即失败，envcheck 会指出
-  [ -x "$PY" ] || warn "$PY 不存在（请先 bash deploy.sh 完成基础安装）"
+  UNIT_PY="$CHIGUO_REPO/.venv/bin/python"  # ExecStart 用仓库 venv python（含 mem0 等依赖）；缺失时 systemd 启动即失败，envcheck 会指出
+  [ -x "$UNIT_PY" ] || warn "$UNIT_PY 不存在（请先 bash deploy.sh 完成基础安装）"
   say "阶段 6c: 安装 systemd chiguo-daemon.service（--loop 900 --compact 常驻）..."
   if [ "$DRY" = 1 ]; then
     PENDING=1
-    echo "  [dry-run] 将写入 $DAEMON_UNIT（ExecStart=$PY $CHIGUO_REPO/chiguo_daemon.py --loop 900 --compact）"
+    echo "  [dry-run] 将写入 $DAEMON_UNIT（ExecStart=$UNIT_PY $CHIGUO_REPO/chiguo_daemon.py --loop 900 --compact）"
   else
     TMP_UNIT="$(mktemp "${TMPDIR:-/tmp}/chiguo-daemon-XXXXXX.service")"
     # unit 模板始终取自脚本所在仓库（CHIGUO_REPO 可能被测试 override）
-    sed -e "s|__PY__|$PY|g" -e "s|__REPO__|$CHIGUO_REPO|g" \
-      "$REPO_DIR/scripts/chiguo-daemon.service" > "$TMP_UNIT"
+    # 占位符替换走 Python str.replace：sed 替换串里的 & / \ | 会被误解释
+    # 解释器用 $PY（第 31 行的系统 python3），ExecStart 值用 $UNIT_PY（仓库 venv python）
+    "$PY" - "$REPO_DIR/scripts/chiguo-daemon.service" "$UNIT_PY" "$CHIGUO_REPO" <<'PYU' > "$TMP_UNIT"
+import sys
+src, py, repo = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.stdout.write(open(src, encoding="utf-8").read().replace("__PY__", py).replace("__REPO__", repo))
+PYU
     if [ -f "$DAEMON_UNIT" ] && cmp -s "$TMP_UNIT" "$DAEMON_UNIT"; then
       say "chiguo-daemon.service 已是最新（跳过写入）"
       rm -f "$TMP_UNIT"
