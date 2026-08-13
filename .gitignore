@@ -91,3 +91,6 @@ reasonix.toml
 
 # OMC 运行态目录（会话/任务台账，不入库）
 .omc/
+
+# 本地计划/笔记文档（不进 git）
+docs/
