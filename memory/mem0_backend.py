@@ -18,6 +18,7 @@ import json
 import math
 import os
 import random
+import sys
 import time as _time_module
 from datetime import datetime, timezone, timedelta
 
@@ -128,6 +129,7 @@ class Mem0Backend(MemoryBackend):
         self._available: bool | None = None
         self._last_probe: float = 0.0
         self._last_error: tuple | None = None  # (ts, op, error_str)，暴露到 stats()
+        self._capability_warned = False  # D2: 能力缺失告警只打一次，不重复刷屏
 
     # ── mem0 初始化 ───────────────────────────────────────
 
@@ -190,6 +192,7 @@ class Mem0Backend(MemoryBackend):
             # 连通性探测：search 一次（走 embedder，覆盖 ollama 依赖；
             # get_all 只走 qdrant scroll 不触 embedder，ollama 故障探测不到）
             self._m.search("probe", filters={"user_id": self.user_id}, top_k=1)
+            self._warn_missing_capabilities()  # D2: 探测成功时检查一次能力缺失，显式告警
             self._available = True
         except Exception as e:
             import logging
@@ -312,7 +315,7 @@ class Mem0Backend(MemoryBackend):
                 "backend": "mem0",
                 "last_error": self._last_error,
             }
-        total = len(self._all_rows(min_importance=0.0))
+        total = self._count_rows()
         return {
             "available": True,
             "total_memories": total,
@@ -485,6 +488,33 @@ class Mem0Backend(MemoryBackend):
                 continue
             out.append(row)
         return out
+
+    def _count_rows(self) -> int:
+        """记忆总数：优先 qdrant get_collection 精确计数（零向量拉取，O(1)），
+        mem0/qdrant 版本差异或假后端无 vector_store.col_info → 回退全量 scroll 计数。"""
+        try:
+            store = getattr(self._m, "vector_store", None)
+            if store is None:
+                raise AttributeError("no vector_store")
+            info = store.col_info()  # qdrant get_collection → CollectionInfo(points_count)
+            n = int(getattr(info, "points_count", -1))
+            if n >= 0:
+                return n
+        except Exception:
+            pass
+        return len(self._all_rows(min_importance=0.0))
+
+    def _warn_missing_capabilities(self):
+        """mem0 升级后 update/delete/get API 可能改名/删除 → getattr 返回 None → 巩固降权/
+        召回计数静默跳过。探测时检查一次，缺失即显式 stderr 告警（不重复刷屏）。"""
+        if self._capability_warned:
+            return
+        missing = [name for name in ("update", "delete", "get")
+                   if getattr(self._m, name, None) is None]
+        if missing:
+            self._capability_warned = True
+            print(f"[warn] mem0 缺 {', '.join(missing)} API → 巩固降权/召回计数将静默跳过；"
+                  f"升级 mem0ai 后需回归（memory/mem0_backend.py）", file=sys.stderr)
 
 
 def _parse_iso_ts(s: str) -> float:
