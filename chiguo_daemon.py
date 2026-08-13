@@ -190,6 +190,10 @@ class DecisionEngine:
             decision["msg_id"] = self._make_msg_id()
         try:
             with open(self.log_path, "a") as f:
+                try:
+                    os.chmod(self.log_path, 0o600)  # 决策日志含对话/状态隐私 → 0600
+                except OSError:
+                    pass
                 f.write(json.dumps(decision, ensure_ascii=False) + "\n")
         except Exception as e:
             print(f"[warn] 写入 {self.log_path} 失败: {e}", file=sys.stderr)  # 日志失败不影响主流程
@@ -1263,6 +1267,10 @@ class DecisionEngine:
                 record["user_emotion_analysis"] = user_emotion_analysis
         try:
             with open(self.messages_log_path, "a") as f:
+                try:
+                    os.chmod(self.messages_log_path, 0o600)  # 消息归档含明文对话 → 0600
+                except OSError:
+                    pass
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
             print(f"[warn] 写入 {self.messages_log_path} 失败: {e}", file=sys.stderr)  # 消息归档失败不影响主流程
@@ -1327,7 +1335,15 @@ class DecisionEngine:
                 headers={"Content-Type": "application/json"})
             if token:
                 req.add_header("X-Bridge-Token", token)
-            with urllib.request.urlopen(req, timeout=t) as resp:
+            # B5: 回环 bridge 调用绕系统代理（同 chiguo_envcheck._urlopen：本机有
+            # http_proxy 时 localhost 直连不被劫持，防回环请求走代理失败降级）
+            host = urllib.request.urlsplit(req.full_url).hostname or ""
+            if host in ("localhost", "127.0.0.1", "::1"):
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                resp = opener.open(req, timeout=t)
+            else:
+                resp = urllib.request.urlopen(req, timeout=t)
+            with resp:
                 return json.loads(resp.read().decode("utf-8"))
 
         # ① 生成（RPC 优先 → spawn 回退，与 chiguo-tick.sh 同构）
@@ -1347,7 +1363,7 @@ class DecisionEngine:
             import subprocess
             runner = os.environ.get("AGENT_RUN_SCRIPT") \
                 or str(self._base_dir / "scripts" / "agent-run.mjs")
-            node_bin = os.environ.get("AGENT_BIN") or "node"
+            node_bin = os.environ.get("NODE_BIN") or "node"  # 注意：AGENT_BIN 是 pi/agent 二进制，不是 node；这里必须用 node
             try:
                 p = subprocess.run(
                     [node_bin, runner, "--prompt",

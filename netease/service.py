@@ -115,6 +115,10 @@ class NeteaseService:
         try:
             with open(tmp, "w") as f:
                 json.dump(self._health, f, ensure_ascii=False, indent=2)
+            try:
+                os.chmod(tmp, 0o600)  # B6: 运行时健康文件统一 0600（与 chiguo_state.save 同款）
+            except OSError:
+                pass
             os.replace(tmp, self.health_file)
         except Exception as e:
             print(f"[warn] netease_health 写入失败: {e}", file=sys.stderr)

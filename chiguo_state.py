@@ -18,6 +18,7 @@ import math
 import hashlib
 import shutil
 import sys
+import types
 import time as time_module
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, asdict, field
@@ -90,15 +91,32 @@ class ChiguoEmotion:
 def _coerce_dataclass_fields(fields: dict, cls) -> dict:
     """v11: dataclass 数值字段(annotation 为 int/float)类型强转。
     手改/损坏数据可能字符串化或为 None → float()/int() 失败时回退字段默认值，
-    防 ChiguoEmotion.clamp()/can_send 的 max/min 比较直接 TypeError。"""
+    防 ChiguoEmotion.clamp()/can_send 的 max/min 比较直接 TypeError。
+    B2: int|None/float|None 联合注解（如 cooldown.last_user_msg_length）规约到数值
+    基底同样强转，None 值显式放行（联合即允许空，不强转不触发比较 TypeError）。"""
     out = dict(fields)
     for name, fdef in cls.__dataclass_fields__.items():
         ann = fdef.type
+        nullable = False
+        # B2: int|None 等联合注解 → 规约到数值基底（last_user_msg_length 损坏为字符串
+        # 时下方 int(float(val)) 兜回；否则恢复成字符串会让后续 >30 比较 TypeError）
+        if isinstance(ann, types.UnionType):
+            args = getattr(ann, "__args__", ())
+            if len(args) == 2 and type(None) in args:
+                base = args[0] if args[1] is type(None) else args[1]
+                if base in (int, float):
+                    ann = base
+                    nullable = True
         if ann not in (int, float, "int", "float"):
             continue
         if name not in out:
             continue
         val = out[name]
+        if val is None:
+            if nullable:
+                continue  # int|None 联合字段允许 None，保留空值
+            out[name] = fdef.default  # 非可空数值字段：None 也回退默认（v11 原行为）
+            continue
         if isinstance(val, (int, float)):
             continue
         try:
@@ -824,6 +842,12 @@ class ChiguoState:
             data = json.dumps(payload, indent=2, ensure_ascii=False)
 
             tmp_path.write_text(data)
+            # 状态文件含隐私（情绪/人格/对话相关）→ 正式文件与暂存均 0600；
+            # 若 tmp 已存在且权限过宽，这里统一收紧，os.replace 后正式文件也是 0600。
+            try:
+                os.chmod(tmp_path, 0o600)
+            except OSError:
+                pass  # 权限收紧失败不阻塞保存（与备份 chmod 同策略）
 
             # ── v5: fsync 确保落盘 ──
             try:

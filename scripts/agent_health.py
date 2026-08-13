@@ -143,6 +143,10 @@ def record(outcome, reason, state_path, config_path):
 
         tmp = state_path.with_name(state_path.name + ".tmp")
         tmp.write_text(json.dumps(st, ensure_ascii=False, indent=2))
+        try:
+            os.chmod(tmp, 0o600)  # B6: 运行时状态统一 0600（与 chiguo_state.save 同款）
+        except OSError:
+            pass
         os.replace(tmp, state_path)
     finally:
         if acquired:

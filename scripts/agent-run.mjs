@@ -190,6 +190,10 @@ export function runAgentBin(bin, args, opts) {
   return new Promise((resolve, reject) => {
     const maxBuffer = opts.maxBuffer ?? 16 * 1024 * 1024
     const c = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts })
+    // B4: setEncoding 让 data 回调收到 string——StringDecoder 内部跨 chunk 拼接多字节字符，
+    // 逐 chunk Buffer 累加会把切在多字节中间的中文解码成 U+FFFD（同 agent-rpc.mjs C2）
+    c.stdout.setEncoding('utf8')
+    c.stderr.setEncoding('utf8')
     let stdout = ''
     let stdoutBytes = 0
     let stderr = ''
@@ -203,7 +207,8 @@ export function runAgentBin(bin, args, opts) {
     c.stdout.on('data', (d) => {
       stdout += d
       // R19: 累计字节计数判断超限（避免对已累积 stdout 逐 chunk 整串 Buffer.byteLength 重扫，O(n²)→O(n)）
-      stdoutBytes += d.length
+      // B4: setEncoding 后 d 为 string，Buffer.byteLength 换算 UTF-8 字节，保持字节口径上限语义
+      stdoutBytes += Buffer.byteLength(d, 'utf8')
       if (stdoutBytes > maxBuffer) {
         bail(new Error(`${bin} stdout 超过 ${maxBuffer} 字节上限（输出无界，已终止）`))
       }

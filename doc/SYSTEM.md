@@ -46,7 +46,9 @@
 发送侧由 systemd `chiguo-daemon.service`（`--loop 900 --compact`）常驻：`_loop_send` 内聚
 「生成→发送→记账」——经 bridge `POST /agent/prompt {mode:send}` 转发常驻 agent RPC
 （`agent-rpc.mjs` 双会话：analysis `chiguo-main` / send `chiguo-send`）→ `POST /send` →
-`record_send_text`；RPC 失败自动回退 spawn（不变式）。cron 仅剩 replan（判脏轮询）。
+`record_send_text`；RPC 失败自动回退 spawn（不变式）。`_loop_send` 对 bridge 的
+POST 走本地回环**绕系统代理**直连（防 http_proxy 劫持导致回环请求走代理失败降级，
+同 chiguo_envcheck `_urlopen`）。cron 仅剩 replan（判脏轮询）。
 与 cron tick **互斥**（install_agent.sh 阶段 6：loop 模式移除 tick 条目防双发）。
 详见 doc/AGENT_INTEGRATION.md §架构总览 与 doc/DEPLOYMENT.md §部署形态。
 
@@ -961,6 +963,11 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `data/mem0/` | mem0 记忆库（qdrant 嵌入式向量库 + history.db） |
 | `archive/` | 轮转归档（decisions_YYYY-MM.jsonl / messages_YYYY-MM.jsonl） |
 
+运行时文件统一以 **0600** 权限落盘（隐私收紧，tmp→os.replace 原子写后 chmod 收紧，
+与 `chiguo_state.json` 同款策略）：`chiguo_state.json`、`chiguo_decisions.jsonl`、
+`chiguo_messages.jsonl`、`schedule_cache.json`、`netease/netease_health.json`、
+`agent_health.json`、`chiguo_alerts.json` 均 0600（追加写路径在写后 chmod）。
+
 ### 6.10 测试（`tests/`）
 
 59 个 py + 8 个 mjs + 5 个 sh（另有 fixture：`_loop_worker.py`、`fake-agent-rpc.mjs`），统一入口 `scripts/ci-test.sh`。详见 §十 与 AGENT_INTEGRATION.md §测试。
@@ -1510,7 +1517,7 @@ runner = "agent"                   # v1.8 agent runner 抽象：agent（默认�
 # agent_command = ["node", "/path/to/agent.mjs"]  # runner=command 必填；agent 模式忽略
 
 [loop]       # v1.11: daemon --loop 常驻（发送侧内聚）
-bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 服务地址（含 /agent/prompt 与 /send 端点）
+bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 服务地址（含 /agent/prompt 与 /send 端点；本地回环绕系统代理直连）
 bridge_token = ""                       # 与 bridge WECHAT_BRIDGE_TOKEN 同源；空=不带头
 agent_timeout_ms = 125000               # /agent/prompt 超时
 

@@ -190,6 +190,10 @@ export async function executeSpecialCommand(spawnFn, spec, daemonPy, daemonScrip
         timeout: 30_000,
         cwd: join(repo),
       })
+      // B4: setEncoding 让 data 回调收到 string（StringDecoder 跨 chunk 拼接多字节中文，
+      // 逐 chunk Buffer 累加会把切在多字节中间的字符解码成 U+FFFD——daemon JSON/确认文案均含中文）
+      c.stdout.setEncoding('utf8')
+      c.stderr.setEncoding('utf8')
       let out = ''
       let err = ''
       c.stdout.on('data', (d) => { out += d })
@@ -274,6 +278,9 @@ function runCli(spawnFn, args, timeoutMs = 30_000) {
 function runCmd(spawnFn, cmd, args, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const c = spawnFn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs })
+    // B4: setEncoding 同上——记忆 CLI 输出含中文（搜索/统计结果），跨 chunk 需 StringDecoder
+    c.stdout.setEncoding('utf8')
+    c.stderr.setEncoding('utf8')
     let out = ''
     let err = ''
     c.stdout.on('data', (d) => { out += d })

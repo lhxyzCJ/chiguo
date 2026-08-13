@@ -397,7 +397,9 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # A6 统一 repeat 阻尼：trigger_history 按 type 计数 n，weight ×= repeat_decay ** min(n, cap)。
     # 对所有 trigger 类型统一生效（daemon 发送时 append history，本层只读不写）。
     repeat_decay = _clamp01(trg_cfg.get("repeat_decay", 0.6), 0.6)
-    repeat_cap = trg_cfg.get("repeat_cap", 3)
+    # B1: repeat_cap 走 _clamp_int 兜底（字符串"3"/None 等脏配置回退默认 3，负数钳 0），
+    # 与 min(n, repeat_cap) 的整型语义一致（裸取遇字符串会 TypeError）
+    repeat_cap = _clamp_int(trg_cfg.get("repeat_cap", 3), 3)
     history = state.cooldown.trigger_history
     for c in weighted_candidates:
         n = sum(1 for t in history if t == c["trigger"].type)
@@ -623,5 +625,7 @@ def _memory_should_trigger(mem: dict, now: datetime) -> bool:
                 return False
     elif mtype == "habit":
         window = mem.get("trigger_window", [])
+        if not isinstance(window, list):
+            return False  # B3: 非 list（int/str 等脏数据）视为未命中，防 in 判断 TypeError/错判
         return now.hour in window and random.random() < 0.06
     return False

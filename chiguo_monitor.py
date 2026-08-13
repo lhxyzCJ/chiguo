@@ -1043,6 +1043,10 @@ class AlertManager:
             }, ensure_ascii=False, indent=2)
             tmp = Path(str(self.state_path) + ".tmp")
             tmp.write_text(data)
+            try:
+                os.chmod(tmp, 0o600)  # B6: 运行时文件含状态 → 统一 0600（与 chiguo_state.save 同款）
+            except OSError:
+                pass
             os.replace(str(tmp), str(self.state_path))
         except OSError as e:
             print(f"[monitor] AlertManager._save 写入失败: {e}", file=sys.stderr)
