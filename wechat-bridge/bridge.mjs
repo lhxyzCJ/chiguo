@@ -50,10 +50,12 @@ const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 // ── 主会话每日轮换配置（toml [host].session_rotate_*；env WECHAT_BRIDGE_ACTIVITY_FILE 可覆盖活动文件路径）──
+// 非法/非正配置值回退默认（不取 Math.max 下限——负数不应导致 5 分钟高频检查）
+const rotNum = (v, d) => { const n = Number(v); return Number.isFinite(n) && n >= 5 ? n : d }
 const ROTATE_CFG = {
   enabled: HOST.session_rotate_enabled !== false,
-  checkMinutes: Math.max(5, Number(HOST.session_rotate_check_minutes ?? 60) || 60),
-  idleMinutes: Math.max(5, Number(HOST.session_rotate_idle_minutes ?? 60) || 60),
+  checkMinutes: rotNum(HOST.session_rotate_check_minutes, 60),
+  idleMinutes: rotNum(HOST.session_rotate_idle_minutes, 60),
 }
 // 仓库根 = 本文件位置推导（可移植，随仓库克隆到任何路径）
 const REPO = resolveRepo(import.meta.url)
