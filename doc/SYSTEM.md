@@ -80,7 +80,7 @@ chiguo_daemon.py (DecisionEngine)
   ├─ chiguo_trigger.py  → sigmoid 加权随机触发（14 种类型（情绪类 8 + 仪式类 6，含 follow_up 接话茬、
   │                      comfort 安慰）+ 逃生阀直接触发 + A2 分类型回复率反馈闭环）
   ├─ chiguo_topics.py   → 8 源话题选择器（含 netease 委托）+ 人格调制 + Ebbinghaus 加权 + A9 内容级防复读
-  ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 + 生成失败兜底 CLI
+  ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 + 独立直出 CLI（不再被发送链调用）
   ├─ solar_terms.py     → 24 节气
   ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康；D1 主动消息效果评估 proactive_stats）
   └─ chiguo_rotation.py → 对话日志轮转与归档 + 告警持久化 + 索引查询
@@ -840,7 +840,7 @@ agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准（表�
 
 Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 层（Intent × Cue × Vibe）30%。
 
-**A8 生成失败确定性回退（v1.10）**：`chiguo_composer.py` 新增 `__main__` CLI——传入 daemon decision JSON 文件路径（或 `--trigger` 触发类型），从模板池直出可发送文本（cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败时固定文案池 `_FALLBACK_LINES` 兜底），退出码 0=成功（文本已输出）/非零=失败；`scripts/chiguo-tick.sh` 在 agent 生成失败时调用它兜底（成功 → 照常发送 + health 记 success + `--record-send` 打 fallback 标记；composer 也失败才记 fail + exit 1）。见「七、CLI 参考 → chiguo_composer.py」。
+**发送侧可靠性（U2/#227，替代 v1.10 A8 兜底）**：`chiguo_composer.py` 保留独立 `CLI`（传入 decision JSON 或 `--trigger`，从模板池直出可发送文本；cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败用 `_FALLBACK_LINES`）——但**发送链不再调用它兜底**。`scripts/chiguo-tick.sh` 与 `chiguo_daemon.py --loop` 的 `_loop_send` 统一：agent 生成失败 → sleep `[loop].retry_delay_seconds`(5) 整链重试一次（抖动缓冲，重试成功不计故障）→ 仍失败即**中止发送**并经 `agent_health.py record --outcome fail` 记账（fail_streak+1）；连续失败达 `[health].fail_threshold`(3) → 状态 down + transition 经微信发「后端异常」告警（仅翻转一次）→ 暂停探测（loop 跳过尝试；cron 读 down 态 exit 0 不发）。修复后重启 loop（重启后首次 probe 放行）或下个 cron probe 成功 → record success → state up + transition 发「已恢复」。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
 
 ---
 
@@ -854,7 +854,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_state.py` | 2280 | ChiguoState：5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线 + 状态持久化（原子写/SHA256/审计日志） |
 | `chiguo_monitor.py` | 1186 | 流式 JSONL 分析：统计/告警/健康 + D1 proactive_stats |
 | `chiguo_trigger.py` | 621 | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
-| `chiguo_composer.py` | 605 | Intent × Cue × Vibe 三层组合 + A8 生成失败兜底 CLI |
+| `chiguo_composer.py` | 605 | Intent × Cue × Vibe 三层组合 + 独立直出 CLI（发送链不再调用） |
 | `chiguo_bayesian.py` | 602 | Bayesian 用户状态推断（6 状态在线学习 + A1 转移矩阵 + A3 信息增益门控） |
 | `chiguo_topics.py` | 436 | 8 源话题选择器 TopicPicker + 人格调制 + Ebbinghaus 加权 + A9 防复读 + netease 委托 |
 | `chiguo_math.py` | 439 | 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix |
@@ -913,7 +913,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `wechat-bridge.sh` | 185 | 微信桥服务管理 |
 | `service.sh` | 255 | systemd 服务管理 |
 | `netease-api.sh` | 180 | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
-| `chiguo-tick.sh` | 176 | cron 门控入口（零模型，读 daemon 输出 → send → record-send → composer 兜底） |
+| `chiguo-tick.sh` | 197 | cron 门控入口（零模型，读 daemon 输出 → send → 5s 重试 → record-send；无 composer 兜底，health 告警/暂停） |
 | `ci-test.sh` | 68 | 全量测试链（59 py + 14 script，CI stub 自举） |
 | `agent-auth.sh` | 18 | agent 认证 |
 | `replan-tick.sh` | 10 | loop 形态 replan 判脏轮询 |

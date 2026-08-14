@@ -176,19 +176,18 @@ CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1 || fail "成功路径 tick
 post_texts | grep -q "测试主动消息" || fail "应发出真实主动消息"
 post_texts | grep -q "恢复" || fail "应发出恢复通知"
 
-# ── 用例 4.5: A8 composer 兜底——agent 失败但 composer 模板池兜底成功 → 照常发送 + success ──
-# fake repo 放入真实 chiguo_composer.py（无 personality 目录 → 无台词模板 → intent 文本兜底，
-# 仍产出非空文本）→ tick 应退出 0、发出消息、health 记 success（fail_streak 归零）。
-cp "$REPO_ROOT/chiguo_composer.py" "$REPO/chiguo_composer.py"
-echo fail > "$FAKE_AGENT_MODE_FILE"
+# ── 用例 4.5: U2 (#227) 去 composer 兜底——agent 尽整链重试失败 → 无兜底文本、
+# 不发送、record fail（fail_streak 推进）+ exit 1 ──
+# 与旧 A8 相反：不再 composer 模板池兜底出消息；失败即中止发送 + 记账。
+echo fail > "$FAKE_AGENT_MODE_FILE"   # RPC 本就是 fail，spawn 也切 fail → 整链失败
 POST_BEFORE="$(post_count)"
+STREAK_BEFORE="$(state_field fail_streak)"
 set +e; CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
-[ "$RC" = 0 ] || fail "composer 兜底成功时 tick 应退出 0, 实得 $RC"
-[ "$(post_count)" = $((POST_BEFORE + 1)) ] \
-  && pass "composer 兜底: 照常发出 1 条消息" || fail "期望 $((POST_BEFORE + 1)) POST 实得 $(post_count)"
-[ "$(state_field state)" = up ] || fail "composer 兜底后 health 应仍为 up, 实得 $(state_field state)"
-[ "$(state_field fail_streak)" = 0 ] || fail "composer 兜底应记 success（fail_streak 归零）, 实得 $(state_field fail_streak)"
-rm -f "$REPO/chiguo_composer.py"
+[ "$RC" = 1 ] || fail "去 composer 兜底时 agent 失败应 exit 1, 实得 $RC"
+# 无兜底消息发出：POST 数不增（不发消息/兜底文本；未达阈值也无告警）
+[ "$(post_count)" = "$POST_BEFORE" ]   && pass "去兜底: 未达阈值 agent 失败 → 无 POST（不兜底发送）" || fail "期望 POST=$POST_BEFORE 实得 $(post_count)"
+# 记账推进 fail_streak
+[ "$(state_field fail_streak)" -gt "$STREAK_BEFORE" ]   && pass "去兜底: fail 记账推进 fail_streak（$STREAK_BEFORE→$(state_field fail_streak)）"   || fail "fail_streak 应 > $STREAK_BEFORE, 实得 $(state_field fail_streak)"
 
 # ── 用例 5: OPENCODE_API_KEY 注入——优先 opencode-go 条目（mem0 LLM 事实提取），无则回退 [host].provider ──
 mkdir -p "$TMP/home/.pi/agent"

@@ -61,13 +61,15 @@ SEND_SESSION="$(grep -oP '(?<=send_session_id = ")[^"]+' "$REPO/chiguo_proactive
 # agent 假死记账：成败记入 agent_health 状态机，transition 时经 /send 发告警/恢复（零额外 agent 调用）
 # 注：toml 缺 wechat_recipient 时（上方提前 exit）agent 未跑 → 该次不记账
 record_health() {
-  local out trans msg body
+  local out trans msg body recstate
   out="$("$PY" "$REPO/scripts/agent_health.py" record --outcome "$1" --reason "${2:-}" 2>/dev/null || true)"
-  IFS='|' read -r trans msg <<< "$(printf '%s' "$out" | "$PY" -c 'import json,sys
+  IFS='|' read -r trans msg state <<< "$(printf '%s' "$out" | "$PY" -c 'import json,sys
 try:
     d = json.load(sys.stdin)
-    print(d.get("transition","") + "|" + d.get("message",""))
-except: print("|")' 2>/dev/null || true)"
+    print(d.get("transition","") + "|" + d.get("message","") + "|" + d.get("state",""))
+except: print("||")' 2>/dev/null || true)"
+  REC_STATE="${state:-}"
+  REC_TRANS="${trans:-}"
   if [ -n "$trans" ] && [ "$trans" != "none" ] && [ -n "$msg" ]; then
     body="$("$PY" -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$msg")"
     curl -sf --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
@@ -83,56 +85,76 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 # ── v1.11 B1: 发送侧 RPC 优先（经 bridge /agent/prompt 转发常驻 AgentRpc），失败回退 spawn ──
 # 决策 JSON 自足（chiguo-send 会话）→ RPC 生成消息；RPC 不可用/超时/空回复 → 回退
-# node agent-run.mjs --send-mode（既有路径），A8 composer 兜底链保持不变。
-RES=""
-if [ -n "$BRIDGE_URL" ]; then
-  RPC_URL="${BRIDGE_URL%%/send*}/agent/prompt"
-  PROMPT_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-rpc-prompt-XXXXXX.json")"
-  printf '%s' "$OUT" > "$PROMPT_FILE"
-  RPC_BODY="$("$PY" -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read(), "mode": "send"}))' "$PROMPT_FILE" 2>/dev/null || true)"
-  rm -f "$PROMPT_FILE"
-  if [ -n "$RPC_BODY" ]; then
-    RPC_RES="$(curl --max-time 125 --connect-timeout 5 --noproxy '*' -s -X POST "$RPC_URL" \
-      -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$RPC_BODY" 2>/dev/null || true)"
-    RES="$(printf '%s' "$RPC_RES" | "$PY" -c 'import json,sys
+# node agent-run.mjs --send-mode。U2 (#227): 无 composer 兜底——生成失败 sleep
+# retry_delay_seconds(默认5) 整链重试一次，仍失败 → record_health fail + exit 1；
+# 状态为 down（暂停）时失败路径 exit 0 静默跳过不发。
+KEEP_TICK_RETRY_S="$(grep -oP '(?<=retry_delay_seconds = )\d+' "$REPO/chiguo_proactive.toml" | head -1 || echo 5)"
+KEEP_TICK_HEALTH="$REPO/agent_health.json"
+# 读 agent_health 当前态：down → 本次失败路径 exit 0（暂停；cron 15min 天然节奏，恢复靠 probe 成功）
+DOWN_BEFORE=0
+if [ -f "$KEEP_TICK_HEALTH" ]; then
+  if python3 -c 'import json,sys
+try:
+    d = json.load(open(sys.argv[1]))
+    sys.exit(0 if d.get("state") == "down" else 1)
+except Exception:
+    sys.exit(1)' "$KEEP_TICK_HEALTH" 2>/dev/null; then
+    DOWN_BEFORE=1
+  fi
+fi
+
+# 完整生成链一次（RPC 优先 → spawn 回退），结果写全局 RES/TEXT
+try_generate() {
+  RES=""
+  if [ -n "$BRIDGE_URL" ]; then
+    RPC_URL="${BRIDGE_URL%%/send*}/agent/prompt"
+    PROMPT_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-rpc-prompt-XXXXXX.json")"
+    printf '%s' "$OUT" > "$PROMPT_FILE"
+    RPC_BODY="$("$PY" -c 'import json,sys; print(json.dumps({"text": open(sys.argv[1]).read(), "mode": "send"}))' "$PROMPT_FILE" 2>/dev/null || true)"
+    rm -f "$PROMPT_FILE"
+    if [ -n "$RPC_BODY" ]; then
+      RPC_RES="$(curl --max-time 125 --connect-timeout 5 --noproxy '*' -s -X POST "$RPC_URL" \
+        -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$RPC_BODY" 2>/dev/null || true)"
+      RES="$(printf '%s' "$RPC_RES" | "$PY" -c 'import json,sys
 try:
     d = json.load(sys.stdin)
     print(json.dumps({"ok": True, "text": d["text"]}) if d.get("ok") and d.get("text") else "")
 except: print("")' 2>/dev/null || true)"
+    fi
   fi
-fi
-if [ -z "$RES" ]; then
-  echo "[chiguo-tick] RPC 未产出,回退 spawn agent-run: $(printf '%s' "${RPC_RES:-}" | head -c 200)" >&2
-  RES="$(CHIGUO_REPO="$REPO" AGENTRUN_SESSION="$SEND_SESSION" AGENTRUN_ROTATE_SESSION=1 node "$REPO/scripts/agent-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
-fi
-TEXT="$(printf '%s' "$RES" | "$PY" -c 'import json,sys
+  if [ -z "$RES" ]; then
+    echo "[chiguo-tick] RPC 未产出,回退 spawn agent-run: $(printf '%s' "${RPC_RES:-}" | head -c 200)" >&2
+    RES="$(CHIGUO_REPO="$REPO" AGENTRUN_SESSION="$SEND_SESSION" AGENTRUN_ROTATE_SESSION=1 node "$REPO/scripts/agent-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
+  fi
+  TEXT="$(printf '%s' "$RES" | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("text",""))
 except: print("")' 2>/dev/null || true)"
-# ── A8: 生成失败确定性回退 ──
-# agent 失败 → composer 模板池兜底（零 LLM）：decision JSON 落盘传给
-# chiguo_composer.py CLI，成功则照常发送（health 记 success + record-send 打 fallback 标记）；
-# composer 也失败才 record_health fail + exit 1。
+}
+
+try_generate
 if [ -z "$TEXT" ]; then
-  echo "[chiguo-tick] agent-run 未生成消息: $(printf '%s' "$RES" | head -c 300)" >&2
-  DECISION_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-fallback-XXXXXX.json")"
-  printf '%s' "$OUT" > "$DECISION_FILE"
-  FALLBACK_TEXT="$("$PY" "$REPO/chiguo_composer.py" "$DECISION_FILE" 2>/dev/null || true)"
-  rm -f "$DECISION_FILE"
-  if [ -n "$FALLBACK_TEXT" ]; then
-    TEXT="$FALLBACK_TEXT"
-    COMPOSER_FALLBACK=1
-    echo "[chiguo-tick] agent 失败,composer 兜底生成消息" >&2
+  # 抖动缓冲：sleep retry_delay_seconds(默认5) 后整链重试一次（重试成功不计 fail）
+  if [ -n "$KEEP_TICK_RETRY_S" ] && [ "$KEEP_TICK_RETRY_S" -gt 0 ] 2>/dev/null; then
+    sleep "$KEEP_TICK_RETRY_S"
   fi
+  try_generate
 fi
 if [ -z "$TEXT" ]; then
+  echo "[chiguo-tick] agent-run 未生成消息: $(printf '%s' "$RES" | head -c 300)" >&2
   FAIL_REASON="$(printf '%s' "$RES" | "$PY" -c 'import json,sys
 try: print((json.load(sys.stdin).get("error") or "")[:100])
 except: print("")' 2>/dev/null || true)"
   [ -n "$FAIL_REASON" ] || FAIL_REASON="tick agent-run 未生成消息"
   record_health fail "$FAIL_REASON"
+  # 本 tick 开始时已 down（暂停态）→ exit 0 静默跳过（cron 15min 天然节奏，
+  # 恢复靠 probe 成功：agent 修好后下个 cron 生成成功 → REC_STATE=up + 恢复消息）；
+  # 触发 down 的那次仍 exit 1（与既有语义一致，未达阈值前逐次失败同样 exit 1）
+  if [ "$DOWN_BEFORE" = 1 ]; then
+    exit 0
+  fi
   exit 1
 fi
-# 消息已产出（agent 或 composer 兜底）→ 先记 success（发送失败不丢成功信号）；再发送
+# 消息已产出 → 先记 success（发送失败不丢成功信号）；再发送
 record_health success
 BODY="$("$PY" -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$TEXT")"
 MSG_ID="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
@@ -165,12 +187,11 @@ if ! printf '%s' "$SEND_RESP" | grep -q '"ok": *true'; then
   fi
   exit 1
 fi
-# 回传发送结果（A8: composer 兜底时额外打 fallback 标记，health 已记 success）
+# 回传发送结果（health 已记 success）
 # A2: --trigger 来自决策 JSON（sent+1 的归因键），无 trigger（如告警直发）则跳过。
 if [ -n "$MSG_ID" ]; then
   RS_ARGS=(--record-send "$MSG_ID" --text "$TEXT")
   [ -n "$TRIGGER" ] && RS_ARGS+=(--trigger "$TRIGGER")
-  [ -n "${COMPOSER_FALLBACK:-}" ] && RS_ARGS+=(--fallback)
   "$PY" "$REPO/chiguo_daemon.py" "${RS_ARGS[@]}" >/dev/null 2>&1 \
     || echo "[chiguo-tick] record-send 失败 msg_id=$MSG_ID" >&2
 fi
