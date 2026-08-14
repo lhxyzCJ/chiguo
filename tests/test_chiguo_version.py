@@ -44,10 +44,12 @@ def test_consumers_import_version():
         print(f"  OK test_consumers_import_version ({fname})")
 
 def test_envcheck_monitor_app_version():
-    """envcheck / monitor 报告以 app_version 键承载 VERSION。"""
+    """envcheck / monitor 报告以 app_version 键承载 VERSION（取值即 VERSION）。"""
     for fname in ("chiguo_envcheck.py", "chiguo_monitor.py"):
         src = (ROOT / fname).read_text(encoding="utf-8")
         assert "app_version" in src, f"{fname} 报告缺 app_version 键"
+        assert re.search(r'"app_version"\s*:\s*VERSION', src), \
+            f"{fname} app_version 键未直接承载 VERSION"
         print(f"  OK test_envcheck_monitor_app_version ({fname})")
 
 def test_consumer_modules_loadable():
