@@ -59,7 +59,7 @@ crontab */15 * * * * scripts/chiguo-tick.sh
         → 常驻 agent RPC 生成消息（chiguo-send 会话）
         → RPC 失败自动回退 node scripts/agent-run.mjs --prompt <决策JSON> --send-mode
           （AGENTRUN_SESSION=<toml [host].send_session_id>）
-        → agent 失败 → chiguo_composer.py 模板池兜底（A8，零 LLM）
+        → agent 失败 → sleep 5s 整链重试一次（U2：抖动缓冲，重试成功不计故障）；仍失败中止（无 composer 兜底）
         → 回文本后 curl --noproxy '*' -X POST <toml [host].wechat_bridge_url> {"to","text"} → bridge → bot.send()
         → scripts/agent_health.py record（成败记账，状态 transition 时经 /send 告警/恢复）
         → daemon --record-send <msg_id> --text <text> --trigger <trigger> 回写（幂等）
@@ -228,7 +228,7 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
   - `source scripts/agent-auth.sh` 解析 auth.json key → `OPENCODE_API_KEY`（opencode-go 优先 → [host].provider 回退）
   - idle 静默退出；send 走 `AGENTRUN_SESSION=<toml send_session_id>`（与会话分离）
   - 发送侧 RPC 优先（v1.11 B1）：`POST <bridge>/agent/prompt {text, mode:send}`，失败回退 spawn
-  - agent 失败 → `chiguo_composer.py` 模板池兜底（A8，零 LLM）
+  - agent 失败 → 5s 整链重试（U2）；仍失败中止发送（无 composer 兜底）+ agent_health 告警 / 手动恢复
   - 发送成败经 `scripts/agent_health.py record` 记账（transition 时告警/恢复）
   - curl 带 `--noproxy '*'`；发送失败仅记 stderr 并 `exit 0`（下个 tick 重试）；
     `--record-send` 回写发送状态（带 `--trigger`，失败不阻塞）

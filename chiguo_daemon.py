@@ -1313,12 +1313,76 @@ class DecisionEngine:
             fallback=fallback,
         )
 
+    def _record_health(self, outcome: str, reason: str, loop_cfg: dict) -> dict | None:
+        """U2/v1.16 (#227): 生成段 health 记账——subprocess 调 agent_health.py record。
+        --state 由 loop_cfg.health_state（测试隔离）或默认 <base_dir>/agent_health.json 注入。
+        返回 record stdout JSON dict（含 state/transition/message/fail_streak）；失败静默返回 None（不阻断发送）。
+        对齐 scripts/chiguo-tick.sh 的 record_health（同 agent_health.py 状态机，transition 仅翻转各一次）。"""
+        import subprocess
+        state_path = str(loop_cfg.get("health_state") or self._base_dir / "agent_health.json")
+        runner = os.environ.get("AGENT_HEALTH_SCRIPT") \
+            or str(self._base_dir / "scripts" / "agent_health.py")
+        try:
+            cmd = [sys.executable, runner, "record", "--outcome", outcome,
+                   "--state", state_path]
+            if reason:
+                cmd += ["--reason", reason]
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            data = json.loads(p.stdout or "{}")
+            if isinstance(data, dict):
+                return data
+        except Exception:  # noqa: BLE001 - 记账失败静默，不阻断发送
+            pass
+        return None
+
+    def _health_should_probe(self, loop_cfg: dict) -> bool:
+        """U2/v1.16 (#227): loop 发送侧降频探测 / down 暂停判定（cron 形态走 tick.sh）。
+        语义（用户拍板 Q2）：
+          - down 状态 → 暂停（本次不尝试；恢复靠重启 loop，重启后首次 probe 放行）
+          - 累计失败（1 ≤ fail_streak < threshold）→ 距上次失败 < probe_interval 跳过（降频），≥ 则 probe
+          - 否则（健康/无状态文件/重启后首次）→ 放行尝试
+        进程内首次调用恒放行（_loop_first_probe = True → 即「重启即恢复」的首次机会）。"""
+        if getattr(self, "_loop_first_probe", True):
+            self._loop_first_probe = False
+            return True
+        state_path = str(loop_cfg.get("health_state") or self._base_dir / "agent_health.json")
+        try:
+            with open(state_path) as f:
+                data = json.load(f)
+        except Exception:  # noqa: BLE001 - 无状态文件/未记账 → 放行
+            return True
+        if not isinstance(data, dict):
+            return True
+        if data.get("state") == "down":
+            return False  # 暂停探测
+        try:
+            streak = int(data.get("fail_streak", 0) or 0)
+            threshold = int((self.config.get("health", {}) or {}).get(
+                "fail_threshold", 3) or 3)
+        except (TypeError, ValueError):
+            streak, threshold = 0, 3
+        if threshold <= 0:
+            threshold = 3
+        if 1 <= streak < threshold:
+            probe_interval = float(loop_cfg.get("probe_interval_seconds", 3600) or 3600)
+            last_fail = data.get("last_fail_at")
+            try:
+                if last_fail:
+                    last = datetime.fromisoformat(last_fail)
+                    if (datetime.now(CST) - last).total_seconds() < probe_interval:
+                        return False  # 未到降频探测节奏
+            except Exception:  # noqa: BLE001
+                pass
+        return True
+
     def _loop_send(self, decision: dict, loop_cfg: dict) -> dict:
         """v1.11 C: --loop 常驻的发送侧内聚（替代 cron tick.sh 的 send 动作）。
-        流程：①经 bridge /agent/prompt 生成消息（RPC 优先，mode=send）→ 失败回退
-        spawn agent-run --send-mode → 再失败返回 generated=false（下轮重试）；
-        ②POST /send 发送；③record_send_text 记账（发送失败 → record_send_result
-        failed 回滚）。异常全部捕获返回结果 dict，不抛出（loop 循环不中断）。"""
+        U2/v1.16 (#227): 生成失败不再 composer 兜底——sleep retry_delay 后整链重试一次
+        （抖动缓冲，重试成功不计 fail_streak）；仍失败 → agent_health record fail（fail_streak+1，
+        达 threshold 状态 down + transition 告警）并返回 generated=false。生成成功 → record success +
+        transition（down→up 恢复）经 /send 发告警/恢复。发送段仍走 record_send_result 退款闭环。
+        异常全部捕获返回结果 dict，不抛出（loop 循环不中断）。"""
+
         import urllib.request
 
         out: dict = {"generated": False, "sent": False}
@@ -1355,40 +1419,68 @@ class DecisionEngine:
             with resp:
                 return json.loads(resp.read().decode("utf-8"))
 
-        # ① 生成（RPC 优先 → spawn 回退，与 chiguo-tick.sh 同构）
-        text = None
-        gen_err = ""
-        try:
-            r = _post("/agent/prompt",
-                      {"text": json.dumps(decision, ensure_ascii=False), "mode": "send"},
-                      timeout)
-            if r.get("ok") and r.get("text"):
-                text = r["text"]
-            else:
-                gen_err = str(r.get("error") or "RPC 空回复")
-        except Exception as e:  # noqa: BLE001 - 回退路径
-            gen_err = str(e)
-        if not text:
+        def _try_generate() -> tuple:
+            """完整生成链（RPC 优先 → spawn 回退）。返回 (text, err)。"""
             import subprocess
-            runner = os.environ.get("AGENT_RUN_SCRIPT") \
-                or str(self._base_dir / "scripts" / "agent-run.mjs")
-            node_bin = os.environ.get("NODE_BIN") or "node"  # 注意：AGENT_BIN 是 pi/agent 二进制，不是 node；这里必须用 node
+            text: str | None = None
+            gen_err = ""
             try:
-                p = subprocess.run(
-                    [node_bin, runner, "--prompt",
-                     json.dumps(decision, ensure_ascii=False), "--send-mode"],
-                    capture_output=True, text=True, timeout=timeout)
-                parsed = json.loads(p.stdout)
-                if parsed.get("ok") and parsed.get("text"):
-                    text = parsed["text"]
+                r = _post("/agent/prompt",
+                          {"text": json.dumps(decision, ensure_ascii=False), "mode": "send"},
+                          timeout)
+                if r.get("ok") and r.get("text"):
+                    text = r["text"]
                 else:
-                    gen_err = f"{gen_err}; spawn: {parsed.get('error') or '空回复'}"
-            except Exception as e:  # noqa: BLE001
-                gen_err = f"{gen_err}; spawn: {e}"
+                    gen_err = str(r.get("error") or "RPC 空回复")
+            except Exception as e:  # noqa: BLE001 - 回退路径
+                gen_err = str(e)
+            if not text:
+                runner = os.environ.get("AGENT_RUN_SCRIPT") \
+                    or str(self._base_dir / "scripts" / "agent-run.mjs")
+                node_bin = os.environ.get("NODE_BIN") or "node"  # 必须用 node，AGENT_BIN 是 pi/agent 二进制
+                try:
+                    p = subprocess.run(
+                        [node_bin, runner, "--prompt",
+                         json.dumps(decision, ensure_ascii=False), "--send-mode"],
+                        capture_output=True, text=True, timeout=timeout)
+                    parsed = json.loads(p.stdout)
+                    if parsed.get("ok") and parsed.get("text"):
+                        text = parsed["text"]
+                    else:
+                        gen_err = f"{gen_err}; spawn: {parsed.get('error') or '空回复'}"
+                except Exception as e:  # noqa: BLE001
+                    gen_err = f"{gen_err}; spawn: {e}"
+            return text, gen_err
+
+        # ── ① 生成（完整链；失败 sleep retry_delay → 整链重试一次，抖动缓冲不计 fail）──
+        text, gen_err = _try_generate()
+        if not text:
+            retry_delay = float(loop_cfg.get("retry_delay_seconds", 5) or 0)
+            if retry_delay > 0:
+                time.sleep(retry_delay)
+            text, gen_err = _try_generate()
+        def _send_transition_alert(rec):
+            """transition（up/down）发生时经 /send 发告警/恢复（对齐 tick.sh record_health；仅翻转各一次）。"""
+            if not rec:
+                return
+            transition = rec.get("transition")
+            message = rec.get("message")
+            if transition in ("up", "down") and message:
+                alert_to = (self.config.get("wechat", {}) or {}).get("wechat_recipient", "")
+                if alert_to:
+                    try:
+                        _post("/send", {"to": alert_to, "text": message}, 10.0)
+                    except Exception:  # noqa: BLE001 - 告警失败不阻断主消息
+                        pass
+
         if not text:
             out["error"] = gen_err
+            # U2 (#227): 无 composer 兜底——记录 health fail（达 threshold → state down + transition 告警）
+            _send_transition_alert(self._record_health("fail", gen_err, loop_cfg))
             return out
         out["generated"] = True
+        # 生成成功 → record success；transition（down→up 恢复）经 /send 发恢复（对齐 tick.sh）
+        _send_transition_alert(self._record_health("success", "", loop_cfg))
         # ② 发送 + ③ 记账
         to = (self.config.get("wechat", {}) or {}).get("wechat_recipient", "")
         if not to:
@@ -2071,7 +2163,12 @@ def main():
                 # v1.11 C: --loop 发送侧内聚（生成→发送→记账），不再只打印 JSON 等外部消费
                 loop_cfg = engine.config.get("loop", {}) or {}
                 try:
-                    decision["_loop"] = engine._loop_send(decision, loop_cfg)
+                    # U2 (#227): down 暂停 / 降频探测门控——不满足则跳过尝试（suppressed）
+                    if engine._health_should_probe(loop_cfg):
+                        decision["_loop"] = engine._loop_send(decision, loop_cfg)
+                    else:
+                        decision["_loop"] = {"generated": False, "sent": False,
+                                             "suppressed": True}
                 except Exception as e:  # noqa: BLE001 - 兜底：打印决策不中断循环
                     decision["_loop_error"] = str(e)
                 print(json.dumps(decision, ensure_ascii=False))

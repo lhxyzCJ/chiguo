@@ -472,6 +472,8 @@ runner = "agent"
 bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 服务地址（含 /agent/prompt 与 /send 端点）
 bridge_token = ""                       # 与 bridge WECHAT_BRIDGE_TOKEN 同源；空=不带头（向后兼容）
 agent_timeout_ms = 125000               # /agent/prompt 超时（agent 生成 LLM 往返兜底）
+retry_delay_seconds = 5                 # 生成失败后 sleep 此值再整链重试一次（抖动缓冲，重试成功不计 fail_streak）
+probe_interval_seconds = 3600           # 累计失败(fail_streak∈[1,threshold))时距上次尝试的最小间隔（降频探测）
 
 [health]
 fail_threshold = 3   # agent 假死判定：连续失败次数 ≥ 此值 → 告警（bridge 记账/tick 记账共用；<1 视为无效回退 3）

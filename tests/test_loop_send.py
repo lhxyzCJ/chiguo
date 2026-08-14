@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_loop_send.py — C1 daemon --loop 发送侧内聚单元测试（TDD）"""
+"""test_loop_send.py — C1 daemon --loop 发送侧内聚单元测试（TDD）+ U2 发送侧可靠性（#227）"""
 
 import json
 import os
@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import tomllib
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -79,6 +80,38 @@ def _send_decision(msg_id="m1", trigger="lonely_mid", intensity="medium"):
             "intensity": intensity, "version": "1.11", "context": {"layer": "shell"}}
 
 
+def _use_health_script():
+    """Point _record_health subprocess at the repo's real agent_health.py.
+    --state defaults to <base_dir>/agent_health.json (isolated under temp dir)."""
+    os.environ["AGENT_HEALTH_SCRIPT"] = str(Path("scripts/agent_health.py").resolve())
+
+
+def _fake_runner_retry(script_path):
+    """Run-once-fail / run-twice-ok fake agent-run (switched by call-count file)."""
+    counter = script_path.with_suffix(".cnt")
+    counter.write_text("0")  # 预置计数起点，避免首次 readFileSync ENOENT
+    script_path.write_text(
+        "import { readFileSync, writeFileSync } from 'node:fs'\n"
+        "const F=" + repr(str(counter)) + "\n"
+        "const c=parseInt(readFileSync(F,'utf8').trim()||'0')+1\n"
+        "writeFileSync(F,String(c))\n"
+        "process.stdout.write(c===1?JSON.stringify({ok:false,error:'first fail'}):"
+        "JSON.stringify({ok:true,text:'retry 兜底消息'}))\n"
+    )
+    return counter
+
+
+def _restore_env(old_r, ah):
+    if old_r is None:
+        os.environ.pop("AGENT_RUN_SCRIPT", None)
+    else:
+        os.environ["AGENT_RUN_SCRIPT"] = old_r
+    if ah is None:
+        os.environ.pop("AGENT_HEALTH_SCRIPT", None)
+    else:
+        os.environ["AGENT_HEALTH_SCRIPT"] = ah
+
+
 def test_loop_send_rpc_ok():
     """RPC 成功：/agent/prompt 带 mode=send → /send 带 to/text → 记账。"""
     srv = _start_bridge()
@@ -113,28 +146,29 @@ def test_loop_send_rpc_fail_fallback_spawn():
             fake_runner.write_text(
                 "process.stdout.write(JSON.stringify({ ok: true, text: 'spawn 兜底消息' }))")
             old = os.environ.get("AGENT_RUN_SCRIPT")
+            ah = os.environ.get("AGENT_HEALTH_SCRIPT")
             os.environ["AGENT_RUN_SCRIPT"] = str(fake_runner)
+            _use_health_script()
             try:
                 engine = _make_engine(td)
                 engine.config["wechat"]["wechat_recipient"] = "r@w"
                 FakeBridge.prompt_mode = "error"
-                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}"}
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "retry_delay_seconds": 0}
                 out = engine._loop_send(_send_decision(), loop_cfg)
                 assert out["generated"] is True and out["sent"] is True, out
                 send_body = json.loads(
                     [b for p, b in FakeBridge.requests if p == "/send"][0])
                 assert send_body["text"] == "spawn 兜底消息", send_body
             finally:
-                if old is None:
-                    os.environ.pop("AGENT_RUN_SCRIPT", None)
-                else:
-                    os.environ["AGENT_RUN_SCRIPT"] = old
+                _restore_env(old, ah)
     finally:
         srv.shutdown()
 
 
 def test_loop_send_all_fail():
-    """RPC 空回复 + spawn 失败 → generated=false + error 非空（不抛异常）。"""
+    """U2 (#227): RPC 空回复 + spawn 失败（整链重试一次仍失败）→ generated=false +
+    error 非空 + 无 composer 兜底 + fail_streak 推进（agent_health --state 临时文件）。"""
     srv = _start_bridge()
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -142,20 +176,27 @@ def test_loop_send_all_fail():
             fake_runner.write_text(
                 "process.stdout.write(JSON.stringify({ ok: false, error: 'fake 故障' }))")
             old = os.environ.get("AGENT_RUN_SCRIPT")
+            ah = os.environ.get("AGENT_HEALTH_SCRIPT")
             os.environ["AGENT_RUN_SCRIPT"] = str(fake_runner)
+            _use_health_script()
             try:
                 engine = _make_engine(td)
                 engine.config["wechat"]["wechat_recipient"] = "r@w"
                 FakeBridge.prompt_mode = "empty"
-                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}"}
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "retry_delay_seconds": 0}
                 out = engine._loop_send(_send_decision(), loop_cfg)
                 assert out["generated"] is False, out
                 assert out.get("error"), out
+                assert not out.get("sent"), out
+                # 无 composer 兜底：无 /send（既不发消息也不发兜底文本）
+                assert not any(p == "/send" for p, _ in FakeBridge.requests)
+                # fail_streak 推进（仅重试也失败才计一次真故障）
+                st = json.loads(Path(td, "agent_health.json").read_text())
+                assert st.get("fail_streak") == 1, st
+                assert st.get("state") == "up", st
             finally:
-                if old is None:
-                    os.environ.pop("AGENT_RUN_SCRIPT", None)
-                else:
-                    os.environ["AGENT_RUN_SCRIPT"] = old
+                _restore_env(old, ah)
     finally:
         srv.shutdown()
 
@@ -167,9 +208,141 @@ def test_loop_send_send_failure_refund():
         with tempfile.TemporaryDirectory() as td:
             engine = _make_engine(td)
             engine.config["wechat"]["wechat_recipient"] = ""  # 空收件人 → 不发送
-            loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}"}
+            loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                        "retry_delay_seconds": 0}
             out = engine._loop_send(_send_decision("m2"), loop_cfg)
             assert out["generated"] is True and out["sent"] is False, out
+    finally:
+        srv.shutdown()
+
+
+def test_loop_send_retry_success_no_fail():
+    """U2 (#227): 首次生成失败 → sleep(retry_delay) 整链重试一次成功 → generated/sent True，
+    不计 fail（agent_health 无 fail 记录，fail_streak 保持 0/up）。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            fake_runner = Path(td) / "fake-agent-retry.mjs"
+            counter = _fake_runner_retry(fake_runner)
+            old_r = os.environ.get("AGENT_RUN_SCRIPT")
+            ah = os.environ.get("AGENT_HEALTH_SCRIPT")
+            os.environ["AGENT_RUN_SCRIPT"] = str(fake_runner)
+            _use_health_script()
+            try:
+                engine = _make_engine(td)
+                engine.config["wechat"]["wechat_recipient"] = "r@w"
+                FakeBridge.prompt_mode = "empty"  # RPC 恒空 → 走 spawn 重试链
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "retry_delay_seconds": 0}
+                out = engine._loop_send(_send_decision("m-retry"), loop_cfg)
+                assert out["generated"] is True and out["sent"] is True, out
+                send_texts = [json.loads(b)["text"]
+                              for p, b in FakeBridge.requests if p == "/send"]
+                assert send_texts == ["retry 兜底消息"], send_texts
+                # 两次尝试（首次 fail + 重试成功）→ 无 fail 记账
+                assert Path(counter).read_text().strip() == "2", "应整链重试一次"
+                st = json.loads(Path(td, "agent_health.json").read_text())
+                assert st.get("fail_streak") == 0, st
+                assert st.get("state") == "up", st
+            finally:
+                _restore_env(old_r, ah)
+    finally:
+        srv.shutdown()
+
+
+def test_loop_send_3_fail_down_alert():
+    """U2 (#227): 连续 3 次真实失败（含整链重试）→ state=down + 恰好 1 条 transition 告警经 /send 发出。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            fake_runner = Path(td) / "fake-agent-fail.mjs"
+            fake_runner.write_text(
+                "process.stdout.write(JSON.stringify({ ok: false, error: '持续故障' }))")
+            old_r = os.environ.get("AGENT_RUN_SCRIPT")
+            ah = os.environ.get("AGENT_HEALTH_SCRIPT")
+            os.environ["AGENT_RUN_SCRIPT"] = str(fake_runner)
+            _use_health_script()
+            try:
+                engine = _make_engine(td)
+                engine.config["wechat"]["wechat_recipient"] = "r@w"
+                FakeBridge.prompt_mode = "empty"
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "retry_delay_seconds": 0}
+                for _ in range(3):
+                    engine._loop_send(_send_decision(), loop_cfg)
+                st = json.loads(Path(td, "agent_health.json").read_text())
+                assert st.get("state") == "down", st
+                assert st.get("fail_streak") == 3, st
+                # transition 唯一告警（down 只发一次）；正文含次数与原因
+                send_texts = [json.loads(b).get("text", "")
+                              for p, b in FakeBridge.requests if p == "/send"]
+                alert_texts = [t for t in send_texts if "后端异常" in t]
+                assert len(alert_texts) == 1, send_texts
+                assert "持续故障" in alert_texts[0], alert_texts
+            finally:
+                _restore_env(old_r, ah)
+    finally:
+        srv.shutdown()
+
+
+def test_loop_health_probe_rhythm():
+    """U2 (#227): 降频探测节奏——累计失败(1<=streak<threshold)距上次 <1h 跳过、≥1h probe；
+    健康/无状态放行；进程内首次 probe 恒放行（重启即恢复）。"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        health = Path(td, "agent_health.json")
+
+        # 首次 probe（_loop_first_probe）恒放行
+        assert engine._health_should_probe({"health_state": str(health)}) is True
+        # 无状态文件 → 放行
+        assert engine._health_should_probe({"health_state": str(health)}) is True
+
+        health.write_text(json.dumps({"state": "up", "fail_streak": 1,
+                                      "last_fail_at": datetime.now().astimezone().isoformat()}))
+        assert engine._health_should_probe({"health_state": str(health)}) is False, "1h 内应跳过"
+
+        old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        health.write_text(json.dumps({"state": "up", "fail_streak": 2, "last_fail_at": old}))
+        assert engine._health_should_probe({"health_state": str(health)}) is True, "≥1h 应 probe"
+
+        health.write_text(json.dumps({"state": "down", "fail_streak": 3, "last_fail_at": old}))
+        assert engine._health_should_probe({"health_state": str(health)}) is False, "down 应暂停"
+
+
+def test_loop_health_restart_recovers():
+    """U2 (#227): 重启恢复——down 状态下重新实例化（_loop_first_probe 复位）→ 首次 probe 放行 → 成功 → up + 恢复消息。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            fake_runner = Path(td) / "fake-agent-ok.mjs"
+            fake_runner.write_text(
+                "process.stdout.write(JSON.stringify({ ok: true, text: '恢复后消息' }))")
+            old_r = os.environ.get("AGENT_RUN_SCRIPT")
+            ah = os.environ.get("AGENT_HEALTH_SCRIPT")
+            os.environ["AGENT_RUN_SCRIPT"] = str(fake_runner)
+            _use_health_script()
+            try:
+                health = Path(td, "agent_health.json")
+                health.write_text(json.dumps({"state": "down", "fail_streak": 3,
+                                              "fail_reason": "历史故障"}))
+                engine = _make_engine(td)
+                engine.config["wechat"]["wechat_recipient"] = "r@w"
+                FakeBridge.prompt_mode = "ok"  # RPC 直接成功
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "health_state": str(health), "retry_delay_seconds": 0}
+                # 重启后首次 probe 恒放行（即使状态仍 down）
+                assert engine._health_should_probe(loop_cfg) is True, "重启后首次应放行"
+                out = engine._loop_send(_send_decision("m-restart"), loop_cfg)
+                assert out["generated"] is True and out["sent"] is True, out
+                st = json.loads(health.read_text())
+                assert st.get("state") == "up", st
+                assert st.get("fail_streak") == 0, st
+                send_texts = [json.loads(b).get("text", "")
+                              for p, b in FakeBridge.requests if p == "/send"]
+                assert any("恢复" in t for t in send_texts), send_texts
+                assert any("loop RPC 消息" == t for t in send_texts), send_texts  # RPC 成功 → 真实消息
+            finally:
+                _restore_env(old_r, ah)
     finally:
         srv.shutdown()
 
@@ -180,6 +353,10 @@ if __name__ == "__main__":
         test_loop_send_rpc_fail_fallback_spawn,
         test_loop_send_all_fail,
         test_loop_send_send_failure_refund,
+        test_loop_send_retry_success_no_fail,
+        test_loop_send_3_fail_down_alert,
+        test_loop_health_probe_rhythm,
+        test_loop_health_restart_recovers,
     ]
     for t in tests:
         t()

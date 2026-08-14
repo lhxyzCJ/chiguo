@@ -87,7 +87,7 @@
 | 🧠 状态感知增强 | Bayesian 转移矩阵 + 前向滤波平滑用户状态 + 信息增益门控「不确定才发」（默认关闭可灰度） |
 | 🔁 反馈闭环 | 分类型回复率反馈（低回复率降频、高回复率微加成）+ 事件类型化情绪 delta + monitor 主动消息效果评估（默认关闭可灰度） |
 | 🧹 记忆自维护 | 空闲期确定性巩固（零 LLM 去重/过期）+ Ebbinghaus 复习强化 + 情绪-记忆耦合（默认关闭可灰度） |
-| 🛡 确定性兜底 | agent 失败 → composer 模板池直出消息（零 LLM）+ 内容级防复读 |
+| 🛡 发送侧可靠性 | agent 失败 → 5s 抖动重试一次，仍失败即中止（无 composer 兜底）+ agent_health 告警/手动恢复 + 内容级防复读 |
 
 ---
 
@@ -95,7 +95,7 @@
 
 系统由两条消息链路组成，全部本地运行，模型 API 与本地自建的网易云 API 服务是仅有的外部调用。
 
-**主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh`（或 `CHIGUO_DAEMON_LOOP=1` 常驻，见 [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)）→ 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/agent-run.mjs --send-mode`（agent 抽象，默认 agent 后端）让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）；agent 生成失败时由 `chiguo_composer.py` 模板池兜底直出文本（零 LLM，成功照常发送 + fallback 标记，composer 也失败才 fail）。
+**主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh`（或 `CHIGUO_DAEMON_LOOP=1` 常驻，见 [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)）→ 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/agent-run.mjs --send-mode`（agent 抽象，默认 agent 后端）让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）。agent 生成失败**不做 composer 兜底**：首次失败 sleep 5s 整链重试一次（抖动缓冲，重试成功不计故障）；仍失败即**中止发送**并计入 agent_health——连续失败达阈值后经微信发告警「后端异常」并暂停探测，修复后重启（loop）/下个 cron probe 成功即恢复（transition 发「已恢复」）。
 
 **被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `agent-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `agent-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
 
@@ -413,7 +413,7 @@ chiguo_daemon.py         # 决策引擎（主入口，零 LLM；1984 行）
 chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian（2280 行）
 chiguo_monitor.py        # 结构化监控（stats/alerts/health 巡检；1186 行）
 chiguo_trigger.py        # 14 种触发评估（sigmoid + 三段激活；621 行）
-chiguo_composer.py       # Intent×Cue×Vibe 消息组合 + 兜底 CLI（生成失败回退；605 行）
+chiguo_composer.py       # Intent×Cue×Vibe 消息组合 + 独立 CLI（模板池直出；605 行，不再被发送链调用）
 chiguo_bayesian.py       # 用户状态在线推断（6 状态；602 行）
 chiguo_topics.py         # 8 大话题来源注入（436 行）
 chiguo_math.py           # 纯数学库（sigmoid/弹性衰减/交互矩阵/饱和阻尼/Hawkes/Jaccard；439 行）
