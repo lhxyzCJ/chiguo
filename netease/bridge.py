@@ -292,13 +292,15 @@ class NeteaseBridge:
             return None
 
     def _save_cache(self, songs):
-        """Persist daily songs to cache file (atomic tmp → os.replace;失败仅 warn)。"""
+        """Persist daily songs to cache file (atomic tmp → os.replace;失败仅 warn)。
+        权限 0600 一步到位：os.open(O_CREAT, 0o600) 落盘即 0600，无先写后 chmod 的泄露窗口。"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         today = datetime.now(CST).strftime("%Y-%m-%d")
         fetched_at = datetime.now(CST).isoformat()
         tmp = f"{self.cache_file}.tmp"
         try:
-            with open(tmp, "w") as f:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
                 json.dump({
                     "date": today,
                     "fetched_at": fetched_at,
@@ -466,10 +468,12 @@ class NeteaseBridge:
         return {"fetched_at": fetched_at, "plays": data["plays"]}
 
     def _save_recent_play_cache(self, cache_file, plays, fetched_at):
-        """Atomic write (tmp → os.replace); failure only warns, never blocks."""
+        """Atomic write (tmp → os.replace); failure only warns, never blocks.
+        权限 0600 一步到位：os.open(O_CREAT, 0o600) 落盘即 0600（播放记录含歌名/时间/艺人，勿 0644）。"""
         tmp = f"{cache_file}.tmp"
         try:
-            with open(tmp, "w") as f:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
                 json.dump({"fetched_at": fetched_at.isoformat(), "plays": plays},
                           f, ensure_ascii=False, indent=2)
             os.replace(tmp, cache_file)

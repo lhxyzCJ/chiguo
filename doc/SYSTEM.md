@@ -964,10 +964,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `data/mem0/` | mem0 记忆库（qdrant 嵌入式向量库 + history.db） |
 | `archive/` | 轮转归档（decisions_YYYY-MM.jsonl / messages_YYYY-MM.jsonl） |
 
-运行时文件统一以 **0600** 权限落盘（隐私收紧，tmp→os.replace 原子写后 chmod 收紧，
-与 `chiguo_state.json` 同款策略）：`chiguo_state.json`、`chiguo_decisions.jsonl`、
-`chiguo_messages.jsonl`、`schedule_cache.json`、`netease/netease_health.json`、
-`agent_health.json`、`chiguo_alerts.json` 均 0600（追加写路径在写后 chmod）。
+运行时文件统一以 **0600** 权限落盘（隐私收紧，tmp→os.replace 原子写；`netease/netease_cookie.txt` 与两个网易云缓存 `netease/netease_cache.json`/`netease/recent_play_cache.json` 用 `os.open(O_CREAT, 0o600)` 落盘即 0600，无先写后 chmod 窗口；其余如 `chiguo_state.json`/`chiguo_decisions.jsonl`/`chiguo_messages.jsonl`/`schedule_cache.json`/`netease/netease_health.json`/`agent_health.json`/`chiguo_alerts.json` 追加写路径在写后 chmod）。
 
 ### 6.10 测试（`tests/`）
 
