@@ -62,7 +62,7 @@ process.env.FAKE_AGENT_LOG = AGENT_LOG
 process.env.FAKE_DAEMON_LOG = DAEMON_LOG
 // B2 确定性:本文件测 spawn 路径,确保 AGENT_RPC_ENABLED=false(宿主残留配置不干扰)
 delete process.env.WECHAT_BRIDGE_AGENT_RPC
-const { askAgent, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue, runWithRecall, runWithAttention, handleAgentPrompt, readClarify, clearClarify, scheduleClarifyPath } = await import('../wechat-bridge/bridge.mjs')
+const { askAgent, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue, runWithRecall, runWithAttention, handleAgentPrompt, readClarify, clearClarify, scheduleClarifyPath, checkAgentRunScript } = await import('../wechat-bridge/bridge.mjs')
 
 let passed = 0
 const tests = []
@@ -390,6 +390,26 @@ t('handleMessage: 空文本 → 不调 agent/daemon、不回复', async () => {
   assert.strictEqual(pLines().length, pb)
   assert.strictEqual(dLines().length, db)
   assert.deepStrictEqual(bot.replies, [])
+})
+// U8c: AGENT_RUN_SCRIPT 启动校验 —— checkAgentRunScript 纯函数(导出,不启动 WeChatBot)
+t('checkAgentRunScript: 存在的脚本 → null(通过)', () => {
+  assert.strictEqual(checkAgentRunScript(FAKE_AGENT), null)
+})
+t('checkAgentRunScript: 真实仓库 scripts/agent-run.mjs 存在 → null', () => {
+  const real = new URL('../scripts/agent-run.mjs', import.meta.url).pathname
+  assert.strictEqual(checkAgentRunScript(real), null)
+})
+t('checkAgentRunScript: 未配置(undefined/null/空白) → 错误文案含配置提示', () => {
+  const errUndef = checkAgentRunScript(undefined)
+  assert.ok(typeof errUndef === 'string' && errUndef.includes('WECHAT_BRIDGE_AGENT_RUN'), 'undefined 应报 env 配置提示')
+  assert.notStrictEqual(checkAgentRunScript(null), null)
+  assert.notStrictEqual(checkAgentRunScript(''), null)
+  assert.ok(checkAgentRunScript('  '), '空白串视为未配置')
+})
+t('checkAgentRunScript: 不存在路径 → 错误文案含该路径', () => {
+  const missing = `${FAKE_AGENT}.does-not-exist`
+  const err = checkAgentRunScript(missing)
+  assert.ok(typeof err === 'string' && err.includes(missing), '错误应指明缺失的脚本路径')
 })
 
 ;(async () => {

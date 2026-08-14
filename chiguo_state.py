@@ -2338,5 +2338,10 @@ class ChiguoState:
         from schedule.sources import load_sources
         from schedule.attention import build_attention
         src, _rc = self._resolved_for(now)
-        snap["attention"] = build_attention(src, now.date())
+        # ── M-2 (#230, D5): attention 并入 _rc_cache 按日缓存——_resolved_for 已保证
+        # date 匹配时 _rc_cache 原样复用、跨日整体重建(丢键)；故首次/跨日这里才重算，
+        # 消除每条消息 3-4 遍 snapshot 的重复 build_attention（跨日自动失效，无额外失效逻辑）──
+        if "attention" not in self._rc_cache:
+            self._rc_cache["attention"] = build_attention(src, now.date())
+        snap["attention"] = self._rc_cache["attention"]
         return snap

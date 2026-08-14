@@ -11,5 +11,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Cache uv dependency cache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/uv
+          key: uv-dep-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys:
+            uv-dep-${{ runner.os }}-
       - run: uv sync --all-extras
       - run: bash scripts/ci-test.sh

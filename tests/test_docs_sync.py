@@ -50,6 +50,23 @@ for f in ["AGENTS.md", "CLAUDE.md", "README.md", "README_EN.md",
           "ci-test.sh" in txt and not MAGIC.search(txt),
           f"引用/魔数: 缺引用={"ci-test.sh" not in txt} 命中={MAGIC.findall(txt)}")
 
+# U8d: 文档行数引用化（防再漂移）——代码文件行数不再硬编码，以 wc -l 为准
+# 覆盖句式: “(1984 行)” / “；621 行” / “470 行 / 22 段” / “| 文件 | 行数 | 职责 |” 及英文 “(1984 lines)” / “470 lines / 22 sections”
+LINES_DOCS = ["README.md", "README_EN.md", "AGENTS.md", "doc/SYSTEM.md"]
+LINES_MAGIC = re.compile(
+    r"[（(]\d{3,4} 行[)）]"
+    r"|；\s*\d{3,4} 行"
+    r"|\d{3,4} 行 /\s*\d+ 段"
+    r"|[(（]\d{3,4} lines[)]"
+    r"|;\s*\d{3,4} lines"
+    r"|\d{3,4} lines /\s*\d+ sections"
+    r"|\| 文件 \| 行数 \|")
+for f in LINES_DOCS:
+    txt = (ROOT / f).read_text()
+    check(f"{f} 代码文件行数引用化（以 wc -l 为准，无硬编码行数）",
+          not LINES_MAGIC.search(txt),
+          f"命中={LINES_MAGIC.findall(txt)}")
+
 # b) --skip-* flags：deploy.sh 与 DEPLOYMENT.md 一致
 flags = ["--skip-agent", "--skip-bridge", "--skip-netease"]
 check("deploy.sh 支持全部 --skip-*", all(f in deploy for f in flags))
