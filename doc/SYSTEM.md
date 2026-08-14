@@ -1878,6 +1878,7 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 - `/agent/prompt` 发送侧端点：与 askAgent 共用同一 `TurnQueue` 串行化（原实现直接调 `__agentRpc.prompt()` 绕过队列，并发 HTTP turn 会交错同一会话的 RPC 调用，现由 `startSendServer(bot, queue)` 透传队列统一约束）
 - 两条链路**永不共享会话** → 消除跨进程并发 turn 风险
 - **每日会话轮换**（`wechat-bridge/session-rotate.mjs`）：每天 04:00 CST（`WECHAT_BRIDGE_SESSION_ROTATE_TIME=HH:MM` 可调，`WECHAT_BRIDGE_SESSION_ROTATE=0` 关闭）把 main+send 双会话备份到 `~/.chiguo/session-backups/` 并自动开新会话（与 `/new` 同款语义，记忆/情绪/课表全保留）；幂等标记 `~/.chiguo/session-rotate-last`（同日只轮换一次），RPC 常驻先杀进程（#192）再备份；bridge 重启/宕机错过时刻 → 启动即补轮换，无需等第二天
+  （已知 P2 竞态：chiguo-send 由 cron tick 独立进程持有、不经 TurnQueue，恰逢轮换 rename 时在途 spawn 尾段落进备份文件——send 决策自足无需连续性，影响可忽略，不改）
 
 agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
 
