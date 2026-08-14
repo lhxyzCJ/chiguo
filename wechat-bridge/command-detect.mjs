@@ -255,17 +255,18 @@ export function encodeSessionDir(cwd) {
   return '--' + cwd.replace(/^\//, '').replaceAll('/', '-') + '--'
 }
 
-/** 备份并移走最近一个 chiguo-main 会话文件(与 AGENTRUN_NEW_SESSION 共享逻辑)。返回备份路径或 null。 */
-export function backupSessionFile(cwd, backupsDir) {
+/** 备份并移走最近一个 <suffix> 会话文件(与 AGENTRUN_NEW_SESSION 共享逻辑)。返回备份路径或 null。
+ *  suffix 默认 chiguo-main（回复链）；chiguo-send（主动发送链）由每日轮换调用。 */
+export function backupSessionFile(cwd, backupsDir, suffix = 'chiguo-main') {
   const dir = join(homedir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
   let files = []
-  try { files = readdirSync(dir).filter((f) => f.endsWith('_chiguo-main.jsonl')) } catch {}
+  try { files = readdirSync(dir).filter((f) => f.endsWith(`_${suffix}.jsonl`)) } catch {}
   if (!files.length) return null
   files.sort()
   const src = join(dir, files[files.length - 1])
   mkdirSync(backupsDir, { recursive: true })
   const ts = new Date().toISOString().replace(/[:.]/g, '-')
-  const dst = join(backupsDir, `${ts}-chiguo-main.jsonl`)
+  const dst = join(backupsDir, `${ts}-${suffix}.jsonl`)
   renameSync(src, dst)
   return dst
 }

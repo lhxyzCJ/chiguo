@@ -32,7 +32,9 @@ import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand } from './command-detect.mjs'
+import { parseRotateTime, msToNextRotate, rotateIfDue, readLastRotate, defaultRotatePaths } from './session-rotate.mjs'
 // #99 A 路：askAgent（agent-run.mjs 统一入口）由阶段 4 集成接入；当前保留原 spawn 调用结构
 import { parseNdjson, extractAnalysis, resolveRepo, RUNNER } from '../scripts/agent-run.mjs'
 
@@ -696,6 +698,36 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   return 'agent'
 }
 
+// ── 每日会话轮换（防上下文堆积；见 session-rotate.mjs）──
+// env: WECHAT_BRIDGE_SESSION_ROTATE=0 关闭；WECHAT_BRIDGE_SESSION_ROTATE_TIME=HH:MM（CST，默认 04:00）。
+// 与 /new 同款备份语义（main + send 双会话），幂等标记 ~/.chiguo/session-rotate-last；
+// 启动即检查（bridge 重启/宕机错过时刻 → 补轮换），随后按时刻循环。轮换经 TurnQueue 串行，
+// 不与在途 agent turn 交错；RPC 常驻先杀进程（#192）再备份。
+function armSessionRotation(queue) {
+  if (process.env.WECHAT_BRIDGE_SESSION_ROTATE === '0') return
+  const timeStr = process.env.WECHAT_BRIDGE_SESSION_ROTATE_TIME ?? '04:00'
+  if (!parseRotateTime(timeStr)) {
+    console.error(`[rotate] 已禁用: WECHAT_BRIDGE_SESSION_ROTATE_TIME 非法 (${timeStr}), 期望 HH:MM`)
+    return
+  }
+  const { backupsDir, markerPath } = defaultRotatePaths()
+  const tick = async () => {
+    try {
+      const done = await queue.run(() =>
+        rotateIfDue({ timeStr, markerPath, backupsDir, cwd: BRIDGE_DIR, rpc: globalThis.__agentRpc ?? null }))
+      if (done) {
+        console.log(`[rotate] 每日会话已轮换（${timeStr} CST, ${readLastRotate(markerPath) ?? '?'}）` +
+          ` main=${done.main ?? '无'} send=${done.send ?? '无'}`)
+      }
+    } catch (err) {
+      console.error('[rotate] 失败:', err instanceof Error ? err.message : String(err))
+    }
+    const wait = msToNextRotate(new Date(), timeStr)
+    setTimeout(tick, Number.isFinite(wait) && wait > 0 ? wait : 60_000)
+  }
+  tick()
+}
+
 async function main() {
   // #191: 未设置共享 token 时 /send 与 /agent/prompt 零鉴权(同机任意进程可冒充 owner)→ 拒绝启动。
   // wechat-bridge.sh 已自动生成并注入 token,故此处仅命中「直接 node bridge.mjs 绕过启动脚本」的场景。
@@ -748,6 +780,7 @@ async function main() {
   await bot.login()
   // 该 fork 的 bot.start() 长轮询挂起不返回 → 主动发送端点必须先于 start 就绪
   startSendServer(bot, queue)
+  armSessionRotation(queue)
   await bot.start()
   console.log('wechat-bridge 运行中（Ctrl+C 停止）')
 }
