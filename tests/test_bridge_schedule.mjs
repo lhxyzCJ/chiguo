@@ -16,6 +16,13 @@ const tmp = mkdtempSync(join(tmpdir(), 'bridge-schedule-'))
 const PH_SCRIPT = join(tmp, 'agent_health.py')
 cpSync(new URL('../scripts/agent_health.py', import.meta.url).pathname, PH_SCRIPT)
 process.env.WECHAT_BRIDGE_AGENT_HEALTH = PH_SCRIPT
+// 隔离: recordUserMsg 走模块级 DAEMON_PY/DAEMON_SCRIPT,不注入 fake 会真实调 daemon
+// --user-msg 污染运行时文件(chiguo_messages.jsonl/chiguo_decisions.jsonl)——与
+// test_bridge_health.mjs 同款 fake daemon(退出 0 即可,recordUserMsg 不检查输出)。
+const FAKE_DAEMON = join(tmp, 'fake-daemon.py')
+writeFileSync(FAKE_DAEMON, 'import sys\nsys.exit(0)\n')
+process.env.WECHAT_BRIDGE_DAEMON_PY = process.execPath
+process.env.WECHAT_BRIDGE_DAEMON = FAKE_DAEMON
 const { scheduleClarifyPath, readClarify, writeClarify, clearClarify, exitWordMatch, handleMessage } =
   await import('../wechat-bridge/bridge.mjs')
 
