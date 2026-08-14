@@ -907,13 +907,13 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 | 文件 | 行数 | 职责 |
 |------|:--:|------|
-| `agent-run.mjs` | 422 | agent 后端统一入口（发送生成/回复分析/recall 等；人格注入 `personality/迟菓人格-精简版.md`） |
+| `agent-run.mjs` | 460 | agent 后端统一入口（发送生成/回复分析/recall 等；人格注入 `personality/迟菓人格-精简版.md`） |
 | `install_agent.sh` | 401 | agent 环境/crontab/systemd 安装（三模式，幂等 + 备份） |
 | `agent_health.py` | 173 | agent 假死状态机（agent_health.json，`[health] fail_threshold`） |
 | `wechat-bridge.sh` | 185 | 微信桥服务管理 |
 | `service.sh` | 255 | systemd 服务管理 |
 | `netease-api.sh` | 180 | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
-| `chiguo-tick.sh` | 159 | cron 门控入口（零模型，读 daemon 输出 → send → record-send → composer 兜底） |
+| `chiguo-tick.sh` | 176 | cron 门控入口（零模型，读 daemon 输出 → send → record-send → composer 兜底） |
 | `ci-test.sh` | 68 | 全量测试链（59 py + 14 script，CI stub 自举） |
 | `agent-auth.sh` | 18 | agent 认证 |
 | `replan-tick.sh` | 10 | loop 形态 replan 判脏轮询 |
@@ -923,10 +923,10 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 | 文件 | 行数 | 职责 |
 |------|:--:|------|
-| `bridge.mjs` | 793 | HTTP 服务：askAgent + /send + /agent/prompt + TurnQueue 串行 + 鉴权 + 每日会话轮换 |
+| `bridge.mjs` | 806 | HTTP 服务：askAgent + /send + /agent/prompt + TurnQueue 串行 + 鉴权 + 每日会话轮换 |
 | `command-detect.mjs` | 382 | 特殊命令规则化检测（纪念日/假期 → CLI，不经 agent） |
 | `agent-rpc.mjs` | 322 | 常驻 agent RPC（analysis chiguo-main / send chiguo-send 双会话） |
-| `session-rotate.mjs` | 99 | 每日固定时刻自动轮换 ai 会话（main+send 备份、幂等标记、RPC 先杀进程） |
+| `session-rotate.mjs` | 110 | 主会话每日轮换（每小时检查 + 空闲保护 + 幂等标记 + RPC 先杀进程） |
 | `package.json` | 10 | file: 本地依赖 @wechatbot/wechatbot（CI stub 自举） |
 
 ### 6.7 `personality/`（人格文件）
@@ -1877,8 +1877,9 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 - `chiguo-send`：主动发送会话（tick 经 `AGENTRUN_SESSION` 注入；决策 JSON 自足，无需对话连续性）
 - `/agent/prompt` 发送侧端点：与 askAgent 共用同一 `TurnQueue` 串行化（原实现直接调 `__agentRpc.prompt()` 绕过队列，并发 HTTP turn 会交错同一会话的 RPC 调用，现由 `startSendServer(bot, queue)` 透传队列统一约束）
 - 两条链路**永不共享会话** → 消除跨进程并发 turn 风险
-- **每日会话轮换**（`wechat-bridge/session-rotate.mjs`）：每天 04:00 CST（`WECHAT_BRIDGE_SESSION_ROTATE_TIME=HH:MM` 可调，`WECHAT_BRIDGE_SESSION_ROTATE=0` 关闭）把 main+send 双会话备份到 `~/.chiguo/session-backups/` 并自动开新会话（与 `/new` 同款语义，记忆/情绪/课表全保留）；幂等标记 `~/.chiguo/session-rotate-last`（同日只轮换一次），RPC 常驻先杀进程（#192）再备份；bridge 重启/宕机错过时刻 → 启动即补轮换，无需等第二天
-  （已知 P2 竞态：chiguo-send 由 cron tick 独立进程持有、不经 TurnQueue，恰逢轮换 rename 时在途 spawn 尾段落进备份文件——send 决策自足无需连续性，影响可忽略，不改）
+- **主会话每日轮换**（`wechat-bridge/session-rotate.mjs`）：每小时整点检查一次（每天首个检查点 = 00:00 CST，正常情况轮换落在凌晨）；距最近活动（用户消息 / cron 判定要发消息，写于 `~/.chiguo/session-activity-last`）超过 `[host].session_rotate_idle_minutes`（默认 60）才轮换 chiguo-main——备份到 `~/.chiguo/session-backups/` + RPC 先杀进程（#192）再开新会话，**绝不切断进行中的对话**（深夜连续对话可顺延到清晨）；幂等标记 `~/.chiguo/session-rotate-last`（同日只轮换一次），bridge 重启错过 → 下一检查点补轮换。开关/间隔/阈值：`[host].session_rotate_enabled/check_minutes/idle_minutes`（见 toml）
+- **send 会话每轮全新**（#223）：`chiguo-send` 上下文恒 ≤1 轮——RPC 路径由 bridge `/agent/prompt`（mode=send）prompt 前 `restart({mode:'send'})` + 备份；spawn 回退由 chiguo-tick.sh 注入 `AGENTRUN_ROTATE_SESSION=1`（agent-run.mjs 启动时备份显式会话）。send 决策 JSON 自足（课表/提醒/纪念日全在 `context.schedule_hint`/`state.schedule`/`state.attention`，每次 tick 现算），不丢事实注入
+  （已知 P2：chiguo-send spawn 与轮换 rename 的窗口竞态——send 决策自足无需连续性，影响可忽略）
 
 agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
 

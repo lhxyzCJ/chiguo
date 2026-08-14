@@ -19,7 +19,7 @@ export function resolveRepo(fileURL, env = process.env) {
 }
 
 const REPO = resolveRepo(import.meta.url)
-const HOST = readToml(`${REPO}/chiguo_proactive.toml`)?.host ?? {}
+export const HOST = readToml(`${REPO}/chiguo_proactive.toml`)?.host ?? {}
 // v1.8 agent 后端抽象：runner=agent（默认，pi-agent 二进制）| command（任意 CLI agent，
 // 经 [host].agent_command 指定，契约见 doc/AGENT_INTEGRATION.md「接入自定义 agent」）。
 // AGENTRUN_RUNNER/AGENTRUN_AGENT_COMMAND 环境变量可覆盖（AGENT_COMMAND 为 JSON 数组字符串）。
@@ -51,6 +51,18 @@ if (process.env.AGENTRUN_NEW_SESSION === '1' && !process.env.AGENTRUN_SESSION) {
     if (dst) console.error(`[new-session] 旧会话已备份: ${dst}`)
   } catch (err) {
     console.error('[new-session] 备份失败:', err instanceof Error ? err.message : String(err))
+  }
+}
+// AGENTRUN_ROTATE_SESSION=1:send 每轮全新（#223）——与 NEW_SESSION 同款备份逻辑,
+// 但显式 session 也生效（chiguo-tick.sh spawn 回退注入: AGENTRUN_SESSION=chiguo-send）。
+if (process.env.AGENTRUN_ROTATE_SESSION === '1') {
+  try {
+    const { backupSessionFile } = await import(pathToFileURL(path.join(REPO, 'wechat-bridge', 'command-detect.mjs')))
+    const { homedir } = await import('node:os')
+    const dst = backupSessionFile(process.cwd(), path.join(homedir(), '.chiguo', 'session-backups'), SESSION_ID)
+    if (dst) console.error(`[rotate-session] 旧会话已备份: ${dst}`)
+  } catch (err) {
+    console.error('[rotate-session] 备份失败:', err instanceof Error ? err.message : String(err))
   }
 }
 const PERSONALITY_DIR = HOST.personality_dir ?? `${REPO}/personality`

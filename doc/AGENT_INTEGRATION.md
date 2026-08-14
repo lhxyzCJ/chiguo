@@ -246,7 +246,9 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
 - 环境变量：`WECHAT_BRIDGE_AGENT_RUN`（默认仓库内 agent-run.mjs）、`WECHAT_BRIDGE_DAEMON_PY`、
   `WECHAT_BRIDGE_DAEMON`、`WECHAT_BRIDGE_OWNER`、`WECHAT_BRIDGE_SEND_PORT`、`WECHAT_BRIDGE_STORAGE`、
   `WECHAT_BRIDGE_MEMORY_PY`/`WECHAT_BRIDGE_MEMORY_BRIDGE`（斜杠命令记忆 CLI）、
-  `WECHAT_BRIDGE_SESSION_ROTATE`/`WECHAT_BRIDGE_SESSION_ROTATE_TIME`（每日会话自动轮换，默认 04:00 CST 开启）
+  `WECHAT_BRIDGE_ACTIVITY_FILE`/`CHIGUO_ACTIVITY_FILE`（轮换活动时间戳覆盖，测试隔离用）
+- 会话轮换配置在 toml `[host].session_rotate_*`：`enabled`（默认 true）、`check_minutes`（默认 60）、
+  `idle_minutes`（默认 60）；send 每轮全新由 bridge `/agent/prompt` + `AGENTRUN_ROTATE_SESSION=1` 实现（§6.1 下方）
 - 测试：`tests/test_agent_rpc.mjs`、`tests/test_bridge_agent_http.mjs`、`tests/test_bridge_askagent_rpc.mjs`、
   `tests/test_bridge_askagent.mjs`、`tests/test_bridge_cmd.mjs`、`tests/test_bridge_health.mjs`、`tests/test_bridge_rotate.mjs`、
   `tests/test_bridge_schedule.mjs`
