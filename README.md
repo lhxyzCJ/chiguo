@@ -321,7 +321,7 @@ personality/
 └── 记忆用法.md                     # 长期记忆使用规范
 ```
 
-想调整她的行为？所有参数集中在 `chiguo_proactive.toml`（470 行 / 22 段，`--loop` 模式热重载），无需改代码。
+想调整她的行为？所有参数集中在 `chiguo_proactive.toml`（22 段配置，行数以 `wc -l chiguo_proactive.toml` 为准，`--loop` 模式热重载），无需改代码。
 
 ---
 
@@ -408,20 +408,20 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 ## 📁 文件结构
 
 ```
-chiguo_proactive.toml    # 主配置（470 行 / 22 段，所有参数，热重载）
-chiguo_daemon.py         # 决策引擎（主入口，零 LLM；1984 行）
-chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian（2280 行）
-chiguo_monitor.py        # 结构化监控（stats/alerts/health 巡检；1186 行）
-chiguo_trigger.py        # 14 种触发评估（sigmoid + 三段激活；621 行）
-chiguo_composer.py       # Intent×Cue×Vibe 消息组合 + 独立 CLI（模板池直出；605 行，不再被发送链调用）
-chiguo_bayesian.py       # 用户状态在线推断（6 状态；602 行）
-chiguo_topics.py         # 8 大话题来源注入（436 行）
-chiguo_math.py           # 纯数学库（sigmoid/弹性衰减/交互矩阵/饱和阻尼/Hawkes/Jaccard；439 行）
-chiguo_envcheck.py       # 环境就绪检查（357 行）
-chiguo_circadian.py      # 生物钟学习（双作息分桶；249 行）
-chiguo_personality.py    # 人格加载与适配（236 行）
-chiguo_demo.py           # 交互式 Demo（纯模板，无 LLM；210 行）
-chiguo_rotation.py       # 日志轮转 & 对话存档（175 行）
+chiguo_proactive.toml    # 主配置（22 段，所有参数，热重载；行数以 wc -l 为准）
+chiguo_daemon.py         # 决策引擎（主入口，零 LLM；行数以 wc -l 为准）
+chiguo_state.py          # 情绪引擎 + 人格 + Bayesian + schedule 门面 + circadian（行数以 wc -l 为准）
+chiguo_monitor.py        # 结构化监控（stats/alerts/health 巡检；行数以 wc -l 为准）
+chiguo_trigger.py        # 14 种触发评估（sigmoid + 三段激活；行数以 wc -l 为准）
+chiguo_composer.py       # Intent×Cue×Vibe 消息组合 + 独立 CLI（模板池直出，不再被发送链调用；行数以 wc -l 为准）
+chiguo_bayesian.py       # 用户状态在线推断（6 状态；行数以 wc -l 为准）
+chiguo_topics.py         # 8 大话题来源注入（行数以 wc -l 为准）
+chiguo_math.py           # 纯数学库（sigmoid/弹性衰减/交互矩阵/饱和阻尼/Hawkes/Jaccard；行数以 wc -l 为准）
+chiguo_envcheck.py       # 环境就绪检查（行数以 wc -l 为准）
+chiguo_circadian.py      # 生物钟学习（双作息分桶；行数以 wc -l 为准）
+chiguo_personality.py    # 人格加载与适配（行数以 wc -l 为准）
+chiguo_demo.py           # 交互式 Demo（纯模板，无 LLM；行数以 wc -l 为准）
+chiguo_rotation.py       # 日志轮转 & 对话存档（行数以 wc -l 为准）
 memory_bridge.py         # 记忆兼容门面（根目录；实现已迁移 memory/ 包）
 memory/                  # 记忆后端抽象（mem0 唯一后端；base/mem0_backend/factory）
 schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
@@ -431,7 +431,7 @@ scripts/                 # tick/replan crontab 入口 + agent runner 抽象（ag
 wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs + agent-rpc.mjs）
 personality/             # 人格（迟菓人格-精简版.md 运行时规范 + archive/ 原著素材 + 措辞 toml + 工具/记忆用法）
 doc/                     # 系统文档（SYSTEM.md / DEPLOYMENT.md / AGENT_INTEGRATION.md / 日光雨剧本 17099 行）
-tests/                   # 测试（59 Python + 9 Node(.mjs) + 5 Shell(.sh) 独立 runner）
+tests/                   # 测试（独立 runner，无 pytest；计数以 scripts/ci-test.sh 为准）
 data/                    # 数据文件（课表/记忆库 data/mem0/ 等，不进 git）
 ```
 

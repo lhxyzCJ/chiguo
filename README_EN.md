@@ -321,7 +321,7 @@ personality/
 └── 记忆用法.md                     # long-term memory usage spec (Chinese)
 ```
 
-Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (470 lines / 22 sections, hot-reloaded in `--loop` mode) — no code changes needed.
+Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (22 sections, line count via `wc -l chiguo_proactive.toml`, hot-reloaded in `--loop` mode) — no code changes needed.
 
 ---
 
@@ -408,20 +408,20 @@ Just say it in WeChat: "明天停课" / "下周三开始考试周" / "8月20号�
 ## 📁 Project Layout
 
 ```
-chiguo_proactive.toml    # main config (470 lines / 22 sections, all parameters, hot-reloaded)
-chiguo_daemon.py         # decision engine (main entry, zero LLM; 1984 lines)
-chiguo_state.py          # emotion engine + persona + Bayesian + schedule facade + circadian (2280 lines)
-chiguo_monitor.py        # structured monitoring (stats/alerts/health patrol; 1186 lines)
-chiguo_trigger.py        # 14 trigger-type evaluation (sigmoid + 3-stage activation; 621 lines)
-chiguo_composer.py       # Intent×Cue×Vibe composer + standalone CLI (template output; 605 lines, no longer called by the send chain)
-chiguo_bayesian.py       # online user-state inference (6 states; 602 lines)
-chiguo_topics.py         # 8 topic-source injection (436 lines)
-chiguo_math.py           # pure math library (sigmoid / elastic decay / interaction matrix / damping / Hawkes / Jaccard; 439 lines)
-chiguo_envcheck.py       # env readiness check (357 lines)
-chiguo_circadian.py      # circadian learning (dual-schedule buckets; 249 lines)
-chiguo_personality.py    # persona loading & adaptation (236 lines)
-chiguo_demo.py           # interactive demo (templates only, no LLM; 210 lines)
-chiguo_rotation.py       # log rotation & conversation archive (175 lines)
+chiguo_proactive.toml    # main config (22 sections, all parameters, hot-reloaded; line count via wc -l)
+chiguo_daemon.py         # decision engine (main entry, zero LLM; line count via wc -l)
+chiguo_state.py          # emotion engine + persona + Bayesian + schedule facade + circadian (line count via wc -l)
+chiguo_monitor.py        # structured monitoring (stats/alerts/health patrol; line count via wc -l)
+chiguo_trigger.py        # 14 trigger-type evaluation (sigmoid + 3-stage activation; line count via wc -l)
+chiguo_composer.py       # Intent×Cue×Vibe composer + standalone CLI (template output, no longer called by the send chain; line count via wc -l)
+chiguo_bayesian.py       # online user-state inference (6 states; line count via wc -l)
+chiguo_topics.py         # 8 topic-source injection (line count via wc -l)
+chiguo_math.py           # pure math library (sigmoid / elastic decay / interaction matrix / damping / Hawkes / Jaccard; line count via wc -l)
+chiguo_envcheck.py       # env readiness check (line count via wc -l)
+chiguo_circadian.py      # circadian learning (dual-schedule buckets; line count via wc -l)
+chiguo_personality.py    # persona loading & adaptation (line count via wc -l)
+chiguo_demo.py           # interactive demo (templates only, no LLM; line count via wc -l)
+chiguo_rotation.py       # log rotation & conversation archive (line count via wc -l)
 memory_bridge.py         # memory compatibility facade (repo root; implementation migrated into memory/)
 memory/                  # memory backend abstraction (mem0 only backend; base/mem0_backend/factory)
 schedule/                # schedule center (holiday/anniversary/override_store/plan_store/
@@ -431,7 +431,7 @@ scripts/                 # tick/replan crontab entries + agent runner abstractio
 wechat-bridge/           # WeChat bridge (bridge.mjs + command-detect.mjs + agent-rpc.mjs)
 personality/             # persona files (迟菓人格-精简版.md runtime spec + archive/ source material + toml material + tool/memory guides)
 doc/                     # system docs (SYSTEM.md / DEPLOYMENT.md / AGENT_INTEGRATION.md / 日光雨 script 17099 lines)
-tests/                   # tests (59 Python + 9 Node(.mjs) + 5 Shell(.sh) standalone runners)
+tests/                   # tests (standalone runners, no pytest; count via scripts/ci-test.sh)
 data/                    # data files (schedule / mem0 store / NetEase QR, never committed)
 ```
 

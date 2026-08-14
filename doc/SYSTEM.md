@@ -848,88 +848,90 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 ## 六、文件清单
 
+> **行数以 `wc -l <文件>` 为准**：本清单各文件不再固定列出行数（避免随代码演进漂移）。
+
 ### 6.1 决策引擎核心（仓库根目录 `*.py`）
 
-| 文件 | 行数 | 职责 |
-|------|:--:|------|
-| `chiguo_daemon.py` | 1984 | 决策引擎入口：DecisionEngine / evaluate 决策链路 / can_send 门控 / CLI / 配置热重载 / loop 常驻 |
-| `chiguo_state.py` | 2280 | ChiguoState：5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线 + 状态持久化（原子写/SHA256/审计日志） |
-| `chiguo_monitor.py` | 1186 | 流式 JSONL 分析：统计/告警/健康 + D1 proactive_stats |
-| `chiguo_trigger.py` | 621 | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
-| `chiguo_composer.py` | 605 | Intent × Cue × Vibe 三层组合 + 独立直出 CLI（发送链不再调用） |
-| `chiguo_bayesian.py` | 602 | Bayesian 用户状态推断（6 状态在线学习 + A1 转移矩阵 + A3 信息增益门控） |
-| `chiguo_topics.py` | 436 | 8 源话题选择器 TopicPicker + 人格调制 + Ebbinghaus 加权 + A9 防复读 + netease 委托 |
-| `chiguo_math.py` | 439 | 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix |
-| `chiguo_envcheck.py` | 357 | 环境检查（python/依赖/bridge/agent/crontab） |
-| `chiguo_circadian.py` | 249 | 生物钟学习（双作息双桶 + 听歌活跃合并） |
-| `chiguo_personality.py` | 236 | 8 维人格（Big Five + 角色特质）+ 自适应 + 基线回归 |
-| `chiguo_demo.py` | 210 | 交互式 Demo |
-| `chiguo_rotation.py` | 175 | 对话日志轮转归档 + 告警持久化 + 索引查询 |
-| `update_holidays.py` | 316 | 节假日数据跨年合并生成（R22 防覆盖） |
-| `solar_terms.py` | 85 | 24 节气近似日期（±1 天窗口命中，零依赖） |
-| `memory_bridge.py` | 79 | 兼容门面（`MemoryBridge = Mem0Backend` 别名 + CLI，经工厂创建） |
-| `chiguo_version.py` | 11 | VERSION = "1.15"（MINOR+1 次版本步进） |
+| 文件 | 职责 |
+|------|------|
+| `chiguo_daemon.py` | 决策引擎入口：DecisionEngine / evaluate 决策链路 / can_send 门控 / CLI / 配置热重载 / loop 常驻 |
+| `chiguo_state.py` | ChiguoState：5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线 + 状态持久化（原子写/SHA256/审计日志） |
+| `chiguo_monitor.py` | 流式 JSONL 分析：统计/告警/健康 + D1 proactive_stats |
+| `chiguo_trigger.py` | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
+| `chiguo_composer.py` | Intent × Cue × Vibe 三层组合 + 独立直出 CLI（发送链不再调用） |
+| `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态在线学习 + A1 转移矩阵 + A3 信息增益门控） |
+| `chiguo_topics.py` | 8 源话题选择器 TopicPicker + 人格调制 + Ebbinghaus 加权 + A9 防复读 + netease 委托 |
+| `chiguo_math.py` | 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix |
+| `chiguo_envcheck.py` | 环境检查（python/依赖/bridge/agent/crontab） |
+| `chiguo_circadian.py` | 生物钟学习（双作息双桶 + 听歌活跃合并） |
+| `chiguo_personality.py` | 8 维人格（Big Five + 角色特质）+ 自适应 + 基线回归 |
+| `chiguo_demo.py` | 交互式 Demo |
+| `chiguo_rotation.py` | 对话日志轮转归档 + 告警持久化 + 索引查询 |
+| `update_holidays.py` | 节假日数据跨年合并生成（R22 防覆盖） |
+| `solar_terms.py` | 24 节气近似日期（±1 天窗口命中，零依赖） |
+| `memory_bridge.py` | 兼容门面（`MemoryBridge = Mem0Backend` 别名 + CLI，经工厂创建） |
+| `chiguo_version.py` | VERSION = "1.15"（MINOR+1 次版本步进） |
 
 ### 6.2 `schedule/` 包（课表/假期/纪念日/安排）
 
-| 文件 | 行数 | 职责 |
-|------|:--:|------|
-| `api.py` | 513 | 安排中心 CLI 门面（attention/recall/change 子命令） |
-| `override_store.py` | 262 | 安排覆盖存储（schedule_overrides.json，原子写） |
-| `replan.py` | 233 | 当日计划复盘（replan，--check 只读） |
-| `holiday.py` | 231 | 节假日解析（2026 内置 + holidays.json 覆盖 + update_holidays 归组） |
-| `anniversary.py` | 209 | 纪念日管理（anniversaries.json，默认「迟菓生日 05-11」+ 形状防御） |
-| `day_plan.py` | 189 | 当日安排生成（含 needs_care ×1.2 频率通道） |
-| `resolve_when.py` | 148 | 「明天/下周/几号」自然语言时间解析 |
-| `parser.py` | 144 | 课表 xlsx 解析（mtime 检测 + cache_version=2 + 单双周） |
-| `parsing.py` | 137 | 纯解析函数（与 I/O 解耦） |
-| `recall.py` | 112 | 安排回忆检索（--schedule-recall） |
-| `attention.py` | 102 | 注意力快照（T1/T2/T3 + 情感快照） |
-| `sources.py` | 93 | 话题/查询数据源聚合 |
-| `confirm.py` | 57 | 写前确认 |
-| `query.py` | 50 | 纯函数状态查询（in_class/remaining → availability 门面） |
-| `plan_store.py` | 45 | 当日计划存储（schedule_plan.json） |
+| 文件 | 职责 |
+|------|------|
+| `api.py` | 安排中心 CLI 门面（attention/recall/change 子命令） |
+| `override_store.py` | 安排覆盖存储（schedule_overrides.json，原子写） |
+| `replan.py` | 当日计划复盘（replan，--check 只读） |
+| `holiday.py` | 节假日解析（2026 内置 + holidays.json 覆盖 + update_holidays 归组） |
+| `anniversary.py` | 纪念日管理（anniversaries.json，默认「迟菓生日 05-11」+ 形状防御） |
+| `day_plan.py` | 当日安排生成（含 needs_care ×1.2 频率通道） |
+| `resolve_when.py` | 「明天/下周/几号」自然语言时间解析 |
+| `parser.py` | 课表 xlsx 解析（mtime 检测 + cache_version=2 + 单双周） |
+| `parsing.py` | 纯解析函数（与 I/O 解耦） |
+| `recall.py` | 安排回忆检索（--schedule-recall） |
+| `attention.py` | 注意力快照（T1/T2/T3 + 情感快照） |
+| `sources.py` | 话题/查询数据源聚合 |
+| `confirm.py` | 写前确认 |
+| `query.py` | 纯函数状态查询（in_class/remaining → availability 门面） |
+| `plan_store.py` | 当日计划存储（schedule_plan.json） |
 
 ### 6.3 `memory/` 包（记忆后端抽象，mem0 唯一后端）
 
-| 文件 | 行数 | 职责 |
-|------|:--:|------|
-| `mem0_backend.py` | 491 | Mem0Backend：LLM 事实提取写入 + 向量语义检索 + qdrant 嵌入式存储 + C1 巩固执行 |
-| `base.py` | 464 | MemoryBackend 抽象基类：Ebbinghaus 包装 + consolidate_plan + user_relevant 等通用逻辑 |
-| `factory.py` | 61 | `create_backend(config, base_dir)` 工厂（backend 仅 mem0/auto 合法） |
+| 文件 | 职责 |
+|------|------|
+| `mem0_backend.py` | Mem0Backend：LLM 事实提取写入 + 向量语义检索 + qdrant 嵌入式存储 + C1 巩固执行 |
+| `base.py` | MemoryBackend 抽象基类：Ebbinghaus 包装 + consolidate_plan + user_relevant 等通用逻辑 |
+| `factory.py` | `create_backend(config, base_dir)` 工厂（backend 仅 mem0/auto 合法） |
 
 ### 6.4 `netease/` 包（网易云联动）
 
-| 文件 | 行数 | 职责 |
-|------|:--:|------|
-| `bridge.py` | 647 | NeteaseBridge 数据面：健康探针/登录失效检测/播放/推荐/QR 登录/降级链 |
-| `service.py` | 313 | NeteaseService 策略层（DI）：fetch_play_proof 单入口 + peek/consume 两阶段 + 配额 |
+| 文件 | 职责 |
+|------|------|
+| `bridge.py` | NeteaseBridge 数据面：健康探针/登录失效检测/播放/推荐/QR 登录/降级链 |
+| `service.py` | NeteaseService 策略层（DI）：fetch_play_proof 单入口 + peek/consume 两阶段 + 配额 |
 
 ### 6.5 `scripts/`（部署与运维）
 
-| 文件 | 行数 | 职责 |
-|------|:--:|------|
-| `agent-run.mjs` | 460 | agent 后端统一入口（发送生成/回复分析/recall 等；人格注入 `personality/迟菓人格-精简版.md`） |
-| `install_agent.sh` | 401 | agent 环境/crontab/systemd 安装（三模式，幂等 + 备份） |
-| `agent_health.py` | 173 | agent 假死状态机（agent_health.json，`[health] fail_threshold`） |
-| `wechat-bridge.sh` | 185 | 微信桥服务管理 |
-| `service.sh` | 255 | systemd 服务管理 |
-| `netease-api.sh` | 180 | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
-| `chiguo-tick.sh` | 197 | cron 门控入口（零模型，读 daemon 输出 → send → 5s 重试 → record-send；无 composer 兜底，health 告警/暂停） |
-| `ci-test.sh` | 68 | 全量测试链（计数以(`scripts/ci-test.sh`)为准，CI stub 自举） |
-| `agent-auth.sh` | 18 | agent 认证 |
-| `replan-tick.sh` | 10 | loop 形态 replan 判脏轮询 |
-| `chiguo-daemon.service` | — | systemd 单元（loop 常驻形态） |
+| 文件 | 职责 |
+|------|------|
+| `agent-run.mjs` | agent 后端统一入口（发送生成/回复分析/recall 等；人格注入 `personality/迟菓人格-精简版.md`） |
+| `install_agent.sh` | agent 环境/crontab/systemd 安装（三模式，幂等 + 备份） |
+| `agent_health.py` | agent 假死状态机（agent_health.json，`[health] fail_threshold`） |
+| `wechat-bridge.sh` | 微信桥服务管理 |
+| `service.sh` | systemd 服务管理 |
+| `netease-api.sh` | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
+| `chiguo-tick.sh` | cron 门控入口（零模型，读 daemon 输出 → send → 5s 重试 → record-send；无 composer 兜底，health 告警/暂停） |
+| `ci-test.sh` | 全量测试链（计数以(`scripts/ci-test.sh`)为准，CI stub 自举） |
+| `agent-auth.sh` | agent 认证 |
+| `replan-tick.sh` | loop 形态 replan 判脏轮询 |
+| `chiguo-daemon.service` | systemd 单元（loop 常驻形态） |
 
 ### 6.6 `wechat-bridge/`（微信桥 Node 服务）
 
-| 文件 | 行数 | 职责 |
-|------|:--:|------|
-| `bridge.mjs` | 806 | HTTP 服务：askAgent + /send + /agent/prompt + TurnQueue 串行 + 鉴权 + 每日会话轮换 |
-| `command-detect.mjs` | 382 | 特殊命令规则化检测（纪念日/假期 → CLI，不经 agent） |
-| `agent-rpc.mjs` | 322 | 常驻 agent RPC（analysis chiguo-main / send chiguo-send 双会话） |
-| `session-rotate.mjs` | 110 | 主会话每日轮换（每小时检查 + 空闲保护 + 幂等标记 + RPC 先杀进程） |
-| `package.json` | 10 | file: 本地依赖 @wechatbot/wechatbot（CI stub 自举） |
+| 文件 | 职责 |
+|------|------|
+| `bridge.mjs` | HTTP 服务：askAgent + /send + /agent/prompt + TurnQueue 串行 + 鉴权 + 每日会话轮换 |
+| `command-detect.mjs` | 特殊命令规则化检测（纪念日/假期 → CLI，不经 agent） |
+| `agent-rpc.mjs` | 常驻 agent RPC（analysis chiguo-main / send chiguo-send 双会话） |
+| `session-rotate.mjs` | 主会话每日轮换（每小时检查 + 空闲保护 + 幂等标记 + RPC 先杀进程） |
+| `package.json` | file: 本地依赖 @wechatbot/wechatbot（CI stub 自举） |
 
 ### 6.7 `personality/`（人格文件）
 
@@ -945,7 +947,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 | 文件 | 说明 |
 |------|------|
-| `chiguo_proactive.toml` | 470 行 / 22 段配置（`[wechat][memory][character][emotion][sigmoid][trigger][poisson][topic_picker][schedule][circadian][netease][hawkes][cooldown][personality][bayesian][composer][safety][monitor][logging][host][loop][health]`），配置热重载（mtime 检测） |
+| `chiguo_proactive.toml` | 22 段配置（`[wechat][memory][character][emotion][sigmoid][trigger][poisson][topic_picker][schedule][circadian][netease][hawkes][cooldown][personality][bayesian][composer][safety][monitor][logging][host][loop][health]`），配置热重载（mtime 检测）；行数以 `wc -l chiguo_proactive.toml` 为准 |
 
 ### 6.9 运行时文件（gitignore，生成于仓库根 / data/）
 
@@ -1231,7 +1233,7 @@ idle reason 枚举：
 
 ## 九、配置参考（chiguo_proactive.toml）
 
-全量配置 **470 行 / 22 段**：`[wechat][memory][character][emotion][sigmoid][trigger][poisson][topic_picker][schedule][circadian][netease][hawkes][cooldown][personality][bayesian][composer][safety][monitor][logging][host][loop][health]`。以下为关键参数摘录（按真实文件顺序）。
+全量配置 **22 段**（`[wechat][memory][character][emotion][sigmoid][trigger][poisson][topic_picker][schedule][circadian][netease][hawkes][cooldown][personality][bayesian][composer][safety][monitor][logging][host][loop][health]`；行数以 `wc -l chiguo_proactive.toml` 为准）。以下为关键参数摘录（按真实文件顺序）。
 
 ```toml
 [wechat]     # 微信发送目标（chiguo-tick.sh / wechat-bridge.sh 按 key 名读取发送目标）
