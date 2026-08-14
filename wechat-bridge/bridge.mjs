@@ -711,7 +711,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   return 'agent'
 }
 
-// ── 主会话每日轮换（00:00 CST 起每 check_minutes 检查,空闲超 idle_minutes 才轮换；见 session-rotate.mjs）──
+// ── 主会话每日轮换（每 check_minutes 整点检查,空闲超 idle_minutes 才轮换；见 session-rotate.mjs）──
 // 活动判定:最近 1h 内有用户消息（onMessage 写 activity）或 cron 判定要发消息
 // （chiguo-tick.sh ACTION=send 写 activity）→ 顺延到下一检查点；绝不切断进行中的对话。
 // 启动即检查（bridge 重启/宕机错过 → 补轮换）；轮换经 TurnQueue 串行，不与在途 agent turn 交错。
