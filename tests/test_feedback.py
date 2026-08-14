@@ -320,6 +320,9 @@ def test_recv_dedup_analysis_upgrade():
         now = datetime.now(CST)
         st.cooldown.current_date = now.strftime("%Y-%m-%d")
 
+        # U4 (#232, M-1): 状态永不越界（clamp 铁律）——初始 energy 调离上限，
+        # 使升级 +8 后不触顶被截断（否则 delta 断言依赖越界落盘行为）
+        st.emotion.energy = 50.0
         engine.record_user_message("哥哥在吗")
         e0, aff0 = st.emotion.energy, st.emotion.affection
         lat0 = len(st.cooldown.reply_latencies)
