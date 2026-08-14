@@ -10,7 +10,7 @@
 #   python3 chiguo_daemon.py              # 检查并输出决策 JSON
 #   python3 chiguo_daemon.py --status     # 查看状态
 #   python3 chiguo_daemon.py --user-msg "…"  # 记录哥哥消息
-#   python3 chiguo_daemon.py --loop 120   # 持续运行（调试用）
+#   python3 chiguo_daemon.py --loop 120   # v1.11 C: 持续运行（调试用）——send 分支内聚发送侧：生成→发送→记账 + U2 health 记账（见 --loop 常驻形态）
 #
 # cron 集成：
 #   系统 crontab 每 15 分钟经 scripts/chiguo-tick.sh 执行本脚本。
@@ -735,7 +735,16 @@ class DecisionEngine:
         daily_max = self.config.get("cooldown", {}).get(
             "max_daily_active", 4) if silent_h < 8 else self.config.get("cooldown", {}).get("max_daily_silent", 2)
         if self.state.cooldown.messages_today >= daily_max:
-            return "daily_limit"
+            # L4 (#234, D4): 逃生阀放行 → 继续走后续门禁，不直接 return daily_limit。
+            # 与 can_send:2169-2172 的 longing 溢出逃生阀语义对齐——can_send 内部已含
+            # 逃生阀（is_longing_overflow + 冷却期）判定，若 it 放行则 daily_limit 不应
+            # 成为 binding constraint（否则 next_evaluation_at 估到明早、逃生消息被压）。
+            try:
+                if not self.state.can_send(now, quiet_ok=quiet_ok):
+                    return "daily_limit"
+            except Exception:  # noqa: BLE001 - 逃生阀判定异常时保守按 daily_limit 拦截
+                return "daily_limit"
+            # can_send 逃生阀放行 → 不 return daily_limit，落到后续门禁（min_interval 等）
 
         # 最小间隔
         min_interval = self.config.get("cooldown", {}).get("min_interval_minutes", 30)
@@ -1075,7 +1084,14 @@ class DecisionEngine:
                                #  recall 两趟 agent 路径最坏 420s：getAttention≤30s + askAgent 第一趟≤180s
                                #  + --schedule-recall daemon≤30s + runAgentRun 第二趟 agent≤180s；余量 30s）
 
-    def record_user_message(self, text: str, analysis_json: str | None = None):
+    def record_user_message(self, text: str, analysis_json: str | None = None,
+                            recv_id: str | None = None):
+        """记录哥哥消息（确定性回传）。
+        U5 (#233, D1): recv_id 精确去重——bridge 对每条主人消息本地生成
+        crypto.randomUUID() 作为 --recv-id，recordUserMsg 与 upgradeAnalysis 两次
+        调用携带同一 id → daemon 以 id 精确判定补报升级（同 id → 只补分析账，免
+        450s 窗口）。无 recv_id（CLI 手动/测试/老调用）→ 回退 text_sha+窗口逻辑
+        （RECV_DEDUP_WINDOW_S 不变），行为向后兼容。recv_id 仅去重流，不进 agent prompt。"""
         now = datetime.now(CST)
         msg_id = self._make_msg_id()
         analysis_dict = None
@@ -1115,14 +1131,19 @@ class DecisionEngine:
                 analysis_dict is not None
                 and bool(dedup)
                 and not dedup.get("analysis")
-                and dedup.get("text_sha") == text_sha
-                and dedup.get("at")
             )
             if is_upgrade:
-                try:
-                    prev_at = datetime.fromisoformat(dedup["at"])
-                    is_upgrade = (now - prev_at).total_seconds() < self.RECV_DEDUP_WINDOW_S
-                except (ValueError, TypeError):
+                # U5 (#233, D1): recv_id 精确匹配（同 id → 补报升级，免窗口判断）
+                if recv_id and dedup.get("recv_id") == recv_id:
+                    is_upgrade = True
+                # 无 recv_id（CLI 手动/测试/老调用）→ 回退 text_sha + 窗口逻辑（450s 不变）
+                elif dedup.get("text_sha") == text_sha and dedup.get("at"):
+                    try:
+                        prev_at = datetime.fromisoformat(dedup["at"])
+                        is_upgrade = (now - prev_at).total_seconds() < self.RECV_DEDUP_WINDOW_S
+                    except (ValueError, TypeError):
+                        is_upgrade = False
+                else:
                     is_upgrade = False
 
             if is_upgrade:
@@ -1132,6 +1153,7 @@ class DecisionEngine:
                         "text_sha": text_sha,
                         "at": now.isoformat(),
                         "analysis": True,
+                        "recv_id": recv_id,
                     }
                     if not self.state.save():
                         print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
@@ -1149,11 +1171,12 @@ class DecisionEngine:
             prev_send_was_replied = self.state.cooldown.messages_without_reply > 0
             self.state.on_user_message(now, len(text), analysis=analysis_dict)
 
-            # ── v9: 更新去重标记（记录是否已含分析）──
+            # ── v9: 更新去重标记（记录是否已含分析；U5: recv_id 精确去重持久化）──
             self.state.cooldown.recv_dedup = {
                 "text_sha": text_sha,
                 "at": now.isoformat(),
                 "analysis": analysis_dict is not None,
+                "recv_id": recv_id,
             }
 
             # ── v4: 人格自适应（收到回复后）──
@@ -1752,13 +1775,16 @@ def _cmd_memory_search(query: str, config_path: str | None = None):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="迟菓主动消息 决策引擎")
-    parser.add_argument("--version", action="version", version=f"chiguo v{VERSION} (规则: 次版本 MINOR+1: 1.9→1.10→1.11)")
+    # L2 (#234): --version 帮助不写死具体版本链，只写规则（防过期）；实际次版本见 chiguo_version.py
+    parser.add_argument("--version", action="version", version=f"chiguo v{VERSION} (规则: 每次迭代次版本 MINOR+1，见 chiguo_version.py)")
     parser.add_argument("--loop", type=int, nargs="?", const=300, metavar="SECONDS",
                         help="循环评估间隔秒数（最小60）")
     parser.add_argument("--user-msg", type=str, default=None,
                         help="记录哥哥消息")
     parser.add_argument("--analysis", type=str, default=None,
                         help="LLM情感分析JSON（配合 --user-msg 使用）")
+    parser.add_argument("--recv-id", type=str, default=None,
+                        help="bridge 每条主人消息本地生成的 uuid，用于 recv_dedup 精确去重（同 id 补报升级，不进 agent prompt；无则回退 text_sha+窗口逻辑）")
     # ── v6: 文件传参（避免 shell 转义问题，SKILL.md 已采用此路径）──
     parser.add_argument("--user-msg-file", type=str, default=None,
                         help="消息文本文件（配合 --analysis-file 使用）")
@@ -2100,7 +2126,7 @@ def main():
             sys.exit(1)
 
     if args.user_msg:
-        engine.record_user_message(args.user_msg, args.analysis)
+        engine.record_user_message(args.user_msg, args.analysis, getattr(args, "recv_id", None))
         # 用户刚发消息 → 立即评估一次（情绪最新，最佳联系窗口）
         decision = engine.evaluate()
         # v1.11+R2 (review R2): --user-msg 由 bridge 在回复链中调用，其实际回复经 agent

@@ -327,7 +327,7 @@ personality/
 
 ## 🛠 部署与运维
 
-**前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export AGENT_API_KEY=...`）；ollama 可选（记忆嵌入）。
+**前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export AGENT_API_KEY=...`）；ollama 可选（记忆嵌入）。node 版本以仓库根 `.nvmrc`（=22，CI 同款）为准，本地更高版本（如 v24）也可运行但 CI/部署以 22 为基准；`nvm use` 自动套用。
 
 **分级部署**：三档路径见 [🚀 快速开始](#-快速开始)；完整指南（六步详解/落点地图/迁移/验证）见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 

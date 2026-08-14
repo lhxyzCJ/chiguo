@@ -12,4 +12,4 @@ dependencies = [
 [project.optional-dependencies]
 schedule = [
     "openpyxl",
-]   # 课表 xlsx 解析；不装 → 降级 availability=0.85（schedule_parser 函数内导入）
+]   # 课表 xlsx 解析；不装 → schedule_valid=False → availability 基确 1.0（见 schedule/day_plan.py）

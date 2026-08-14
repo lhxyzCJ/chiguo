@@ -65,6 +65,12 @@ class OverrideStore:
                     except (ValueError, TypeError):
                         ok = False
                         break
+            # M-3 (#229): 读路径防线——period/to_period 越界(如 12)剔除，防 day_plan _PERIOD_START[p] KeyError
+            for key in ("period", "to_period"):
+                pv = it.get(key)
+                if ok and pv is not None and (not isinstance(pv, int) or not 1 <= pv <= 11):
+                    ok = False
+                    break
             if ok:
                 items.append(it)
             else:
