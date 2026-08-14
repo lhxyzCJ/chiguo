@@ -76,7 +76,7 @@ chmod +x "$SERVICE"
 OUT="$("$SERVICE" autostart --dry-run 2>&1)"
 echo "$OUT" | grep -q "chiguo-bridge.service" || fail "dry-run 未展示 unit 名"
 echo "$OUT" | grep -q "EnvironmentFile=$TMP/repo/wechat-bridge/.env" || fail "unit 模板缺 EnvironmentFile"
-echo "$OUT" | grep -q "ExecStart=.*node bridge.mjs" || fail "unit 模板缺 ExecStart"
+echo "$OUT" | grep -q "ExecStart=.*node .*bridge.mjs" || fail "unit 模板缺 ExecStart"
 echo "$OUT" | grep -q "Restart=on-failure" || fail "unit 模板缺 Restart"
 echo "$OUT" | grep -q "After=network-online.target ollama.service" || fail "unit 模板缺 After"
 [ -z "$(ls -A "$TMP/systemd" 2>/dev/null)" ] || fail "dry-run 不应写 unit 文件"
@@ -114,7 +114,7 @@ sleep 1
 CHIGUO_NODE="$TMP/bin/node2" "$SERVICE" autostart >/dev/null 2>&1 || fail "unit 变更后 autostart 退出非 0"
 grep -q "restart chiguo-bridge" "$CALLS_LOG" || fail "unit 变更后未 restart bridge"
 [ "$(stat -c %Y "$TMP/systemd/chiguo-bridge.service")" != "$UNIT_MTIME2" ] || fail "unit 内容变更未被重写"
-grep -q "ExecStart=$TMP/bin/node2 bridge.mjs" "$TMP/systemd/chiguo-bridge.service" || fail "unit 未更新为新 NODE 路径"
+grep -q "ExecStart=$TMP/bin/node2 .*bridge.mjs" "$TMP/systemd/chiguo-bridge.service" || fail "unit 未更新为新 NODE 路径"
 pass "autostart unit 变更 → 重写 + restart"
 
 # ── 用例 4: temp 残留被杀（pidfile 指向存活进程时 autostart 清理）──

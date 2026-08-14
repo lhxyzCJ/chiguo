@@ -80,7 +80,7 @@ write_unit() {
     'Type=simple' \
     "WorkingDirectory=$BRIDGE_DIR" \
     "EnvironmentFile=$ENV_FILE" \
-    "ExecStart=$NODE bridge.mjs" \
+    "ExecStart=$NODE $BRIDGE_DIR/bridge.mjs" \
     'Restart=on-failure' \
     '' \
     '[Install]' \
