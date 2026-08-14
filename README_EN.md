@@ -327,7 +327,7 @@ Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (4
 
 ## 🛠 Deploy & Ops
 
-**Prerequisites**: Debian Linux (systemd) + git + Node.js/npm + a model API key (`export AGENT_API_KEY=...`); ollama optional (memory embeddings).
+**Prerequisites**: Debian Linux (systemd) + git + Node.js/npm + a model API key (`export AGENT_API_KEY=...`); ollama optional (memory embeddings). Node version is pinned by the repo-root `.nvmrc` (=22, same as CI); newer local versions (e.g. v24) run too but CI/deploy target 22 (`nvm use` applies it).
 
 **Tiered deployment**: the three tiers are in [🚀 Quick Start](#-quick-start); the full guide (six steps in detail / landing map / migration / verification) is [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
 

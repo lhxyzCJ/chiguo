@@ -251,7 +251,9 @@ class NeteaseBridge:
             result = subprocess.run(
                 ["node", "-e", f"""
                     const QRCode = require('qrcode');
-                    QRCode.toString('https://music.163.com/login?codekey={unikey}',
+                    // L-1 (#229): unikey 用 JSON.stringify 安全嵌入——含引号/特殊字符不破 JS 源码（防注入/截断）
+                    const key = {json.dumps(unikey)};
+                    QRCode.toString('https://music.163.com/login?codekey=' + key,
                         {{type: 'terminal', small: true}}, (err, str) => {{
                             if (err) process.exit(1);
                             console.log(str);

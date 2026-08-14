@@ -159,7 +159,8 @@ def class_load_adjust(base: float, resolved_classes: dict, now) -> float:
         if n <= 5:
             return 0.08
         return 0.05
-    remaining = len([p for p in active if _PERIOD_START[p] > now.time()])
+    # M-3 (#229): p 可能越界（override 读路径曾放行 period=12）→ 先判 in 避免 _PERIOD_START[p] KeyError
+    remaining = len([p for p in active if p in _PERIOD_START and _PERIOD_START[p] > now.time()])
     if remaining == 0:
         return 0.85
     if remaining == 1:

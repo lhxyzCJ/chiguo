@@ -345,6 +345,12 @@ class Mem0Backend(MemoryBackend):
         return random.choices(rows, weights=weights, k=1)[0]
 
     def stats(self) -> dict:
+        # M-5 (#229): 结构化暴露 update/delete/get 能力可用性（对齐 _warn_missing_capabilities 探测）
+        def _caps():
+            if getattr(self, "_m", None) is None:
+                return {"update": False, "delete": False, "get": False}
+            return {n: getattr(self._m, n, None) is not None
+                    for n in ("update", "delete", "get")}
         if not self.available:
             return {
                 "available": False,
@@ -352,6 +358,7 @@ class Mem0Backend(MemoryBackend):
                 "user_relevant_count": 0,
                 "db_path": self.qdrant_path,
                 "backend": "mem0",
+                "capabilities": {"update": False, "delete": False, "get": False},
                 "last_error": self._last_error,
             }
         total = self._count_rows()
@@ -361,6 +368,7 @@ class Mem0Backend(MemoryBackend):
             "user_relevant_count": len(self.user_relevant(limit=100)),
             "db_path": self.qdrant_path,
             "backend": "mem0",
+            "capabilities": _caps(),
             "last_error": self._last_error,
         }
 

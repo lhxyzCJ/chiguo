@@ -187,6 +187,29 @@ def test_apply_analysis_impact_replays_fresh_preserved_mood():
         assert abs(st.emotion.anxiety - (anx0 + 1.0)) < 1e-9, "有效期内沿用感知应重放 delta"
 
 
+def test_apply_analysis_impact_clamps_boundary():
+    """U4 (#232, M-1): recv_dedup 升级路径叠加后越界（anxiety≈99+冷淡→102.3）→
+    _apply_analysis_impact 末尾幂等 clamp，save→load 往返后仍 ≤100（修复前存续到
+    下次 _finalize 才钳回）。"""
+    with tempfile.TemporaryDirectory() as td:
+        st = _make_state(td, anxiety=99.0, affection=80.0)
+        st.config["emotion"]["user_mood_low_anxiety_factor"] = 1.0
+        now = datetime(2026, 8, 9, 12, 0, tzinfo=CST)
+        # 冷淡升级：anxiety≈99 + 低暖度/低努力 → 情绪 delta 会把 anxiety 顶破 100
+        st._apply_analysis_impact(
+            {"warmth": -0.9, "effort": -0.9, "attention": 0.5,
+             "user_mood": "low", "user_mood_intensity": 0.5}, now)
+        assert 0 <= st.emotion.anxiety <= 100, f"anxiety 应钳到 [0,100]，实得 {st.emotion.anxiety}"
+        assert 0 <= st.emotion.affection <= 100, f"affection 应钳到 [0,100]"
+        # sanity：确实在越界钳制生效前会顶破（防线是 clamp 而非不叠加）
+        assert st.emotion.anxiety > 99.0, f"应叠加了 delta（才轮到 clamp），实得 {st.emotion.anxiety}"
+        # save→load 往返：落盘值在界内（修复前 102.3 落盘存续）
+        st.save()
+        st2 = ChiguoState(st.config)
+        st2._load()
+        assert 0 <= st2.emotion.anxiety <= 100, f"落盘后 anxiety 应 ≤100，实得 {st2.emotion.anxiety}"
+
+
 def test_old_state_missing_user_mood_defaults():
     """旧状态无 user_mood 字段 → 加载补默认 None（drop_events 先例）；save→load 往返保留。"""
     with tempfile.TemporaryDirectory() as td:
@@ -369,6 +392,48 @@ def test_recv_dedup_upgrade_consumes_user_mood_once():
         assert st.cooldown.user_mood and st.cooldown.user_mood["mood"] == "distressed"
 
 
+def test_recv_dedup_recv_id_precise():
+    """U5 (#233, D1): recv_id 精确去重——同 id 无分析→补分析按升级记账；
+    不同 id 同文本（或分析已升级过）→ 视为真实重发走完整 on_user_message；无 recv_id 回退窗口逻辑。"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        st = engine.state
+        now = datetime.now(CST)
+        st.cooldown.current_date = now.strftime("%Y-%m-%d")
+        st.config["emotion"]["user_mood_low_anxiety_factor"] = 1.0
+        rid = "11111111-2222-3333-4444-555555555555"
+
+        # 同 id 两步：先无分析 → 后补分析 → 升级记账（user_mood 落一次，recv_dedup.analysis=True）
+        engine.record_user_message("哥哥在吗", recv_id=rid)
+        assert st.cooldown.user_mood is None
+        assert st.cooldown.recv_dedup.get("recv_id") == rid
+        engine.record_user_message(
+            "哥哥在吗",
+            '{"warmth": 0.0, "effort": 0.0, "attention": 0.5,'
+            ' "user_mood": "low", "user_mood_intensity": 0.5}',
+            recv_id=rid)
+        assert st.cooldown.user_mood and st.cooldown.user_mood["mood"] == "low"
+        assert st.cooldown.recv_dedup.get("analysis") is True
+
+        # 不同 id 同文本 → 视为真实重发（非升级）：新分析覆盖（distressed 覆盖 low）
+        engine.record_user_message(
+            "哥哥在吗",
+            '{"warmth": 0.0, "effort": 0.0, "attention": 0.5,'
+            ' "user_mood": "distressed", "user_mood_intensity": 1.0}',
+            recv_id="99999999-0000-0000-0000-555555555555")
+        assert st.cooldown.user_mood and st.cooldown.user_mood["mood"] == "distressed",             "不同 id 应走完整 on_user_message（覆盖语义）"
+
+        # 无 recv_id → 回退 text_sha+窗口逻辑（450s 内无分析 → 升级；行为与旧版一致）
+        st.cooldown.recv_dedup = {"text_sha": "deadbeef", "at": now.isoformat(),
+                                  "analysis": False, "recv_id": None}
+        engine.record_user_message(
+            "另一次消息",
+            '{"warmth": 0.0, "effort": 0.0, "attention": 0.5,'
+            ' "user_mood": "low", "user_mood_intensity": 0.5}')
+        # text_sha 不匹配 → 非升级，走完整记录
+        assert st.cooldown.recv_dedup.get("text_sha") != "deadbeef"
+
+
 if __name__ == "__main__":
     tests = [
         test_impact_calm_or_zero_intensity_empty, test_impact_enabled_coefficients,
@@ -379,12 +444,14 @@ if __name__ == "__main__":
         test_apply_analysis_impact_applies_mood_delta,
         test_apply_analysis_impact_ttl_gate_stale_mood,
         test_apply_analysis_impact_replays_fresh_preserved_mood,
+        test_apply_analysis_impact_clamps_boundary,
         test_old_state_missing_user_mood_defaults,
         test_comfort_trigger_appears_when_enabled,
         test_comfort_weight_monotonic_and_ttl,
         test_anxiety_bonus_scales,
         test_build_context_mood_note,
         test_recv_dedup_upgrade_consumes_user_mood_once,
+        test_recv_dedup_recv_id_precise,
     ]
     for t in tests:
         t()

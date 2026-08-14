@@ -29,6 +29,7 @@ import { createServer } from 'node:http'
 import { WeChatBot } from '@wechatbot/wechatbot'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -261,10 +262,14 @@ export async function runWithAttention(text, runOverride = null) {
   return (await askAgentWithAttention(text, att, mem)).text
 }
 
-/** 确定性记录主人消息到迟菓 daemon（无分析；随后的 askAgent 分析经 upgradeAnalysis 升级，daemon 去重）。失败不阻塞回复流。 */
-export async function recordUserMsg(text) {
+/** 确定性记录主人消息到迟菓 daemon（无分析；随后的 askAgent 分析经 upgradeAnalysis 升级，daemon 去重）。失败不阻塞回复流。
+ *  U5 (#233, D1): recvId 为 handleMessage 对该条消息本地生成的 uuid，与 upgradeAnalysis 同传
+ *  → daemon recv_dedup 按 id 精确判定补报升级（免 450s 窗口）；无则回退 text_sha+窗口逻辑。 */
+export async function recordUserMsg(text, recvId) {
+  const args = [DAEMON_SCRIPT, '--user-msg', text]
+  if (recvId) args.push('--recv-id', recvId)
   try {
-    await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--user-msg', text], {
+    await execFileP(DAEMON_PY, args, {
       timeout: 30_000,
       maxBuffer: 4 * 1024 * 1024,
     })
@@ -275,12 +280,15 @@ export async function recordUserMsg(text) {
 }
 
 /** 分析升级：askAgent 已产出情绪分析 JSON → daemon --user-msg --analysis。
- * recv_dedup 升级语义：同一原文（窗口内，RECV_DEDUP_WINDOW_S=450s 覆盖 agent 分析往返）只补分析微调，不重复记账。失败不阻塞回复流。 */
-export async function upgradeAnalysis(text, analysis) {
+ * recv_dedup 升级语义：同 recvId（精确匹配，免窗口）或同原文（窗口内，RECV_DEDUP_WINDOW_S=450s）
+ * 只补分析微调，不重复记账。失败不阻塞回复流。 */
+export async function upgradeAnalysis(text, analysis, recvId) {
   if (!analysis) return
   const analysisJson = typeof analysis === 'string' ? analysis : JSON.stringify(analysis)
+  const args = [DAEMON_SCRIPT, '--user-msg', text, '--analysis', analysisJson]
+  if (recvId) args.push('--recv-id', recvId)
   try {
-    await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--user-msg', text, '--analysis', analysisJson], {
+    await execFileP(DAEMON_PY, args, {
       timeout: 30_000,
       maxBuffer: 4 * 1024 * 1024,
     })
@@ -597,7 +605,10 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     return 'agent'
   }
 
-  await queue.run(() => recordUserMsg(text))   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 450s 继承)
+  // U5 (#233, D1): 每条主人消息本地生成 recv-id，recordUserMsg 与 upgradeAnalysis
+  // 同传 → daemon recv_dedup 按 id 精确判定补报升级（免 450s 窗口；仅去重流，不进 agent prompt）
+  const recvId = randomUUID()
+  await queue.run(() => recordUserMsg(text, recvId))   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 继承)
 
   // 澄清检查:有待澄清记录且非退出词 → 路由回提取(词表命中=新命令;否则合并"原意+回答")
   // B3 兜底:readClarify 内部 rmSync 已容错,防御性再包一层——记录损坏/目录占位等极端情况不阻塞回复流
@@ -689,13 +700,13 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
           if (second) {
             // B8: recalled 分支同样 upgradeAnalysis——daemon 侧该消息才能以
             // recv_dedup 升级语义记账（--user-msg 带 --analysis），与未命中路径一致
-            await upgradeAnalysis(text, analysis)
+            await upgradeAnalysis(text, analysis, recvId)
             await bot.reply(msg, second).catch((e) => console.error('[reply error]', e))
             recalled = true
           }
         }
         if (!recalled) {
-          await upgradeAnalysis(text, analysis)  // recv_dedup 升级语义，不重复记账
+          await upgradeAnalysis(text, analysis, recvId)  // recv_dedup 升级语义，不重复记账
           console.log(`[out] ${(reply ?? '').slice(0, 80)}`)
           await bot.reply(msg, reply).catch((e) => console.error('[reply error]', e))
         }

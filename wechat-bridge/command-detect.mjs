@@ -195,11 +195,25 @@ export async function executeSpecialCommand(spawnFn, spec, daemonPy, daemonScrip
       c.stdout.setEncoding('utf8')
       c.stderr.setEncoding('utf8')
       let out = ''
+      let outBytes = 0
       let err = ''
-      c.stdout.on('data', (d) => { out += d })
-      c.stderr.on('data', (d) => { err += d })
-      c.on('error', (e) => reject(e))
-      c.on('close', (code) => {
+      let killed = false
+      const bail = (e) => { if (!killed) { killed = true; try { c.kill('SIGKILL') } catch {} reject(e) } }
+      // U5 (#233, M-7): 套用 R19 上限——累计 stdout 超 16MB 即 kill+reject（防无界累积内存）；
+      // stderr 保留尾部 256KB；B4 setEncoding 保留（中文跨 chunk）
+      c.stdout.on('data', (d) => {
+        out += d
+        outBytes += Buffer.byteLength(d, 'utf8')
+        if (outBytes > 16 * 1024 * 1024) {
+          bail(new Error('daemon stdout 超过 16MB 上限（输出无界，已终止）'))
+        }
+      })
+      c.stderr.on('data', (d) => {
+        err += d
+        if (Buffer.byteLength(err, 'utf8') > 1024 * 1024) err = err.slice(-256 * 1024)
+      })
+      c.on('error', (e) => { if (!killed) reject(e) })
+      c.on('close', (code) => { if (killed) return
         if (code !== 0 && !out.trim()) {
           const reason = err.trim().slice(0, 200)
           reject(new Error(`daemon exited ${code}${reason ? `: ${reason}` : ''}`))
@@ -283,11 +297,25 @@ function runCmd(spawnFn, cmd, args, timeoutMs = 30_000) {
     c.stdout.setEncoding('utf8')
     c.stderr.setEncoding('utf8')
     let out = ''
+    let outBytes = 0
     let err = ''
-    c.stdout.on('data', (d) => { out += d })
-    c.stderr.on('data', (d) => { err += d })
-    c.on('error', (e) => reject(e))
+    let killed = false
+    const bail = (e) => { if (!killed) { killed = true; try { c.kill('SIGKILL') } catch {} reject(e) } }
+    // U5 (#233, M-7): 套用 R19 上限——累计 stdout 超 16MB 即 kill+reject（防无界累积内存）；stderr 保留尾部 256KB；B4 setEncoding 保留
+    c.stdout.on('data', (d) => {
+      out += d
+      outBytes += Buffer.byteLength(d, 'utf8')
+      if (outBytes > 16 * 1024 * 1024) {
+        bail(new Error(cmd + ' stdout 超过 16MB 上限（输出无界，已终止）'))
+      }
+    })
+    c.stderr.on('data', (d) => {
+      err += d
+      if (Buffer.byteLength(err, 'utf8') > 1024 * 1024) err = err.slice(-256 * 1024)
+    })
+    c.on('error', (e) => { if (!killed) reject(e) })
     c.on('close', (code) => {
+      if (killed) return
       if (code !== 0 && !out.trim()) reject(new Error(`exit ${code}: ${err.trim().slice(0, 120)}`))
       else resolve(out)
     })

@@ -99,3 +99,9 @@ reasonix.toml
 
 # 本地计划/笔记文档（不进 git）
 docs/
+
+# AgentTeams 团队机制目录（本地会话台账，不进 git）
+.agent-teams/
+
+# gh/claude 本地设备缓存（不进 git）
+.local/

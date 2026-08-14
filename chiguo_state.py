@@ -1539,6 +1539,11 @@ class ChiguoState:
         elif topic:
             self.add_pending_topic(topic, now)
 
+        # ── U4 (#232, M-1): 越界钳制 —— recv_dedup 升级路径叠加 emotion delta /
+        # user_mood 后可能越界（如 anxiety≈99 + 冷淡升级 → 102.3），直接落盘存续到下次
+        # _finalize 才钳回；此处幂等 clamp 到 [0,100]（on_user_message 亦覆盖）。──
+        self.emotion.clamp()
+
     def _consume_user_mood(self, analysis: dict, now: datetime):
         """v1.11 ①: 解析 analysis 的 user_mood/user_mood_intensity → cooldown.user_mood。
         容错语义（5 层）：analysis 无 user_mood 键 / 非法枚举 / 非数值强度 → 本次

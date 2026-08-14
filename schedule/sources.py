@@ -14,6 +14,21 @@ from schedule.anniversary import AnniversaryManager
 from schedule.override_store import OverrideStore
 
 
+def _holidays_cover_next_year(base_dir, next_year):
+    """L-2 (#234): holidays.json 是否已含 next_year 数据（11-12 月 freshness 提示用）。"""
+    try:
+        hp = Path(base_dir) / "holidays.json"
+        if not hp.exists():
+            return False
+        data = json.loads(hp.read_text())
+        for r in data.get("holidays", {}).values():
+            if str(r.get("start", "")).startswith(str(next_year)):
+                return True
+    except Exception:  # noqa: BLE001 - 读取失败按未覆盖处理
+        return False
+    return False
+
+
 @dataclass
 class Sources:
     base_dir: str
@@ -66,6 +81,15 @@ def load_sources(base_dir: str, config: dict, schedule_cache_dict: dict | None =
         # H-2 兜底:holidays.json override 意外异常 → 降级为仅内嵌节假日,不抛(replan 不被 traceback 中断)
         print(f"[schedule.sources] holidays.json 解析异常,降级仅用内嵌节假日", file=sys.stderr)
         holiday = HolidayParser()
+    # L-2 (#234): 11-12 月且 holidays.json 未覆盖下一年 → stderr 提示（对齐 daemon._check_data_freshness）
+    try:
+        _now = date.today()
+        if _now.month >= 11 and not _holidays_cover_next_year(base, _now.year + 1):
+            print(f"[schedule.sources] {_now.year} 年节假日数据即将过期：请运行 "
+                  f"python3 update_holidays.py {_now.year + 1} 生成 {_now.year + 1} 年模板（国务院通知发布后填实际日期）",
+                  file=sys.stderr)
+    except Exception:  # noqa: BLE001 - 提示不影响主流程
+        pass
     anniversaries = AnniversaryManager(str(base))
     overrides = OverrideStore(str(base))
     break_state = None

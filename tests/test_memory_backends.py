@@ -165,6 +165,16 @@ def test_stats():
         s = b.stats()
         assert s["available"] and s["total_memories"] == 2
         assert s["backend"] == "mem0" and s["db_path"]
+        # M-5 (#229): capabilities 字段结构化暴露 update/delete/get 可用性
+        assert set(s["capabilities"]) == {"update", "delete", "get"}, s["capabilities"]
+        assert all(v is False for v in s["capabilities"].values()),             f"FakeMem0 无 update/delete/get → 全 False, got {s['capabilities']}"
+    # available=False 时 capabilities 全 False
+    with tempfile.TemporaryDirectory() as td:
+        b = _fake_backend([], Path(td))
+        b._available = False
+        b._last_probe = time.time() + 3600
+        s = b.stats()
+        assert not s["available"] and s["capabilities"] == {"update": False, "delete": False, "get": False}, s
     print("  OK test_stats")
 
 
@@ -246,6 +256,10 @@ def test_factory_mem0():
         # 默认（不写 backend）→ mem0
         b3 = create_backend({})
         assert isinstance(b3, Mem0Backend)
+        # L-4 (#229): 显式空值也回落默认（cfg.get 只处理缺键，null/空串需 or 兜底）
+        b4 = create_backend({"backend": "mem0", "mem0_qdrant_path": None, "mem0_history_db": ""}, base_dir=td)
+        assert b4.qdrant_path.endswith(("data/mem0/qdrant",)), b4.qdrant_path
+        assert b4.history_db.endswith(("data/mem0/history.db",)), b4.history_db
     print("  OK test_factory_mem0")
 
 

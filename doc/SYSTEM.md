@@ -1,6 +1,8 @@
 # 迟菓主动消息系统 — 系统文档
 
 > 版本: v1.15（`chiguo_version.py` VERSION=1.15,规则: MINOR+1 次版本步进（1.9→1.10→1.11→1.12→1.13→1.14→1.15,非十进制加法）;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
+>
+> 版本摘要：v1.13（#137）`mono_anchor`/`wall_anchor` 单调锚对持久化，cap NTP 时钟前跳时情绪 elapsed 在 cron 形态被高估；v1.14（#139）`record_user_message`/`record_send_result` 锁内先 `_load` 重载磁盘最新状态再 RMW，防 cron evaluate 并发丢更新。
 
 > 本文档为**系统架构唯一权威**（吸收原 CLAUDE_CODE_RULES.md 架构描述，重组去重）。agent 后端集成细节见 `doc/AGENT_INTEGRATION.md`，部署见 `doc/DEPLOYMENT.md`，使用见 `doc/README.md`。
 

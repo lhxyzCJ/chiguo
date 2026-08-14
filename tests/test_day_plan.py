@@ -487,6 +487,37 @@ def test_api_move_source_and_snapshot():
         assert r["ok"] is True, "源槽来自 add 例外 → 允许"
     print("  OK test_api_move_source_and_snapshot")
 
+def test_override_store_filters_oob_period():
+    """M-3 (#229): 越界 period(如 12) 在 override_store._load 读路径被剔除（防
+    day_plan._PERIOD_START[p] KeyError）。写非法 period 到 schedule_overrides.json →
+    load_sources 仍正常构造，坏条目剔除 + corrupt 置位，不抛异常。"""
+    with tempfile.TemporaryDirectory() as td:
+        _write_overrides(td, [
+            {"id": "ok1", "date": "2026-03-04", "kind": "cancel", "period": 3,
+             "created_at": "2026-03-01T10:00:00+08:00"},
+            {"id": "bad12", "date": "2026-03-04", "kind": "cancel", "period": 12,
+             "created_at": "2026-03-01T10:00:00+08:00"},
+            {"id": "badtp", "date": "2026-03-04", "kind": "move", "period": 3, "to_period": 99,
+             "course": {"course": "x"}, "created_at": "2026-03-01T10:00:00+08:00"},
+        ])
+        src = _mk(td, cache=CACHE_3PERIOD)
+        # 越界条目被剔除 → 只剩合法 cancel
+        items = src.overrides._items
+        assert all(it.get("period", 1) in range(1, 12) and
+                   it.get("to_period", 1) in range(1, 12) for it in items), items
+        assert len(items) == 1, f"应剔除越界 period,剩 {len(items)}: {items}"
+        assert src.overrides.corrupt, "剔除坏条目应置 corrupt 标志"
+        # 正常 resolve 不因越界崩溃（读路径防线）；合法 cancel 生效（保留键、标 cancelled）
+        rc = resolve_classes(date(2026, 3, 4), src)
+        assert rc.get(3, {}).get("cancelled") is True, f"合法 cancel 应标 cancelled, got {rc.get(3)}"
+    # day_plan 侧防御：即使 period 越界混入 active，_PERIOD_START 守卫也不 KeyError
+    from schedule.day_plan import class_load_adjust
+    odd = {3: {"period": 3, "course": "x", "source": "schedule", "cancelled": False},
+           12: {"period": 12, "course": "x", "source": "schedule", "cancelled": False}}
+    between = datetime(2026, 8, 5, 9, 36, tzinfo=CST)
+    assert class_load_adjust(0.85, odd, between) in (0.85, 0.7, 0.5), "越界 period 不 KeyError"
+
+
 if __name__ == "__main__":
     print("test_day_plan.py\n")
     tests = [test_week_number_monday_alignment, test_week_courses_active_and_alternates,
@@ -497,7 +528,8 @@ if __name__ == "__main__":
              test_rw_week_offset_interval, test_rw_combo, test_rw_start_end,
              test_rw_structural_rejects, test_api_shape_constraints, test_api_to_date_forms,
              test_api_past_checks_by_kind, test_api_semester_boundary,
-             test_api_move_source_and_snapshot]
+             test_api_move_source_and_snapshot,
+             test_override_store_filters_oob_period]
     for t in tests:
         t()
     print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

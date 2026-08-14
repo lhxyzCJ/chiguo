@@ -33,8 +33,9 @@ def create_backend(config: dict | None = None, base_dir: str | Path | None = Non
     return Mem0Backend(
         user_id=cfg.get("mem0_user_id", "chiguo"),
         collection_name=cfg.get("mem0_collection", "chiguo"),
-        qdrant_path=_resolve_path(cfg.get("mem0_qdrant_path", "data/mem0/qdrant"), base),
-        history_db=_resolve_path(cfg.get("mem0_history_db", "data/mem0/history.db"), base),
+        # L-4 (#229): 显式空值也回落默认（cfg.get 只处理缺键，null/空串需 or 兜底）
+        qdrant_path=_resolve_path(cfg.get("mem0_qdrant_path") or "data/mem0/qdrant", base),
+        history_db=_resolve_path(cfg.get("mem0_history_db") or "data/mem0/history.db", base),
         llm_model=cfg.get("mem0_llm_model"),
         llm_base_url=cfg.get("mem0_llm_base_url"),
         llm_api_key=cfg.get("mem0_llm_api_key"),

@@ -298,6 +298,17 @@ const botStub = () => {
   }
 }
 const msg = (text) => ({ userId: 'owner@im.wechat', text })
+// U5 (#233): handleMessage 对每条主人消息生成 --recv-id（uuid 随机）→ 断言存在性 + 其余参数
+const assertRecvUserMsg = (args, text, analysis) => {
+  assert.strictEqual(args[0], '--user-msg')
+  assert.strictEqual(args[1], text)
+  const ri = args.indexOf('--recv-id')
+  assert.ok(ri > 1, `预期含 --recv-id，实际 ${JSON.stringify(args)}`)
+  assert.ok(typeof args[ri + 1] === 'string' && args[ri + 1].length > 0, 'recv-id 应为非空字符串')
+  const rest = args.slice(2, ri)
+  if (analysis !== undefined) assert.deepStrictEqual(rest, ['--analysis', analysis])
+  else assert.deepStrictEqual(rest, [])
+}
 const queue = new TurnQueue()
 
 t('handleMessage: 特殊命令（记住X月X日）→ 不调 agent、daemon --anniversary add、真实 shape 确认文案', async () => {
@@ -307,7 +318,7 @@ t('handleMessage: 特殊命令（记住X月X日）→ 不调 agent、daemon --an
   const r = await handleMessage('记住5月11日是迟菓生日', msg('记住5月11日是迟菓生日'), bot, queue)
   assert.strictEqual(r, 'special')
   assert.strictEqual(pLines().length, pb, '特殊命令不应调 agent')
-  assert.deepStrictEqual(JSON.parse(dLines()[db]), ['--user-msg', '记住5月11日是迟菓生日'])
+  assertRecvUserMsg(JSON.parse(dLines()[db]), '记住5月11日是迟菓生日')
   assert.deepStrictEqual(JSON.parse(dLines()[db + 1]), ['--anniversary', 'add anniversary 05-11 迟菓生日'])
   assert.deepStrictEqual(bot.replies, ['记住了！05-11——迟菓生日。……哼，才不会忘记。'])
 })
@@ -318,7 +329,7 @@ t('handleMessage: 特殊命令（放假了）→ 不调 agent、daemon --break o
   const r = await handleMessage('放假了', msg('放假了'), bot, queue)
   assert.strictEqual(r, 'special')
   assert.strictEqual(pLines().length, pb, '特殊命令不应调 agent')
-  assert.deepStrictEqual(JSON.parse(dLines()[db]), ['--user-msg', '放假了'])
+  assertRecvUserMsg(JSON.parse(dLines()[db]), '放假了')
   assert.deepStrictEqual(JSON.parse(dLines()[db + 1]), ['--break', 'on'])
   assert.ok(bot.replies[0].includes('放假了'), bot.replies[0])
 })
@@ -331,10 +342,10 @@ t('handleMessage: 普通消息 → 走 askAgent（--prompt 原文 --analysis-mod
   assert.strictEqual(r, 'agent')
   assert.strictEqual(pLines().length, pb + 1, 'agent 应被调一次')
   assert.deepStrictEqual(JSON.parse(pLines()[pb]), ['--prompt', '今天天气怎么样', '--analysis-mode'])
-  assert.deepStrictEqual(JSON.parse(dLines()[db]), ['--user-msg', '今天天气怎么样'])
+  assertRecvUserMsg(JSON.parse(dLines()[db]), '今天天气怎么样')
   assert.deepStrictEqual(JSON.parse(dLines()[db + 1]), ['--attention'], '6b:回复侧先取 --attention(失败降级继续 askAgent)')
   assert.deepStrictEqual(JSON.parse(dLines()[db + 2]), ['--memory-search', '今天天气怎么样'], '回复侧记忆检索走 mem0 --memory-search')
-  assert.deepStrictEqual(JSON.parse(dLines()[db + 3]), ['--user-msg', '今天天气怎么样', '--analysis', JSON.stringify({ warmth: 0.3, effort: 0.4 })])
+  assertRecvUserMsg(JSON.parse(dLines()[db + 3]), '今天天气怎么样', JSON.stringify({ warmth: 0.3, effort: 0.4 }))
   assert.deepStrictEqual(bot.replies, ['今天天气不错呢'])
 })
 t('handleMessage: mem0 记忆命中 → askAgent prompt 含 <relevant-memories> 与 [UNTRUSTED DATA]', async () => {
