@@ -32,7 +32,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 | 脚本 | 职责 |
 |------|------|
 | `deploy.sh`（仓库根） | 一键部署：uv+Python 3.14+依赖 → mem0 校验 → 全量自检 → 环境检查 → 微信桥/agent/网易云分级安装 → 迁移提示 |
-| `scripts/ci-test.sh` | 全量自检链（59 py + 13 script），与 GitHub Actions 共用同一入口 |
+| `scripts/ci-test.sh` | 全量自检链（59 py + 14 script），与 GitHub Actions 共用同一入口 |
 | `scripts/chiguo-tick.sh` | 主动发送链（crontab 触发：决策 → 生成 → 微信发送 → 健康记录） |
 | `scripts/replan-tick.sh` | 计划重分析（crontab 触发） |
 | `scripts/install_agent.sh` | agent 环境安装（key 写入、crontab/常驻注册、冒烟） |

@@ -245,9 +245,11 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
 - 进程内 `TurnQueue` 串行 agent 调用（同一会话 chiguo-main 不允许并发 turn）
 - 环境变量：`WECHAT_BRIDGE_AGENT_RUN`（默认仓库内 agent-run.mjs）、`WECHAT_BRIDGE_DAEMON_PY`、
   `WECHAT_BRIDGE_DAEMON`、`WECHAT_BRIDGE_OWNER`、`WECHAT_BRIDGE_SEND_PORT`、`WECHAT_BRIDGE_STORAGE`、
-  `WECHAT_BRIDGE_MEMORY_PY`/`WECHAT_BRIDGE_MEMORY_BRIDGE`（斜杠命令记忆 CLI）
+  `WECHAT_BRIDGE_MEMORY_PY`/`WECHAT_BRIDGE_MEMORY_BRIDGE`（斜杠命令记忆 CLI）、
+  `WECHAT_BRIDGE_SESSION_ROTATE`/`WECHAT_BRIDGE_SESSION_ROTATE_TIME`（每日会话自动轮换，默认 04:00 CST 开启）
 - 测试：`tests/test_agent_rpc.mjs`、`tests/test_bridge_agent_http.mjs`、`tests/test_bridge_askagent_rpc.mjs`、
-  `tests/test_bridge_askagent.mjs`、`tests/test_bridge_cmd.mjs`、`tests/test_bridge_health.mjs`、`tests/test_bridge_schedule.mjs`
+  `tests/test_bridge_askagent.mjs`、`tests/test_bridge_cmd.mjs`、`tests/test_bridge_health.mjs`、`tests/test_bridge_rotate.mjs`、
+  `tests/test_bridge_schedule.mjs`
 
 ### 6.1 命令体系 A：斜杠命令（ai 会话命令，detectSlashCommand）
 
