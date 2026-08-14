@@ -112,7 +112,7 @@ bash scripts/install_agent.sh --yes
 
 环境变量（bridge 侧，wechat-bridge.sh write_env 生成；**回复链 RPC 默认启用**，无需 CHIGUO_DAEMON_LOOP）：
 ```
-WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs   # spawn 回退路径
+WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs   # spawn 回退路径（未设置时默认仓库内 scripts/agent-run.mjs；启动时校验存在，缺失/被误删 → 明确报错退出）
 WECHAT_BRIDGE_AGENT_RPC=1                                     # 1=回复链 RPC 优先（仅 RUNNER=agent 可用，失败自动回退 spawn）
 WECHAT_BRIDGE_TOKEN=<随机 hex>                                # /send 与 /agent/prompt 共享 token（wechat-bridge.sh 生成，幂等保留）
 # loop 形态下 daemon _loop_send 的 /send 鉴权（R17）：install_agent.sh 生成 chiguo-daemon.service

@@ -277,8 +277,11 @@ t('桥侧 180s 超时 → "处理失败,再试一次?" 且队列不阻塞(M16)',
   const replies = []
   const slowDeps = {
     repoRoot: repo,
-    extractPi: async () => { await new Promise((r) => setTimeout(r, 10)); throw new Error('timeout 180s') },
-    verifyPi: async () => ({ ok: true }),
+    // U8c: 修正 deps 键名（旧 extractPi/verifyPi 早已改为 extractAgent/verifyAgent；原写法
+    // 使本用例静默走默认 extractAgent(真实 spawn)而非注入慢 deps——此前靠 AGENT_RUN_SCRIPT 未定义
+    // 快速失败绕过,AGENT_RUN_SCRIPT 默认化后暴露。现正确注入慢 extract 以真测 180s 超时兜底。
+    extractAgent: async () => { await new Promise((r) => setTimeout(r, 10)); throw new Error('timeout 180s') },
+    verifyAgent: async () => ({ ok: true }),
     runDaemon: async () => ({ ok: true, text: 'x' }),
   }
   // R2.3: 去掉同义反复的 released 行,捕获返回值断言 'error'(withTimeout 拒绝 → catch → 兜底)

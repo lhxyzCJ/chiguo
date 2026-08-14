@@ -42,7 +42,10 @@ import { parseNdjson, extractAnalysis, resolveRepo, RUNNER, HOST } from '../scri
 const execFileP = promisify(execFile)
 
 const DEBOUNCE_MS = 4000
+// U8c: AGENT_RUN_SCRIPT 默认随仓库 scripts/ 部署(portable,同 AGENT_HEALTH_SCRIPT),可用 WECHAT_BRIDGE_AGENT_RUN 覆盖;
+// 启动时见 checkAgentRunScript/main()——缺失或文件不存在时明确报错,替代 ask 期通用失败文案。
 const AGENT_RUN_SCRIPT = process.env.WECHAT_BRIDGE_AGENT_RUN
+  ?? new URL('../scripts/agent-run.mjs', import.meta.url).pathname
 // RPC 常驻(仿 OpenClaw gateway):env WECHAT_BRIDGE_AGENT_RPC=1 显式启用;失败自动回退 spawn。
 // v1.8: RPC 是 agent 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
 const AGENT_RPC_ENABLED = RUNNER === 'agent' && process.env.WECHAT_BRIDGE_AGENT_RPC === '1'
@@ -86,6 +89,19 @@ export class TurnQueue {
     this.tail = next.catch(() => {})
     return next
   }
+}
+
+/** U8c: AGENT_RUN_SCRIPT 启动校验（导出供测试，不启动 WeChatBot）。
+ * 返回 null = 通过；返回错误文案 = 启动时明确报错（替代 ask 期 spawn 通用失败文案，
+ * 便于诊断「env 未配置 / scripts/agent-run.mjs 缺失或被误删」两种配置问题）。 */
+export function checkAgentRunScript(script) {
+  if (!script || typeof script !== 'string' || script.length === 0) {
+    return 'AGENT_RUN_SCRIPT 未配置:WECHAT_BRIDGE_AGENT_RUN 为空或未设置(通过 wechat-bridge.sh 启动会自动注入,或手动 export WECHAT_BRIDGE_AGENT_RUN=<repo>/scripts/agent-run.mjs)'
+  }
+  if (!existsSync(script)) {
+    return `AGENT_RUN_SCRIPT 指向的脚本不存在: ${script}(请检查 WECHAT_BRIDGE_AGENT_RUN 配置,或确认 scripts/agent-run.mjs 已随仓库部署未被误删)`
+  }
+  return null
 }
 
 /** 调用 pi-agent（agent-run.mjs），一次完成「情绪分析 JSON + 回复」。
@@ -760,6 +776,13 @@ async function main() {
       '[FATAL] WECHAT_BRIDGE_TOKEN 未设置:HTTP 端点(/send 与 /agent/prompt)零鉴权,拒绝启动。\n' +
       '       请通过 wechat-bridge.sh 启动,或手动生成 token 写入 .env:\n' +
       '      echo "WECHAT_BRIDGE_TOKEN=$(openssl rand -hex 16)" >> .env\n')
+    process.exit(1)
+  }
+  // U8c: AGENT_RUN_SCRIPT 启动时校验——缺失/脚本不存在 → 明确报错退出(替代 ask 期通用失败文案,便于诊断)。
+  // 默认已按仓库内 scripts/agent-run.mjs 落地;此处兜底命中「env 显式指向错误/文件缺失」场景。
+  const agentRunErr = checkAgentRunScript(AGENT_RUN_SCRIPT)
+  if (agentRunErr) {
+    console.error(`[FATAL] ${agentRunErr}\n       请通过 wechat-bridge.sh 启动(其自动注入 WECHAT_BRIDGE_AGENT_RUN=scripts/agent-run.mjs),或确认 agent 调用层脚本存在。`)
     process.exit(1)
   }
   // 登录态目录含微信登录凭证 → 强制 0o700,防同机其他用户读取会话/凭证文件(umask 宽松时兜底)
