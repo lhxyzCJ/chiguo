@@ -781,7 +781,7 @@ async function main() {
     const text = msg.text
     if (!text?.trim()) return
     console.log(`[in] ${msg.userId}: ${text.length} chars`)  // 脱敏：不落正文（仅长度）
-    writeActivity(activityPath)   // 用户主动消息 = 会话活动（主会话轮换的空闲保护据此顺延）
+    try { writeActivity(activityPath) } catch {}   // 用户主动消息 = 会话活动（best-effort，写失败不阻塞消息链）
     await handleMessage(text, msg, bot, queue, makeScheduleDeps(REPO_ROOT))
   })
 
