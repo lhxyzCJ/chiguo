@@ -914,7 +914,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `service.sh` | 255 | systemd 服务管理 |
 | `netease-api.sh` | 180 | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
 | `chiguo-tick.sh` | 197 | cron 门控入口（零模型，读 daemon 输出 → send → 5s 重试 → record-send；无 composer 兜底，health 告警/暂停） |
-| `ci-test.sh` | 68 | 全量测试链（59 py + 14 script，CI stub 自举） |
+| `ci-test.sh` | 68 | 全量测试链（计数以(`scripts/ci-test.sh`)为准，CI stub 自举） |
 | `agent-auth.sh` | 18 | agent 认证 |
 | `replan-tick.sh` | 10 | loop 形态 replan 判脏轮询 |
 | `chiguo-daemon.service` | — | systemd 单元（loop 常驻形态） |
@@ -968,7 +968,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 ### 6.10 测试（`tests/`）
 
-59 个 py + 8 个 mjs + 5 个 sh（另有 fixture：`_loop_worker.py`、`fake-agent-rpc.mjs`），统一入口 `scripts/ci-test.sh`。详见 §十 与 AGENT_INTEGRATION.md §测试。
+`tests/` 测试集合以 `scripts/ci-test.sh` 为唯一权威（计数不硬编码，由 test_docs_sync 双向校验）；fixture `_loop_worker.py`、`fake-agent-rpc.mjs` 不以 `test_` 开头不入链。详见 §十 与 AGENT_INTEGRATION.md §测试。
 
 ### 6.11 文档（`doc/`）
 

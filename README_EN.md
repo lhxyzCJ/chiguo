@@ -206,7 +206,7 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: 59 py + 14 script standalone runners — 59 Python + 9 Node(.mjs) + 5 Shell(.sh))
+# Core tests (full suite: counts authoritative in scripts/ci-test.sh, self-checked by the blueprint; standalone runners, no pytest)
 bash scripts/ci-test.sh   # same entry point as GitHub Actions; any failure exits non-zero
 ```
 
@@ -370,7 +370,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 Any contribution is welcome — especially ones that help *her* grow:
 
 - **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each `test_*.py` in `tests/` is a standalone runner, exit-code driven.
-- **Run the full suite before submitting**: see `AGENTS.md` (59 py + 14 script tests), all green before commit.
+- **Run the full suite before submitting**: see `AGENTS.md` (test counts authoritative in scripts/ci-test.sh), all green before commit.
 - **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md` (repo rule).
 - **Commit style**: `feat:` / `fix:` / `docs:` / `chore:` prefix + Chinese description.
 - **Design docs**: for major changes, write a design doc under `~/chiguo-meta/specs/` (outside the repo) and get it reviewed first.

@@ -40,7 +40,7 @@ uv run python tests/test_state_sleep.py && uv run python tests/test_monitor_hard
 uv run python tests/test_demo.py && uv run python tests/test_daemon_fixes.py && \
 uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
 uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
-uv run python tests/test_personality_init.py && uv run python tests/test_toml_binding.py && \
+uv run python tests/test_personality_init.py && uv run python tests/test_personality_toml_binding.py && \
 uv run python tests/test_adapt_personality.py && uv run python tests/test_agent_health.py && \
 uv run python tests/test_anniversary.py && uv run python tests/test_schedule_override.py && \
 uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \

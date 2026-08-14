@@ -3,7 +3,7 @@
 > 定位：纯 Claude Code 开发规则（构建、测试、约定、gotchas）。版本 v1.15。
 > 架构（文件依赖树、evaluate() 决策流、5 维情绪引擎、触发系统、话题注入、消息 composer、Ship of Theseus 配置参数、决策输出 schema、运行时数据文件归属）详见 **doc/SYSTEM.md**。
 > agent 后端集成（LLM Host、send/reply 侧、SUN2.md 人格宪法、skill 文件边界）详见 **doc/AGENT_INTEGRATION.md**。
-> 测试 59 py + 9 node + 5 shell 独立 runner（合计 14 script，清单 scripts/ci-test.sh）；zero framework，纯 Python stdlib。
+> 测试无 pytest，独立 runner、纯 Python stdlib；测试清单唯一权威为 scripts/ci-test.sh（计数以它为准）。
 > **Iron law**: decision/generation separation. Daemon outputs JSON. agent backend generates messages (Phase 4).
 
 ---
@@ -11,7 +11,7 @@
 ## 1. 构建与测试 (Build & Test)
 
 ```bash
-# 全量测试：59 py + 9 node + 5 shell 独立 runner（任一失败退出非零；清单权威入口）
+# 全量测试：scripts/ci-test.sh 独立 runner（任一失败退出非零；清单唯一权威入口，计数以它为准）
 bash scripts/ci-test.sh
 
 # 单文件
