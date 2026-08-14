@@ -337,6 +337,8 @@ bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境�
 
 **认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态/网易云 cookie/agent key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。agent key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。微信登录态跨设备通常可直接复用：若首次**主动发送**报 `prepare failed`（context_token 过期），从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
 
+**context_token 有效期（已知现象，勿误判为故障）**：主动发送依赖微信服务端签发的 context_token（存于 `~/.chiguo/auth/wechat/context_tokens.json`）。微信侧无公开 TTL，实测**最后一次收到用户消息后约 35 小时失效**；每次收到用户消息自动刷新续期，正常聊天往来不会过期。过期唯一症状：主动发送报 `[send error] prepare failed`（回复链路不受影响）——**从微信给机器人发一条消息即恢复**，无需重新扫码、无需重启服务。排查工具：`bash scripts/wechat-bridge.sh status` 会显示 token 新鲜度（部署时 `deploy.sh` 也会检查并提示）。
+
 **网易云 API 服务**（可选来源）：systemd 托管（`systemctl status netease-api`），健康检查 `uv run python -m netease.bridge --test`；管理脚本 `bash scripts/netease-api.sh status`。
 
 部署后系统自动运行：crontab 每 15 分钟评估一次"要不要主动发消息"（或 `CHIGUO_DAEMON_LOOP=1` 常驻，见 [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)）；微信桥常驻接收你的消息。

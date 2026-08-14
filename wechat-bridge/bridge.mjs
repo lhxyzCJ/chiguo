@@ -439,7 +439,13 @@ function startSendServer(bot, queue) {
         }
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
-        console.error('[send error]', reason)
+        // #224: 服务端拒发 "prepare failed" = context_token 过期（微信侧无公开 TTL，
+        // 实测最后一次收到用户消息后约 35h 失效；每次收到用户消息自动刷新）。
+        // 显式提示恢复路径，避免误判为网络/登录问题而盲目重扫码。
+        const isStaleToken = reason.includes('prepare failed')
+        console.error(isStaleToken
+          ? `[send error] ${reason}（context_token 过期：从微信给机器人发一条消息即刷新恢复，无需重新扫码）`
+          : `[send error] ${reason}`)
         if (!res.writableEnded && !res.destroyed) {
           res.writeHead(500, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ ok: false, error: reason }))

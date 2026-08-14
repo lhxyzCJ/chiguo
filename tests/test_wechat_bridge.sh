@@ -94,6 +94,21 @@ set +e; OUT=$(FAKE_PID=123 bash scripts/wechat-bridge.sh status 2>&1); RC=$?; se
 echo "$OUT" | grep -q "owner_test@im.wechat" || fail "status 未显示账号"
 pass "有登录态 status → 退出 0 + 账号"
 
+# ── 用例 5b: context_token 新鲜度检查（#224）──
+# 新鲜（<24h）→ status 提示续期信息
+touch "$TMP/home/.chiguo/auth/wechat/context_tokens.json"
+set +e; OUT=$(FAKE_PID=123 bash scripts/wechat-bridge.sh status 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "新鲜 token status 期望 0 实得 $RC"
+echo "$OUT" | grep -q "context_token 新鲜" || fail "新鲜 token 未提示续期: $OUT"
+pass "context_token 新鲜 → status 提示续期"
+# 过期（≥24h）→ status 显式警告 prepare failed + 恢复指引
+touch -d "30 hours ago" "$TMP/home/.chiguo/auth/wechat/context_tokens.json"
+set +e; OUT=$(FAKE_PID=123 bash scripts/wechat-bridge.sh status 2>&1); RC=$?; set -e
+echo "$OUT" | grep -q "prepare failed" || fail "过期 token 未提示 prepare failed: $OUT"
+echo "$OUT" | grep -q "发一条消息即刷新恢复" || fail "过期 token 未提示恢复指引: $OUT"
+pass "context_token 过期 → status 警告 prepare failed + 恢复指引"
+rm -f "$TMP/home/.chiguo/auth/wechat/context_tokens.json"
+
 # ── 用例 6: start 缺 .env → 提示安装返回 1 ──
 rm -f "$TMP/repo/wechat-bridge/.env"
 set +e; OUT=$(bash scripts/wechat-bridge.sh start 2>&1); RC=$?; set -e

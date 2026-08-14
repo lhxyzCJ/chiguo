@@ -144,6 +144,21 @@ if [ ! -f chiguo_state.json ]; then
     warn "  (旧机的 chiguo_state.json/chiguo_decisions.jsonl/netease/netease_cookie.txt)"
 fi
 
+# 6.6 context_token 新鲜度检查（#224 主动发送前置条件）：
+#     微信服务端无公开 TTL，实测最后一次收到用户消息后约 35h 失效；收到消息自动刷新。
+#     过期症状 = 主动发送报 [send error] prepare failed → 从微信给机器人发一条消息即恢复。
+CT_FILE="$HOME/.chiguo/auth/wechat/context_tokens.json"
+if [ -f "$CT_FILE" ]; then
+    CT_AGE_H=$(( ($(date +%s) - $(stat -c %Y "$CT_FILE")) / 3600 ))
+    if [ "$CT_AGE_H" -ge 24 ]; then
+        warn "context_token 已 ${CT_AGE_H}h 未刷新（实测约 35h 过期）→ 主动发送将报 prepare failed；部署后从微信给机器人发一条消息即刷新恢复（无需重扫码）"
+    else
+        say "context_token 新鲜（${CT_AGE_H}h 前刷新，收到用户消息自动续期）"
+    fi
+else
+    warn "无 context_tokens.json（用户尚未发过消息）→ 首次主动发送前先从微信给机器人发一条消息（缺少 context_token 会报 prepare failed）"
+fi
+
 cat <<EOF
 
 ────────────────── 部署完成 ──────────────────

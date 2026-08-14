@@ -138,12 +138,24 @@ except: print("")' 2>/dev/null || true)"
 TRIGGER="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("trigger",""))
 except: print("")' 2>/dev/null || true)"
-if ! curl -sf --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
-  -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$BODY" >/dev/null 2>&1; then
-  echo "[chiguo-tick] bridge 发送失败，下个 tick 重试" >&2
+# 发送并透传失败原因（#224: "prepare failed" = context_token 过期 → 显式恢复指引，
+# 而不是笼统的"发送失败"——从微信给机器人发一条消息即刷新，无需重新扫码）
+SEND_RESP="$(curl -s --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
+  -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$BODY" 2>&1 || true)"
+if ! printf '%s' "$SEND_RESP" | grep -q '"ok": *true'; then
+  case "$SEND_RESP" in
+    *"prepare failed"*)
+      echo "[chiguo-tick] bridge 发送失败: context_token 过期（prepare failed）——从微信给机器人发一条消息即刷新恢复，无需重新扫码（详见 README「认证迁移」）" >&2
+      SEND_ERR="context_token expired (prepare failed)"
+      ;;
+    *)
+      echo "[chiguo-tick] bridge 发送失败: ${SEND_RESP:-无响应}，下个 tick 重试" >&2
+      SEND_ERR="bridge send failed: $(printf '%s' "$SEND_RESP" | head -c 120)"
+      ;;
+  esac
   # 回传失败 → daemon 侧 refund_send（energy/quota 回滚 + Hawkes 事件剔除），反馈闭环不静默断
   if [ -n "$MSG_ID" ]; then
-    "$PY" "$REPO/chiguo_daemon.py" --send-result "$MSG_ID" --send-status failed --error "bridge unreachable" >/dev/null 2>&1 \
+    "$PY" "$REPO/chiguo_daemon.py" --send-result "$MSG_ID" --send-status failed --error "$SEND_ERR" >/dev/null 2>&1 \
       || echo "[chiguo-tick] send-result(failed) 回传失败 msg_id=$MSG_ID" >&2
   fi
   exit 1

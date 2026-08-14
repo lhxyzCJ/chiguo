@@ -139,6 +139,7 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 - 备份/迁移清单：`~/.chiguo/auth/`（含 `agent-auth.json`）、`~/.pi/`、仓库内运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`schedule_overrides.json`、`schedule_plan.json`、`anniversaries.json`、`break_state.json`、`holidays.json`、`schedule_cache.json`）、`data/`（课表/记忆/手动数据）
 - 新机器：clone → 拷贝上述 → `bash deploy.sh`（自动接入；agent key 100% 迁移可用；微信/网易云跨设备自动重登兜底）
 - 微信登录态跨设备实测可复用：迁移后轮询正常，但首次**主动发送**可能被服务端拒（`[send error] prepare failed`，context_token 过期）——从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
+- **context_token 有效期**：主动发送依赖微信服务端签发的 context_token（`~/.chiguo/auth/wechat/context_tokens.json`）。微信侧无公开 TTL，实测**最后一次收到用户消息后约 35 小时失效**；每次收到用户消息自动刷新续期，正常聊天往来不会过期。过期唯一症状是主动发送报 `prepare failed`（回复链路不受影响），**从微信给机器人发一条消息即恢复**——不是网络/登录故障，不要盲目重扫码或重启。`deploy.sh` 部署时会检查并提示 token 新鲜度；`bash scripts/wechat-bridge.sh status` 随时可查。
 - 课表数据：仓库无 `data/` 目录，`chiguo_proactive.toml` 的 `xlsx_path = "data/xskb.xlsx"` 由部署者自行放入（最小课表 fixture 由 test_7/test_trigger 测试内自包含生成）。
 
 ## 十二、从旧版本（<v1.15）升级

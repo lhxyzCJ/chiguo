@@ -178,6 +178,22 @@ do_status() {
         warn "无登录态（start 后扫码登录）"
         rc=1
     fi
+    # #224 context_token 新鲜度检查：主动发送前置条件。context_token 由微信服务端签发，
+    # 无公开 TTL，实测最后一次收到用户消息后约 35h 失效；每次收到用户消息自动刷新
+    # （SDK remember() → context_tokens.json mtime = 最近刷新时刻）。过期症状：
+    # 主动发送报 [send error] prepare failed —— 从微信给机器人发一条消息即恢复，无需重扫码。
+    local ctx_file="$WX_STORAGE/context_tokens.json"
+    if [ -f "$ctx_file" ]; then
+        local age_h
+        age_h=$(( ($(date +%s) - $(stat -c %Y "$ctx_file")) / 3600 ))
+        if [ "$age_h" -ge 24 ]; then
+            warn "context_token 已 ${age_h}h 未刷新（微信侧无公开 TTL，实测约 35h 过期）→ 主动发送将报 prepare failed；从微信给机器人发一条消息即刷新恢复，无需重扫码"
+        else
+            say "context_token 新鲜（${age_h}h 前刷新；收到用户消息自动续期）"
+        fi
+    else
+        warn "无 context_tokens.json → 尚未收到过用户消息，主动发送会因缺 context_token 失败；先发一条微信给机器人即可"
+    fi
     return $rc
 }
 
