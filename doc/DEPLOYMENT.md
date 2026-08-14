@@ -32,7 +32,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 | 脚本 | 职责 |
 |------|------|
 | `deploy.sh`（仓库根） | 一键部署：uv+Python 3.14+依赖 → mem0 校验 → 全量自检 → 环境检查 → 微信桥/agent/网易云分级安装 → 迁移提示 |
-| `scripts/ci-test.sh` | 全量自检链（59 py + 14 script），与 GitHub Actions 共用同一入口 |
+| `scripts/ci-test.sh` | 全量自检链（计数以此脚本为准），与 GitHub Actions 共用同一入口 |
 | `scripts/chiguo-tick.sh` | 主动发送链（crontab 触发：决策 → 生成 → 微信发送 → 健康记录） |
 | `scripts/replan-tick.sh` | 计划重分析（crontab 触发） |
 | `scripts/install_agent.sh` | agent 环境安装（key 写入、crontab/常驻注册、冒烟） |
@@ -63,7 +63,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 ### 3. 全量自检
 
-`bash scripts/ci-test.sh`：59 个 Python + 13 个脚本测试（其中 8 个 Node `.mjs` + 5 个 Shell，独立 runner、无 pytest），任一失败即中止。验证：看输出「ALL TESTS PASSED」。
+`bash scripts/ci-test.sh`：全量测试链（计数以此脚本为准，独立 runner、无 pytest），任一失败即中止。验证：看输出「ALL TESTS PASSED」。
 
 该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot`（`ci-test.sh` 自动自举 stub）与 `data/xskb.xlsx`（课表 fixture 由 test_7/test_trigger 测试内自包含生成），因此本地与 CI 结果一致。
 

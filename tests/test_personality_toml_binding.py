@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_toml_binding.py — personality/*.toml 接线测试（Phase 2 Task 7）
+"""test_personality_toml_binding.py — personality/*.toml 接线测试（Phase 2 Task 7）
 
 测试意图（brief Step 1）：toml 存在、meta.name=迟菓、composer 加载逻辑生效
 （cue ↔ 模板关联：tsundere_* → tsundere.toml，dere_dere → deredere.toml，
