@@ -65,7 +65,7 @@ rl.on('line', (line) => {
     process.stdout.write(JSON.stringify({ type: 'response', id: cmd.id, command: 'prompt', success: true }) + '\\n')
     setTimeout(() => {
       const text = '<<ANALYSIS>>{"warmth":0.4,"effort":0.5,"attention":0.6}<<END>> RPC 回复'
-      process.stdout.write(JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text }] } }) + '\\n')
+      process.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text }] } }) + '\\n')
       process.stdout.write(JSON.stringify({ type: 'agent_settled' }) + '\\n')
     }, 20)
   }

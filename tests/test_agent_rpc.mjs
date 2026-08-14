@@ -42,7 +42,7 @@ rl.on('line', (line) => {
   } else if (cmd.type === 'prompt') {
     process.stdout.write(JSON.stringify({ type: 'response', id: cmd.id, command: 'prompt', success: true }) + '\\n')
     setTimeout(() => {
-      const ev = { type: 'message_end', message: { content: [{ type: 'text', text: '<<ANALYSIS>>{"warmth":0.5}<<END>> 测试中文🚀回复' }] } }
+      const ev = { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<ANALYSIS>>{"warmth":0.5}<<END>> 测试中文🚀回复' }] } }
       const buf = Buffer.from(JSON.stringify(ev) + '\\n', 'utf8')
       const cut = buf.indexOf(0xE6) + 1   // 切在 '测' 首字节之后(0xE6 | 0xB5 0x8B),跨多字节字符
       process.stdout.write(buf.subarray(0, cut))

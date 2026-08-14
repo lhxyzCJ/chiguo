@@ -43,6 +43,16 @@ t('parseNdjson: 坏行 + 好行混合 → 只取好行', () => {
 t('parseNdjson: 无 message_end（只有 message_start）→ 空串', () => {
   assert.strictEqual(parseNdjson('{"type":"message_start","message":{"content":[]}}'), '')
 })
+t('parseNdjson: agent 失败(仅 user message_end + assistant 空)→ 空串不取提示词 (#225)', () => {
+  const failOut = [
+    '{"type":"session","version":3,"id":"x"}',
+    '{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"你是迟菓。以下是提示词……"}]}}',
+    '{"type":"message_start","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"401: Invalid API key."}}',
+    '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"401: Invalid API key."}}',
+    '{"type":"agent_end","messages":[]}',
+  ].join('\n')
+  assert.strictEqual(parseNdjson(failOut), '', '401 失败不得把 user 提示词当回复')
+})
 
 t('extractAnalysis: 含 <<ANALYSIS>> 块 → 提取 JSON + 剥离后回复', () => {
   const text = '<<ANALYSIS>>{"warmth":0.5,"effort":0.3}<<END>>\n那、那也还行吧。'

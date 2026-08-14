@@ -24,7 +24,7 @@ rl.on('line', (line) => {
         : '<<ANALYSIS>>{"warmth":0.5,"effort":0.6,"attention":0.7}<<END>> 测试回复(analysis模板)'
       process.stdout.write(JSON.stringify({
         type: 'message_end',
-        message: { content: [{ type: 'text', text }], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+        message: { role: 'assistant', content: [{ type: 'text', text }], usage: { prompt_tokens: 10, completion_tokens: 5 } },
       }) + '\n')
       process.stdout.write(JSON.stringify({ type: 'agent_settled' }) + '\n')
     }, 20)

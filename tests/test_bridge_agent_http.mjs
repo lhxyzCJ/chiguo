@@ -41,7 +41,7 @@ rl.on('line', (line) => {
       const text = isSend
         ? '<<ANALYSIS>>{"warmth":0.5}<<END>> http(send)回复'
         : '<<ANALYSIS>>{"warmth":0.5}<<END>> http(analysis)回复'
-      process.stdout.write(JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text }] } }) + '\\n')
+      process.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text }] } }) + '\\n')
       process.stdout.write(JSON.stringify({ type: 'agent_settled' }) + '\\n')
     }, 20)
   }

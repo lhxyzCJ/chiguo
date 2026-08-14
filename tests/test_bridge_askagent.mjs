@@ -175,10 +175,10 @@ t('recall 信号路由:信号 → 第二趟 agent → 回答(mock analysis JSON)
     const joined = args.join(' ')
     calls.push(joined)
     if (joined.includes('--analysis-mode')) {
-      return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<ANALYSIS>>{"warmth":0.5,"recall":"生日"}<<END>>回答' }] } }) }
+      return { stdout: JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<ANALYSIS>>{"warmth":0.5,"recall":"生日"}<<END>>回答' }] } }) }
     }
     if (joined.includes('--schedule-recall')) {
-      return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<RECALL>>{"ok":true,"matches":[{"type":"anniversary","label":"哥哥的生日"}]}<<END>>哥哥的生日是5月11日呀' }] } }) }
+      return { stdout: JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<RECALL>>{"ok":true,"matches":[{"type":"anniversary","label":"哥哥的生日"}]}<<END>>哥哥的生日是5月11日呀' }] } }) }
     }
     throw new Error('unexpected')
   } }
@@ -195,9 +195,9 @@ t('recall 无匹配 → --facts 空数组、prompt 保留原文(事实只走 --f
   const fakeRun = { exec: async (bin, args, opts) => {
     calls.push(args.join(' '))
     if (args.join(' ').includes('--analysis-mode')) {
-      return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<ANALYSIS>>{"warmth":0.5,"recall":"查无此事"}<<END>>回答' }] } }) }
+      return { stdout: JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<ANALYSIS>>{"warmth":0.5,"recall":"查无此事"}<<END>>回答' }] } }) }
     }
-    return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '回答' }] } }) }
+    return { stdout: JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '回答' }] } }) }
   } }
   await runWithRecall('查无此事', fakeRun)
   const second = calls.find((c) => c.includes('--schedule-recall'))
@@ -223,7 +223,7 @@ t('B7: runWithRecall 传入 existingAnalysis → 复用已有分析,不重复 fi
     const joined = args.join(' ')
     calls.push(joined)
     if (joined.includes('--schedule-recall')) {
-      return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<RECALL>>{"ok":true,"matches":[{"type":"anniversary","label":"哥哥的生日"}]}<<END>>5月11日呀' }] } }) }
+      return { stdout: JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<RECALL>>{"ok":true,"matches":[{"type":"anniversary","label":"哥哥的生日"}]}<<END>>5月11日呀' }] } }) }
     }
     throw new Error('不应再调 firstAnalysis: ' + joined)
   } }
@@ -247,7 +247,7 @@ t('R4: handleMessage recall 路径走 deps.askAgent 注入(不走模块级 askAg
   injectedAsk.exec = async (bin, args, opts) => {
     execCalls += 1
     assert.ok(args.join(' ').includes('--schedule-recall'), '第二趟走 --schedule-recall')
-    return { stdout: JSON.stringify({ type: 'message_end', message: { content: [{ type: 'text', text: '<<RECALL>>{"ok":true}<<END>>注入的第二趟回答' }] } }) }
+    return { stdout: JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '<<RECALL>>{"ok":true}<<END>>注入的第二趟回答' }] } }) }
   }
   const r = await handleMessage('哥哥我生日是什么时候', msg('哥哥我生日是什么时候'), bot, queue,
     { askAgent: injectedAsk })

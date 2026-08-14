@@ -113,7 +113,9 @@ export function parseNdjson(stdout) {
     if (!line.trim()) continue
     try {
       const ev = JSON.parse(line)
-      if (ev.type === 'message_end') {
+      // #225: 只取 assistant 的 message_end——agent 失败(401/超时)时 stdout 里
+      // 只有 user 的 message_end(内容=提示词),此前会把提示词当回复发出去。
+      if (ev.type === 'message_end' && ev.message?.role === 'assistant') {
         const texts = (ev.message?.content ?? [])
           .filter((c) => c.type === 'text').map((c) => c.text)
         if (texts.length) finalText = texts.join('\n')
