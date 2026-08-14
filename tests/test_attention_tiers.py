@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """test_attention_tiers.py — 注意力分层 T1/T2/T3 + today_exceptions 单元测试(批次 2c)"""
 
-import json, os, sys, tempfile
+import json, os, re, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datetime import date
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
+from unittest import mock
+
+import tomllib
+from chiguo_state import ChiguoState
+import schedule.attention as attn_mod
 
 TODAY = date(2026, 8, 5)
+CST = timezone(timedelta(hours=8))
 
 from schedule.sources import load_sources
 from schedule.attention import t1_items, t2_block, t3_window, today_exceptions, build_attention
@@ -123,9 +130,44 @@ def test_t3_window_and_today_exceptions():
     print("  OK test_t3_window_and_today_exceptions")
 
 
+def _mk_state(td):
+    """构造临时目录中的 ChiguoState（隔离配置/状态）。"""
+    src = Path("chiguo_proactive.toml").read_text()
+    src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                 f'mem0_qdrant_path = "{Path(td) / "no_qdrant"}"', src)
+    cfg_path = Path(td) / "chiguo_proactive.toml"
+    cfg_path.write_text(src)
+    with open(cfg_path, "rb") as f:
+        cfg = tomllib.load(f)
+    cfg["_base_dir"] = str(td)
+    return ChiguoState(cfg)
+
+
+def test_snapshot_attention_m2_cache():
+    """M-2 (#230, D5): attention 并入 _rc_cache 按日缓存——同日多次 snapshot 只 build_attention 一次；
+    跨日（_resolved_for 整体重建 _rc_cache）→ 重算一次。"""
+    import tomllib
+    with tempfile.TemporaryDirectory() as td:
+        st = _mk_state(td)
+        now1 = datetime(2026, 8, 5, 10, 0, tzinfo=CST)
+        now1b = datetime(2026, 8, 5, 14, 0, tzinfo=CST)
+        now2 = datetime(2026, 8, 6, 9, 0, tzinfo=CST)
+        with mock.patch.object(attn_mod, "build_attention",
+                               wraps=attn_mod.build_attention) as m:
+            st.snapshot(now1)
+            st.snapshot(now1b)   # 同日 → 命中 _rc_cache，不再调
+            assert m.call_count == 1, f"同日两次 snapshot 应只 build 一次, got {m.call_count}"
+            st.snapshot(now2)    # 跨日 → _resolved_for 重建 _rc_cache，重算
+            assert m.call_count == 2, f"跨日应重算一次, got {m.call_count}"
+            st.snapshot(now2)    # 同日 again → 命中
+            assert m.call_count == 2, f"跨日后同日再 snapshot 不重算, got {m.call_count}"
+    print("  OK test_snapshot_attention_m2_cache")
+
+
 if __name__ == "__main__":
     print("test_attention_tiers.py\n")
-    tests = [test_t1_items, test_t2_block, test_t3_window_and_today_exceptions]
+    tests = [test_t1_items, test_t2_block, test_t3_window_and_today_exceptions,
+             test_snapshot_attention_m2_cache]
     for t in tests:
         t()
     print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
