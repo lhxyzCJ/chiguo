@@ -448,6 +448,13 @@ thinking_level = "off"            # 思考模式：off 关闭（pi --thinking �
 reply_thinking_level = "off"      # 回复侧独立档位（交互及时性:微信消息→回复的 LLM 调用用此档位;主动发送/重分析仍用 thinking_level。可设 medium/high 保响应速度,max 保质量,缺省回退 thinking_level；off=关闭思考）
 session_id = "chiguo-main"      # 回复侧会话（bridge askAgent；进程内 TurnQueue 串行）
 send_session_id = "chiguo-send" # 主动发送会话（chiguo-tick.sh 经 AGENTRUN_SESSION 注入；与回复会话分离 → 消除跨进程并发 turn）
+# ── 每日会话轮换（bridge 内定时器；防上下文堆积，详见 doc/SYSTEM.md §11.2）──
+# 语义：每小时整点检查（每天首个检查点 = 00:00 CST）；距最近活动（用户消息 / cron
+# 判定要发消息，记于 ~/.chiguo/session-activity-last）超过 idle_minutes 才轮换主会话
+# （备份+开新会话，记忆/情绪/课表保留）。有活动则顺延，绝不切断进行中的对话。
+session_rotate_enabled = true      # 总开关（false 关闭）
+session_rotate_check_minutes = 60  # 检测间隔（分钟；整点对齐）
+session_rotate_idle_minutes = 60   # 空闲阈值（分钟）
 wechat_bridge_url = "http://127.0.0.1:18790/send"   # 主动发送端点（chiguo-tick.sh curl 目标；--noproxy '*'）
 
 # ── agent 后端抽象（v1.8 解耦：任意替换 agent）──

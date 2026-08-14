@@ -91,7 +91,10 @@ TOML
 cat > "$REPO/chiguo_daemon.py" <<'PY'
 import json, sys, os
 if "--compact" in sys.argv:
-    print(json.dumps({"action": "send", "msg_id": "abc123", "trigger": "lonely_mid", "context": {}}))
+    if os.environ.get("FAKE_DAEMON_ACTION") == "idle":
+        print(json.dumps({"action": "idle"}))
+    else:
+        print(json.dumps({"action": "send", "msg_id": "abc123", "trigger": "lonely_mid", "context": {}}))
 elif "--send-result" in sys.argv:
     with open(os.environ.get("SEND_RESULT_LOG", "/dev/null"), "a") as f:
         f.write(json.dumps(sys.argv) + "\n")
@@ -113,6 +116,8 @@ JS
 export FAKE_AGENT_CALLS="$TMP/agent_calls"
 : > "$FAKE_AGENT_CALLS"
 spawn_count() { [ -f "$FAKE_AGENT_CALLS" ] && wc -c < "$FAKE_AGENT_CALLS" || echo 0; }
+# #223 活动标记（轮换空闲保护）：隔离到 TMP，绝不写真实 ~/.chiguo
+export CHIGUO_ACTIVITY_FILE="$TMP/activity"
 
 cp "$REPO_ROOT/scripts/agent_health.py" "$REPO/scripts/agent_health.py"
 export FAKE_AGENT_MODE_FILE="$TMP/agent_mode"
@@ -321,6 +326,24 @@ test_replan_tick_path() {
   pass "R18: replan-tick.sh 含 PATH 补齐 export"
 }
 test_replan_tick_path
+
+# ── #223 活动标记：ACTION=send 写活动文件（epoch 秒）；idle 判定不写 ──
+test_activity_marker() {
+  # 前面各用例均为 send 判定（多次运行）→ 活动文件应存在且新鲜
+  [ -f "$CHIGUO_ACTIVITY_FILE" ] || fail "send 判定后应写活动文件"
+  local ACT_TS NOW_TS
+  ACT_TS="$(cat "$CHIGUO_ACTIVITY_FILE" 2>/dev/null || echo 0)"
+  NOW_TS="$(date +%s)"
+  [ $(( NOW_TS - ACT_TS )) -lt 300 ] || fail "活动时间戳应新鲜（差 $(( NOW_TS - ACT_TS ))s）"
+  # idle 路径：ACTION != send → 不改写活动文件（exit 0）
+  echo 1111111111 > "$CHIGUO_ACTIVITY_FILE"
+  FAKE_DAEMON_ACTION=idle CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1 || fail "idle tick 应退出 0"
+  [ "$(cat "$CHIGUO_ACTIVITY_FILE")" = 1111111111 ] || fail "idle 判定不应改写活动文件"
+  # 源码层面：spawn 回退带 AGENTRUN_ROTATE_SESSION=1（send 每轮全新）
+  grep -q 'AGENTRUN_ROTATE_SESSION=1' "$REAL_TICK" || fail "tick spawn 回退缺 AGENTRUN_ROTATE_SESSION=1"
+  pass "#223 活动标记: send 写 / idle 不写 + spawn 轮换标志"
+}
+test_activity_marker
 
 # ── 用例 8（Issue #135）: daemon --compact 崩溃 → 非零退出 + stderr 告警（不得静默吞掉）──
 # 放在最末尾：替换 fake daemon 为崩溃版，不影响前面各用例依赖的 send 输出

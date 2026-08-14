@@ -32,6 +32,11 @@ ACTION="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("action",""))
 except: print("")' 2>/dev/null || true)"
 [ "$ACTION" = "send" ] || exit 0
+# 活动标记（#223 轮换空闲保护）：cron 判定要发消息 = 会话活动 → 主会话每日轮换顺延。
+# 与 bridge onMessage 的用户消息活动共用 ~/.chiguo/session-activity-last（epoch 秒）。
+ACTIVITY_FILE="${CHIGUO_ACTIVITY_FILE:-$HOME/.chiguo/session-activity-last}"
+mkdir -p "$(dirname "$ACTIVITY_FILE")" 2>/dev/null || true
+date +%s > "$ACTIVITY_FILE" 2>/dev/null || true
 # 发送目标/端点（提前解析：失败分支记账告警也要用）
 # 收件人解析链：登录后的 ~/.chiguo/auth/wechat/credentials.json userId（真实）→ toml wechat_recipient（用户手配）→ 失败提示 login
 OWNER="$(sed -n 's/.*"userId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$HOME/.chiguo/auth/wechat/credentials.json" 2>/dev/null | head -1 || true)"
@@ -98,7 +103,7 @@ except: print("")' 2>/dev/null || true)"
 fi
 if [ -z "$RES" ]; then
   echo "[chiguo-tick] RPC 未产出,回退 spawn agent-run: $(printf '%s' "${RPC_RES:-}" | head -c 200)" >&2
-  RES="$(CHIGUO_REPO="$REPO" AGENTRUN_SESSION="$SEND_SESSION" node "$REPO/scripts/agent-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
+  RES="$(CHIGUO_REPO="$REPO" AGENTRUN_SESSION="$SEND_SESSION" AGENTRUN_ROTATE_SESSION=1 node "$REPO/scripts/agent-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
 fi
 TEXT="$(printf '%s' "$RES" | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("text",""))

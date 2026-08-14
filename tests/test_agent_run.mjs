@@ -175,7 +175,8 @@ t('run: analysis-mode 用 reply_thinking_level（回复及时性,与主动发送
     assert.ok(si >= 0 && captured[si + 1] === 'max',
       `send-mode 应保留 thinking_level=max，实得 ${captured[si + 1]}`)
   } finally {
-    process.env.CHIGUO_REPO = prev
+    if (prev === undefined) delete process.env.CHIGUO_REPO
+    else process.env.CHIGUO_REPO = prev
     fs.rmSync(td, { recursive: true, force: true })
   }
 })
@@ -483,6 +484,41 @@ t('parseAgentOutput: 契约 JSON → 对象；非 JSON/无 ok 字段 → null', 
 // ── resolveRepo 仓库根推导（可移植性：消除 /root/chiguo 硬编码）──
 t('resolveRepo: 环境变量 CHIGUO_REPO 优先', () => {
   assert.strictEqual(resolveRepo('file:///x/y/z.mjs', { CHIGUO_REPO: '/tmp/r' }), '/tmp/r')
+})
+
+// ── AGENTRUN_ROTATE_SESSION=1（#223 send 每轮全新：显式会话也轮换）──
+t('rotate-session: AGENTRUN_ROTATE_SESSION=1 备份显式会话（chiguo-send）', async () => {
+  const { encodeSessionDir } = await import('../wechat-bridge/command-detect.mjs')
+  const td = fs.mkdtempSync(path.join(os.tmpdir(), 'chiguo-rotate-sess-'))
+  const prevHome = process.env.HOME
+  const prevCwd = process.cwd()
+  const prevRepo = process.env.CHIGUO_REPO
+  // 模块顶层 REPO 解析依赖 CHIGUO_REPO：显式指向真实仓库（防环境残留 'undefined'）
+  process.env.CHIGUO_REPO = path.join(path.dirname(new URL(import.meta.url).pathname), '..')
+  process.env.HOME = td
+  process.env.AGENTRUN_ROTATE_SESSION = '1'
+  process.env.AGENTRUN_SESSION = 'chiguo-send'
+  try {
+    const cwd = path.join(td, 'wechat-bridge')
+    fs.mkdirSync(cwd, { recursive: true })
+    process.chdir(cwd)
+    const sdir = path.join(td, '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
+    fs.mkdirSync(sdir, { recursive: true })
+    const file = path.join(sdir, '2099-01-01T00-00-00-000Z_chiguo-send.jsonl')
+    fs.writeFileSync(file, 'x\n')
+    await import(`../scripts/agent-run.mjs?rot=${Date.now()}-${Math.random()}`)
+    assert.ok(!fs.existsSync(file), '显式会话文件已移走')
+    const backups = path.join(td, '.chiguo', 'session-backups')
+    assert.ok(fs.readdirSync(backups).some((f) => f.endsWith('-chiguo-send.jsonl')), 'send 备份存在')
+  } finally {
+    process.env.HOME = prevHome
+    delete process.env.AGENTRUN_ROTATE_SESSION
+    delete process.env.AGENTRUN_SESSION
+    process.chdir(prevCwd)
+    if (prevRepo === undefined) delete process.env.CHIGUO_REPO
+    else process.env.CHIGUO_REPO = prevRepo
+    fs.rmSync(td, { recursive: true, force: true })
+  }
 })
 t('resolveRepo: 目录 URL（尾斜杠）→ 一级目录推导', () => {
   const repo = resolveRepo(new URL('.', import.meta.url).href, {})

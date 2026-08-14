@@ -80,6 +80,36 @@ t('handleAgentPrompt: send 模式成功 → 200 {ok,text}', async () => {
   } finally { globalThis.__agentRpc.dispose(); globalThis.__agentRpc = null }
 })
 
+t('handleAgentPrompt: send 模式每次轮换 send 会话（#223：移走旧文件）；analysis 不动', async () => {
+  const fs2 = await import('node:fs')
+  const path2 = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const { encodeSessionDir } = await import('../wechat-bridge/command-detect.mjs')
+  const repoRoot = path2.join(path2.dirname(fileURLToPath(import.meta.url)), '..')
+  const bridgeDir = path2.join(repoRoot, 'wechat-bridge')
+  const sdir = path2.join(cleanHome, '.pi', 'agent', 'sessions', encodeSessionDir(bridgeDir))
+  fs2.mkdirSync(sdir, { recursive: true })
+  const sendFile = path2.join(sdir, '2099-01-01T00-00-00-000Z_chiguo-send.jsonl')
+  fs2.writeFileSync(sendFile, 'x\n')
+  const backups = path2.join(cleanHome, '.chiguo', 'session-backups')
+  globalThis.__agentRpc = new AgentRpc({ bin: process.execPath, args: [FAKE_PI] })
+  try {
+    const res = resStub()
+    await handleAgentPrompt({ text: '{"action":"send"}', mode: 'send' }, res)
+    assert(res.status === 200, `status=${res.status}`)
+    assert.ok(!fs2.existsSync(sendFile), '旧 send 会话文件已移走（每轮全新）')
+    assert.ok(fs2.readdirSync(backups).some((f) => f.endsWith('-chiguo-send.jsonl')), 'send 备份存在')
+    // analysis 模式不轮换 send 会话
+    fs2.writeFileSync(sendFile, 'y\n')
+    const res2 = resStub()
+    await handleAgentPrompt({ text: 'hi', mode: 'analysis' }, res2)
+    assert(res2.status === 200, `analysis status=${res2.status}`)
+    assert.ok(fs2.existsSync(sendFile), 'analysis 模式不应动 send 文件')
+  } finally {
+    globalThis.__agentRpc.dispose(); globalThis.__agentRpc = null
+  }
+})
+
 t('handleAgentPrompt: 缺 text → 400', async () => {
   const res = resStub()
   await handleAgentPrompt({ mode: 'send' }, res)

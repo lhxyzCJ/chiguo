@@ -1,12 +1,13 @@
-// test_bridge_rotate.mjs — 每日会话轮换逻辑测试（独立 runner）
+// test_bridge_rotate.mjs — 主会话每日轮换逻辑测试（独立 runner）
 // 用法: node test_bridge_rotate.mjs（退出码 0=全过，1=有失败）
 import assert from 'node:assert'
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { encodeSessionDir, backupSessionFile } from '../wechat-bridge/command-detect.mjs'
 import {
-  parseRotateTime, cstDateStr, rotateInstantUTC, msToNextRotate,
+  cstDateStr, dayStartUTC, msToNextCheck,
+  readActivity, writeActivity, isIdleSince,
   rotateIfDue, readLastRotate,
 } from '../wechat-bridge/session-rotate.mjs'
 
@@ -20,39 +21,57 @@ async function runAll() {
   }
 }
 
-// ── 时刻解析/日历（纯函数）──
-t('rotate: parseRotateTime 合法/非法', () => {
-  assert.deepStrictEqual(parseRotateTime('04:00'), { h: 4, m: 0 })
-  assert.deepStrictEqual(parseRotateTime('4:30'), { h: 4, m: 30 })
-  assert.deepStrictEqual(parseRotateTime('23:59'), { h: 23, m: 59 })
-  assert.deepStrictEqual(parseRotateTime('00:00'), { h: 0, m: 0 })
-  assert.strictEqual(parseRotateTime('24:00'), null)
-  assert.strictEqual(parseRotateTime('04:60'), null)
-  assert.strictEqual(parseRotateTime('04:0'), null)
-  assert.strictEqual(parseRotateTime('abc'), null)
-  assert.strictEqual(parseRotateTime(''), null)
-  assert.strictEqual(parseRotateTime(null), null)
-})
+// ── 日历/时刻（纯函数）──
 t('rotate: cstDateStr 边界（UTC 20:30 → CST 次日 04:30）', () => {
   assert.strictEqual(cstDateStr(new Date('2025-08-14T20:30:00.000Z')), '2025-08-15')
   assert.strictEqual(cstDateStr(new Date('2025-08-14T15:59:59.000Z')), '2025-08-14')
 })
-t('rotate: rotateInstantUTC 今天（CST）04:00 → UTC 昨日 20:00', () => {
-  const now = new Date('2025-08-14T10:00:00.000Z')  // CST 08-14 18:00
-  assert.strictEqual(new Date(rotateInstantUTC(now, '04:00')).toISOString(), '2025-08-13T20:00:00.000Z')
-  assert.ok(Number.isNaN(rotateInstantUTC(now, 'abc')), '非法时刻 → NaN')
+t('rotate: dayStartUTC 今天 00:00 CST → UTC 昨日 16:00', () => {
+  // CST 2025-08-14 18:00
+  assert.strictEqual(new Date(dayStartUTC(new Date('2025-08-14T10:00:00.000Z'))).toISOString(), '2025-08-13T16:00:00.000Z')
+  // CST 2025-08-14 00:00 整（UTC 08-13T16:00）
+  assert.strictEqual(new Date(dayStartUTC(new Date('2025-08-13T16:00:00.000Z'))).toISOString(), '2025-08-13T16:00:00.000Z')
 })
-t('rotate: msToNextRotate 今天未到 → 今天；已过 → 明天；正到 → 明天', () => {
-  // CST 08-14 02:00（未到 04:00）→ 2h
-  assert.strictEqual(msToNextRotate(new Date('2025-08-13T18:00:00.000Z'), '04:00'), 7_200_000)
-  // CST 08-14 18:00（已过 04:00）→ 明天 04:00 = 10h
-  assert.strictEqual(msToNextRotate(new Date('2025-08-14T10:00:00.000Z'), '04:00'), 36_000_000)
-  // 正到时刻 → 24h
-  assert.strictEqual(msToNextRotate(new Date('2025-08-13T20:00:00.000Z'), '04:00'), 86_400_000)
-  assert.ok(Number.isNaN(msToNextRotate(new Date(), 'abc')), '非法时刻 → NaN')
+t('rotate: msToNextCheck 整点对齐网格', () => {
+  // CST 23:30 → 下一个整点 = 次日 00:00 = 30min
+  assert.strictEqual(msToNextCheck(new Date('2025-08-13T15:30:00.000Z'), 60), 1_800_000)
+  // CST 00:30 → 01:00 = 30min
+  assert.strictEqual(msToNextCheck(new Date('2025-08-13T16:30:00.000Z'), 60), 1_800_000)
+  // 正到整点 → 下一个整点 = 60min
+  assert.strictEqual(msToNextCheck(new Date('2025-08-13T16:00:00.000Z'), 60), 3_600_000)
+  // 30min 网格：CST 00:15 → 00:30 = 15min
+  assert.strictEqual(msToNextCheck(new Date('2025-08-13T16:15:00.000Z'), 30), 900_000)
+  // 非法/过小 → 退避 60s
+  assert.strictEqual(msToNextCheck(new Date(), 0), 60_000)
+  assert.strictEqual(msToNextCheck(new Date(), 'abc'), 60_000)
 })
 
-// ── backupSessionFile suffix 参数 ──
+// ── 活动时间戳 ──
+t('rotate: writeActivity/readActivity 往返 + 损坏容错', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rotate-activity-'))
+  try {
+    const p = join(dir, 'sub', 'activity')
+    writeActivity(p, 1234567890)
+    assert.strictEqual(readActivity(p), 1234567890)
+    writeFileSync(p, 'not-a-number')
+    assert.strictEqual(readActivity(p), null, '损坏 → null(视为空闲)')
+    writeFileSync(p, '')
+    assert.strictEqual(readActivity(p), null)
+    assert.strictEqual(readActivity(join(dir, 'missing')), null, '缺失 → null')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+t('rotate: isIdleSince 阈值判定', () => {
+  const now = new Date('2025-08-14T10:00:00.000Z')
+  const nowSec = Math.floor(now.getTime() / 1000)
+  assert.strictEqual(isIdleSince(now, null, 60), true, '无活动 → 空闲')
+  assert.strictEqual(isIdleSince(now, nowSec - 10 * 60, 60), false, '10min 前活动 → 不空闲')
+  assert.strictEqual(isIdleSince(now, nowSec - 61 * 60, 60), true, '61min 前活动 → 空闲')
+  assert.strictEqual(isIdleSince(now, nowSec - 60 * 60, 60), true, '恰 60min → 空闲(>=)')
+})
+
+// ── backupSessionFile suffix 参数（send 每轮全新复用）──
 t('rotate: backupSessionFile suffix 只移对应后缀文件', () => {
   const home = mkdtempSync(join(tmpdir(), 'rotate-suffix-home-'))
   const prevHome = process.env.HOME
@@ -81,104 +100,83 @@ t('rotate: backupSessionFile suffix 只移对应后缀文件', () => {
 })
 
 // ── rotateIfDue 全流程（HOME 注入隔离，绝不触碰真实 ~/.pi、~/.chiguo）──
-t('rotate: 到点且当日未轮换 → 双会话备份 + 写标记 + RPC 重启一次', async () => {
+function rotateCtx(nowIso, { marker = null, activity = null } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'rotate-home-'))
   const prevHome = process.env.HOME
   process.env.HOME = home
+  const cwd = mkdtempSync(join(tmpdir(), 'rotate-cwd-'))
+  const dir = join(home, '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
+  mkdirSync(dir, { recursive: true })
+  const mainFile = join(dir, '2099-01-01T00-00-00-000Z_chiguo-main.jsonl')
+  const sendFile = join(dir, '2099-01-01T00-00-00-000Z_chiguo-send.jsonl')
+  writeFileSync(mainFile, '{"type":"session"}\n')
+  writeFileSync(sendFile, '{"type":"session"}\n')
+  const backups = join(home, '.chiguo', 'session-backups')
+  const markerPath = join(home, '.chiguo', 'session-rotate-last')
+  const activityPath = join(home, '.chiguo', 'session-activity-last')
+  mkdirSync(join(home, '.chiguo'), { recursive: true })
+  if (marker) writeFileSync(markerPath, marker)
+  if (activity != null) writeActivity(activityPath, activity)
+  const restarts = { n: 0 }
+  const rpc = { async restart() { restarts.n++ } }
+  const cleanup = () => { process.env.HOME = prevHome; rmSync(home, { recursive: true, force: true }) }
+  return { home, cwd, dir, mainFile, sendFile, backups, markerPath, activityPath, rpc, restarts, cleanup }
+}
+
+t('rotate: 近期有活动 → active 顺延,不轮换', async () => {
+  const now = new Date('2025-08-14T10:00:00.000Z')  // CST 08-14 18:00
+  const ctx = rotateCtx('2025-08-14T10:00:00.000Z', { activity: Math.floor(now.getTime() / 1000) - 10 * 60 })
   try {
-    const cwd = mkdtempSync(join(tmpdir(), 'rotate-cwd-'))
-    const dir = join(home, '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
-    mkdirSync(dir, { recursive: true })
-    const mainFile = join(dir, '2099-01-01T00-00-00-000Z_chiguo-main.jsonl')
-    const sendFile = join(dir, '2099-01-01T00-00-00-000Z_chiguo-send.jsonl')
-    writeFileSync(mainFile, '{"type":"session"}\n')
-    writeFileSync(sendFile, '{"type":"session"}\n')
-    const backups = join(home, '.chiguo', 'session-backups')
-    const marker = join(home, '.chiguo', 'session-rotate-last')
-    const now = new Date('2025-08-14T10:00:00.000Z')  // CST 08-14 18:00，已过 04:00
-    let restarts = 0
-    const rpc = { async restart() { restarts++ } }
-    const out = await rotateIfDue({ now, timeStr: '04:00', markerPath: marker, backupsDir: backups, cwd, rpc })
-    assert.ok(out, '应执行轮换')
-    assert.ok(out.main.endsWith('-chiguo-main.jsonl') && out.send.endsWith('-chiguo-send.jsonl'), '双备份路径')
-    assert.ok(!existsSync(mainFile) && !existsSync(sendFile), '双会话文件已移走')
-    assert.ok(readdirSync(backups).some((f) => f.endsWith('-chiguo-main.jsonl')), 'main 备份存在')
-    assert.ok(readdirSync(backups).some((f) => f.endsWith('-chiguo-send.jsonl')), 'send 备份存在')
-    assert.strictEqual(readLastRotate(marker), '2025-08-14', '幂等标记已写')
-    assert.strictEqual(restarts, 1, 'RPC 重启一次（先杀进程再备份，#192）')
-    // 同日再调 → 幂等跳过（不重复重启）
-    assert.strictEqual(await rotateIfDue({ now, timeStr: '04:00', markerPath: marker, backupsDir: backups, cwd, rpc }), false)
-    assert.strictEqual(restarts, 1, '幂等不重复重启')
-  } finally {
-    process.env.HOME = prevHome
-    rmSync(home, { recursive: true, force: true })
-  }
+    const out = await rotateIfDue({ now, markerPath: ctx.markerPath, backupsDir: ctx.backups, cwd: ctx.cwd, rpc: ctx.rpc, activityPath: ctx.activityPath, idleMinutes: 60 })
+    assert.strictEqual(out, 'active')
+    assert.ok(existsSync(ctx.mainFile), '会话文件未动')
+    assert.ok(!existsSync(ctx.markerPath), '未写标记')
+  } finally { ctx.cleanup() }
 })
-t('rotate: 未到轮换时刻 → 不轮换、不写标记', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'rotate-home-'))
-  const prevHome = process.env.HOME
-  process.env.HOME = home
+t('rotate: 空闲超阈值 → 轮换 main（只动 main,不碰 send）+ RPC 重启一次 + 写标记', async () => {
+  const now = new Date('2025-08-14T10:00:00.000Z')  // CST 08-14 18:00
+  const ctx = rotateCtx('2025-08-14T10:00:00.000Z', { activity: Math.floor(now.getTime() / 1000) - 70 * 60 })
   try {
-    const cwd = mkdtempSync(join(tmpdir(), 'rotate-cwd-'))
-    const dir = join(home, '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
-    mkdirSync(dir, { recursive: true })
-    const mainFile = join(dir, '2099-01-01T00-00-00-000Z_chiguo-main.jsonl')
-    writeFileSync(mainFile, 'x\n')
-    const backups = join(home, '.chiguo', 'session-backups')
-    const marker = join(home, '.chiguo', 'session-rotate-last')
-    const now = new Date('2025-08-13T18:00:00.000Z')  // CST 08-14 02:00 < 04:00
-    const out = await rotateIfDue({ now, timeStr: '04:00', markerPath: marker, backupsDir: backups, cwd, rpc: null })
-    assert.strictEqual(out, false)
-    assert.ok(existsSync(mainFile), '会话文件未动')
-    assert.ok(!existsSync(marker), '未写标记')
-  } finally {
-    process.env.HOME = prevHome
-    rmSync(home, { recursive: true, force: true })
-  }
+    const out = await rotateIfDue({ now, markerPath: ctx.markerPath, backupsDir: ctx.backups, cwd: ctx.cwd, rpc: ctx.rpc, activityPath: ctx.activityPath, idleMinutes: 60 })
+    assert.ok(out && out.main.endsWith('-chiguo-main.jsonl'), 'main 备份路径')
+    assert.ok(!existsSync(ctx.mainFile), 'main 文件已移走')
+    assert.ok(existsSync(ctx.sendFile), 'send 文件不受每日轮换影响（只动 main）')
+    assert.ok(readdirSync(ctx.backups).some((f) => f.endsWith('-chiguo-main.jsonl')), 'main 备份存在')
+    assert.ok(!readdirSync(ctx.backups).some((f) => f.endsWith('-chiguo-send.jsonl')), '无 send 备份（每日轮换只动 main）')
+    assert.strictEqual(readLastRotate(ctx.markerPath), '2025-08-14', '幂等标记已写')
+    assert.strictEqual(ctx.restarts.n, 1, 'RPC 重启一次（先杀进程再备份，#192）')
+    // 同日再调 → 幂等跳过
+    assert.strictEqual(await rotateIfDue({ now, markerPath: ctx.markerPath, backupsDir: ctx.backups, cwd: ctx.cwd, rpc: ctx.rpc, activityPath: ctx.activityPath, idleMinutes: 60 }), false)
+    assert.strictEqual(ctx.restarts.n, 1, '幂等不重复重启')
+  } finally { ctx.cleanup() }
 })
-t('rotate: 标记当日已轮换 → 即使到点也跳过；无 rpc（非 RPC 模式）也能轮换', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'rotate-home-'))
-  const prevHome = process.env.HOME
-  process.env.HOME = home
+t('rotate: 无 rpc（非 RPC 模式）也能轮换;无活动文件视为空闲', async () => {
+  const now = new Date('2025-08-14T10:00:00.000Z')
+  const ctx = rotateCtx('2025-08-14T10:00:00.000Z')
   try {
-    const cwd = mkdtempSync(join(tmpdir(), 'rotate-cwd-'))
-    const dir = join(home, '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
-    mkdirSync(dir, { recursive: true })
-    const mainFile = join(dir, '2099-01-01T00-00-00-000Z_chiguo-main.jsonl')
-    writeFileSync(mainFile, 'x\n')
-    const backups = join(home, '.chiguo', 'session-backups')
-    const marker = join(home, '.chiguo', 'session-rotate-last')
-    mkdirSync(join(home, '.chiguo'), { recursive: true })
-    writeFileSync(marker, '2025-08-14')
-    const now = new Date('2025-08-14T10:00:00.000Z')  // 到点
-    assert.strictEqual(await rotateIfDue({ now, timeStr: '04:00', markerPath: marker, backupsDir: backups, cwd, rpc: null }), false)
-    assert.ok(existsSync(mainFile), '会话文件未动')
-    // 清标记 → rpc=null（非 RPC 模式）到点正常轮换
-    rmSync(marker)
-    const out = await rotateIfDue({ now, timeStr: '04:00', markerPath: marker, backupsDir: backups, cwd, rpc: null })
-    assert.ok(out && out.main.endsWith('-chiguo-main.jsonl') && out.send === null, '非 RPC 模式轮换（无 send 文件 → null）')
-    assert.strictEqual(readLastRotate(marker), '2025-08-14')
-  } finally {
-    process.env.HOME = prevHome
-    rmSync(home, { recursive: true, force: true })
-  }
+    const out = await rotateIfDue({ now, markerPath: ctx.markerPath, backupsDir: ctx.backups, cwd: ctx.cwd, rpc: null, activityPath: ctx.activityPath, idleMinutes: 60 })
+    assert.ok(out && out.main.endsWith('-chiguo-main.jsonl'), '非 RPC 模式轮换')
+    assert.strictEqual(readLastRotate(ctx.markerPath), '2025-08-14')
+  } finally { ctx.cleanup() }
 })
 t('rotate: 无会话文件也写标记（新机不整天重试）', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'rotate-home-'))
-  const prevHome = process.env.HOME
-  process.env.HOME = home
+  const now = new Date('2025-08-14T10:00:00.000Z')
+  const ctx = rotateCtx('2025-08-14T10:00:00.000Z')
   try {
-    const cwd = mkdtempSync(join(tmpdir(), 'rotate-cwd-'))
-    const backups = join(home, '.chiguo', 'session-backups')
-    const marker = join(home, '.chiguo', 'session-rotate-last')
-    const now = new Date('2025-08-14T10:00:00.000Z')
-    const out = await rotateIfDue({ now, timeStr: '04:00', markerPath: marker, backupsDir: backups, cwd, rpc: null })
-    assert.ok(out && out.main === null && out.send === null, '无文件也返回轮换结果')
-    assert.strictEqual(readLastRotate(marker), '2025-08-14')
-  } finally {
-    process.env.HOME = prevHome
-    rmSync(home, { recursive: true, force: true })
-  }
+    rmSync(ctx.mainFile)
+    rmSync(ctx.sendFile)
+    const out = await rotateIfDue({ now, markerPath: ctx.markerPath, backupsDir: ctx.backups, cwd: ctx.cwd, rpc: ctx.rpc })
+    assert.ok(out && out.main === null, '无文件也返回轮换结果')
+    assert.strictEqual(readLastRotate(ctx.markerPath), '2025-08-14')
+  } finally { ctx.cleanup() }
+})
+t('rotate: 当日已轮换标记 → 即使空闲也跳过', async () => {
+  const now = new Date('2025-08-14T10:00:00.000Z')
+  const ctx = rotateCtx('2025-08-14T10:00:00.000Z', { marker: '2025-08-14' })
+  try {
+    assert.strictEqual(await rotateIfDue({ now, markerPath: ctx.markerPath, backupsDir: ctx.backups, cwd: ctx.cwd, rpc: ctx.rpc }), false)
+    assert.ok(existsSync(ctx.mainFile), '会话文件未动')
+  } finally { ctx.cleanup() }
 })
 
 ;(async () => {

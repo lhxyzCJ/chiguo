@@ -33,10 +33,10 @@ import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand } from './command-detect.mjs'
-import { parseRotateTime, msToNextRotate, rotateIfDue, readLastRotate, defaultRotatePaths } from './session-rotate.mjs'
+import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand, backupSessionFile } from './command-detect.mjs'
+import { msToNextCheck, rotateIfDue, defaultRotatePaths, writeActivity, cstDateStr } from './session-rotate.mjs'
 // #99 A 路：askAgent（agent-run.mjs 统一入口）由阶段 4 集成接入；当前保留原 spawn 调用结构
-import { parseNdjson, extractAnalysis, resolveRepo, RUNNER } from '../scripts/agent-run.mjs'
+import { parseNdjson, extractAnalysis, resolveRepo, RUNNER, HOST } from '../scripts/agent-run.mjs'
 
 const execFileP = promisify(execFile)
 
@@ -49,6 +49,12 @@ const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 // #84 /send 共享 token:未设置时跳过 token 校验(向后兼容 tick.sh 等既有调用);设置后必须匹配
 const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
+// ── 主会话每日轮换配置（toml [host].session_rotate_*；env WECHAT_BRIDGE_ACTIVITY_FILE 可覆盖活动文件路径）──
+const ROTATE_CFG = {
+  enabled: HOST.session_rotate_enabled !== false,
+  checkMinutes: Math.max(5, Number(HOST.session_rotate_check_minutes ?? 60) || 60),
+  idleMinutes: Math.max(5, Number(HOST.session_rotate_idle_minutes ?? 60) || 60),
+}
 // 仓库根 = 本文件位置推导（可移植，随仓库克隆到任何路径）
 const REPO = resolveRepo(import.meta.url)
 // bridge 运行目录（wechat-bridge.sh 启动 cwd）：会话目录编码与 pi 进程 cwd 锚定于此。
@@ -374,6 +380,13 @@ export async function handleAgentPrompt(payload, res, queue = fallbackTurnQueue)
     const r = await queue.run(async () => {
       const { AgentRpc } = await import('./agent-rpc.mjs')
       if (!globalThis.__agentRpc) globalThis.__agentRpc = new AgentRpc()
+      // send 每轮全新（#223 设计）：prompt 前重启 send 会话进程（#192:先杀进程释放会话文件）再备份，
+      // 本轮从空会话开始 → 上下文恒 ≤1 轮（决策 JSON 自足，事实注入全在 JSON 里，不丢课表/提醒）。
+      if (mode === 'send') {
+        await globalThis.__agentRpc.restart({ mode: 'send' })
+        const dst = backupSessionFile(BRIDGE_DIR, join(homedir(), '.chiguo', 'session-backups'), 'chiguo-send')
+        if (dst) console.log(`[rotate] send 会话已轮换: ${dst}`)
+      }
       return withTimeout(globalThis.__agentRpc.prompt(text, { mode: mode ?? 'analysis' }), 180_000)
     })
     res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -698,32 +711,30 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   return 'agent'
 }
 
-// ── 每日会话轮换（防上下文堆积；见 session-rotate.mjs）──
-// env: WECHAT_BRIDGE_SESSION_ROTATE=0 关闭；WECHAT_BRIDGE_SESSION_ROTATE_TIME=HH:MM（CST，默认 04:00）。
-// 与 /new 同款备份语义（main + send 双会话），幂等标记 ~/.chiguo/session-rotate-last；
-// 启动即检查（bridge 重启/宕机错过时刻 → 补轮换），随后按时刻循环。轮换经 TurnQueue 串行，
-// 不与在途 agent turn 交错；RPC 常驻先杀进程（#192）再备份。
+// ── 主会话每日轮换（00:00 CST 起每 check_minutes 检查,空闲超 idle_minutes 才轮换；见 session-rotate.mjs）──
+// 活动判定:最近 1h 内有用户消息（onMessage 写 activity）或 cron 判定要发消息
+// （chiguo-tick.sh ACTION=send 写 activity）→ 顺延到下一检查点；绝不切断进行中的对话。
+// 启动即检查（bridge 重启/宕机错过 → 补轮换）；轮换经 TurnQueue 串行，不与在途 agent turn 交错。
 function armSessionRotation(queue) {
-  if (process.env.WECHAT_BRIDGE_SESSION_ROTATE === '0') return
-  const timeStr = process.env.WECHAT_BRIDGE_SESSION_ROTATE_TIME ?? '04:00'
-  if (!parseRotateTime(timeStr)) {
-    console.error(`[rotate] 已禁用: WECHAT_BRIDGE_SESSION_ROTATE_TIME 非法 (${timeStr}), 期望 HH:MM`)
-    return
-  }
-  const { backupsDir, markerPath } = defaultRotatePaths()
+  if (!ROTATE_CFG.enabled) return
+  const { backupsDir, markerPath, activityFile } = defaultRotatePaths()
+  const activityPath = process.env.WECHAT_BRIDGE_ACTIVITY_FILE ?? activityFile
   const tick = async () => {
     try {
-      const done = await queue.run(() =>
-        rotateIfDue({ timeStr, markerPath, backupsDir, cwd: BRIDGE_DIR, rpc: globalThis.__agentRpc ?? null }))
-      if (done) {
-        console.log(`[rotate] 每日会话已轮换（${timeStr} CST, ${readLastRotate(markerPath) ?? '?'}）` +
-          ` main=${done.main ?? '无'} send=${done.send ?? '无'}`)
+      const done = await queue.run(() => rotateIfDue({
+        markerPath, backupsDir, cwd: BRIDGE_DIR,
+        rpc: globalThis.__agentRpc ?? null,
+        activityPath, idleMinutes: ROTATE_CFG.idleMinutes,
+      }))
+      if (done && typeof done === 'object') {
+        console.log(`[rotate] 主会话已轮换（${cstDateStr()}）: main=${done.main ?? '无'}`)
+      } else if (done === 'active') {
+        console.log(`[rotate] 顺延: 近期有活动（${ROTATE_CFG.idleMinutes}min 空闲才轮换）`)
       }
     } catch (err) {
       console.error('[rotate] 失败:', err instanceof Error ? err.message : String(err))
     }
-    const wait = msToNextRotate(new Date(), timeStr)
-    setTimeout(tick, Number.isFinite(wait) && wait > 0 ? wait : 60_000)
+    setTimeout(tick, msToNextCheck(new Date(), ROTATE_CFG.checkMinutes))
   }
   tick()
 }
@@ -764,11 +775,13 @@ async function main() {
   })
 
   const queue = new TurnQueue()
+  const activityPath = process.env.WECHAT_BRIDGE_ACTIVITY_FILE ?? defaultRotatePaths().activityFile
 
   bot.onMessage(async (msg) => {
     const text = msg.text
     if (!text?.trim()) return
     console.log(`[in] ${msg.userId}: ${text.length} chars`)  // 脱敏：不落正文（仅长度）
+    writeActivity(activityPath)   // 用户主动消息 = 会话活动（主会话轮换的空闲保护据此顺延）
     await handleMessage(text, msg, bot, queue, makeScheduleDeps(REPO_ROOT))
   })
 

@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
- * session-rotate — 每日固定时间自动轮换 ai 会话（防上下文无限堆积）
+ * session-rotate — 主会话（chiguo-main）每日轮换：每小时检查，空闲超阈值才轮换
  *
- * 背景：chiguo-main（回复链）/ chiguo-send（主动发送链）会话文件随轮次无限增长，
- * prompt tokens 达 ~10 万后需手动 /new（doc/微信命令.md）。本模块提供每日固定时刻
- * （默认 04:00 CST）自动轮换：与 /new 共享同一备份逻辑（backupSessionFile），
- * RPC 常驻模式下先重启 agent 会话（#192 时序：先杀进程释放会话文件，再备份）再备份。
+ * 语义（详见 doc/SYSTEM.md §11.2）：
+ * - 每小时整点检查一次（每天首个检查点 = 00:00 CST，正常情况轮换落在凌晨）
+ * - 距最近活动（用户消息 / cron 判定要发消息，写于 ~/.chiguo/session-activity-last）
+ *   超过 session_rotate_idle_minutes（默认 60）才轮换 → 绝不切断进行中的对话；
+ *   有活动则顺延到下一检查点（深夜连续对话可能推迟到清晨）
+ * - 轮换 = RPC 常驻先杀进程（#192 时序）→ 备份 chiguo-main → 开新会话；
+ *   幂等标记 ~/.chiguo/session-rotate-last（同日只轮换一次）
+ * - send 会话（chiguo-send）不在此轮换：它每轮全新（bridge /agent/prompt send 前轮换 +
+ *   agent-run.mjs AGENTRUN_ROTATE_SESSION=1 兜底），上下文恒 ≤1 轮
  *
- * 幂等性：`~/.chiguo/session-rotate-last` 记录最近一次轮换的 CST 日期，同一天只轮换
- * 一次；bridge 重启/宕机错过时刻 → 下次启动补轮换（标记陈旧即补，无需等第二天）。
- *
- * 配置（env，由 bridge.mjs 读取）：
- *   WECHAT_BRIDGE_SESSION_ROTATE=0           关闭（默认开启）
- *   WECHAT_BRIDGE_SESSION_ROTATE_TIME=HH:MM  轮换时刻（CST，默认 04:00）
+ * 活动文件格式：epoch 秒（整数），由 bridge（onMessage 生产入口）与 chiguo-tick.sh
+ * （ACTION=send 判定）写入；文件缺失视为空闲（允许轮换）。
  */
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -31,29 +32,43 @@ export function cstDateStr(now = new Date()) {
   return cstNow(now).toISOString().slice(0, 10)
 }
 
-/** "HH:MM" → {h, m}；非法（非数字/越界/格式错）→ null。 */
-export function parseRotateTime(timeStr) {
-  const m = /^(\d{1,2}):([0-5]\d)$/.exec(String(timeStr ?? '').trim())
-  if (!m) return null
-  const h = Number(m[1])
-  if (h > 23) return null
-  return { h, m: Number(m[2]) }
-}
-
-/** 今天（CST）轮换时刻对应的 UTC ms；timeStr 非法 → NaN。 */
-export function rotateInstantUTC(now = new Date(), timeStr) {
-  const t = parseRotateTime(timeStr)
-  if (!t) return NaN
+/** 今天（CST）00:00 对应的 UTC ms（msToNextCheck 网格基准用）。 */
+export function dayStartUTC(now = new Date()) {
   const c = cstNow(now)
-  return Date.UTC(c.getUTCFullYear(), c.getUTCMonth(), c.getUTCDate(), t.h - 8, t.m)
+  return Date.UTC(c.getUTCFullYear(), c.getUTCMonth(), c.getUTCDate(), -8, 0)
 }
 
-/** 距下一次轮换时刻的 ms（今天未到 → 今天；已过/正到 → 明天）；非法 → NaN。 */
-export function msToNextRotate(now = new Date(), timeStr) {
-  const inst = rotateInstantUTC(now, timeStr)
-  if (Number.isNaN(inst)) return NaN
-  const t = now.getTime()
-  return (inst > t ? inst : inst + 24 * 3600e3) - t
+/** 距下一个检测网格边界（整点对齐 checkMinutes）的 ms；非法/过小 → 退避 60s。 */
+export function msToNextCheck(now = new Date(), checkMinutes = 60) {
+  const m = Number(checkMinutes)
+  if (!Number.isFinite(m) || m < 5) return 60_000
+  const c = cstNow(now)
+  const dayMs = ((c.getUTCHours() * 60 + c.getUTCMinutes()) * 60 + c.getUTCSeconds()) * 1000 + c.getUTCMilliseconds()
+  const step = m * 60_000
+  const nextDayMs = Math.floor(dayMs / step) * step + step
+  return dayStartUTC(now) + nextDayMs - now.getTime()
+}
+
+/** 读活动时间戳（epoch 秒；无/损坏 → null=视为空闲）。 */
+export function readActivity(activityPath) {
+  try {
+    const s = readFileSync(activityPath, 'utf8').trim()
+    const n = Number(s)
+    return Number.isFinite(n) && n > 0 ? n : null
+  } catch {
+    return null
+  }
+}
+
+export function writeActivity(activityPath, tsSeconds = Math.floor(Date.now() / 1000)) {
+  mkdirSync(dirname(activityPath), { recursive: true })
+  writeFileSync(activityPath, String(tsSeconds))
+}
+
+/** 距最近活动是否已超过 idleMinutes 分钟（活动缺失 → 空闲）。 */
+export function isIdleSince(now = new Date(), activitySeconds, idleMinutes = 60) {
+  if (activitySeconds == null) return true
+  return (now.getTime() / 1000 - activitySeconds) >= Number(idleMinutes) * 60
 }
 
 /** 读最近轮换日期标记（无/损坏 → null）。 */
@@ -71,29 +86,25 @@ export function writeLastRotate(markerPath, date) {
   writeFileSync(markerPath, date)
 }
 
-/** 轮换两个会话（main + send）：RPC 常驻先杀进程（#192：释放会话文件），再备份。
- *  返回 { main, send } = 备份路径（无对应会话文件 → null）。rpc 可为 null/无 restart。 */
-export async function rotateSessions({ cwd, backupsDir, rpc = null }) {
+/** 当日未轮换且空闲超阈值 → 轮换主会话并写标记。
+ *  返回 { main }（备份路径，无会话文件 → null）已轮换；
+ *  false=今日已轮换；'active'=近期有活动（顺延到下一检查点）。
+ *  rpc 可为 null/无 restart（非 RPC 模式直接备份）。 */
+export async function rotateIfDue({ now = new Date(), markerPath, backupsDir, cwd, rpc = null, activityPath = null, idleMinutes = 60 }) {
+  if (readLastRotate(markerPath) === cstDateStr(now)) return false
+  const act = activityPath ? readActivity(activityPath) : null
+  if (!isIdleSince(now, act, idleMinutes)) return 'active'
   if (rpc?.restart) await rpc.restart()
   const main = backupSessionFile(cwd, backupsDir, 'chiguo-main')
-  const send = backupSessionFile(cwd, backupsDir, 'chiguo-send')
-  return { main, send }
-}
-
-/** 到点且当日未轮换 → 轮换并写标记；返回 { main, send }，未轮换 → false。 */
-export async function rotateIfDue({ now = new Date(), timeStr, markerPath, backupsDir, cwd, rpc = null }) {
-  if (readLastRotate(markerPath) === cstDateStr(now)) return false
-  const inst = rotateInstantUTC(now, timeStr)
-  if (Number.isNaN(inst) || now.getTime() < inst) return false
-  const out = await rotateSessions({ cwd, backupsDir, rpc })
   writeLastRotate(markerPath, cstDateStr(now))
-  return out
+  return { main }
 }
 
-/** 默认路径（生产）：备份目录 + 幂等标记，均锚定 ~/.chiguo/。 */
+/** 默认路径（生产）：备份目录 + 幂等标记 + 活动时间戳，均锚定 ~/.chiguo/。 */
 export function defaultRotatePaths() {
   return {
     backupsDir: join(homedir(), '.chiguo', 'session-backups'),
     markerPath: join(homedir(), '.chiguo', 'session-rotate-last'),
+    activityFile: join(homedir(), '.chiguo', 'session-activity-last'),
   }
 }
