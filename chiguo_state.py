@@ -20,7 +20,7 @@ import shutil
 import sys
 import types
 import time as time_module
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from contextlib import contextmanager
@@ -45,13 +45,12 @@ from schedule.plan_store import PlanStore
 from memory import create_backend
 from chiguo_circadian import CircadianTracker, bucket_for
 from datetime import date as date_type
+from chiguo_time import CST
+import chiguo_locks as locks
+from chiguo_atomic import atomic_write
 
-CST = timezone(timedelta(hours=8))
-
-# ── v6: 跨进程锁的模块级状态。lock_path → fd（持锁中）与重入深度。
-# 同进程所有实例/调用共享同一 fd，避免对同一文件二次 open 造成 flock 自死锁。
-_LOCK_FDS: dict[str, int] = {}
-_LOCK_DEPTH: dict[str, int] = {}
+# ── Q21: 跨进程 fcntl 锁已收敛至共享模块 chiguo_locks（可重入;同进程共享
+# 同一 fd 与深度计数）。本模块经 state_lock/_in_lock 复用之。
 
 # ── Q7 (#79/#260): reminder 去重标记（last_triggered_at）跨进程持久化。
 # 该标记是运行时写上的去重状态，不属于记忆内容本身——持久化时从记忆的
@@ -523,7 +522,6 @@ class StatePersistence:
     def save(self, _backup: bool = True, _increment_tick: bool = True) -> bool:
         """原子写入：先写 .tmp，再 os.replace（避免写崩损坏正式文件）。返回 bool。"""
         p = self.state_path
-        tmp_path = Path(str(p) + ".tmp")
         bak_path = Path(str(p) + ".bak")
         lock_path = str(p) + ".lock"
         lock_acquired = self._lock_acquire(lock_path)
@@ -566,28 +564,23 @@ class StatePersistence:
             payload["_checksum"] = checksum
 
             data = json.dumps(payload, indent=2, ensure_ascii=False)
-            tmp_path.write_text(data)
-            try:
-                os.chmod(tmp_path, 0o600)
-            except OSError:
-                pass
-            try:
-                with open(tmp_path, 'rb') as _fsync_f:
-                    os.fsync(_fsync_f.fileno())
-            except OSError:
-                pass
-            # ── v5: 验证 tmp 是合法 JSON ──
-            try:
-                _verify = json.loads(tmp_path.read_text())
-                if not isinstance(_verify, dict) or "_version" not in _verify:
-                    raise ValueError("tmp validation failed: not a dict or no _version")
-            except (json.JSONDecodeError, ValueError, OSError):
+
+            # ── Q23: 原子写收敛至共享 chiguo_atomic.atomic_write
+            # （tmp 写入 0600 → fsync → 写前校验 → os.replace；
+            #  校验失败由 helper 清理 tmp 并抛异常，此处捕获后跳过本次 save——
+            #  与重构前一致：任何校验/读取失败都静默返回 False，不覆盖好状态）。
+            def _verify_tmp(t):
                 try:
-                    tmp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                return False
-            os.replace(tmp_path, self.state_path)
+                    _v = json.loads(Path(t).read_text())
+                except OSError as _e:
+                    raise ValueError("tmp validation failed: unreadable") from _e
+                if not isinstance(_v, dict) or "_version" not in _v:
+                    raise ValueError("tmp validation failed: not a dict or no _version")
+
+            try:
+                atomic_write(p, data, mode=0o600, fsync=True, verify=_verify_tmp)
+            except (json.JSONDecodeError, ValueError):
+                return False  # 跳过本次 save，不替换好状态
 
         except OSError as e:
             print(f"[chiguo_state] save failed: {e}", file=sys.stderr)
@@ -798,58 +791,22 @@ class StatePersistence:
         """公开审计入口（daemon/核心公共 API 用）。"""
         self._audit(event, detail)
 
-    # ── v6: 跨进程写锁（fcntl.flock）。同进程可重入（模块级 _LOCK_FDS/_LOCK_DEPTH）。──
+    # ── Q21: 跨进程写锁（fcntl.flock）已收敛至共享模块 chiguo_locks。
+    # 锁文件常驻，os.replace 换 inode 不影响锁；可重入（同进程共享同一 fd
+    # 与深度计数），防止 cron + 手动运行多实例竞争写导致 checksum 不匹配→删重建。
 
     def _lock_acquire(self, lock_path: str) -> bool:
-        if _LOCK_DEPTH.get(lock_path, 0) > 0:
-            return False
-        fd = _LOCK_FDS.get(lock_path)
-        if fd is None:
-            try:
-                import fcntl
-            except ImportError:
-                return False
-            try:
-                fd = open(lock_path, "a+")
-            except OSError:
-                return False
-            try:
-                deadline = time_module.monotonic() + 5.0
-                while True:
-                    try:
-                        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except OSError:
-                        if time_module.monotonic() >= deadline:
-                            self._audit("state_lock_timeout", lock_path)
-                            fd.close()
-                            return False
-                        time_module.sleep(0.1)
-            except OSError:
-                try:
-                    fd.close()
-                except OSError:
-                    pass
-                return False
-            _LOCK_FDS[lock_path] = fd
-        _LOCK_DEPTH[lock_path] = 1
-        return True
+        """获取进程级独占锁（可重入，delegate → chiguo_locks.acquire）。
+        返回 True 表示本次真正获得锁（需配套 release）。非 POSIX 或 5s 内
+        拿不到锁 → 降级无锁并审计（超时回调）。"""
+        return locks.acquire(
+            lock_path,
+            on_timeout=lambda lp: self._audit("state_lock_timeout", lp),
+        )
 
     def _lock_release(self, lock_path: str):
-        if _LOCK_DEPTH.get(lock_path, 0) <= 0:
-            return
-        _LOCK_DEPTH.pop(lock_path, None)
-        fd = _LOCK_FDS.pop(lock_path, None)
-        if fd is not None:
-            try:
-                import fcntl
-                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
-            except (ImportError, OSError):
-                pass
-            try:
-                fd.close()
-            except OSError:
-                pass
+        """释放锁（仅持有者调用）。delegate → chiguo_locks.release。"""
+        locks.release(lock_path)
 
     def lock_acquire(self, lock_path: str) -> bool:
         """公开跨进程锁原语（T11·Q1：核心类/委托走公开 API，不强闯私有）。"""
@@ -872,7 +829,7 @@ class StatePersistence:
 
     def in_lock(self) -> bool:
         """当前进程是否已持有 state 锁。"""
-        return _LOCK_DEPTH.get(str(self.state_path) + ".lock", 0) > 0
+        return locks.in_lock(str(self.state_path) + ".lock")
 
     def monotonic_anchor_pair(self) -> tuple[float | None, str | None]:
         """返回持久化的单调锚点对 (mono, wall)，缺失/损坏为 None。"""

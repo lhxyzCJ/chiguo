@@ -8,15 +8,14 @@ import os
 import subprocess
 import sys
 import time
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 from schedule.sources import load_sources
 from schedule.plan_store import PlanStore
-
+from chiguo_time import CST  # Q22: 共享时区常量
 from trigger_types import TriggerType, REPLAN_SCALE_KEYS
 
-CST = timezone(timedelta(hours=8))
 DIRTY_FILES = ("schedule_overrides.json", "holidays.json")   # mtime 文件集合(仅此二者,F12)
 # 合法 trigger_scale 类型 = 枚举全部真实触发类型 + default（默认缩放键），单一事实来源见 trigger_types.py。
 TRIGGER_TYPES = sorted(REPLAN_SCALE_KEYS)   # 含 comfort（Q3）；default 为缺席类型缩放键

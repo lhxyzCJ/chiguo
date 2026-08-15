@@ -25,8 +25,10 @@ from cli.dispatch import main, run, parse_args
 from decision.engine import DecisionEngine
 from cli.commands import _cmd_memory_search  # 仅测试经 chiguo_daemon 入口消费，故保留
 from chiguo_version import VERSION
+from chiguo_time import CST  # Q22 收敛：对外共享时区常量（test_infra_consistency 断言单一来源）
 
-__all__ = ["DecisionEngine", "main", "run", "parse_args", "_cmd_memory_search", "VERSION"]
+__all__ = ["DecisionEngine", "main", "run", "parse_args", "_cmd_memory_search",
+           "VERSION", "CST"]
 
 
 if __name__ == "__main__":

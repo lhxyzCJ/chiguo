@@ -12,10 +12,11 @@ import random
 import re
 import sys
 import tomllib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from chiguo_time import CST  # Q22: 共享时区常量
 from trigger_types import TriggerType
 
 
@@ -577,7 +578,6 @@ def _fallback_text(combo: dict, trigger_type: str = "") -> str:
 
 def _cli_main(argv=None) -> int:
     """A8 兜底 CLI 入口。退出码：0=成功（文本已输出）；非零=失败。"""
-    cst = timezone(timedelta(hours=8))
     parser = argparse.ArgumentParser(
         prog="chiguo_composer",
         description="A8 确定性兜底：从 decision JSON 生成可发送消息文本（零 LLM）",
@@ -610,7 +610,7 @@ def _cli_main(argv=None) -> int:
     # AttributeError 保护自动降级（cue 权重不调制 + 按当前时间选 vibe）。
     state_stub = SimpleNamespace()
     composer = MessageComposer(state_stub, config={})
-    now = datetime.now(cst)
+    now = datetime.now(CST)
     combo = composer.select_combo(trigger_type, now)
     text = _fallback_text(combo, trigger_type)
     if not text:

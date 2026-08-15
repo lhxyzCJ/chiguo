@@ -880,6 +880,9 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态在线学习 + A1 转移矩阵 + A3 信息增益门控） |
 | `chiguo_topics.py` | 8 源话题选择器 TopicPicker + 人格调制 + Ebbinghaus 加权 + A9 防复读 + netease 委托；Q4 话题源注册表化（TOPIC_REGISTRY） |
 | `chiguo_math.py` | 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix |
+| `chiguo_time.py` | 共享时区常量 `CST`（UTC+8，Q22 收敛全仓库重复定义） |
+| `chiguo_locks.py` | 共享跨进程 fcntl 文件锁（可重入；Q21 收敛 state/agent_health 重复实现） |
+| `chiguo_atomic.py` | 共享原子写助手 `atomic_write`（tmp→os.replace；Q23 收敛 11 处实现） |
 | `chiguo_envcheck.py` | 环境检查（python/依赖/bridge/agent/crontab） |
 | `chiguo_circadian.py` | 生物钟学习（双作息双桶 + 听歌活跃合并） |
 | `chiguo_personality.py` | 8 维人格（Big Five + 角色特质）+ 自适应 + 基线回归 |
@@ -986,7 +989,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `data/mem0/` | mem0 记忆库（qdrant 嵌入式向量库 + history.db） |
 | `archive/` | 轮转归档（decisions_YYYY-MM.jsonl / messages_YYYY-MM.jsonl） |
 
-运行时文件统一以 **0600** 权限落盘（隐私收紧，tmp→os.replace 原子写；`netease/netease_cookie.txt` 与两个网易云缓存 `netease/netease_cache.json`/`netease/recent_play_cache.json` 用 `os.open(O_CREAT, 0o600)` 落盘即 0600，无先写后 chmod 窗口；其余如 `chiguo_state.json`/`chiguo_decisions.jsonl`/`chiguo_messages.jsonl`/`schedule_cache.json`/`netease/netease_health.json`/`agent_health.json`/`chiguo_alerts.json` 追加写路径在写后 chmod）。
+运行时文件统一以 **0600** 权限落盘（隐私收紧，原子写统一走共享 `chiguo_atomic.atomic_write`：tmp→os.replace；`netease/netease_cookie.txt` 与两个网易云缓存 `netease/netease_cache.json`/`netease/recent_play_cache.json` 由 helper `os.open(O_CREAT, 0o600)` 落盘即 0600，无先写后 chmod 窗口；`holidays.json`/`solar_terms.json` 等非隐私数据以默认 umask 落盘；其余如 `chiguo_state.json`/`chiguo_decisions.jsonl`/`chiguo_messages.jsonl`/`schedule_cache.json`/`netease/netease_health.json`/`agent_health.json`/`chiguo_alerts.json` 追加写路径在写后 chmod）。跨进程写一致性由共享 `chiguo_locks`（fcntl 可重入锁）保证。
 
 ### 6.10 测试（`tests/`）
 

@@ -10,11 +10,12 @@
 import os
 import shutil
 import tomllib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 PROJ_DIR = Path(__file__).resolve().parent
-CST = timezone(timedelta(hours=8))
+
+from chiguo_time import CST  # Q22: 共享时区常量
 
 from chiguo_state import ChiguoState
 from chiguo_trigger import evaluate_triggers

@@ -58,7 +58,8 @@ python3 chiguo_rotation.py --force
 ## 3. 关键模式与约定 (Key Patterns & Conventions)
 
 ### 状态持久化
-- **原子写**：`.tmp` 文件 → 校验 JSON → `os.replace()` 覆盖目标
+- **原子写**：统一走共享 `chiguo_atomic.atomic_write`（`.tmp` 文件 → 校验 JSON → `os.replace()` 覆盖目标；0600 一步到位可选）
+- **跨进程写锁**：统一走共享 `chiguo_locks`（fcntl 可重入锁；`chiguo_state`/`agent_health` 共用一份实现）
 - **备份**：覆盖前 `.bak` 副本
 - **校验和**：`_checksum` 字段 SHA256（校验但不因 mismatch 拒绝）
 - **审计日志**：`chiguo_state_audit.jsonl` 记录损坏/恢复事件
