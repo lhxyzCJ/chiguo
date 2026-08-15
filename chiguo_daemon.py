@@ -1538,14 +1538,26 @@ class DecisionEngine:
         """A9 查重数据源：最近 n 条已发送消息文本（chiguo_messages.jsonl 倒序取）。
         记录由 --record-send --text 写入（含 direction=send + text 字段），
         不新增文件。文件缺失/损坏行 → 静默跳过（查重降级为不启用）。"""
+        # 只读文件尾部最近 500 行（倒序原语），不全量 readlines：日志随运行时间
+        # 线性增长，全量扫描无必要（复用 _has_send_result 的尾部读先例，seek
+        # 到末尾分块向前累计到窗口即停）。文件缺失/损坏行 → 静默跳过。
+        tail: list[str] = []
         try:
-            with open(self.messages_log_path, "r") as f:
-                lines = f.readlines()
+            with open(self.messages_log_path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                pos = f.tell()
+                buf = b""
+                while pos > 0 and len(tail) < 500:
+                    step = min(65536, pos)
+                    pos -= step
+                    f.seek(pos)
+                    buf = f.read(step) + buf
+                    tail = buf.decode("utf-8", errors="replace").splitlines()
+                tail = tail[-500:]
         except OSError:
             return []
         texts: list[str] = []
-        # 只扫最近 500 行（倒序前截断）：日志随运行时间线性增长，全量扫描无必要
-        for line in reversed(lines[-500:]):
+        for line in reversed(tail):
             try:
                 rec = json.loads(line)
             except json.JSONDecodeError:
