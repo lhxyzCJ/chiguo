@@ -401,7 +401,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
                                              trigger_scale.get("default", 1.0))
 
     # ── v10 (#73): 触发层三段优化 — A3 日程乘数 → A6 repeat 阻尼 → A4 三段激活 ──
-    # trg_cfg 已在 follow_up 段定义，此处复用。
+    # trg_cfg 已在函数顶部定义，此处复用。
 
     # A3 日程乘数 + 抖动：只作用于情绪类候选，仪式类（morning/night/meal/special/memory/follow_up）豁免。
     # 上课中 ×0.3；空闲（节假日/周末/课间）× free_multiplier（默认 1.2）；半忙 ×0.6。
