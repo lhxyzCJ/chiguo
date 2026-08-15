@@ -327,12 +327,13 @@ class DecisionEngine:
             if len(self.state.cooldown.trigger_history) > history_max:
                 self.state.cooldown.trigger_history = \
                     self.state.cooldown.trigger_history[-history_max:]
-            # #79: reminder 一次性提醒去重——发送确认后在该 mem 上标记，
-            # trigger 层 (_memory_should_trigger) 据此跳过，同进程不重复触发。
+            # #79: reminder 一次性提醒去重——发送确认后经 state 公开 API 标记
+            # (last_triggered_at)。Q7(#260): 标记并入 state JSON 持久化(memory_dedup),
+            # cron 每 15 分钟新进程 load 时读回 → 窗口内多评估路径不再重复触发。
             if trigger.type == "memory":
                 mem_ref = trigger.data.get("memory")
                 if isinstance(mem_ref, dict) and mem_ref.get("type") == "reminder":
-                    mem_ref["last_triggered_at"] = now.isoformat()
+                    self.state.mark_memory_triggered(mem_ref, now)
 
             # 4. 构建上下文（给 pi-agent 生成消息用）
             context = self._build_context(trigger, now, user_state)
@@ -1523,6 +1524,8 @@ class DecisionEngine:
             # ── v1.15 (#164): /send 超时 10s→35s（微信 bridge 网络抖动下
             # 10s 易误判失败退款）；并校验返回体 ok 字段——bridge 返回
             # ok=false 视为发送失败走退款闭环，不再假记账 sent+1。
+            # 35s 与 scripts/chiguo-tick.sh 主消息发送 curl --max-time 35 保持一致
+            # （#261/CR-2: 对齐 cron / loop 双路径超时；改此值须同步改 tick.sh）。
             resp = _post("/send", {"to": to, "text": text}, 35.0)
             if not resp.get("ok"):
                 raise RuntimeError(str(resp.get("error") or "bridge /send ok=false"))
