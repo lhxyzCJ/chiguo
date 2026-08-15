@@ -347,6 +347,47 @@ def test_loop_health_restart_recovers():
         srv.shutdown()
 
 
+def test_alerts_push_wechat_chain():
+    """Q24 (#275): 告警微信推送链路——collect_new_alerts_to_push 识别新增 critical/warn
+    → _push_alerts_via_wechat 经 bridge /send 送达（mock bridge，不真发微信）。"""
+    from chiguo_monitor import ChiguoMonitor, AlertManager, collect_new_alerts_to_push
+    from chiguo_daemon import _push_alerts_via_wechat
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            engine = _make_engine(td)
+            engine.config["wechat"]["wechat_recipient"] = "alert_owner@im.wechat"
+            engine.config.setdefault("loop", {})
+            engine.config["loop"]["bridge_url"] = f"http://127.0.0.1:{srv.server_port}"
+
+            # 构造一个 no_state（critical）告警：state 文件缺失
+            none_state = Path(td) / "none_state.json"
+            log = Path(td) / "decisions.jsonl"
+            log.write_text("")
+            cfg = Path(td) / "chiguo_proactive.toml"
+            cfg.write_text("[monitor]\n")
+            mon = ChiguoMonitor(str(log), str(none_state), config_path=str(cfg))
+            am = AlertManager(str(Path(td) / "chiguo_alerts.json"))
+
+            FakeBridge.requests = []  # 计数前清零
+            new_alerts = collect_new_alerts_to_push(mon, am)
+            assert any(a["type"] == "no_state" for a in new_alerts), new_alerts
+            pushed = _push_alerts_via_wechat(engine, new_alerts)
+            assert len(pushed) == len(new_alerts), f"应全部投递: {pushed}"
+
+            sends = [json.loads(b) for p, b in FakeBridge.requests if p == "/send"]
+            assert len(sends) == 1, f"应恰好 1 次 /send: {sends}"
+            assert sends[0]["to"] == "alert_owner@im.wechat", sends[0]
+            assert "🚨" in sends[0]["text"], sends[0]["text"]
+            assert "no_state" in sends[0]["text"] or "告警" in sends[0]["text"], sends[0]["text"]
+
+            # 第二次运行：no_state 已活跃 → 不重推、不再发 /send
+            again = collect_new_alerts_to_push(mon, am)
+            assert again == [], f"重复运行不应重推: {again}"
+    finally:
+        srv.shutdown()
+
+
 if __name__ == "__main__":
     tests = [
         test_loop_send_rpc_ok,
@@ -357,6 +398,7 @@ if __name__ == "__main__":
         test_loop_send_3_fail_down_alert,
         test_loop_health_probe_rhythm,
         test_loop_health_restart_recovers,
+        test_alerts_push_wechat_chain,
     ]
     for t in tests:
         t()

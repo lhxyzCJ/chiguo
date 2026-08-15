@@ -1,13 +1,15 @@
 """cli.dispatch — daemon 入口分发（拆自 chiguo_daemon.py main()）。
 
-对外 CLI 行为完全不变：35 参数解析（见 cli.parser）、子命令分发顺序、
+对外 CLI 行为完全不变：36 参数解析（见 cli.parser）、子命令分发顺序、
 JSON 输出形状、exit code 语义与拆分前逐字一致。子命令分优先级：
   纪念日 → rotate → record_send → send_result → 对话/导出 → break → tune →
   consolidate → 监控 → health → 轻量子命令 → status → user_msg → loop → 默认单次评估
 """
 import sys
 import json
+import os
 import time
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -20,8 +22,71 @@ from chiguo_version import VERSION
 CST = timezone(timedelta(hours=8))
 
 
+def bridge_post(bridge_url: str, token: str, path: str, body: dict,
+                timeout: float = 10.0) -> dict:
+    """POST JSON 至 wechat-bridge，返回解析后的响应 dict。
+
+    Q24 (#275) 移植：从 daemon _loop_send 嵌套 _post 提取的模块级复用入口——
+    主动发送（runner/loop）与告警微信推送（--alerts-push / scripts/alert-cron.sh）
+    共用同一发送链路，保证 token 注入 + 回环代理绕过（B5）行为一致。
+    """
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        f"{bridge_url}{path}", data=data,
+        headers={"Content-Type": "application/json"})
+    if token:
+        req.add_header("X-Bridge-Token", token)
+    # B5: 回环 bridge 调用绕系统代理（同 chiguo_envcheck._urlopen：本机有
+    # http_proxy 时 localhost 直连不被劫持，防回环请求走代理失败降级）
+    host = urllib.request.urlsplit(req.full_url).hostname or ""
+    if host in ("localhost", "127.0.0.1", "::1"):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        resp = opener.open(req, timeout=timeout)
+    else:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+    with resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _push_alerts_via_wechat(engine: "DecisionEngine", new_alerts: list[dict]) -> list[dict]:
+    """把 collect_new_alerts_to_push 返回的告警经微信 bridge /send 推送。
+
+    Q24 (#275): 解复用 loop 发送侧的 bridge 链路（bridge_post + token 注入 + 收件人解析）。
+    告警文案非 LLM 生成（运维/系统事件直发，与 agent_health transition 告警同性质）。
+    推送失败不阻断：返回已实际投递成功的告警（失败静默，下次 cron 不再重推——去重语义）。
+    返回告警附加的 `delivered` 为 CLI 输出专用元数据，不持久化（chiguo_alerts.json
+    在 collect_new_alerts_to_push 的 ingest() 阶段已落盘；cron 全新建进程不会回写）。
+    """
+    if not new_alerts:
+        return []
+    wechat = (engine.config.get("wechat", {}) or {})
+    to = wechat.get("wechat_recipient", "")
+    if not to:
+        print("[chiguo_daemon] --alerts-push: wechat_recipient 未配置，跳过微信推送",
+              file=sys.stderr)
+        return []
+    loop_cfg = engine.config.get("loop", {}) or {}
+    bridge_url = str(loop_cfg.get("bridge_url", "http://127.0.0.1:18790")).rstrip("/")
+    token = os.environ.get("WECHAT_BRIDGE_TOKEN") or str(loop_cfg.get("bridge_token", "") or "")
+    pushed: list[dict] = []
+    for alert in new_alerts:
+        severity = alert.get("severity", "info")
+        alert_id = alert.get("alert_id", "?")
+        text = f"🚨 迟菓告警 [{severity}] {alert.get('type', 'unknown')}：{alert.get('message', '')}"
+        try:
+            resp = bridge_post(bridge_url, token, "/send", {"to": to, "text": text}, 10.0)
+            if not resp.get("ok"):
+                raise RuntimeError(str(resp.get("error") or "bridge /send ok=false"))
+            alert["delivered"] = True  # 仅 CLI 输出用元数据，不持久化（见函数 docstring）
+            pushed.append(alert)
+        except Exception as e:  # noqa: BLE001 - 单条推送失败不阻断其余告警
+            print(f"[chiguo_daemon] --alerts-push 推送失败 alert_id={alert_id}: {e}",
+                  file=sys.stderr)
+    return pushed
+
+
 def parse_args(argv=None):
-    """解析命令行参数（35 参数）。供参数快照测试与 main 共用。"""
+    """解析命令行参数（36 参数）。供参数快照测试与 main 共用。"""
     parser = build_parser()
     return parser, parser.parse_args(argv)
 
@@ -188,8 +253,8 @@ def run(args):
         from decision.engine import DecisionEngine
         sys.exit(DecisionEngine().cli_consolidate())
 
-    # ── 监控系统（stats / alerts / monitor）（v10: 锚定 base_dir，从任意 cwd 运行都读写项目文件）──
-    if args.stats is not None or args.alerts or args.monitor:
+    # ── 监控系统（stats / alerts / monitor / alerts-push）（v10: 锚定 base_dir，从任意 cwd 运行都读写项目文件）──
+    if args.stats is not None or args.alerts or args.monitor or args.alerts_push:
         from decision.engine import DecisionEngine
         from chiguo_monitor import ChiguoMonitor, AlertManager
         engine = DecisionEngine()
@@ -199,7 +264,18 @@ def run(args):
             break_state_path=str(engine._base_dir / "break_state.json"),
             config_path=str(engine._base_dir / "chiguo_proactive.toml"),
             messages_log_path=str(engine._base_dir / "chiguo_messages.jsonl"),
+            alerts_path=str(engine._base_dir / "chiguo_alerts.json"),
+            events_path=str(engine._base_dir / "chiguo_events.jsonl"),
         )
+        # ── Q24 (#275): 告警微信推送（cron 化入口，--alerts-push 独立命中）──
+        if args.alerts_push:
+            from chiguo_monitor import collect_new_alerts_to_push
+            am = AlertManager(state_path=str(engine._base_dir / "chiguo_alerts.json"))
+            new_alerts = collect_new_alerts_to_push(mon, am)
+            pushed = _push_alerts_via_wechat(engine, new_alerts)
+            print(json.dumps({"action": "alerts_push", "pushed": len(pushed),
+                              "alerts": pushed}, ensure_ascii=False, indent=2))
+            return
         if args.alerts:
             am = AlertManager(state_path=str(engine._base_dir / "chiguo_alerts.json"))
             # --ack ALERT_ID

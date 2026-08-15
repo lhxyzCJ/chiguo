@@ -6,7 +6,7 @@
 #   - main(): 参数解析 + 子命令分发（实现在 cli/）
 #   - DecisionEngine: 决策引擎（实现在 decision/engine.py，由 base/core/context/
 #     ops.engine_ops/runner.loop 五个 mixin 组合）
-#   - 对外 CLI 行为（35 参数/子命令/JSON 输出/exit code）与拆分前逐字一致。
+#   - 对外 CLI 行为（36 参数/子命令/JSON 输出/exit code）与拆分前逐字一致。
 #
 # 职责拆包（T10·Q2 daemon 上帝入口拆分，#268）：
 #   cli/      参数解析 + 子命令分发（parser.py / commands.py / dispatch.py）
@@ -21,14 +21,14 @@
 #   python3 chiguo_daemon.py --loop 120   # 持续运行（send 分支内聚发送侧）
 # ============================================================
 
-from cli.dispatch import main, run, parse_args
+from cli.dispatch import main, run, parse_args, _push_alerts_via_wechat
 from decision.engine import DecisionEngine
 from cli.commands import _cmd_memory_search  # 仅测试经 chiguo_daemon 入口消费，故保留
 from chiguo_version import VERSION
 from chiguo_time import CST  # Q22 收敛：对外共享时区常量（test_infra_consistency 断言单一来源）
 
 __all__ = ["DecisionEngine", "main", "run", "parse_args", "_cmd_memory_search",
-           "VERSION", "CST"]
+           "VERSION", "CST", "_push_alerts_via_wechat"]
 
 
 if __name__ == "__main__":
