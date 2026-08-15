@@ -1232,6 +1232,10 @@ def collect_new_alerts_to_push(monitor: "ChiguoMonitor",
       已在活跃态、cron 每次重复运行不再重推（按 alert type 天然去重）。
     - 返回被推送的告警列表（empty = 本次无新告警需打扰）。
 
+    返回告警上附加的 `pushed`/`pushed_at` 为 **CLI 输出专用元数据，不持久化**——
+    `ingest()` 在附加前已 `_save()` 落盘 chiguo_alerts.json，且 cron 每次全新进程
+    也不会回写；它们仅供 --alerts-push 的 stdout JSON 展示，去重不依赖它们。
+
     Args:
         monitor: 已构造的 ChiguoMonitor（alerts() 数据源）。
         alert_manager: 已构造的 AlertManager（持久化与去重）。
@@ -1251,6 +1255,7 @@ def collect_new_alerts_to_push(monitor: "ChiguoMonitor",
             continue  # info 级不打扰
         if alert.get("status") != "active":
             continue  # 新增即非 active（acknowledged/resolved）→ 不推
+        # pushed/pushed_at 仅 CLI 输出用元数据，不持久化（ingest 已 _save；cron 全新建进程不回写）
         alert["pushed"] = True
         alert["pushed_at"] = _now.isoformat()
         pushed.append(alert)

@@ -79,6 +79,8 @@ def _push_alerts_via_wechat(engine: "DecisionEngine", new_alerts: list[dict]) ->
     Q24 (#275): 解复用 loop 发送侧的 bridge 链路（bridge_post + token 注入 + 收件人解析）。
     告警文案非 LLM 生成（运维/系统事件直发，与 agent_health transition 告警同性质）。
     推送失败不阻断：返回已实际投递成功的告警（失败静默，下次 cron 不再重推——去重语义）。
+    返回告警附加的 `delivered` 为 CLI 输出专用元数据，不持久化（chiguo_alerts.json
+    在 collect_new_alerts_to_push 的 ingest() 阶段已落盘；cron 全新建进程不会回写）。
     """
     if not new_alerts:
         return []
@@ -100,7 +102,7 @@ def _push_alerts_via_wechat(engine: "DecisionEngine", new_alerts: list[dict]) ->
             resp = bridge_post(bridge_url, token, "/send", {"to": to, "text": text}, 10.0)
             if not resp.get("ok"):
                 raise RuntimeError(str(resp.get("error") or "bridge /send ok=false"))
-            alert["delivered"] = True
+            alert["delivered"] = True  # 仅 CLI 输出用元数据，不持久化（见函数 docstring）
             pushed.append(alert)
         except Exception as e:  # noqa: BLE001 - 单条推送失败不阻断其余告警
             print(f"[chiguo_daemon] --alerts-push 推送失败 alert_id={alert_id}: {e}",
