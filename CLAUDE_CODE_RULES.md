@@ -111,7 +111,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | `anniversaries.json` | schedule/anniversary.py | Anniversary records (countdown deprecated, migrated to reminder) |
 | `break_state.json` | chiguo_daemon.py | Vacation override (written by --break CLI) |
 | `holidays.json` | update_holidays.py | Override holiday data for future years |
-| `solar_terms.json` | update_holidays.py | Override solar terms for future years |
+| `solar_terms.json` | update_holidays.py | 某年节气快照（`--solar` 生成物；运行期不被读取，节气单一事实源见 §5） |
 | `netease/netease_cache.json` | netease/bridge.py | Daily song recommendations cache |
 | `netease/netease_cookie.txt` | netease/bridge.py | Netease API auth cookie (chmod 600) |
 | `netease/recent_play_cache.json` | netease/bridge.py | Recent-play cache (v8, atomic write, 15-min TTL) |
