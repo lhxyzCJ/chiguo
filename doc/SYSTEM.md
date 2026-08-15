@@ -82,7 +82,7 @@ chiguo_daemon.py (DecisionEngine)
   ├─ trigger_types.py   → 触发类型枚举单一事实来源（TriggerType StrEnum + 情绪/仪式分区 + replan scale key）
   ├─ chiguo_trigger.py  → sigmoid 加权随机触发（14 种类型（情绪类 8 + 仪式类 6，含 follow_up 接话茬、
   │                      comfort 安慰）+ 逃生阀直接触发 + A2 分类型回复率反馈闭环）
-  ├─ chiguo_topics.py   → 8 源话题选择器（含 netease 委托）+ 人格调制 + Ebbinghaus 加权 + A9 内容级防复读
+  ├─ chiguo_topics.py   → 8 源话题选择器（含 netease 委托）+ 人格调制 + Ebbinghaus 加权 + A9 内容级防复读；Q4 接线注册表化（TOPIC_REGISTRY）
   ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 + 独立直出 CLI（不再被发送链调用）
   ├─ solar_terms.py     → 24 节气
   ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康；D1 主动消息效果评估 proactive_stats）
@@ -723,6 +723,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 | netease | 0.12 | NeteaseService (netease/service.py) | v9: 网易云音乐话题（策略层委托） |
 
 - `chiguo_topics.py`: TopicPicker 类，`pick(now)` → weighted_trigger_choice
+- Q4: 话题源接线收敛到集中注册表 `TOPIC_REGISTRY`（源名 → `weight_fn`/`pick_fn`/`modulate_fn` 三段），`pick()` 逐源 compute 有效权重（基础×调制）并生成候选，顺序即候选生成顺序（RNG 序列不变，行为纯重构）；新增源成本 1 点——仅向注册表插入一条 `TopicSource` 即被 `pick` 自动驱动（默认模块级注册表，经 `picker.registry` 可覆写）
 - v9: `TopicPicker.__init__(state, config, netease_service=None)` — 策略层可注入可省略（None → 静默跳过，向后兼容）；daemon 构造与热重载分支均已注入 `NeteaseService`；`_netease_music_topic(now)` 计算上课/睡眠门控（schedule_status + cooldown.quiet_window + `in_quiet_window` 跨午夜语义；门控信息异常 → fail-closed 不发）后委托 `peek_music_topic`（不消费配额），抽选命中 netease_music/netease_fault 后才 consume——配额只在真正发出时消耗；未注入/异常 → 返回 None 不阻塞话题选择；委托细节见 §2.12
 - 连续 3 次孤独触发 → 强制注入话题
 - `topic_probability=0.70` 控制注入概率
@@ -864,7 +865,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_trigger.py` | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
 | `chiguo_composer.py` | Intent × Cue × Vibe 三层组合 + 独立直出 CLI（发送链不再调用） |
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态在线学习 + A1 转移矩阵 + A3 信息增益门控） |
-| `chiguo_topics.py` | 8 源话题选择器 TopicPicker + 人格调制 + Ebbinghaus 加权 + A9 防复读 + netease 委托 |
+| `chiguo_topics.py` | 8 源话题选择器 TopicPicker + 人格调制 + Ebbinghaus 加权 + A9 防复读 + netease 委托；Q4 话题源注册表化（TOPIC_REGISTRY） |
 | `chiguo_math.py` | 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix |
 | `chiguo_envcheck.py` | 环境检查（python/依赖/bridge/agent/crontab） |
 | `chiguo_circadian.py` | 生物钟学习（双作息双桶 + 听歌活跃合并） |
