@@ -21,14 +21,17 @@
 #   python3 chiguo_daemon.py --loop 120   # 持续运行（send 分支内聚发送侧）
 # ============================================================
 
-from cli.dispatch import main, run, parse_args, _push_alerts_via_wechat
+from cli.dispatch import main, run, parse_args, _push_alerts_via_wechat, \
+    _run_passive, startup_conflict, guard_mutual_form, cron_form_active, \
+    loop_form_active  # Q24: --alerts-push；Q28: loop/cron 互斥守卫（测试经 chiguo_daemon 消费，故保留）
 from decision.engine import DecisionEngine
 from cli.commands import _cmd_memory_search  # 仅测试经 chiguo_daemon 入口消费，故保留
 from chiguo_version import VERSION
 from chiguo_time import CST  # Q22 收敛：对外共享时区常量（test_infra_consistency 断言单一来源）
 
 __all__ = ["DecisionEngine", "main", "run", "parse_args", "_cmd_memory_search",
-           "VERSION", "CST", "_push_alerts_via_wechat"]
+           "VERSION", "CST", "_push_alerts_via_wechat", "_run_passive",
+           "startup_conflict", "guard_mutual_form", "cron_form_active", "loop_form_active"]
 
 
 if __name__ == "__main__":

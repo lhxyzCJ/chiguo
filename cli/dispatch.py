@@ -9,6 +9,7 @@ import sys
 import json
 import os
 import time
+import fcntl
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -89,6 +90,115 @@ def parse_args(argv=None):
     """解析命令行参数（36 参数）。供参数快照测试与 main 共用。"""
     parser = build_parser()
     return parser, parser.parse_args(argv)
+
+
+# ── loop/cron 双形态运行期互斥守卫（Q28）─────────────────────────
+# loop 常驻（--loop）与 cron tick（scripts/chiguo-tick.sh）都会走主动发送链，
+# 若同时存活会双发消息。deploy 层（install_agent.sh 阶段 6）只在切换形态时做一次互斥，
+# 运行期再补一道自防锁互认：各自的自我防护锁能让对方识别 ——
+#   * loop 形态的自我防护锁 =  chiguo_loop.pid（已有 PID 双开锁，cron 侧据此识别）
+#   * cron 形态的自我防护锁 =  chiguo-tick.lock 的 flock（R16 tick 重入锁，loop 侧据此识别）
+def _cron_tick_lock_path() -> Path:
+    """chiguo-tick.sh 的并发 flock 锁文件路径（R16：$CHIGUO_LOCK_DIR 或 ~/.chiguo/run）。"""
+    lock_dir = os.environ.get("CHIGUO_LOCK_DIR") or os.path.join(
+        os.path.expanduser("~"), ".chiguo", "run")
+    return Path(lock_dir) / "chiguo-tick.lock"
+
+
+def cron_form_active() -> bool:
+    """cron 形态是否此刻在跑：chiguo-tick.sh 是否持有 chiguo-tick.lock flock。
+
+    持锁时 flock(LOCK_EX|LOCK_NB) 抛 BlockingIOError → 判定 cron 活跃；
+    锁文件缺失 / 能拿到锁 → cron 未在跑。非阻塞单次探测，不会等待。
+    """
+    lock_path = _cron_tick_lock_path()
+    try:
+        fd = os.open(str(lock_path), os.O_RDONLY)
+    except OSError:
+        return False  # 锁文件不存在 → cron 未运行
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        return False
+    finally:
+        os.close(fd)
+
+
+def loop_form_active(base_dir: str) -> bool:
+    """loop 形态是否在跑：chiguo_loop.pid 记录的进程存活（过期 pid 视为未运行）。"""
+    pid_path = Path(base_dir) / "chiguo_loop.pid"
+    try:
+        pid = int(pid_path.read_text().strip())
+    except (FileNotFoundError, ValueError, OSError):
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False  # 进程已退出 → 过期 pid，视为未运行
+    return True
+
+
+def guard_mutual_form(base_dir: str, form: str) -> str | None:
+    """loop/cron 双形态互斥守卫（Q28）。返回冲突描述，无冲突返回 None。
+
+    form = "loop" | "cron"：
+      loop 启动时检测 cron（chiguo-tick flock）是否在跑；
+      cron 单次主动评估时检测 loop（chiguo_loop.pid）是否在跑。
+    """
+    if form == "loop":
+        if cron_form_active():
+            return "cron 形态（chiguo-tick）正在运行"
+        return None
+    if form == "cron":
+        if loop_form_active(base_dir):
+            return "loop 形态（chiguo-daemon --loop）正在运行"
+        return None
+    raise ValueError(f"未知形态: {form!r}")
+
+
+def startup_conflict(base_dir: str, form: str) -> int:
+    """启动防线：冲突则打 stderr 诊断并返回区分语义的哨兵码，调用方据此分流。
+
+    返回语义（Q28 P0 修复，区分「拒启」与「跳过」两种冲突）：
+      0 = 无冲突，放行；
+      1 = loop 冲突，拒绝启动常驻（exit 1）；
+      2 = cron 冲突，跳过本 tick 单次主动评估（exit 0，不输出决策，不拖垮健康检查）。
+    """
+    conflict = guard_mutual_form(base_dir, form)
+    if conflict is None:
+        return 0
+    if form == "loop":
+        print(f"[chiguo_daemon] {conflict}，拒绝启动 loop 形态（防双发送）",
+              file=sys.stderr)
+        return 1
+    print(f"[chiguo_daemon] {conflict}，跳过本次单次主动评估（防双发送）",
+          file=sys.stderr)
+    return 2
+
+
+def _run_passive(engine, compact: bool) -> None:
+    """cron 形态的单次主动评估入口（--compact 亦经此）。
+
+    Q28 P0 修复：评估前先查 loop 冲突。startup_conflict 返回 2（cron 冲突=跳过）
+    时直接 sys.exit(0)——跳过本 tick、**不调用 engine.evaluate()、不输出任何决策
+    JSON**，防止 loop 与 cron 双发送，同时以 0 退出不拖垮 cron 健康检查。
+    """
+    rc = startup_conflict(str(engine._base_dir), "cron")
+    if rc == 2:
+        sys.exit(0)  # cron 冲突：跳过本 tick（与 loop 冲突 exit 1 语义区分）
+    if rc != 0:
+        sys.exit(rc)  # 防御：未知非零哨兵照常退出
+
+    decision = engine.evaluate()
+    if compact and decision["action"] == "idle":
+        # 紧凑模式 idle 时输出最小 heartbeat（用于 cron 健康检查）
+        print(json.dumps({"action": "idle", "version": VERSION,
+                          "time": datetime.now(CST).isoformat()},
+                         ensure_ascii=False))
+        return
+    print(json.dumps(decision, ensure_ascii=False, indent=2))
 
 
 def run(args):
@@ -402,16 +512,17 @@ def run(args):
         return
 
     if args.loop:
+        # ── Q28: loop 启动时检测 cron 形态是否在跑，冲突拒启（防双发送）──
+        rc = startup_conflict(str(engine._base_dir), "loop")
+        if rc == 1:  # loop 冲突 → 拒绝启动常驻（无冲突返回 0；loop 不产生 cron 跳过 2）
+            sys.exit(rc)
         run_loop(engine, args.loop, args.compact)
         return
 
-    # 默认：单次评估
-    decision = engine.evaluate()
-    if args.compact and decision["action"] == "idle":
-        # 紧凑模式 idle 时输出最小 heartbeat（用于 cron 健康检查）
-        print(json.dumps({"action": "idle", "version": VERSION, "time": datetime.now(CST).isoformat()}, ensure_ascii=False))
-        return
-    print(json.dumps(decision, ensure_ascii=False, indent=2))
+    # 默认：单次评估（cron 形态的主动评估入口，--compact 亦经此）
+    # Q28: cron 单次主动评估前检测 loop 形态是否在跑，冲突则跳过（防双发送）。
+    _run_passive(engine, bool(args.compact))
+    return
 
 
 def main(argv=None):

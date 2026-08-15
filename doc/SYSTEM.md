@@ -56,7 +56,12 @@
 `record_send_text`；RPC 失败自动回退 spawn（不变式）。`_loop_send` 对 bridge 的
 POST 走本地回环**绕系统代理**直连（防 http_proxy 劫持导致回环请求走代理失败降级，
 同 chiguo_envcheck `_urlopen`）。cron 仅剩 replan（判脏轮询）。
-与 cron tick **互斥**（install_agent.sh 阶段 6：loop 模式移除 tick 条目防双发）。
+与 cron tick **互斥**（install_agent.sh 阶段 6：loop 模式移除 tick 条目防双发；
+Q28 起**运行期自防锁互认**兜底：`--loop` 启动与 cron 单次主动评估（`--compact`）前先做
+形态互斥检测——loop 侧识别 cron 的 `chiguo-tick.lock` flock（chiguo-tick.sh 运行时持有）；
+cron 侧识别 loop 的 `chiguo_loop.pid` 存活——对方在跑则 loop 拒启（exit 1）/ cron 跳过本 tick
+（exit 0，不调 engine.evaluate、不输出任何决策 JSON，防双发送；`startup_conflict` 返回哨兵
+0=放行 / 1=loop 拒启 / 2=cron 跳过，调用方据此短路）。
 详见 doc/AGENT_INTEGRATION.md §架构总览 与 doc/DEPLOYMENT.md §部署形态。
 
 ### 模块依赖
