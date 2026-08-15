@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 全量测试链（60 py + 14 script）——本地与 CI 同一入口；任一失败即退出非零
+# 全量测试链（62 py + 14 script）——本地与 CI 同一入口；任一失败即退出非零
 # 前置: .venv 存在（本地 dev 机已有；CI 由 uv sync 创建）
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
