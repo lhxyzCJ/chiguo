@@ -12,6 +12,8 @@ __pycache__/
 chiguo_state.json*
 chiguo_loop.pid
 chiguo_state_audit.jsonl
+chiguo_events.jsonl
+chiguo_alerts.json
 agent_health.json
 *.lock
 !uv.lock

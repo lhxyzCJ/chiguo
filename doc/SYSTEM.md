@@ -68,7 +68,7 @@ cron 侧识别 loop 的 `chiguo_loop.pid` 存活——对方在跑则 loop 拒�
 
 ```
 chiguo_daemon.py（薄 CLI facade，T10·Q2 拆分，Issue #268）
-  ├─ cli/        → 参数解析(cli/parser.py 35 参数) + 子命令分发(cli/dispatch.py main/run)
+  ├─ cli/        → 参数解析(cli/parser.py 36 参数) + 子命令分发(cli/dispatch.py main/run)
   │              + 轻量子命令(cli/commands.py: --attention/--schedule-* /--memory-search / _load_light_config)
   ├─ runner/     → loop/cron 形态(runner/loop.py: LoopSenderMixin._loop_send + run_loop PID/动态休眠编排)
   ├─ decision/   → 决策引擎(decision/engine.py 组合 DecisionEngine；base 基础infra / core 核心决策
@@ -102,12 +102,13 @@ chiguo_daemon.py（薄 CLI facade，T10·Q2 拆分，Issue #268）
   ├─ chiguo_topics.py   → 8 源话题选择器（含 netease 委托）+ 人格调制 + Ebbinghaus 加权 + A9 内容级防复读；Q4 接线注册表化（TOPIC_REGISTRY）
   ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 + 独立直出 CLI（不再被发送链调用）
   ├─ solar_terms.py     → 24 节气
-  ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康；D1 主动消息效果评估 proactive_stats）
-  └─ chiguo_rotation.py → 对话日志轮转与归档 + 告警持久化 + 索引查询
+  ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康；D1 主动消息效果评估 proactive_stats；Q24 事件时序 alerts/rotations_by_day + 告警微信推送 collect_new_alerts_to_push）
+  └─ chiguo_rotation.py → 对话日志轮转与归档 + 索引查询；轮转名单含对话日志与审计日志（chiguo_state_audit.jsonl）；轮转事件落 chiguo_events.jsonl 供时序统计
 
   输出: chiguo_decisions.jsonl（追加式结构化日志）
   对话归档: chiguo_messages.jsonl（完整对话记录）
   告警持久: chiguo_alerts.json（告警生命周期管理）
+  事件审计: chiguo_events.jsonl（轮转等事件时序统计数据源）
   状态: chiguo_state.json（原子写入: tmp → os.replace + SHA256 校验 + 审计日志 chiguo_state_audit.jsonl）
 ```
 
@@ -879,7 +880,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_daemon.py` | 决策引擎 CLI 薄入口 facade（T10·Q2 拆分）：参数解析+分发→cli/、决策引擎→decision/、loop/cron→runner/、记账审计→ops/；对外 CLI 契约不变 |
 | `decision/` `cli/` `runner/` `ops/` | 拆包：decision/base+core+context（DecisionEngine）、cli/parser+commands+dispatch、runner/loop（LoopSenderMixin+run_loop）、ops/engine_ops（AccountingMixin） |
 | `chiguo_state.py` | 状态核心（T11·Q1 拆分 13 集群为 4 单类）：ChiguoState（5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线）、ChiguoEmotion（情绪数据）、CooldownState（冷却子状态 + 公开 getter/mutator）、StatePersistence（原子持久化/SHA256/审计日志/迁移） |
-| `chiguo_monitor.py` | 流式 JSONL 分析：统计/告警/健康 + D1 proactive_stats |
+| `chiguo_monitor.py` | 流式 JSONL 分析：统计/告警/健康 + D1 proactive_stats + Q24 事件时序（alerts/rotations_by_day）+ 告警微信推送 collect_new_alerts_to_push |
 | `chiguo_trigger.py` | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
 | `chiguo_composer.py` | Intent × Cue × Vibe 三层组合 + 独立直出 CLI（发送链不再调用） |
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态在线学习 + A1 转移矩阵 + A3 信息增益门控） |
@@ -892,7 +893,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_circadian.py` | 生物钟学习（双作息双桶 + 听歌活跃合并） |
 | `chiguo_personality.py` | 8 维人格（Big Five + 角色特质）+ 自适应 + 基线回归 |
 | `chiguo_demo.py` | 交互式 Demo |
-| `chiguo_rotation.py` | 对话日志轮转归档 + 告警持久化 + 索引查询 |
+| `chiguo_rotation.py` | 对话日志轮转归档（名单含审计日志）+ 轮转事件审计 chiguo_events.jsonl + 索引查询 |
 | `update_holidays.py` | 节假日数据跨年合并生成（R22 防覆盖） |
 | `solar_terms.py` | 24 节气按年动态查询（消费者，单一事实源在 update_holidays.get_solar_terms_for） |
 | `memory/` | 记忆后端抽象（mem0 唯一后端；base/factory/mem0_backend + `python -m memory` CLI cli.py；根目录 memory_bridge.py 门面已删） |
@@ -982,6 +983,8 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_state.json` | 状态持久化（原子写 tmp→os.replace + SHA256 校验 + 审计 `chiguo_state_audit.jsonl`；含顶层 `memory_dedup` = reminder 去重标记 `{记忆去重键: last_triggered_at}`，见 §3.4，仅存标记不存 memories 全文） |
 | `chiguo_decisions.jsonl` | 决策日志（追加式，monitor/轮转/索引消费） |
 | `chiguo_messages.jsonl` | 完整对话归档 |
+| `chiguo_state_audit.jsonl` | 状态损坏/恢复审计日志（已纳入轮转名单） |
+| `chiguo_events.jsonl` | 事件审计（轮转等，monitor 时序指标数据源） |
 | `data/chiguo_memories.json` | 手动记忆（reminder/habit） |
 | `holidays.json` | 节假日覆盖（update_holidays.py 生成） |
 | `break_state.json` | 寒暑假状态 |
@@ -992,7 +995,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `agent_health.json` | agent 假死状态 |
 | `chiguo_alerts.json` | 告警持久化（生命周期 active→acknowledged→resolved） |
 | `data/mem0/` | mem0 记忆库（qdrant 嵌入式向量库 + history.db） |
-| `archive/` | 轮转归档（decisions_YYYY-MM.jsonl / messages_YYYY-MM.jsonl） |
+| `archive/` | 轮转归档（decisions_YYYY-MM.jsonl / messages_YYYY-MM.jsonl / state_audit_YYYY-MM.jsonl） |
 
 运行时文件统一以 **0600** 权限落盘（隐私收紧，原子写统一走共享 `chiguo_atomic.atomic_write`：tmp→os.replace；`netease/netease_cookie.txt` 与两个网易云缓存 `netease/netease_cache.json`/`netease/recent_play_cache.json` 由 helper `os.open(O_CREAT, 0o600)` 落盘即 0600，无先写后 chmod 窗口；`holidays.json`/`solar_terms.json` 等非隐私数据以默认 umask 落盘；其余如 `chiguo_state.json`/`chiguo_decisions.jsonl`/`chiguo_messages.jsonl`/`schedule_cache.json`/`netease/netease_health.json`/`agent_health.json`/`chiguo_alerts.json` 追加写路径在写后 chmod）。跨进程写一致性由共享 `chiguo_locks`（fcntl 可重入锁）保证。
 
@@ -1017,7 +1020,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 ### chiguo_daemon.py
 
 > **T10·Q2 拆包（Issue #268）**：`chiguo_daemon.py` 已是薄 facade（CLI 入口 + 兼容 re-export）。
-> 35 参数 argparse 在 `cli/parser.py`；子命令分发在 `cli/dispatch.py`；`DecisionEngine` 由
+> 36 参数 argparse 在 `cli/parser.py`；子命令分发在 `cli/dispatch.py`；`DecisionEngine` 由
 > `decision/engine.py` 组合（base 基础infra / core 核心决策 / context 上下文构建 /
 > ops.engine_ops 记账审计 / runner.loop 发送内聚）；loop 常驻编排在 `runner/loop.py::run_loop`。
 > 对外 CLI 行为（参数/子命令/JSON/exit code）与拆分前逐字一致（`tests/test_daemon_cli_snapshot.py` 守护）。
@@ -1080,7 +1083,9 @@ python3 chiguo_daemon.py --analysis-file /tmp/analysis.json
 python3 chiguo_daemon.py --stats             # 最近7天统计
 python3 chiguo_daemon.py --stats 30          # 最近30天统计
 python3 chiguo_daemon.py --alerts            # 异常检测
+python3 chiguo_daemon.py --alerts-push       # Q24: 检出+持久化告警，并微信推送新增 critical/warn（cron 入口）
 python3 chiguo_daemon.py --monitor           # 完整报告（stats + alerts + health）
+# 告警 cron（Q24/#275）经 scripts/alert-cron.sh 调用 --alerts-push；日志 logs/cron-alert.log
 ```
 
 ### chiguo_demo.py
@@ -1409,6 +1414,24 @@ reply_feedback_low_rate = 0.3
 reply_feedback_high_rate = 0.7
 reply_feedback_min_samples = 3
 
+# Q10 (#276) 触发离散概率/魔法权重配置化（默认 = 现值，行为不变）
+ritual_special_weight = 3.0        # 仪式类基础权重（×[cooldown].ritual_weight_scale）
+ritual_morning_weight = 2.5
+ritual_night_weight = 2.0
+ritual_meal_weight = 0.8
+ritual_memory_weight = 2.0
+ritual_mem0_weight = 1.5
+morning_probability = 0.10         # 早安窗口触发概率
+night_probability = 0.12           # 晚安窗口触发概率
+meal_probability = 0.05            # 饭点触发概率
+mem0_surface_min_silent_hours = 6.0  # mem0 随机浮现沉默阈值
+mem0_surface_probability = 0.08    # mem0 随机浮现概率
+followup_memory_probability = 0.5  # 接话茬记忆兜底概率门控
+habit_probability = 0.06           # habit 记忆触发概率
+playful_base_weight = 0.15         # playful 基础权重
+reflect_base_weight = 0.08         # reflect 基础权重
+reflect_probability = 0.08         # reflect 概率门控
+
 [poisson]    # Poisson 过程参数（μ 的基础部分）
 base_lambda = 0.25                 # 基础事件率（次/小时）
 lambda_loneliness_mid = 50
@@ -1579,6 +1602,8 @@ python3 chiguo_daemon.py --stats 30     # 最近30天
 # 异常告警
 python3 chiguo_monitor.py --alerts
 python3 chiguo_daemon.py --alerts
+python3 chiguo_daemon.py --alerts-push     # Q24: 检出+持久化告警并微信推送新增 critical/warn（cron 入口）
+bash scripts/alert-cron.sh                  # Q24: 告警 cron 包装（调 --alerts-push；日志 logs/cron-alert.log）
 
 # 完整报告（stats + alerts + health）
 python3 chiguo_monitor.py --report
@@ -1724,8 +1749,11 @@ check_rotation():
   ③ 如果月份 < 当前月份 → 触发轮转
   ④ rename: chiguo_decisions.jsonl → archive/decisions_2026-05.jsonl
   ⑤ rename: chiguo_messages.jsonl  → archive/messages_2026-05.jsonl
-  ⑥ 新日志从当前月份重新开始写入
+  ⑥ rename: chiguo_state_audit.jsonl → archive/state_audit_2026-05.jsonl   （Q24/#275 纳入轮转名单）
+  ⑦ 新日志从当前月份重新开始写入
 ```
+
+> **Q24（#275）轮转名单说明**：`chiguo_rotation.py` 轮转名单为 `chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`chiguo_state_audit.jsonl`。审计日志此前被明确排除（无限增长），现纳入——状态损坏/恢复事件时间记与对话日志同保留策略归档，保证排查可追溯。轮转每次动作同时追加一行 `chiguo_events.jsonl`（`{"event":"rotation","kind":"monthly|force","file":..,"at":..}`）供 monitor 时序指标统计（每日轮转数）。
 
 **archive/ 目录结构**：
 
@@ -1734,7 +1762,9 @@ archive/
 ├── decisions_2026-05.jsonl
 ├── decisions_2026-06.jsonl
 ├── messages_2026-05.jsonl
-└── messages_2026-06.jsonl
+├── messages_2026-06.jsonl
+├── state_audit_2026-05.jsonl
+└── state_audit_2026-06.jsonl
 ```
 
 **配置段** (`chiguo_proactive.toml` `[logging]`):
@@ -1747,7 +1777,7 @@ archive_dir = "archive"      # 归档目录（相对路径锚定项目根，绝�
 
 **路径锚定**：相对 `archive_dir`（如 `"archive"`）一律锚定 `chiguo_rotation.py` 所在目录（项目根），绝对路径原样保留——从任意 cwd 运行 `force_rotate`/`rotate_if_needed`/`--rotate` 都不会把日志移出项目。
 
-轮转在 daemon tick 时自动触发（`_maybe_rotate_logs()`），每次 tick 前检查。
+轮转在每次 daemon 进程启动时自动触发（`DecisionEngine.__init__` 调 `chiguo_rotation.rotate_if_needed`），每次启动检查一次月份变化即轮转；`--rotate` 可手动强制。
 
 #### 10.7.4 告警持久化
 
@@ -1805,6 +1835,15 @@ class AlertManager:
 ```
 
 **自动过期**：`severity=info` 的告警 7 天后自动标记 resolved。
+
+**Q24（#275）告警微信推送 / cron 化**：告警检出 + 持久化 + 推送收敛到 `chiguo_daemon.py --alerts-push`（cron 经 `scripts/alert-cron.sh` 调用）：
+
+- `ChiguoMonitor.alerts()` 检出当前异常 → `AlertManager.ingest()` 持久化（active→acknowledged→resolved 生命周期）
+- `chiguo_monitor.collect_new_alerts_to_push()` 判「本次新增活跃」的 `critical`/`warn` 告警（推送前不存在于 active 集合；已在活跃态、cron 每次重复运行不重推——按 alert type 天然去重）
+- 经 wechat-bridge `/send` 推送（复用 `chiguo_daemon.bridge_post`：token 注入 + 回环代理绕过 B5；收件人 `[wechat].wechat_recipient`、端点 `[loop].bridge_url`、token 优先 env `WECHAT_BRIDGE_TOKEN` 回退 `[loop].bridge_token`）
+- 单条推送失败静默（记录 stderr），不影响其余告警；已推送即投递，不重发（去重语义）
+
+告警文案为运维/系统事件直发（与 agent_health transition 告警同性质），非 LLM 生成。注册示例：`0 */2 * * * /path/scripts/alert-cron.sh >> /path/logs/cron-alert.log 2>&1`。
 
 #### 10.7.5 索引查询
 
@@ -1868,6 +1907,7 @@ python3 chiguo_daemon.py --rotate --force            # 强制轮转（忽略月�
 python3 chiguo_daemon.py --alerts-all                # 列出所有告警（含历史）
 python3 chiguo_daemon.py --ack ALT_ID                # 确认指定告警（不带 --alerts 时自动联动开启）
 python3 chiguo_daemon.py --resolve ALT_ID            # 解决指定告警
+python3 chiguo_daemon.py --alerts-push               # Q24: 检出+持久化告警并微信推送新增 critical/warn（cron 入口）
 ```
 
 **conversation 输出格式**（人类可读）：

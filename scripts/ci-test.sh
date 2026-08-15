@@ -56,8 +56,10 @@ uv run python tests/test_adapt_personality.py && uv run python tests/test_agent_
 uv run python tests/test_anniversary.py && uv run python tests/test_schedule_override.py && \
 uv run python tests/test_day_plan.py && uv run python tests/test_recall.py && \
 uv run python tests/test_attention_tiers.py && uv run python tests/test_availability.py && \
-uv run python tests/test_trigger_scale.py && uv run python tests/test_trigger_types.py && \
-uv run python tests/test_isolation.py && uv run python tests/test_state_private_access_guard.py && \
+uv run python tests/test_trigger_scale.py && \
+uv run python tests/test_trigger_config_defaults.py && \
+uv run python tests/test_isolation.py && \
+uv run python tests/test_trigger_types.py && uv run python tests/test_state_private_access_guard.py && \
 uv run python tests/test_schedule_plan.py && uv run python tests/test_schedule_cli.py && \
 uv run python tests/test_memory_backends.py && \
 uv run python tests/test_memory_consolidate.py && \
