@@ -3,6 +3,8 @@
 # 为孤独触发（lonely_low/mid）提供自然破冰话题。
 # 8 个来源(新增 netease)：课表/假期、mem0 记忆、季节感知、通用关心、
 #           节气、纪念日/倒计时、偏好追问、网易云音乐。
+# Q4: 接线收敛到集中注册表 TOPIC_REGISTRY（源名 → weight_fn/pick_fn/modulate_fn），
+#     新增源成本从 5 点降到 1 点，纯重构行为不变。
 # 0 token 消耗，0 新依赖。
 # ============================================================
 
@@ -12,6 +14,92 @@ from datetime import datetime
 from chiguo_math import weighted_trigger_choice, in_quiet_window, jaccard_3gram
 from chiguo_state import emotion_tag_snapshot
 from solar_terms import SolarTerms
+
+
+# ── 话题源注册表（Q4）──────────────────────────────────────
+# 集中接线：源名 → {weight_fn(基础权重), pick_fn(候选生成), modulate_fn(调制系数)}。
+# pick() 逐源 compute 有效权重(基础×调制)并生成候选——新增源只需在 TOPIC_REGISTRY
+# 追加一条并给出该源专属 weight_fn/pick_fn/modulate_fn 即可，不再散落 pick() 多处
+# 手写接线。
+# 顺序即候选生成顺序（须与原手写接线一致，确保 RNG 消耗序列与加权选种行为不变）。
+
+
+class TopicSource:
+    """一个话题源的注册表条目：三段接线。"""
+
+    __slots__ = ("name", "weight_fn", "pick_fn", "modulate_fn")
+
+    def __init__(self, name, weight_fn, pick_fn, modulate_fn):
+        self.name = name
+        self.weight_fn = weight_fn    # (picker, now) -> float 基础权重
+        self.pick_fn = pick_fn        # (picker, now) -> dict|None 候选生成
+        self.modulate_fn = modulate_fn  # (mod_ctx) -> float 调制系数(1.0=不调制)
+
+
+def _weight_of(source_name):
+    """注册表辅助：从 picker.weights 读某源基础权重（config 已在该 dict 组装，可被覆写）。"""
+    return lambda picker, now: picker.weights[source_name]
+
+
+# ── 调制函数（纯函数，接收调制上下文 dict；返回乘法系数，乘法复合不变） ──
+def _mod_identity(ctx):
+    return 1.0
+
+
+def _mod_schedule(ctx):
+    f = 1.0
+    if ctx["high_rate"]:
+        f *= 1.3
+    if ctx["low_openness"]:
+        f *= 1.3
+    return f
+
+
+def _mod_general(ctx):
+    f = 1.0
+    if ctx["high_rate"]:
+        f *= 1.5
+    if ctx["low_openness"]:
+        f *= 1.2
+    return f
+
+
+def _mod_weather_season(ctx):
+    return 0.7 if ctx["high_rate"] else 1.0
+
+
+def _mod_solar_terms(ctx):
+    return 0.6 if ctx["high_rate"] else 1.0
+
+
+def _mod_memory(ctx):
+    return ctx["openness_bonus"]
+
+
+def _mod_anniversary(ctx):
+    return ctx["openness_bonus"]
+
+
+# 8 源注册表（顺序即候选生成顺序）。pick_fn 统一签名为 (picker, now) -> dict|None，
+# 用 lambda 适配各实例方法（有无 now 参数皆可）。
+TOPIC_REGISTRY = [
+    TopicSource("schedule", _weight_of("schedule"),
+                lambda pk, now: pk._schedule_topic(now), _mod_schedule),
+    TopicSource("memory", _weight_of("memory"),
+                lambda pk, now: pk._memory_topic(), _mod_memory),
+    TopicSource("solar_terms", _weight_of("solar_terms"),
+                lambda pk, now: pk._solar_terms_topic(now), _mod_solar_terms),
+    TopicSource("anniversary", _weight_of("anniversary"),
+                lambda pk, now: pk._anniversary_topic(now), _mod_anniversary),
+    TopicSource("preference_followup", _weight_of("preference_followup"),
+                lambda pk, now: pk._preference_followup_topic(now), _mod_identity),
+    TopicSource("netease", _weight_of("netease"),
+                lambda pk, now: pk._netease_music_topic(now), _mod_identity),
+    TopicSource("weather_season", _weight_of("weather_season"),
+                lambda pk, now: pk._weather_season_topic(now), _mod_weather_season),
+    TopicSource("general", _weight_of("general"),
+                lambda pk, now: pk._general_topic(now), _mod_general),
+]
 
 
 class TopicPicker:
@@ -43,6 +131,9 @@ class TopicPicker:
             "preference_followup": config.get("preference_followup_weight", 0.10),
             "netease": config.get("netease_weight", 0.12),  # v9
         }
+        # Q4: 注册表驱动接线。默认模块级 TOPIC_REGISTRY；测试/调用方可按需覆写
+        # 为含自定义源的列表（新增源仅需在 registry 插入一条即被 pick 自动驱动）。
+        self.registry = TOPIC_REGISTRY
         self.solar_terms = SolarTerms()
 
     def pick(self, now: datetime) -> dict | None:
@@ -50,67 +141,18 @@ class TopicPicker:
         加权随机选取一个话题。general 永远可用，所以总是返回有效结果。
         情绪快速变化时调权重：偏向关心型话题，降低轻松型话题。
         v4: 人格调制话题多样性（高开放性→更多 memory/anniversary）
+        Q4: 接线收敛到集中注册表 TOPIC_REGISTRY，
+            逐源 compute 有效权重(=基础权重×调制系数)并生成候选。
         """
-        # 变化率检查
-        lo_rate = getattr(self.state.emotion, 'loneliness_rate', 0.0)
-        anx_rate = getattr(self.state.emotion, 'anxiety_rate', 0.0)
-        high_rate = lo_rate > 3.0 or anx_rate > 2.0
-
-        weights = dict(self.weights)
-        if high_rate:
-            weights["general"] *= 1.5
-            weights["schedule"] *= 1.3
-            weights["weather_season"] *= 0.7
-            weights["solar_terms"] *= 0.6
-
-        # ── v4: 人格调制 ──
-        try:
-            pers = self.state.personality
-            openness_bonus = pers.openness_bonus()  # 1.0~2.0
-            # 高开放性 → 更多 memory 和 anniversary 话题
-            weights["memory"] *= openness_bonus
-            weights["anniversary"] *= openness_bonus
-            # 低开放性（内向/谨慎）→ 更多 schedule 和 general
-            if openness_bonus < 1.3:
-                weights["schedule"] *= 1.3
-                weights["general"] *= 1.2
-        except AttributeError:
-            pass
-
+        mod_ctx = self._modulation_context(now)
         candidates = []
-
-        sched = self._schedule_topic(now)
-        if sched:
-            candidates.append({"topic": sched, "weight": weights["schedule"]})
-
-        mem = self._memory_topic()
-        if mem:
-            candidates.append({"topic": mem, "weight": weights["memory"]})
-
-        st = self._solar_terms_topic(now)
-        if st:
-            candidates.append({"topic": st, "weight": weights["solar_terms"]})
-
-        ann = self._anniversary_topic(now)
-        if ann:
-            candidates.append({"topic": ann, "weight": weights["anniversary"]})
-
-        pref = self._preference_followup_topic(now)
-        if pref:
-            candidates.append({"topic": pref, "weight": weights["preference_followup"]})
-
-        netease = self._netease_music_topic(now)
-        if netease:
-            candidates.append({"topic": netease, "weight": weights["netease"]})
-
-        candidates.append({
-            "topic": self._weather_season_topic(now),
-            "weight": weights["weather_season"],
-        })
-        candidates.append({
-            "topic": self._general_topic(now),
-            "weight": weights["general"],
-        })
+        for spec in self.registry:
+            base = spec.weight_fn(self, now)
+            factor = spec.modulate_fn(mod_ctx)
+            # 候选生成（顺序即注册表顺序，RNG 消耗序列与原手写接线一致）
+            topic = spec.pick_fn(self, now)
+            if topic:
+                candidates.append({"topic": topic, "weight": base * factor})
 
         # ── A9: 内容级防复读——候选与最近已发消息查重,高相似候选弃用 ──
         # 只作用于 topic 候选选择层（生成侧内容多样性），不改 daemon 发不发决策。
@@ -135,6 +177,30 @@ class TopicPicker:
             except Exception:
                 pass
         return topic
+
+    def _modulation_context(self, now: datetime) -> dict:
+        """计算调制上下文：high_rate(情绪快速变化) + 人格调制(openness_bonus/low_openness)。
+        语义与原手写版逐字等价（乘法满足交换律/结合律，逐源乘积不变）：
+          high_rate → general×1.5 / schedule×1.3 / weather_season×0.7 / solar_terms×0.6
+          人格 → memory×openness_bonus / anniversary×openness_bonus；
+                 low_openness(<1.3) 再 schedule×1.3 / general×1.2
+        personality 缺失（None / 无该方法）→ 抛 AttributeError → 人格部分跳过（系数=1.0）。"""
+        lo_rate = getattr(self.state.emotion, 'loneliness_rate', 0.0)
+        anx_rate = getattr(self.state.emotion, 'anxiety_rate', 0.0)
+        high_rate = lo_rate > 3.0 or anx_rate > 2.0
+
+        openness_bonus = 1.0
+        low_openness = False
+        try:
+            pers = self.state.personality
+            if pers is not None:
+                openness_bonus = pers.openness_bonus()  # 1.0~2.0
+                low_openness = openness_bonus < 1.3
+        except AttributeError:
+            pass  # 与旧实现一致：personality 缺失 → 人格调制整体跳过
+        return {"high_rate": high_rate,
+                "openness_bonus": openness_bonus,
+                "low_openness": low_openness}
 
     def _is_repeat(self, hint: str) -> bool:
         """A9: 候选 hint 与任一最近已发消息的 jaccard_3gram ≥ 阈值 → 视为复读。"""
@@ -245,7 +311,7 @@ class TopicPicker:
         # ── v4: 50% 概率用 Ebbinghaus 搜索（相关性），50% 随机 ──
         if random.random() < 0.5:
             # 用最近触发历史作为搜索上下文
-            recent = self.state.cooldown.trigger_history[-3:] if self.state.cooldown.trigger_history else []
+            recent = self.state.cooldown.get_trigger_history()[-3:] if self.state.cooldown.get_trigger_history() else []
             queries = [f"conversation", f"shared experience", f"preference"]
             if recent:
                 queries.insert(0, recent[-1])

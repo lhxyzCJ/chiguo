@@ -83,7 +83,7 @@ class AnniversaryManager:
         data = json.dumps({
             "anniversaries": [asdict(a) for a in self._items],
         }, indent=2, ensure_ascii=False)
-        atomic_write(self._path, data)
+        atomic_write(self._path, data, mode=0o600)
 
     @staticmethod
     def _valid(a: dict) -> bool:

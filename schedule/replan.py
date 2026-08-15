@@ -14,11 +14,11 @@ from pathlib import Path
 from schedule.sources import load_sources
 from schedule.plan_store import PlanStore
 from chiguo_time import CST  # Q22: 共享时区常量
+from trigger_types import TriggerType, REPLAN_SCALE_KEYS
 
 DIRTY_FILES = ("schedule_overrides.json", "holidays.json")   # mtime 文件集合(仅此二者,F12)
-TRIGGER_TYPES = ("special", "morning", "night", "memory", "meal",
-                 "lonely_low", "lonely_mid", "lonely_high", "anxiety", "playful",
-                 "reflect", "longing", "follow_up", "default")   # 13 类型 + default
+# 合法 trigger_scale 类型 = 枚举全部真实触发类型 + default（默认缩放键），单一事实来源见 trigger_types.py。
+TRIGGER_TYPES = sorted(REPLAN_SCALE_KEYS)   # 含 comfort（Q3）；default 为缺席类型缩放键
 MAX_MODIFIERS = 20
 MAX_FIELD_LEN = 100
 MAX_ITEM_BYTES = 4096
@@ -89,13 +89,74 @@ def validate_plan(plan: dict, sources=None) -> list[str]:
         for k, v in ts.items():
             if len(str(k)) > MAX_FIELD_LEN:
                 errs.append(f"类型名超长(>{MAX_FIELD_LEN}): {k[:20]}...")
-            if k not in TRIGGER_TYPES:
+            if k not in REPLAN_SCALE_KEYS:
                 errs.append(f"未知类型名: {k}")
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0.1 <= float(v) <= 10:
                 errs.append(f"trigger_scale clamp 越界: {k}={v}")
         if len(json.dumps(m, ensure_ascii=False).encode()) > MAX_ITEM_BYTES:
             errs.append(f"modifier JSON 总长 > 4KB: {ref}")
     return errs
+
+
+def sanitize_plan(plan: dict, sources=None) -> tuple[list, list]:
+    """校验失败降级(Q3 #265)：剔非法 modifier/trigger_scale key，保留合法部分。
+    返回 (合法 modifiers 列表, 告警列表)。plan 非 dict / modifiers 非 list → 无可挽救部分。
+    逐条剔除：非法字段/非法 ref/非 dict trigger_scale/超长/超限 clamp/越界值/总长超限。
+    对合法条目仅剔除非法 scale key，其余 scale 保留。"""
+    warns = []
+    if not isinstance(plan, dict):
+        return [], ["plan 非 dict,无可挽救"]
+    mods = plan.get("modifiers", [])
+    if not isinstance(mods, list):
+        return [], ["modifiers 非 list,无可挽救"]
+    kept = []
+    for m in mods:
+        if not isinstance(m, dict) or set(m) - {"ref", "trigger_scale"}:
+            warns.append(f"剔 modifier 未知字段: {m if not isinstance(m, dict) else list(m)}")
+            continue
+        ref = m.get("ref", "")
+        if len(ref) > MAX_FIELD_LEN:
+            warns.append(f"剔 ref 超长: {ref[:20]}...")
+            continue
+        if not (ref.startswith("fact:") or ref.startswith("holiday:")):
+            warns.append(f"剔 ref 前缀未知: {ref}")
+            continue
+        if sources is not None:
+            if ref.startswith("fact:"):
+                it = sources.overrides.by_id(ref[5:])
+                if it is None or it["kind"] != "exam_week":
+                    warns.append(f"剔 ref 未知/不合格: {ref}")
+                    continue
+            elif sources.holiday.range_of(ref[len("holiday:"):]) is None:
+                warns.append(f"剔 ref 未知: {ref}")
+                continue
+        ts = m.get("trigger_scale", {})
+        if not isinstance(ts, dict):
+            warns.append(f"剔 trigger_scale 非 dict: {ref}")
+            continue
+        clean_ts = {}
+        for k, v in ts.items():
+            if len(str(k)) > MAX_FIELD_LEN:
+                warns.append(f"剔类型名超长: {k[:20]}...")
+                continue
+            if k not in REPLAN_SCALE_KEYS:
+                warns.append(f"剔未知类型名: {k}")
+                continue
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0.1 <= float(v) <= 10:
+                warns.append(f"剔 clamp 越界: {k}={v}")
+                continue
+            clean_ts[k] = v
+        clean_m = {"ref": ref}
+        if clean_ts:
+            clean_m["trigger_scale"] = clean_ts
+        if len(json.dumps(clean_m, ensure_ascii=False).encode()) > MAX_ITEM_BYTES:
+            warns.append(f"剔 modifier 总长 > 4KB: {ref}")
+            continue
+        kept.append(clean_m)
+    if len(kept) > MAX_MODIFIERS:
+        warns.append(f"modifiers > {MAX_MODIFIERS},截断保留前 {MAX_MODIFIERS} 条")
+        kept = kept[:MAX_MODIFIERS]
+    return kept, warns
 
 
 def _lock(base_dir: str) -> bool:
@@ -217,8 +278,14 @@ def main(argv=None):
             return 1
         errs = validate_plan(plan, sources)
         if errs:
-            print(f"[schedule.replan] 校验失败({errs[:3]}…)→ 保留旧 plan + stale", file=sys.stderr)
-            return 1
+            # Q3 (#265): 校验失败不再丢整份 plan —— 剔非法 key/条目,保留合法部分 + 告警。
+            kept, warns = sanitize_plan(plan, sources)
+            for w in warns:
+                print(f"[schedule.replan] 剔非法部分: {w}", file=sys.stderr)
+            if warns:
+                print(f"[schedule.replan] 校验{len(errs)} 处失败,已剔除非法部分"
+                      f"({len(kept)}/{len(plan.get('modifiers', []))} modifiers 保留)", file=sys.stderr)
+            plan["modifiers"] = kept
         # TOCTOU 防护(M14/F2):写盘前重查来源 mtime 逐文件比对快照;变化 → 本轮放弃
         for n, snap_m in snap.items():
             p = Path(base_dir) / n

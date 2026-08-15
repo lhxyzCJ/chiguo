@@ -16,7 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from chiguo_time import CST
+from chiguo_time import CST  # Q22: 共享时区常量
+from trigger_types import TriggerType
 
 
 def _to_float(value, default: float) -> float:
@@ -403,30 +404,30 @@ class MessageComposer:
             weights["caring_gentle"] *= 0.4
 
         # trigger_type 调制
-        if trigger_type == "lonely_high":
+        if trigger_type == TriggerType.LONELY_HIGH:
             weights["tsundere_classic"] *= 0.2  # 崩溃时不太可能嘴硬
             weights["anxious_clingy"] *= 2.0
             weights["dere_dere"] *= 1.5
-        elif trigger_type == "lonely_low":
+        elif trigger_type == TriggerType.LONELY_LOW:
             weights["playful_bubbly"] *= 1.3
             weights["tsundere_soft"] *= 1.2
-        elif trigger_type == "anxiety":
+        elif trigger_type == TriggerType.ANXIETY:
             weights["anxious_clingy"] *= 2.5
             weights["tsundere_classic"] *= 0.3
-        elif trigger_type == "playful":
+        elif trigger_type == TriggerType.PLAYFUL:
             weights["playful_bubbly"] *= 3.0
             weights["caring_gentle"] *= 0.5
-        elif trigger_type in ("morning", "meal"):
+        elif trigger_type in (TriggerType.MORNING, TriggerType.MEAL):
             weights["playful_bubbly"] *= 1.2
-        elif trigger_type == "night":
+        elif trigger_type == TriggerType.NIGHT:
             weights["tsundere_soft"] *= 1.2
-        elif trigger_type == "comfort":
+        elif trigger_type == TriggerType.COMFORT:
             # 安慰语境 → 安抚系 cue 占优，压嘴硬/玩闹（review R8：勿用试探傲娇语气安慰）
             weights["caring_gentle"] *= 1.8
             weights["dere_dere"] *= 1.3
             weights["tsundere_classic"] *= 0.3
             weights["playful_bubbly"] *= 0.5
-        elif trigger_type == "follow_up":
+        elif trigger_type == TriggerType.FOLLOW_UP:
             # 接话茬 → 自然延续，轻快系微升
             weights["playful_bubbly"] *= 1.2
             weights["tsundere_soft"] *= 1.2

@@ -12,20 +12,14 @@ from dataclasses import dataclass, field
 from chiguo_state import CST, ChiguoState
 from chiguo_math import weighted_trigger_choice, in_quiet_window, mood_fresh
 
+from trigger_types import TriggerType, EMOTION_TRIGGERS
+
 
 @dataclass
 class Trigger:
     type: str
     intensity: str = "soft"
     data: dict = field(default_factory=dict)
-
-
-# 情绪类触发集合 —— A3 日程乘数只作用于此集合；A4 activation = 该集合候选权重之和；
-# A5 未回复退场（backing_off）时该集合禁发。仪式类（special/morning/night/meal/memory/follow_up）豁免。
-EMOTION_TRIGGERS = frozenset({
-    "lonely_low", "lonely_mid", "lonely_high",
-    "anxiety", "playful", "reflect", "longing", "comfort",
-})
 
 
 def _clamp01(value, default: float) -> float:
@@ -78,7 +72,7 @@ def backoff_level(state: ChiguoState, now: datetime) -> int:
     # #83: 类型防护——配置为 "3.5"/None 等非整数时回退默认，防 ValueError/TypeError 崩溃
     start = _clamp_int(cfg.get("backoff_start", 3), 3, max_value=100)
     silent = _clamp_int(cfg.get("backoff_silent", 5), 5, max_value=100)
-    n = state.cooldown.messages_without_reply
+    n = state.cooldown.get_messages_without_reply()
     if n >= silent:
         return 2
     if n >= start:
@@ -99,7 +93,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # 数学上永远无法到达（accumulation 被 blocked），必须用时间+状态驱动破防。
     # longing_break_eligible 检查：① 焦虑 ≥ 阻塞阈值 ② 墙钟沉默 ≥ 72h ③ 冷却期外
     if state.longing_break_eligible(now):
-        return Trigger("longing", "high", data={"escape_valve": True})
+        return Trigger(TriggerType.LONGING, "high", data={"escape_valve": True})
 
     # ── A5: 未回复退场状态机（硬性禁发层，escape_valve 已在上面 return → 天然豁免）──
     # 0=normal 正常竞争；1=backing_off 情绪类禁发、仪式类照发；2=silent 全禁发。
@@ -123,28 +117,28 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         special_hit = False
     if special_hit:
         weighted_candidates.append({
-            "trigger": Trigger(type="special", intensity="soft"),
+            "trigger": Trigger(type=TriggerType.SPECIAL, intensity="soft"),
             "weight": 3.0 * ritual_scale,  # 高权重,但非绝对
         })
 
     # 早安
     if _should_morning(state, now):
         weighted_candidates.append({
-            "trigger": Trigger(type="morning", intensity="soft"),
+            "trigger": Trigger(type=TriggerType.MORNING, intensity="soft"),
             "weight": 2.5 * ritual_scale,
         })
 
     # 晚安
     if _should_night(state, now):
         weighted_candidates.append({
-            "trigger": Trigger(type="night", intensity="soft"),
+            "trigger": Trigger(type=TriggerType.NIGHT, intensity="soft"),
             "weight": 2.0 * ritual_scale,
         })
 
     # 用餐（上课时跳过）
     if _should_meal(now, state):
         weighted_candidates.append({
-            "trigger": Trigger(type="meal", intensity="soft"),
+            "trigger": Trigger(type=TriggerType.MEAL, intensity="soft"),
             "weight": 0.8 * ritual_scale,
         })
 
@@ -155,7 +149,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             continue  # 数据防御：非 dict 条目跳过（state 加载已净化，这里再兜底防崩）
         if _memory_should_trigger(mem, now):
             weighted_candidates.append({
-                "trigger": Trigger(type="memory", intensity="soft",
+                "trigger": Trigger(type=TriggerType.MEMORY, intensity="soft",
                                    data={"memory": mem}),
                 "weight": 2.0 * ritual_scale,
             })
@@ -167,7 +161,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         mem0_mem = state.memory_bridge.random_memory(min_importance=0.4)
         if mem0_mem:
             weighted_candidates.append({
-                "trigger": Trigger(type="memory", intensity="soft",
+                "trigger": Trigger(type=TriggerType.MEMORY, intensity="soft",
                                    data={"mem0_memory": mem0_mem}),
                 "weight": 1.5 * ritual_scale,
             })
@@ -246,19 +240,19 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
 
     if w_low > 0.03:
         weighted_candidates.append({
-            "trigger": Trigger(type="lonely_low", intensity="soft"),
+            "trigger": Trigger(type=TriggerType.LONELY_LOW, intensity="soft"),
             "weight": w_low,
         })
 
     if w_mid > 0.03:
         weighted_candidates.append({
-            "trigger": Trigger(type="lonely_mid", intensity="medium"),
+            "trigger": Trigger(type=TriggerType.LONELY_MID, intensity="medium"),
             "weight": w_mid,
         })
 
     if w_high > 0.02:
         weighted_candidates.append({
-            "trigger": Trigger(type="lonely_high", intensity="intense"),
+            "trigger": Trigger(type=TriggerType.LONELY_HIGH, intensity="intense"),
             "weight": w_high,
         })
 
@@ -272,7 +266,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # ── v1.11 ①: 用户情绪感知（user_mood） ──
     # 新鲜窗口内（默认 6h）低落/崩溃 → comfort 安慰触发 + anxiety 权重加成。
     # 全部参数默认 0/关闭 → 行为恒等（灰度先例）。
-    mood = state.cooldown.user_mood
+    mood = state.cooldown.get_user_mood()
     mood_fresh_flag = bool(mood and mood_fresh(
         mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0)))
     if mood_fresh_flag:
@@ -297,7 +291,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     w_anx = raw_anx / denom_anx if denom_anx > 0 else 0.0
     if w_anx > anx_min_weight:
         weighted_candidates.append({
-            "trigger": Trigger(type="anxiety", intensity="medium"),
+            "trigger": Trigger(type=TriggerType.ANXIETY, intensity="medium"),
             "weight": w_anx,
         })
 
@@ -315,7 +309,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         w_cf = raw_cf / (raw_cf + cf_baseline) if raw_cf + cf_baseline > 0 else 0.0
         if w_cf > cf_min:
             weighted_candidates.append({
-                "trigger": Trigger("comfort", "soft"),
+                "trigger": Trigger(TriggerType.COMFORT, "soft"),
                 "weight": w_cf,
             })
 
@@ -330,7 +324,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         w_bored = 0.15 * (emo.energy / 100) * aff_factor * pers_extra_factor
         if w_bored > 0.03:
             weighted_candidates.append({
-                "trigger": Trigger(type="playful", intensity="soft"),
+                "trigger": Trigger(type=TriggerType.PLAYFUL, intensity="soft"),
                 "weight": w_bored,
             })
 
@@ -344,20 +338,20 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             w_reflect = 0.08 * (emo.affection / 100) * (1 - neuroticism / 100) * (emo.energy / 100)
             if w_reflect > 0.02:
                 weighted_candidates.append({
-                    "trigger": Trigger(type="reflect", intensity="soft"),
+                    "trigger": Trigger(type=TriggerType.REFLECT, intensity="soft"),
                     "weight": w_reflect,
                 })
 
     # ── v4: longing 触发（概率累积溢出）──
     # held_count 高 + accumulated_lambda 高 → "累积的想念终于溢出"
-    held = getattr(state.cooldown, 'held_count', 0)
-    acc_lam = state.cooldown.accumulated_lambda or 0
+    held = state.cooldown.get_held_count()
+    acc_lam = state.cooldown.get_accumulated_lambda() or 0
     base_lambda = _to_float(state.config.get("poisson", {}).get("base_lambda", 0.25), 0.25)
     if state.is_longing_overflow() and base_lambda > 0:
         w_longing = min(0.5, (acc_lam / base_lambda - 1) * 0.3)
         if w_longing > 0.03:
             weighted_candidates.append({
-                "trigger": Trigger(type="longing", intensity="soft",
+                "trigger": Trigger(type=TriggerType.LONGING, intensity="soft",
                                    data={"held_count": held, "accumulated_lambda": round(acc_lam, 3)}),
                 "weight": w_longing,
             })
@@ -400,7 +394,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # B1: repeat_cap 走 _clamp_int 兜底（字符串"3"/None 等脏配置回退默认 3，负数钳 0），
     # 与 min(n, repeat_cap) 的整型语义一致（裸取遇字符串会 TypeError）
     repeat_cap = _clamp_int(trg_cfg.get("repeat_cap", 3), 3)
-    history = state.cooldown.trigger_history
+    history = state.cooldown.get_trigger_history()
     for c in weighted_candidates:
         n = sum(1 for t in history if t == c["trigger"].type)
         c["weight"] *= repeat_decay ** min(n, repeat_cap)
@@ -440,7 +434,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # 回复时 replied+1），样本数 < min_samples 不调整（防冷启动误伤）。
     # 放在抖动后、三段选择前 → 只影响类型间相对概率，不扰动 A4 三段归属阈值。
     if trg_cfg.get("reply_feedback_enabled", 0):
-        stats = getattr(state.cooldown, "reply_stats", None) or {}
+        stats = state.cooldown.get_reply_stats() or {}
         rfb_damp = _to_float(trg_cfg.get("reply_feedback_damp", 0.0), 0.0)
         rfb_boost = _to_float(trg_cfg.get("reply_feedback_boost", 0.0), 0.0)
         rfb_low = _to_float(trg_cfg.get("reply_feedback_low_rate", 0.3), 0.3)
@@ -475,16 +469,16 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         trigger.data["must_send"] = True
 
     # ── v7: 接话茬触发后标记已尝试(防重复;记忆兜底条目不在 pending 中,no-op)──
-    if trigger.type == "follow_up" and chosen.get("topic_ref") is not None:
+    if trigger.type == TriggerType.FOLLOW_UP and chosen.get("topic_ref") is not None:
         state.mark_pending_topic_attempted(chosen["topic_ref"].get("topic", ""))
 
     # ── v4.1: 安全阀 — 连续崩溃降级（降级只改类型/强度，继承 data 保留 must_send 标记）──
     safety = state.safety_level(now)
-    if safety >= 1 and trigger.type == "lonely_high":
-        trigger = Trigger(type="lonely_mid", intensity="soft", data=trigger.data)
+    if safety >= 1 and trigger.type == TriggerType.LONELY_HIGH:
+        trigger = Trigger(type=TriggerType.LONELY_MID, intensity="soft", data=trigger.data)
     elif safety >= 2:
-        if trigger.type == "anxiety":
-            trigger = Trigger(type="lonely_low", intensity="soft", data=trigger.data)
+        if trigger.type == TriggerType.ANXIETY:
+            trigger = Trigger(type=TriggerType.LONELY_LOW, intensity="soft", data=trigger.data)
         else:
             trigger.intensity = "soft"
 
@@ -514,9 +508,11 @@ def _activation_score(emo_cands: list[dict]) -> float:
     与全量求和的差异：两股中低情绪叠加（如孤独35+焦虑57）不再凑到高段触发 must_send，
     只有单个维度真正强（孤独族和或单源焦虑 ≥ 阈值）才必发 —— 与 toml #79 文档承诺一致。"""
     lonely = sum(c["weight"] for c in emo_cands
-                 if c["trigger"].type in ("lonely_low", "lonely_mid", "lonely_high"))
+                 if c["trigger"].type in
+                 (TriggerType.LONELY_LOW, TriggerType.LONELY_MID, TriggerType.LONELY_HIGH))
     others = [c["weight"] for c in emo_cands
-              if c["trigger"].type not in ("lonely_low", "lonely_mid", "lonely_high")]
+              if c["trigger"].type not in
+              (TriggerType.LONELY_LOW, TriggerType.LONELY_MID, TriggerType.LONELY_HIGH)]
     return max(lonely, max(others, default=0.0))
 
 
@@ -540,7 +536,7 @@ def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
     if w <= _clamp01(trg_cfg.get("follow_up_min_weight", 0.03), 0.03):
         return None
     return {
-        "trigger": Trigger(type="follow_up", intensity="soft",
+        "trigger": Trigger(type=TriggerType.FOLLOW_UP, intensity="soft",
                            data={"topic": topic,
                                  "source": entry.get("source", ""),
                                  "age_hours": round(age, 1)}),
@@ -550,7 +546,7 @@ def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
 
 
 def _should_morning(state: ChiguoState, now: datetime) -> bool:
-    if state.cooldown.morning_sent:
+    if state.cooldown.is_morning_sent():
         return False
     s = state.config.get("schedule", {})
     start, end = s.get("morning_start", 8), s.get("morning_end", 10)
@@ -561,7 +557,7 @@ def _should_morning(state: ChiguoState, now: datetime) -> bool:
 
 
 def _should_night(state: ChiguoState, now: datetime) -> bool:
-    if state.cooldown.night_sent:
+    if state.cooldown.is_night_sent():
         return False
     s = state.config.get("schedule", {})
     start, end = s.get("night_start", 20), s.get("night_end", 21)

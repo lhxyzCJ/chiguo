@@ -79,9 +79,9 @@ class Demo:
         self.sent.append({"time": self.sim_now.isoformat(), "message": situation})
         self.state.on_character_message(self.sim_now, trigger.type)
         if trigger.type == "morning":
-            self.state.cooldown.morning_sent = True
+            self.state.cooldown.mark_morning_sent()
         elif trigger.type == "night":
-            self.state.cooldown.night_sent = True
+            self.state.cooldown.mark_night_sent()
 
     def user_msg(self, text: str):
         print(f"\n{Color.GRN}📩 主人: {text}{Color.R}")

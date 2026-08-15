@@ -135,9 +135,13 @@ class NeteaseBridge:
         if cookie:
             headers["Cookie"] = cookie
         req = urllib.request.Request(url, headers=headers)
+        # Q15: 显式 ProxyHandler({}) 回环直连（等价 curl --noproxy '*',同 chiguo_envcheck._urlopen）。
+        # 本桥接请求携带隐私 MUSIC_U/__csrf cookie（凭据外发即泄露）且目标为本机 API 服务:
+        # 本机配 http_proxy 时显式绕代理可避免 cookie 随请求发往/被代理劫持渗漏。
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         for attempt in range(self.retry_count + 1):
             try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                with opener.open(req, timeout=timeout) as resp:
                     return json.loads(resp.read())
             except urllib.error.HTTPError as e:  # HTTPError 是 URLError 子类,必须在前
                 if e.code >= 500 and attempt < self.retry_count:
