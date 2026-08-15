@@ -12,7 +12,7 @@
 #     以默认 umask 创建（用于 holidays.json 等非隐私数据）。
 #   - fsync=True → replace 前 fsync 落盘。
 #   - verify 给定 → replace 前对 tmp 调 verify(tmp_path)；抛异常则中止
-#     replace（由调用方决定清理）。
+#     replace，并自动清理残留 .tmp 后向上抛出（由调用方决定终止/告警）。
 #   - 低层 OSError 抛出，由调用方决定终止/告警/降级。
 # ============================================================
 
@@ -31,7 +31,7 @@ def atomic_write(path, data, *, mode=None, fsync=False, verify=None,
             0600 一步到位，无先写后 chmod 窗口）。None → 默认 umask。
         fsync: True → replace 前对 tmp fd fsync 落盘。
         verify: 可选 callable(tmp_path)，在 replace 前调用；抛异常则中止
-            replace（tmp 不自动清理）。
+            replace，且 helper 自动清理残留 .tmp 后把异常向上抛出。
         tmp_path: 可选，覆盖默认 <path>.tmp。
     """
     path = os.fspath(path)
