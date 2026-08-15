@@ -1838,10 +1838,15 @@ def guard_mutual_form(base_dir: str, form: str) -> str | None:
 
 
 def startup_conflict(base_dir: str, form: str) -> int:
-    """启动防线：冲突则打 stderr 诊断并返回建议退出码（调用方据此 sys.exit）。
+    """启动防线：冲突则打 stderr 诊断并返回区分语义的哨兵码，调用方据此分流。
 
-    loop 冲突返回 1（明确拒绝启动常驻）；cron 冲突返回 0（像 tick flock 的
-    「跳过本 tick」语义一样静默跳过，不把 cron 健康检查拖垮）。
+    返回语义（Q28 P0 修复，区分「拒启」与「跳过」两种冲突）：
+      0 = 无冲突，放行；
+      1 = loop 冲突，拒绝启动常驻（exit 1）；
+      2 = cron 冲突，跳过本 tick 单次主动评估（exit 0，不输出决策，不拖垮健康检查）。
+
+    此前 cron 冲突误返回 0（假值），调用方 `if rc: sys.exit(rc)` 不生效 → 守卫没
+    短路，engine.evaluate() 照跑、stdout 仍输出决策，loop 与 cron 会双发送。
     """
     conflict = guard_mutual_form(base_dir, form)
     if conflict is None:
@@ -1852,7 +1857,30 @@ def startup_conflict(base_dir: str, form: str) -> int:
         return 1
     print(f"[chiguo_daemon] {conflict}，跳过本次单次主动评估（防双发送）",
           file=sys.stderr)
-    return 0
+    return 2
+
+
+def _run_passive(engine, compact: bool) -> None:
+    """cron 形态的单次主动评估入口（--compact 亦经此）。
+
+    Q28 P0 修复：评估前先查 loop 冲突。startup_conflict 返回 2（cron 冲突=跳过）
+    时直接 sys.exit(0)——跳过本 tick、**不调用 engine.evaluate()、不输出任何决策
+    JSON**，防止 loop 与 cron 双发送，同时以 0 退出不拖垮 cron 健康检查。
+    """
+    rc = startup_conflict(str(engine._base_dir), "cron")
+    if rc == 2:
+        sys.exit(0)  # cron 冲突：跳过本 tick（与 loop 冲突 exit 1 语义区分）
+    if rc != 0:
+        sys.exit(rc)  # 防御：未知非零哨兵照常退出
+
+    decision = engine.evaluate()
+    if compact and decision["action"] == "idle":
+        # 紧凑模式 idle 时输出最小 heartbeat（用于 cron 健康检查）
+        print(json.dumps({"action": "idle", "version": VERSION,
+                          "time": datetime.now(CST).isoformat()},
+                         ensure_ascii=False))
+        return
+    print(json.dumps(decision, ensure_ascii=False, indent=2))
 
 
 # ── 入口 ──────────────────────────────────────────────────
@@ -2239,7 +2267,7 @@ def main():
 
         # ── Q28: loop 启动时检测 cron 形态是否在跑，冲突拒启（防双发送）──
         rc = startup_conflict(str(engine._base_dir), "loop")
-        if rc:
+        if rc == 1:  # loop 冲突 → 拒绝启动常驻（无冲突返回 0；loop 不产生 cron 跳过 2）
             sys.exit(rc)
 
         # ── v5: PID 锁文件，防止双开（v6: 锚定 base_dir）──
@@ -2319,16 +2347,8 @@ def main():
 
     # 默认：单次评估（cron 形态的主动评估入口，--compact 亦经此）
     # Q28: cron 单次主动评估前检测 loop 形态是否在跑，冲突则跳过（防双发送）。
-    rc = startup_conflict(str(engine._base_dir), "cron")
-    if rc:
-        sys.exit(rc)
-
-    decision = engine.evaluate()
-    if args.compact and decision["action"] == "idle":
-        # 紧凑模式 idle 时输出最小 heartbeat（用于 cron 健康检查）
-        print(json.dumps({"action": "idle", "version": VERSION, "time": datetime.now(CST).isoformat()}, ensure_ascii=False))
-        return
-    print(json.dumps(decision, ensure_ascii=False, indent=2))
+    _run_passive(engine, bool(args.compact))
+    return
 
 
 if __name__ == "__main__":
