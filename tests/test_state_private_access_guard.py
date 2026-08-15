@@ -20,6 +20,16 @@ GUARDED_MODULES = ["chiguo_daemon.py", "chiguo_trigger.py", "chiguo_topics.py", 
 # 允许不经公开 API 的私有访问名单（无；守卫目标是"零直访"）
 ALLOWED_PRIVATE = set()
 
+# CooldownState 的裸字段名（dataclass 定义）。守卫据此识别 getattr(x, 'field') 字符串字段形式。
+COOLDOWN_FIELDS = {
+    "last_message_at", "last_user_message_at", "messages_today", "messages_without_reply",
+    "current_date", "morning_sent", "night_sent", "trigger_history", "event_timestamps",
+    "reply_latencies", "busy_suppress_until", "held_count", "accumulated_lambda",
+    "last_user_msg_length", "last_crash_at", "crash_count_48h", "crash_timestamps",
+    "last_longing_break_at", "recv_dedup", "drop_events", "user_mood", "reply_stats",
+    "reply_pending", "consolidate_last_at",
+}
+
 
 def _state_private_violations(tree):
     """返回 (lineno, expr) 列表：形如 `X.state._attr` 的访问。"""
@@ -42,9 +52,50 @@ def _state_private_violations(tree):
     return bad
 
 
-def _cooldown_bare_field_violations(tree):
-    """返回 (lineno, expr) 列表：形如 `X.state.cooldown.<field>` 且 field 非方法调用。"""
+def _is_state_cooldown_chain(node):
+    """判断 ast 节点是否为 `(...state).cooldown` 链（node 属性名 == 'cooldown'）。
+
+    base 可为变量 `state`（Name）或 `X.state`（Attribute）——即同时覆盖
+    `getattr(state.cooldown, …)` 与 `getattr(x.state.cooldown, …)`。
+    """
+    if not isinstance(node, ast.Attribute) or node.attr != "cooldown":
+        return False
+    base = node.value
+    if isinstance(base, ast.Name):
+        return base.id == "state"
+    return isinstance(base, ast.Attribute) and base.attr == "state"
+
+
+def _cooldown_getattr_violations(tree):
+    """返回 (lineno, expr) 列表：`getattr(<state>.cooldown, '<字段名>')` 字符串裸字段形式。
+
+    字段名须为常量字符串且属于 COOLDOWN_FIELDS（裸字段读）；动态/方法名不命中。
+    此为点式 `state.cooldown.field` 之外的第二类裸读（getattr 字符串形式）。
+    """
     bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Name) and func.id == "getattr"):
+            continue
+        if len(node.args) < 2:
+            continue
+        obj, name_arg = node.args[0], node.args[1]
+        if not _is_state_cooldown_chain(obj):
+            continue
+        field = None
+        if isinstance(name_arg, ast.Constant) and isinstance(name_arg.value, str):
+            field = name_arg.value
+        if field is None or field not in COOLDOWN_FIELDS:
+            continue
+        expr = f"getattr(<state>.cooldown, '{field}')"
+        bad.append((node.lineno, expr))
+    return bad
+
+
+def _cooldown_bare_field_violations(tree):
+    """返回 (lineno, expr) 列表：cooldown 裸字段直读写（点式 + getattr 字符串形式）。"""
     # 收集所有被方法调用包裹的属性（其父节点是 Call 且是 func）→ 视为方法访问（合法）
     call_func_ids = set()
     for node in ast.walk(tree):
@@ -52,6 +103,7 @@ def _cooldown_bare_field_violations(tree):
             if isinstance(node.func, ast.Attribute):
                 call_func_ids.add(id(node.func))
 
+    bad = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Attribute):
             continue
@@ -68,6 +120,8 @@ def _cooldown_bare_field_violations(tree):
             continue
         expr = f"<state>.cooldown.{field_name}"
         bad.append((node.lineno, expr))
+
+    bad += _cooldown_getattr_violations(tree)
     return bad
 
 
