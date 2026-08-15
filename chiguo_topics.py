@@ -116,7 +116,7 @@ class TopicPicker:
                 由调用方从发送日志读取注入；None/空 = 不查重，行为同旧版）
         """
         self.state = state
-        self.netease_service = netease_service  # v9: 网易云策略层,可为 None(降级)
+        self.netease_service = netease_service  # 网易云策略层,可为 None(降级)
         # ── A9: 内容级防复读参数（[topic_picker] 段）──
         self.repeat_jaccard_threshold = config.get("repeat_jaccard_threshold", 0.6)
         self.repeat_history_n = int(config.get("repeat_history_n", 5))
@@ -167,7 +167,7 @@ class TopicPicker:
 
         chosen = weighted_trigger_choice(candidates)
         topic = chosen["topic"] if chosen else None
-        # v9: netease 候选被选中 → 确认消费配额(peek 不消费,抽选后补)
+        # netease 候选被选中 → 确认消费配额(peek 不消费,抽选后补)
         if topic and self.netease_service and topic.get("type") in ("netease_music", "netease_fault"):
             try:
                 if topic.get("type") == "netease_fault":

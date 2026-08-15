@@ -403,7 +403,7 @@ regress_rate = 0.01                # 基线回归速率（每次互动后向初�
 learning_rate = 0.05             # 在线学习率（越小越保守）
 min_confidence_for_block = 0.5   # 置信度高于此才阻塞发送
 utility_threshold = 0.4          # 加权效用高于此推荐发送
-escape_valve_sleep_block = 0.9   # v7: 逃生阀豁免时，睡觉置信度≥此值仍降级（默认0.9）
+escape_valve_sleep_block = 0.9   # 逃生阀豁免时，睡觉置信度≥此值仍降级（默认0.9）
 # ── A1: 状态转移矩阵 + 前向滤波（默认关闭恒等，可灰度）──
 # transition_enabled=True 时 infer 用 prev_posterior × TRANSITIONS 作转移先验，
 # 与时间先验 0.5/0.5 线性混合（状态持续性平滑 + 时段分布兜底）。

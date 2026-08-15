@@ -108,7 +108,7 @@ export function readToml(p) {
       else if (v === 'false') v = false
       else if (/^-?\d+(\.\d+)?$/.test(v)) v = Number(v)
       else if (v.startsWith('[') && v.endsWith(']')) {
-        // v1.8: 数组值（如 agent_command = ["node", "/path/x.mjs"]）→ 字符串数组
+        // 数组值（如 agent_command = ["node", "/path/x.mjs"]）→ 字符串数组
         v = v.slice(1, -1).split(',')
           .map((s) => s.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1'))
           .filter((s) => s !== '')

@@ -281,7 +281,7 @@ class ChiguoMonitor:
         mem0_ok_count = 0
         mem0_check_count = 0
 
-        # v6: 发送结果统计
+        # 发送结果统计
         send_success = 0
         send_failed = 0
 
@@ -1102,7 +1102,7 @@ class ChiguoMonitor:
 
 
 # ═══════════════════════════════════════════════════════════
-# v5: AlertManager — 告警生命周期管理
+# AlertManager — 告警生命周期管理
 # ═══════════════════════════════════════════════════════════
 
 class AlertManager:
