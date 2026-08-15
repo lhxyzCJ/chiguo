@@ -450,6 +450,22 @@ class ChiguoState:
         else:
             self._apply_quiet_window()
 
+    def _relearn_windows(self, now: datetime):
+        """单源：重算生物钟学习窗口并同步门禁。reply/active 记账由各自调用方先行。
+
+        Q30「circadian 双源」收敛——recompute + _sync_quiet_window 曾在
+        on_user_message（回复）与 daemon._apply_play_proof（听歌活跃）两处重复，
+        且 [circadian] 4 参数默认值被复制两遍。一律经此门面重算+同步，
+        [circadian] 参数默认只在此维护一份（行为不变）。"""
+        cfg = self.config.get("circadian", {})
+        self.circadian.recompute(
+            min_sample_days=cfg.get("min_sample_days", 7),
+            history_days=cfg.get("history_days", 14),
+            min_width=cfg.get("min_width", 5),
+            max_width=cfg.get("max_width", 12),
+        )
+        self._sync_quiet_window(now)
+
     @property
     def state_path(self) -> Path:
         return self._anchored("chiguo_state.json")
@@ -1796,14 +1812,9 @@ class ChiguoState:
         # ── v7/v8: 生物钟学习(每次回复记录小时 + 重算窗口;v8 按当日分桶)──
         circ_cfg = self.config.get("circadian", {})
         self.circadian.record(now, circ_cfg.get("history_days", 14), self._current_bucket(now))
-        self.circadian.recompute(
-            min_sample_days=circ_cfg.get("min_sample_days", 7),
-            history_days=circ_cfg.get("history_days", 14),
-            min_width=circ_cfg.get("min_width", 5),
-            max_width=circ_cfg.get("max_width", 12),
-        )
         # v8: 与 record 使用同一 now(测试注入过去时间时桶选择语义一致)
-        self._sync_quiet_window(now)
+        # Q30: 重算+同步收敛到 _relearn_windows 单门面（circadian 双源合并）
+        self._relearn_windows(now)
 
         self._finalize(now)
 

@@ -551,14 +551,9 @@ class DecisionEngine:
                     play_proof = True
                     self.state.circadian.record_active(
                         dt, circ_cfg.get("history_days", 14), p_bucket)
-            # 活跃证据后重算窗口并同步门禁
+            # 活跃证据后重算窗口并同步门禁（Q30：收敛到 state._relearn_windows 单门面）
             if play_proof:
-                self.state.circadian.recompute(
-                    min_sample_days=circ_cfg.get("min_sample_days", 7),
-                    history_days=circ_cfg.get("history_days", 14),
-                    min_width=circ_cfg.get("min_width", 5),
-                    max_width=circ_cfg.get("max_width", 12))
-                self.state._sync_quiet_window(now)
+                self.state._relearn_windows(now)
             return play_proof
         except Exception as e:
             print(f"[warn] netease play proof apply failed: {e}", file=sys.stderr)
