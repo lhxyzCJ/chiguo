@@ -669,7 +669,6 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
   ① JSON 手动（data/chiguo_memories.json，相对路径经 `_anchored` 解析）
      类型: reminder（定时）/ habit（习惯窗口）
      → daemon 直接读取
-
   ② mem0 记忆（mem0ai 记忆层，v1.9 唯一内置后端）
      路径: data/mem0/（qdrant 嵌入式向量库 + history.db，相对路径经 `_anchored` 解析，gitignore）
      访问: memory/ 包（默认 Mem0Backend：LLM 事实提取写入 + 向量语义检索 + Ebbinghaus 加权；mem0 唯一后端）
@@ -687,6 +686,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
      MemoryBackend 基类共享 ebbinghaus_weight()/search_with_forgetting()/user_relevant_with_forgetting()/random_memory_with_forgetting()（后端无关）
 ```
 
+**Q7 reminder 去重标记持久化（#79/#260）**：`data/chiguo_memories.json` 是记忆内容**唯一事实源**，daemon 发送 reminder 后在记忆条目上写 `last_triggered_at` 去重标记仅存内存、不写回该文件（内容文件不变量）。为避免 cron 每 15 分钟新进程丢标记、窗口内多评估路径重复触发，该去重标记并入 `chiguo_state.json` 顶层 `memory_dedup` 字段（键 = 记忆去重键 = 剥离标记字段后的稳定 JSON，值 = `last_triggered_at`）：daemon 经 `ChiguoState.mark_memory_triggered()`（公开 API）标记并随 `save()` 落盘；`_load()` 读回并回写到 `self.memories` 对应条目，`trigger` 层 `_memory_should_trigger` 据此跳过。空标记不写该字段（状态文件保持干净，同 bayesian 策略）。
 **B2 情绪-记忆耦合（v1.12）**：写侧 `emotion_tagging=True`（默认 False）时，daemon 对话写入 mem0 把当前情绪快照打标进 `metadata.emotion_tag`（`emotion_tag_snapshot()`：loneliness/affection/anxiety/energy → low/mid/high 三档（≤30 low / ≥70 high）+ `user_mood`）；读侧 `emotion_tag_weight > 0`（默认 0）时，`_apply_forgetting` 检索对带 `emotion_tag` 的记忆按情绪相近度加权——`_score *= (1 + emotion_tag_weight × sim)`（`emotion_tag_similarity`：记忆或请求任一缺 emotion_tag → 0 不加权）。对标情绪状态相关的记忆优先浮现。
 
 **C1 空闲期确定性记忆巩固（v1.12，零 LLM）**：对标 Letta dreaming / CowAgent Deep Dream，吸收思想不换库、不调 LLM——`MemoryBackend.consolidate_plan` 纯函数生成巩固计划（不写库）：
@@ -953,7 +953,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 | 文件 | 说明 |
 |------|------|
-| `chiguo_state.json` | 状态持久化（原子写 tmp→os.replace + SHA256 校验 + 审计 `chiguo_state_audit.jsonl`） |
+| `chiguo_state.json` | 状态持久化（原子写 tmp→os.replace + SHA256 校验 + 审计 `chiguo_state_audit.jsonl`；含顶层 `memory_dedup` = reminder 去重标记 `{记忆去重键: last_triggered_at}`，见 §3.4，仅存标记不存 memories 全文） |
 | `chiguo_decisions.jsonl` | 决策日志（追加式，monitor/轮转/索引消费） |
 | `chiguo_messages.jsonl` | 完整对话归档 |
 | `data/chiguo_memories.json` | 手动记忆（reminder/habit） |
