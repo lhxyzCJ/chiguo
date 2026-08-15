@@ -27,6 +27,8 @@ try:
 except ImportError:
     _HAS_MEM0 = False
 
+from decision_schema import validate as validate_decision  # Q16: 消费同一 schema
+
 
 def _num(v):
     """数值守卫：非 int/float（损坏行 dict/list/str）→ 0，防比较 TypeError 崩溃。"""
@@ -106,7 +108,12 @@ class ChiguoMonitor:
         return datetime.now(CST)
 
     def _iter_decisions(self, since: datetime | None = None):
-        """流式迭代 decisions.jsonl，一次一行。损坏行静默跳过。"""
+        """流式迭代 decisions.jsonl，一次一行。损坏行静默跳过。
+
+        Q16：每条 dict 记录都经决策 schema（decision_schema.validate）消费——
+        旧 jsonl 无 contract 键按缺省 1 处理（兼容不跳）；仍 yield 原记录，
+        不据此跳过（不破坏历史读取）。真正的形状防御由下游 _normalize_entry。
+        """
         if not self.log_path.exists():
             return
         try:
@@ -121,6 +128,8 @@ class ChiguoMonitor:
                         continue
                     if not isinstance(d, dict):
                         continue  # 合法 JSON 但非 dict（形状漂移）→ 跳过，防 AttributeError
+                    # 消费同一 schema（非破坏：仅校验不跳过，历史无 contract 兼容）
+                    validate_decision(d)
                     if since:
                         ts = self._extract_time(d)
                         if ts and ts < since:

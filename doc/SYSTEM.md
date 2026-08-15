@@ -1672,6 +1672,8 @@ v5 新增完整的对话日志、归档、轮转、告警持久化和索引查�
 
 `msg_id` 格式：`msg_{YYYYMMDD}_{HHMMSS}_{random6}`。idle 条目不含 `msg_id`（未产生消息）。
 
+**Q16 决策契约键 `contract`** — 决策日志每条记录顶层统一带 `"contract": 1`（由 `decision_schema.py` 单一权威定义，与项目版本 `chiguo_version.VERSION` 分离；`DecisionEngine._log` 写前统一注入并校验）。consumer 跨语言对齐：Python 侧 `decision_schema.validate()`（daemon 写、monitor 读）集中校验；node `scripts/agent-run.mjs` 无法 import Python schema，仅对齐字段名（`DECISION_SEND_FIELDS` 与 `decision_schema.send_top_level_fields()` 契约测试互检）。历史 jsonl（无 `contract` 键）读取时按缺省 `1` 处理，向后兼容不破坏。
+
 #### 10.7.2 对话归档
 
 `chiguo_messages.jsonl` 独立存储完整对话记录，与 decisions 日志解耦。每条记录一行 JSON：

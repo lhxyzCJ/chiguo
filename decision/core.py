@@ -18,6 +18,7 @@ from chiguo_version import VERSION
 from chiguo_math import in_quiet_window, longing_accumulate
 from chiguo_circadian import bucket_for
 from trigger_types import TriggerType  # T7·Q3 (#265) 移植：触发类型枚举单一事实源
+from decision_schema import with_contract, validate as validate_decision  # Q16 移植：决策 JSON schema 写前校验
 
 CST = timezone(timedelta(hours=8))
 
@@ -29,9 +30,18 @@ class DecisionCoreMixin(DecisionEngineBase):
             return uuid.uuid4().hex[:12]
 
         def _log(self, decision: dict):
-            """追加决策到 JSONL 日志。自动添加 msg_id。"""
+            """追加决策到 JSONL 日志。自动添加 msg_id + 契约版本键 contract。
+
+            Q16 移植：决策 JSON 全部经集中 schema（decision_schema.py）写前校验并统一加
+            contract 契约键；校验失败是编程错误 → 抛错（不写坏日志），不静默吞掉。
+            """
             if "msg_id" not in decision:
                 decision["msg_id"] = self._make_msg_id()
+            # 统一加契约版本键；历史 jsonl 读取侧按缺省 1 兼容（见 decision_schema）。
+            decision = with_contract(decision)
+            errors = validate_decision(decision, require_contract=True)
+            if errors:
+                raise ValueError("决策 JSON schema 校验失败: " + "; ".join(errors))
             try:
                 with open(self.log_path, "a") as f:
                     try:
