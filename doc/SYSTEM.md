@@ -58,8 +58,8 @@ POST 走本地回环**绕系统代理**直连（防 http_proxy 劫持导致回�
 
 ```
 chiguo_daemon.py (DecisionEngine)
-  ├─ chiguo_state.py     → 5-dimension emotion engine + 8-dim personality + Bayesian inference + schedule + holidays + memory
-  │                       （v1.12 B1 事件类型化情绪 delta + B2 情绪-记忆耦合）
+  ├─ chiguo_state.py     → 状态核心 4 单类：ChiguoState（核心决策/协调）+ ChiguoEmotion（情绪引擎数据）+ CooldownState（冷却子状态 + 公开 getter/mutator）+ StatePersistence（持久化/迁移：原子读写/锁/审计/校验和）
+  │                       （v1.12 B1 事件类型化情绪 delta + B2 情绪-记忆耦合；T11·Q1 拆分 13 责任集群为 ≤4 单类，daemon 私有直访与 cooldown 字段直读写改走公开 API）
   │     ├─ chiguo_math.py      → 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix
   │     ├─ chiguo_personality.py → Big Five + 角色特质（8 维人格）+ 自适应 + 基线回归
   │     ├─ chiguo_bayesian.py  → Bayesian 用户状态推断（6 状态，在线学习；A1 转移矩阵+前向滤波 + A3 信息增益门控）
@@ -855,7 +855,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | 文件 | 职责 |
 |------|------|
 | `chiguo_daemon.py` | 决策引擎入口：DecisionEngine / evaluate 决策链路 / can_send 门控 / CLI / 配置热重载 / loop 常驻 |
-| `chiguo_state.py` | ChiguoState：5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线 + 状态持久化（原子写/SHA256/审计日志） |
+| `chiguo_state.py` | 状态核心（T11·Q1 拆分 13 集群为 4 单类）：ChiguoState（5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线）、ChiguoEmotion（情绪数据）、CooldownState（冷却子状态 + 公开 getter/mutator）、StatePersistence（原子持久化/SHA256/审计日志/迁移） |
 | `chiguo_monitor.py` | 流式 JSONL 分析：统计/告警/健康 + D1 proactive_stats |
 | `chiguo_trigger.py` | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
 | `chiguo_composer.py` | Intent × Cue × Vibe 三层组合 + 独立直出 CLI（发送链不再调用） |

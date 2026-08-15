@@ -402,7 +402,7 @@ class StatePersistence:
 
     持有 owner（ChiguoState）的引用，序列化/反序列化时通过 owner 的各公开字段
     （emotion/cooldown/circadian/personality/…）读写成整份状态快照；加载完成后
-    交由 owner._apply_loaded_data / owner._migrate_circadian_v8 / owner._sync_quiet_window
+    交由 apply_loaded_data（含 migrate_circadian_v8）应用数据，并调 owner._sync_quiet_window
     就地重建可变子对象。如此把文件层关注点从核心状态类中剥离，ChiguoState 只保留
     决策/情绪/课表等人格逻辑。
     """
@@ -454,14 +454,14 @@ class StatePersistence:
         if p.exists():
             try:
                 data = json.loads(p.read_text())
-                self.owner._apply_loaded_data(data)
+                self.apply_loaded_data(data)
                 restored = True
             except Exception as e:
                 # ── v5: 先尝试从 .bak 恢复 ──
                 if bak.exists():
                     try:
                         data = json.loads(bak.read_text())
-                        self.owner._apply_loaded_data(data)
+                        self.apply_loaded_data(data)
                         # 写入恢复后的主文件
                         self.save(_backup=False, _increment_tick=False)
                         restored = True
@@ -600,6 +600,147 @@ class StatePersistence:
                                    if o._bayesian_estimator is not None
                                    else o._bayesian_restored)
         return payload
+
+    def apply_loaded_data(self, data: dict):
+        """解析并应用已加载的状态数据到 owner。v4/v5/v6 兼容（含校验和/版本门禁/迁移）。"""
+        o = self.owner
+        # ── v5: 校验和验证；v6: 不匹配 → 强制拒绝，走 load 的 .bak 恢复链。──
+        stored_checksum = data.pop("_checksum", None)
+        if stored_checksum:
+            recomputed = hashlib.sha256(
+                json.dumps(data, sort_keys=True, ensure_ascii=False).encode()
+            ).hexdigest()
+            if recomputed != stored_checksum:
+                self._audit("checksum_mismatch",
+                    f"stored={stored_checksum[:12]}... computed={recomputed[:12]}...")
+                raise ValueError("checksum mismatch — refusing to load, falling back to .bak")
+
+        # ── v6: 未来版本状态 → 记录审计并保守继续加载（字段过滤兜底）──
+        ver = data.get("_version")
+        if isinstance(ver, int) and ver > self.STATE_VERSION:
+            self._audit("state_future_version",
+                f"stored={ver} current={self.STATE_VERSION} loading anyway")
+
+        # 过滤未知字段，防止未来版本新增字段导致 dataclass __init__ 崩溃
+        emo_fields = {k: v for k, v in data.get("emotion", {}).items()
+                      if k in ChiguoEmotion.__dataclass_fields__}
+        # ── v11: 数值字段类型强转(字符串/None → 回退默认),防 clamp() TypeError ──
+        emo_fields = _coerce_dataclass_fields(emo_fields, ChiguoEmotion)
+        o.emotion = ChiguoEmotion(**emo_fields)
+        cd_fields = {k: v for k, v in data.get("cooldown", {}).items()
+                     if k in CooldownState.__dataclass_fields__}
+        # ── v11: 数值字段类型强转(如 messages_today 字符串 → 回退默认),防 can_send TypeError ──
+        cd_fields = _coerce_dataclass_fields(cd_fields, CooldownState)
+        # ── v5: accumulated_lambda null → 0.0 (type drift fix) ──
+        if cd_fields.get("accumulated_lambda") is None:
+            cd_fields["accumulated_lambda"] = 0.0
+        o.cooldown = CooldownState(**cd_fields)
+        # ── v6: 旧版本（无 crash_timestamps）迁移：从 last_crash_at 恢复单条记录 ──
+        if (not o.cooldown.crash_timestamps and
+                o.cooldown.last_crash_at):
+            o.cooldown.crash_timestamps = [o.cooldown.last_crash_at]
+        # ── v7: 生物钟学习器加载(字段过滤,旧版本无 circadian 字段 → 默认值)──
+        circ_fields = {k: v for k, v in (data.get("circadian") or {}).items()
+                       if k in CircadianTracker.__dataclass_fields__}
+        o.circadian = CircadianTracker(**circ_fields)
+        # ── v8: 双作息迁移(旧格式补桶 + 旧单桶窗口 → weekday_*)──
+        self.migrate_circadian_v8()
+        o._sync_quiet_window()
+        # ── v7: 待接续话题加载(普通 list,isinstance 检查兜底)──
+        pending = data.get("pending_topics")
+        o.pending_topics = pending if isinstance(pending, list) else []
+        o.last_tick = data.get("last_tick")
+        # ── 单调锚点对加载（类型校验；旧文件缺字段 → None 回退语义）──
+        mono = data.get("mono_anchor")
+        o.mono_anchor = (
+            mono if isinstance(mono, (int, float)) and not isinstance(mono, bool) else None)
+        wall = data.get("wall_anchor")
+        o.wall_anchor = wall if (isinstance(wall, str) and wall) else None
+        # ── v5: tick_seq ──
+        o.tick_seq = data.get("tick_seq", 0)
+        # ── v4: 加载人格 ──
+        pers_data = data.get("personality")
+        if pers_data:
+            o.personality = personality_from_dict(pers_data)
+            # ── v10: 恢复持久化基线（回归目标）；旧状态无 → 回退 toml 初始值 ──
+            saved_base = data.get("personality_baseline")
+            if isinstance(saved_base, dict) and saved_base:
+                o.personality.reset_baseline(saved_base)
+            else:
+                o.personality.reset_baseline(dict(o._personality_initial_baseline))
+        else:
+            emo_data = data.get("emotion", {})
+            tsun = emo_data.get("tsundere_index", 70.0)
+            o.personality.tsundere_intensity = tsun
+        # ── v10: 人格演变历史（普通 list，isinstance 检查兜底）──
+        ph = data.get("personality_history")
+        o.personality_history = ph if isinstance(ph, list) else []
+        # v2→v3 迁移：trigger_history 有数据但 event_timestamps 空
+        if (o.cooldown.trigger_history and
+                not o.cooldown.event_timestamps and
+                o.cooldown.last_message_at):
+            try:
+                base_time = datetime.fromisoformat(o.cooldown.last_message_at)
+                n = len(o.cooldown.trigger_history)
+                for i, t in enumerate(o.cooldown.trigger_history):
+                    approx = base_time - timedelta(hours=(n - i) * 24 / max(n, 1))
+                    o.cooldown.event_timestamps.append({
+                        "type": t,
+                        "time": approx.isoformat(),
+                    })
+            except (ValueError, TypeError):
+                pass
+
+        # ── v1.11+R3: Bayesian 在线学习缓存（EMA 调优）还原——延迟初始化时交给 estimator ──
+        o._bayesian_restored = data.get("bayesian")
+
+    def migrate_circadian_v8(self):
+        """v8 双作息迁移(幂等,加载时执行一次)：
+        ① reply_days/active_days 无 bucket 条目 → 按日期启发式补桶(调休优先 → 节假日 → 周几,解析失败丢弃);
+        ② 旧单桶窗口迁移到 weekday_*:若 weekday_* 与 weekend_* 均为默认且旧 confidence > 0
+           → 继承旧 quiet_*(weekend 非默认说明是 v8 风格状态,兼容字段只是当前生效桶快照,不迁移)。
+        """
+        o = self.owner
+        for key in ("reply_days", "active_days"):
+            days = getattr(o.circadian, key, None)
+            if not isinstance(days, list):
+                continue
+            migrated = []
+            for d in days:
+                if not isinstance(d, dict) or d.get("bucket"):
+                    if isinstance(d, dict):
+                        migrated.append(d)
+                    continue
+                try:
+                    dt = datetime.fromisoformat(str(d.get("date", "")))
+                except (ValueError, TypeError):
+                    continue  # 解析失败 → 丢弃
+                # 调休优先 → 节假日 → 周几启发式(迁移时 holiday_parser 已就绪;
+                # 构造失败为 None → 直接启发式)
+                hp = o.holiday_parser
+                if hp is not None and hp.is_makeup_workday(dt):
+                    d["bucket"] = "weekday"
+                elif hp is not None and hp.is_holiday(dt):
+                    d["bucket"] = "weekend"
+                else:
+                    d["bucket"] = "weekday" if dt.weekday() < 5 else "weekend"
+                migrated.append(d)
+            setattr(o.circadian, key, migrated)
+        # 迁移门控类型漂移防护:旧 confidence 可能为字符串 → 强转,失败视为 0(不继承)
+        try:
+            legacy_conf = float(o.circadian.confidence)
+        except (ValueError, TypeError):
+            legacy_conf = 0.0
+        if (o.circadian.weekday_quiet_start == 0
+                and o.circadian.weekday_quiet_end == 8
+                and o.circadian.weekday_confidence == 0.0
+                and o.circadian.weekend_quiet_start == 0
+                and o.circadian.weekend_quiet_end == 8
+                and o.circadian.weekend_confidence == 0.0
+                and legacy_conf > 0):
+            o.circadian.weekday_quiet_start = o.circadian.quiet_start
+            o.circadian.weekday_quiet_end = o.circadian.quiet_end
+            o.circadian.weekday_confidence = legacy_conf
 
     def _audit(self, event: str, detail: str = ""):
         """v5: 状态损坏审计日志。追加到 chiguo_state_audit.jsonl。v6: 路径锚定。"""
@@ -855,148 +996,6 @@ class ChiguoState:
     def load(self):
         """公开加载（T11·Q1：daemon 等外部走公开 API，不强闯私有）。"""
         self._persistence.load()
-
-    def _apply_loaded_data(self, data: dict):
-        """解析并应用已加载的状态数据。v4/v5/v6 兼容。"""
-        # ── v5: 校验和验证 ──
-        # ── v6: 校验和不匹配 → 强制拒绝加载，走 _load 的 .bak 恢复链。
-        # 位翻转/手改后 JSON 可解析但数据损坏，宁可回退 .bak 也不带病运行。
-        stored_checksum = data.pop("_checksum", None)
-        if stored_checksum:
-            recomputed = hashlib.sha256(
-                json.dumps(data, sort_keys=True, ensure_ascii=False).encode()
-            ).hexdigest()
-            if recomputed != stored_checksum:
-                self._audit("checksum_mismatch",
-                    f"stored={stored_checksum[:12]}... computed={recomputed[:12]}...")
-                raise ValueError("checksum mismatch — refusing to load, falling back to .bak")
-
-        # ── v6: 未来版本状态 → 记录审计并保守继续加载（字段过滤兜底）──
-        ver = data.get("_version")
-        state_version = self._persistence.STATE_VERSION
-        if isinstance(ver, int) and ver > state_version:
-            self._audit("state_future_version",
-                f"stored={ver} current={state_version} loading anyway")
-
-        # 过滤未知字段，防止未来版本新增字段导致 dataclass __init__ 崩溃
-        emo_fields = {k: v for k, v in data.get("emotion", {}).items()
-                      if k in ChiguoEmotion.__dataclass_fields__}
-        # ── v11: 数值字段类型强转(字符串/None → 回退默认),防 clamp() TypeError ──
-        emo_fields = _coerce_dataclass_fields(emo_fields, ChiguoEmotion)
-        self.emotion = ChiguoEmotion(**emo_fields)
-        cd_fields = {k: v for k, v in data.get("cooldown", {}).items()
-                     if k in CooldownState.__dataclass_fields__}
-        # ── v11: 数值字段类型强转(如 messages_today 字符串 → 回退默认),防 can_send TypeError ──
-        cd_fields = _coerce_dataclass_fields(cd_fields, CooldownState)
-        # ── v5: accumulated_lambda null → 0.0 (type drift fix) ──
-        if cd_fields.get("accumulated_lambda") is None:
-            cd_fields["accumulated_lambda"] = 0.0
-        self.cooldown = CooldownState(**cd_fields)
-        # ── v6: 旧版本（无 crash_timestamps）迁移：从 last_crash_at 恢复单条记录 ──
-        if (not self.cooldown.crash_timestamps and
-                self.cooldown.last_crash_at):
-            self.cooldown.crash_timestamps = [self.cooldown.last_crash_at]
-        # ── v7: 生物钟学习器加载(字段过滤,旧版本无 circadian 字段 → 默认值)──
-        circ_fields = {k: v for k, v in (data.get("circadian") or {}).items()
-                       if k in CircadianTracker.__dataclass_fields__}
-        self.circadian = CircadianTracker(**circ_fields)
-        # ── v8: 双作息迁移(旧格式补桶 + 旧单桶窗口 → weekday_*)──
-        self._migrate_circadian_v8()
-        self._sync_quiet_window()
-        # ── v7: 待接续话题加载(普通 list,isinstance 检查兜底)──
-        pending = data.get("pending_topics")
-        self.pending_topics = pending if isinstance(pending, list) else []
-        self.last_tick = data.get("last_tick")
-        # ── 单调锚点对加载（类型校验；旧文件缺字段 → None 回退语义）──
-        mono = data.get("mono_anchor")
-        self.mono_anchor = (
-            mono if isinstance(mono, (int, float)) and not isinstance(mono, bool) else None)
-        wall = data.get("wall_anchor")
-        self.wall_anchor = wall if (isinstance(wall, str) and wall) else None
-        # ── v5: tick_seq ──
-        self.tick_seq = data.get("tick_seq", 0)
-        # ── v4: 加载人格 ──
-        pers_data = data.get("personality")
-        if pers_data:
-            self.personality = personality_from_dict(pers_data)
-            # ── v10: 恢复持久化基线（回归目标）；旧状态无 → 回退 toml 初始值 ──
-            saved_base = data.get("personality_baseline")
-            if isinstance(saved_base, dict) and saved_base:
-                self.personality.reset_baseline(saved_base)
-            else:
-                self.personality.reset_baseline(dict(self._personality_initial_baseline))
-        else:
-            emo_data = data.get("emotion", {})
-            tsun = emo_data.get("tsundere_index", 70.0)
-            self.personality.tsundere_intensity = tsun
-        # ── v10: 人格演变历史（普通 list，isinstance 检查兜底）──
-        ph = data.get("personality_history")
-        self.personality_history = ph if isinstance(ph, list) else []
-        # v2→v3 迁移：trigger_history 有数据但 event_timestamps 空
-        if (self.cooldown.trigger_history and
-                not self.cooldown.event_timestamps and
-                self.cooldown.last_message_at):
-            try:
-                base_time = datetime.fromisoformat(self.cooldown.last_message_at)
-                n = len(self.cooldown.trigger_history)
-                for i, t in enumerate(self.cooldown.trigger_history):
-                    approx = base_time - timedelta(hours=(n - i) * 24 / max(n, 1))
-                    self.cooldown.event_timestamps.append({
-                        "type": t,
-                        "time": approx.isoformat(),
-                    })
-            except (ValueError, TypeError):
-                pass
-
-        # ── v1.11+R3: Bayesian 在线学习缓存（EMA 调优）还原——延迟初始化时交给 estimator ──
-        self._bayesian_restored = data.get("bayesian")
-
-    def _migrate_circadian_v8(self):
-        """v8 双作息迁移(幂等,加载时执行一次):
-        ① reply_days/active_days 无 bucket 条目 → 按日期启发式补桶(调休优先 → 节假日 → 周几,解析失败丢弃);
-        ② 旧单桶窗口迁移到 weekday_*:若 weekday_* 与 weekend_* 均为默认且旧 confidence > 0
-           → 继承旧 quiet_*(weekend 非默认说明是 v8 风格状态,兼容字段只是当前生效桶快照,不迁移)。
-        """
-        for key in ("reply_days", "active_days"):
-            days = getattr(self.circadian, key, None)
-            if not isinstance(days, list):
-                continue
-            migrated = []
-            for d in days:
-                if not isinstance(d, dict) or d.get("bucket"):
-                    if isinstance(d, dict):
-                        migrated.append(d)
-                    continue
-                try:
-                    dt = datetime.fromisoformat(str(d.get("date", "")))
-                except (ValueError, TypeError):
-                    continue  # 解析失败 → 丢弃
-                # 调休优先 → 节假日 → 周几启发式(迁移时 holiday_parser 已就绪;
-                # 构造失败为 None → 直接启发式)
-                hp = self.holiday_parser
-                if hp is not None and hp.is_makeup_workday(dt):
-                    d["bucket"] = "weekday"
-                elif hp is not None and hp.is_holiday(dt):
-                    d["bucket"] = "weekend"
-                else:
-                    d["bucket"] = "weekday" if dt.weekday() < 5 else "weekend"
-                migrated.append(d)
-            setattr(self.circadian, key, migrated)
-        # 迁移门控类型漂移防护:旧 confidence 可能为字符串 → 强转,失败视为 0(不继承)
-        try:
-            legacy_conf = float(self.circadian.confidence)
-        except (ValueError, TypeError):
-            legacy_conf = 0.0
-        if (self.circadian.weekday_quiet_start == 0
-                and self.circadian.weekday_quiet_end == 8
-                and self.circadian.weekday_confidence == 0.0
-                and self.circadian.weekend_quiet_start == 0
-                and self.circadian.weekend_quiet_end == 8
-                and self.circadian.weekend_confidence == 0.0
-                and legacy_conf > 0):
-            self.circadian.weekday_quiet_start = self.circadian.quiet_start
-            self.circadian.weekday_quiet_end = self.circadian.quiet_end
-            self.circadian.weekday_confidence = legacy_conf
 
     def _audit(self, event: str, detail: str = ""):
         """私有审计（白盒测试沿用），委托持久化单类。"""
