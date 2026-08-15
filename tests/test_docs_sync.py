@@ -50,6 +50,14 @@ for f in ["AGENTS.md", "CLAUDE.md", "README.md", "README_EN.md",
           "ci-test.sh" in txt and not MAGIC.search(txt),
           f"引用/魔数: 缺引用={"ci-test.sh" not in txt} 命中={MAGIC.findall(txt)}")
 
+# Q12/#262：测试计数魔数改磁盘动态计算——runner（ci-test.sh 自身）也不得硬编码「N py + N script」式自述
+# （否则文档引用它时又把魔数固化回来，与磁盘实际数目脱钩）。
+for runner in ["scripts/ci-test.sh", "deploy.sh"]:
+    runner_txt = (ROOT / runner).read_text()
+    check(f"{runner} 测试计数不硬编码（动态扫描磁盘，无「N py + N script」魔数）",
+          not MAGIC.search(runner_txt),
+          f"命中={MAGIC.findall(runner_txt)}")
+
 # U8d: 文档行数引用化（防再漂移）——代码文件行数不再硬编码，以 wc -l 为准
 # 覆盖句式: “(1984 行)” / “；621 行” / “470 行 / 22 段” / “| 文件 | 行数 | 职责 |” 及英文 “(1984 lines)” / “470 lines / 22 sections”
 LINES_DOCS = ["README.md", "README_EN.md", "AGENTS.md", "doc/SYSTEM.md"]
@@ -66,6 +74,35 @@ for f in LINES_DOCS:
     check(f"{f} 代码文件行数引用化（以 wc -l 为准，无硬编码行数）",
           not LINES_MAGIC.search(txt),
           f"命中={LINES_MAGIC.findall(txt)}")
+
+# 解析文档内「daemon CLI 全量参数清单」（反引号段内全部 --xxx + 声明的参数计数）
+def _doc_cli_manifest(txt, anchor_pat):
+    """anchor_pat 须捕获 \1=声明参数数、\2=反引号清单段；返回 (declared, set|None)。"""
+    m = re.search(anchor_pat, txt, re.S)
+    if not m:
+        return None, None
+    return int(m.group(1)), set(re.findall(r"--[a-z][a-z0-9-]*", m.group(2)))
+
+# Q12/#262：daemon CLI 参数清单守卫——从 argparse 动态提取，与文档全量清单双向比对。
+# 守护「新增 CLI 参数未文档化」：daemon 每新增 add_argument，若未同步写入全量清单文档即可失败；
+# 同理文档清单里若出现 daemon 本不存在的参数（悬空/过期）也失败。
+daemon_src = (ROOT / "chiguo_daemon.py").read_text()
+daemon_args = set(re.findall(r'parser\.add_argument\("(--[a-z][a-z0-9-]*)"', daemon_src))
+_CLI_MANIFEST_DOCS = {
+    "CLAUDE_CODE_RULES.md": r'### daemon CLI（(\d+) 个参数）\n(`[^`]*`)',
+    "doc/AGENT_INTEGRATION.md": r'daemon CLI 共 (\d+) 个参数（(`[^`]*`)',
+}
+for cli_doc, cli_pat in _CLI_MANIFEST_DOCS.items():
+    cli_txt = (ROOT / cli_doc).read_text()
+    declared, doc_args = _doc_cli_manifest(cli_txt, cli_pat)
+    check(f"{cli_doc} daemon CLI 清单锚点存在", declared is not None)
+    if declared is None:
+        continue
+    check(f"{cli_doc} daemon CLI 计数 == argparse 参数数",
+          declared == len(daemon_args), f"声明 {declared} vs 实际 {len(daemon_args)}")
+    check(f"{cli_doc} daemon CLI 清单 == argparse（双向一致，新增参数须补文档）",
+          doc_args == daemon_args,
+          f"文档缺(新增未文档化): {sorted(daemon_args - doc_args)} / 文档多(悬空): {sorted(doc_args - daemon_args)}")
 
 # b) --skip-* flags：deploy.sh 与 DEPLOYMENT.md 一致
 flags = ["--skip-agent", "--skip-bridge", "--skip-netease"]
