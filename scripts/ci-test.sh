@@ -38,6 +38,7 @@ uv run python tests/test_trigger.py && uv run python tests/test_topics.py && \
 uv run python tests/test_circadian.py && uv run python tests/test_followup.py && \
 uv run python tests/test_state_sleep.py && uv run python tests/test_monitor_hardening.py && \
 uv run python tests/test_demo.py && uv run python tests/test_daemon_fixes.py && \
+uv run python tests/test_reminder_dedup_persist.py && \
 uv run python tests/test_netease_proof.py && uv run python tests/test_netease_service.py && \
 uv run python tests/test_envcheck.py && uv run python tests/test_composer_trade.py && \
 uv run python tests/test_personality_init.py && uv run python tests/test_personality_toml_binding.py && \
