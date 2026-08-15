@@ -10,10 +10,10 @@
 
 import sys
 
-from datetime import datetime, date, timezone, timedelta
+from datetime import datetime, date
 from pathlib import Path
 
-CST = timezone(timedelta(hours=8))
+from chiguo_time import CST  # Q22: 共享时区常量
 
 # ── 2026年节假日 ────────────────────────────────────────────
 # 格式: "节日名": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}

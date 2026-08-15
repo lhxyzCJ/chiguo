@@ -5,9 +5,10 @@
 # ============================================================
 
 import json
-import os
 import sys
 from pathlib import Path
+
+from chiguo_atomic import atomic_write  # Q23: 共享原子写助手
 
 
 class PlanStore:
@@ -32,10 +33,7 @@ class PlanStore:
             return None
 
     def save(self, plan: dict) -> None:
-        tmp = Path(str(self._path) + ".tmp")
-        tmp.write_text(json.dumps(plan, ensure_ascii=False))
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self._path)
+        atomic_write(self._path, json.dumps(plan, ensure_ascii=False), mode=0o600)
 
     def exists(self) -> bool:
         return self._path.exists()

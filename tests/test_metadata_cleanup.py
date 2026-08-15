@@ -2,7 +2,7 @@
 """test_metadata_cleanup.py — C3 死 metadata 清理测试（text 兜底优先）
 
 覆盖: chiguo_topics 的 _memory_topic/_preference_followup_topic 读 path、
-chiguo_trigger 的 follow_up 记忆兜底读 path、memory_bridge 展示用读 path——
+chiguo_trigger 的 follow_up 记忆兜底读 path、memory 包 CLI 展示用读 path——
 一律 text 优先，l0_abstract/memory_category 仅作空值兜底（不依赖死字段）。
 零 LLM、零网络。
 """
@@ -24,7 +24,7 @@ CST = timezone(timedelta(hours=8))
 from chiguo_topics import TopicPicker  # noqa: E402
 from chiguo_trigger import evaluate_triggers  # noqa: E402
 from chiguo_state import ChiguoState  # noqa: E402
-from memory_bridge import fmt_search_row  # noqa: E402
+from memory.cli import fmt_search_row  # noqa: E402
 
 
 def _picker_cfg() -> dict:
@@ -48,7 +48,9 @@ class MockState:
         self.memory_bridge = bridge
         self.personality = personality if personality is not None else PersonalityTraits()
         self.emotion = mock.Mock(loneliness_rate=0.0, anxiety_rate=0.0)
-        self.cooldown = mock.Mock(trigger_history=[])
+        self.cooldown = mock.Mock()
+        self.cooldown.trigger_history = []
+        self.cooldown.get_trigger_history.return_value = self.cooldown.trigger_history
         self.anniversary_mgr = _EmptyAnniversaryMgr()
         self.config = {"memory": {}}
         self._schedule_status = {"in_class": False, "class_load": "free",
@@ -202,7 +204,7 @@ def test_trigger_followup_memory_falls_back_to_abstract():
     print("  OK test_trigger_followup_memory_falls_back_to_abstract")
 
 
-# ── memory_bridge 展示用读：text 优先 ────────────────────
+# ── memory 包 CLI 展示用读：text 优先 ────────────────────
 
 def test_fmt_search_row_text_primary():
     """fmt_search_row：text 优先展示（有 text 不显示 l0_abstract）。"""

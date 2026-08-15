@@ -4,6 +4,7 @@
 覆盖:
 - Bug1(update_holidays.py): 农历偏移方向 —— 2028 春节必须早于 2027 模板(2027-02-06)
 - Bug2(update_holidays.py): chinese_calendar dict 分支的键名可读性与区间保留
+- Q5/Q17(update_holidays.py): 节气表收敛单一事实源 + 2026/2027 天文权威校准 + 跨年估算
 - Bug4(chiguo_demo.py): 演示模式退出时 state.save() 不得写回生产 chiguo_state.json
 
 注: 新增测试文件白名单仅此一个,故 update_holidays 的测试也收在这里。
@@ -141,6 +142,88 @@ def test_cc_dict_branch_range_kept():
 
 
 # ═══════════════════════════════════════════════════════════
+# Q5/Q17: 节气表收敛单一事实源 + 天文权威校准(#259)
+# 依据：lunar_python 1.4.8（北京时间计算）权威值（captain #259）。
+# 旧两表分叉的大暑/白露/冬至 3 条：2027 估算值(大暑/白露/冬至=23/8/22)复核为正确，
+# 白露/冬至是年份差异自然结果；实际纠错为：2026 雨水 02-19→02-18、大暑 07-22→07-23
+#（2026 冬至 12-21 本就正确）、2027 立秋 08-07→08-08。
+# ═══════════════════════════════════════════════════════════
+
+def _solar_map(year):
+    return {t["name"]: (t["month"], t["day"]) for t in uh.get_solar_terms_for(year)}
+
+
+def test_solar_terms_2026_authoritative():
+    """Q5/Q17: 2026 节气表与 lunar_python 权威日期逐项一致。"""
+    hko = {
+        "小寒": (1, 5), "大寒": (1, 20), "立春": (2, 4), "雨水": (2, 18),
+        "惊蛰": (3, 5), "春分": (3, 20), "清明": (4, 5), "谷雨": (4, 20),
+        "立夏": (5, 5), "小满": (5, 21), "芒种": (6, 5), "夏至": (6, 21),
+        "小暑": (7, 7), "大暑": (7, 23), "立秋": (8, 7), "处暑": (8, 23),
+        "白露": (9, 7), "秋分": (9, 23), "寒露": (10, 8), "霜降": (10, 23),
+        "立冬": (11, 7), "小雪": (11, 22), "大雪": (12, 7), "冬至": (12, 21),
+    }
+    assert _solar_map(2026) == hko
+    print("  OK test_solar_terms_2026_authoritative")
+
+
+def test_solar_terms_2027_authoritative():
+    """Q5/Q17: 2027 节气表与 lunar_python 权威日期逐项一致；立夏/立秋纠为 05-06/08-08。"""
+    hko = {
+        "小寒": (1, 5), "大寒": (1, 20), "立春": (2, 4), "雨水": (2, 19),
+        "惊蛰": (3, 6), "春分": (3, 21), "清明": (4, 5), "谷雨": (4, 20),
+        "立夏": (5, 6), "小满": (5, 21), "芒种": (6, 6), "夏至": (6, 21),
+        "小暑": (7, 7), "大暑": (7, 23), "立秋": (8, 8), "处暑": (8, 23),
+        "白露": (9, 8), "秋分": (9, 23), "寒露": (10, 8), "霜降": (10, 23),
+        "立冬": (11, 7), "小雪": (11, 22), "大雪": (12, 7), "冬至": (12, 22),
+    }
+    assert _solar_map(2027) == hko
+    print("  OK test_solar_terms_2027_authoritative")
+
+
+def test_solar_terms_divergent_dates_calibrated():
+    """Q5/Q17: 旧分叉 3 条(大暑/白露/冬至)校准结论 + 实际纠错留痕。
+
+    旧表分叉(2026 vs 2027)：大暑 22/23、白露 7/8、冬至 21/22。
+    复核（lunar_python 北京时间）：2027 估算(大暑/白露/冬至 = 23/8/22)即是权威正确值，
+    无需改；白露/冬至是年份差异自然结果(2026=9/7、12/21；2027=9/8、12/22)。
+    真正纠错：2026 表 雨水 02-19→02-18、大暑 07-22→07-23（2026 冬至 12-21 本就正确）；
+    2027 表 立秋 08-07→08-08。
+    """
+    s26 = _solar_map(2026)
+    s27 = _solar_map(2027)
+    # 复核：2027 大暑/白露/冬至 = 23/8/22（即原估算值）
+    assert s27["大暑"] == (7, 23)
+    assert s27["白露"] == (9, 8)
+    assert s27["冬至"] == (12, 22)
+    # 纠错留痕：2026 雨水/大暑 修正为权威值；2026 冬至 12-21 本就正确
+    assert s26["雨水"] == (2, 18)
+    assert s26["大暑"] == (7, 23)
+    assert s26["冬至"] == (12, 21)
+    # 2026 白露 09-07 本就正确
+    assert s26["白露"] == (9, 7)
+    # 2027 立秋 08-08
+    assert s27["立秋"] == (8, 8)
+    print("  OK test_solar_terms_divergent_dates_calibrated")
+
+
+def test_solar_terms_cross_year_estimation():
+    """Q17: 非权威年份由 2027 权威表跨年估算(2028 = 2027 偏移)。"""
+    s27 = _solar_map(2027)
+    s28 = _solar_map(2028)
+    assert len(s28) == 24
+    # 2028 立春 = 2027-02-04 + round((2028-2027)*0.25) = 原表 +0 天 → 02-04
+    assert s28["立春"] == (2, 4)
+    assert s28["冬至"] == (12, 22)  # 无偏移时同 2027
+    # 跨年消费者可用：solar_terms.SolarTerms 按年生成
+    from solar_terms import SolarTerms
+    from datetime import date
+    near = SolarTerms().nearby_term(date(2028, 2, 4))
+    assert near and near["name"] == "立春"
+    print("  OK test_solar_terms_cross_year_estimation")
+
+
+# ═══════════════════════════════════════════════════════════
 # Bug4: 演示模式状态隔离(chiguo_demo.py)
 # ═══════════════════════════════════════════════════════════
 
@@ -270,6 +353,11 @@ if __name__ == "__main__":
     test_cc_dict_branch_str_value()
     test_cc_dict_branch_range_kept()
     test_cc_dict_branch_multi_day_same_name_aggregated()
+    # Q5/Q17 节气收敛单一事实源
+    test_solar_terms_2026_authoritative()
+    test_solar_terms_2027_authoritative()
+    test_solar_terms_divergent_dates_calibrated()
+    test_solar_terms_cross_year_estimation()
     # Bug4
     test_demo_state_path_isolated()
     test_demo_run_keeps_production_state_untouched()
@@ -277,4 +365,4 @@ if __name__ == "__main__":
     test_holidays_file_covers_year()
     test_holidays_merge_semantics()
     test_holidays_generate_cross_year_merge()
-    print(f"test_demo.py: ALL {13} TESTS PASSED")
+    print(f"test_demo.py: ALL {17} TESTS PASSED")

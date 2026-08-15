@@ -12,12 +12,14 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-from schedule.override_store import OverrideStore, OverrideError, CST
+from schedule.override_store import OverrideStore, OverrideError
 from schedule.plan_store import PlanStore
 from schedule import anniversary
 from schedule.confirm import build_confirmation, build_question
 from schedule.resolve_when import resolve_when, ResolveReject
 from schedule.day_plan import week_number
+from chiguo_time import CST  # Q22: 共享时区常量
+from chiguo_atomic import atomic_write  # Q23: 共享原子写助手
 
 
 class ApiRejection(Exception):
@@ -108,12 +110,10 @@ class ScheduleApi:
                 migrated += 1
         if migrated:
             kept = [it for it in items if it.get("type") != "countdown"]
-            # M-9: 原子写（tmp + os.replace + 0600），防迁移中途崩溃写坏正式文件丢纪念日；
-            # 与 anniversary._save / plan_store._save 同款模式
-            tmp = Path(str(p) + ".tmp")
-            tmp.write_text(json.dumps({"anniversaries": kept}, ensure_ascii=False, indent=2))
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, p)
+            # M-9: 原子写（tmp + os.replace + 0600，Q23 收敛至共享 atomic_write），
+            # 防迁移中途崩溃写坏正式文件丢纪念日。
+            atomic_write(p, json.dumps({"anniversaries": kept}, ensure_ascii=False, indent=2),
+                         mode=0o600)
             self.anniversary_mgr._load()
 
     def _migrate_toml_exam_weeks(self):
@@ -426,14 +426,8 @@ class ScheduleApi:
             return {"breaks": []}
 
         def _save(data):
-            tmp = Path(str(bp) + ".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-            try:
-                with open(tmp, "rb") as _f:
-                    os.fsync(_f.fileno())
-            except OSError:
-                pass
-            os.replace(tmp, bp)
+            atomic_write(bp, json.dumps(data, ensure_ascii=False, indent=2),
+                         fsync=True)
 
         if cmd == "on":
             self._guard()
