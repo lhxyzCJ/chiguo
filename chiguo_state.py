@@ -53,6 +53,18 @@ CST = timezone(timedelta(hours=8))
 _LOCK_FDS: dict[str, int] = {}
 _LOCK_DEPTH: dict[str, int] = {}
 
+# ── Q7 (#79/#260): reminder 去重标记（last_triggered_at）跨进程持久化。
+# 该标记是运行时写上的去重状态，不属于记忆内容本身——持久化时从记忆的
+# 「内容键」（排除标记字段）中剥离，状态 payload 只存标记（不进 memories 全文）。
+# _memory_dedup_key 见下方；chiguo_memories.json 仍是记忆内容的唯一事实源。
+_MEMORY_MARKER_KEYS = ("last_triggered_at",)
+
+
+def _memory_dedup_key(mem: dict) -> str:
+    """记忆去重/内容键：排除运行时标记字段后的稳定标识（跨进程可匹配）。"""
+    key = {k: v for k, v in mem.items() if k not in _MEMORY_MARKER_KEYS}
+    return json.dumps(key, sort_keys=True, ensure_ascii=False)
+
 
 @dataclass
 class ChiguoEmotion:
@@ -491,7 +503,8 @@ class StatePersistence:
         self._load_memories()
 
     def _load_memories(self):
-        """加载独立 memories 文件（data/chiguo_memories.json，形状防御）。"""
+        """加载独立 memories 文件（data/chiguo_memories.json，形状防御）。
+        加载后回写持久化的 reminder 去重标记（Q7#260，T2 语义移植）。"""
         mp = self.memories_path
         if mp.exists():
             try:
@@ -501,7 +514,11 @@ class StatePersistence:
                 self.owner.memories = ([m for m in data if isinstance(m, dict)]
                                        if isinstance(data, list) else [])
             except Exception:
-                pass
+                self.owner.memories = []
+        else:
+            self.owner.memories = []
+        # ── Q7 (#260): 读回持久化的 reminder 去重标记 → 回写到刚加载的记忆 ──
+        self.owner._apply_memory_dedup()
 
     def save(self, _backup: bool = True, _increment_tick: bool = True) -> bool:
         """原子写入：先写 .tmp，再 os.replace（避免写崩损坏正式文件）。返回 bool。"""
@@ -602,6 +619,17 @@ class StatePersistence:
             payload["bayesian"] = (o.bayesian_estimator.to_state_dict()
                                    if o._bayesian_estimator is not None
                                    else o._bayesian_restored)
+        # ── Q7 (#260, T2 移植): reminder 去重标记持久化。从 o.memories 扫描带
+        # last_triggered_at 的条目（daemon 经 mark_memory_triggered 原地标记，
+        # 与 o.memories 共享对象引用），推导 {内容键: last_triggered_at} 落盘。
+        # 空 → 不写字段，状态文件保持干净（与 bayesian 字段同策略）。──
+        dedup_payload = {
+            _memory_dedup_key(m): m["last_triggered_at"]
+            for m in o.memories
+            if isinstance(m, dict) and m.get("last_triggered_at")
+        }
+        if dedup_payload:
+            payload["memory_dedup"] = dedup_payload
         return payload
 
     def apply_loaded_data(self, data: dict):
@@ -696,6 +724,13 @@ class StatePersistence:
 
         # ── v1.11+R3: Bayesian 在线学习缓存（EMA 调优）还原——延迟初始化时交给 estimator ──
         o._bayesian_restored = data.get("bayesian")
+        # ── Q7 (#260): reminder 去重标记还原（{记忆内容键: last_triggered_at}）。
+        # 缺失/非 dict → 空（旧状态/手改损坏不致崩，与未标记等价）。
+        # （T2 语义移植到 T11·Q1 StatePersistence apply_loaded_data。）──
+        dedup = data.get("memory_dedup")
+        o._memory_dedup = (dict(dedup)
+                           if isinstance(dedup, dict)
+                           else {})
 
     def migrate_circadian_v8(self):
         """v8 双作息迁移(幂等,加载时执行一次)：
@@ -863,6 +898,10 @@ class ChiguoState:
         self.circadian = CircadianTracker()
         self._apply_quiet_window()
         self.memories: list[dict] = []
+        # ── Q7 (#260): reminder 去重标记持久化缓存 {记忆内容键: last_triggered_at}。
+        # load 时读回 state 的 memory_dedup 字段，经 _apply_memory_dedup 回写到
+        # self.memories；save 时从 self.memories 扫描已标记条目落盘。──
+        self._memory_dedup: dict[str, str] = {}
         # ── v7: 待接续话题(接话茬)。[{topic, source, created_at, attempted}] ──
         self.pending_topics: list[dict] = []
         self.tick_seq: int = 0  # v5: 单调递增 tick 计数器，用于检测遗漏
@@ -1007,6 +1046,58 @@ class ChiguoState:
     def load(self):
         """公开加载（T11·Q1：daemon 等外部走公开 API，不强闯私有）。"""
         self._persistence.load()
+
+    def _apply_memory_dedup(self):
+        """把本进程已持久化的 reminder 去重标记（self._memory_dedup）回写到
+        self.memories 对应条目上，使跨进程（cron 每 15 分钟新进程）不再重复触发。
+        内容键匹配：记忆文件仍是内容唯一事实源，此处仅补回 last_triggered_at。"""
+        if not self._memory_dedup:
+            return
+        for mem in self.memories:
+            if not isinstance(mem, dict):
+                continue
+            key = _memory_dedup_key(mem)
+            marked = self._memory_dedup.get(key)
+            if marked:
+                mem["last_triggered_at"] = marked
+
+    def mark_memory_triggered(self, mem: dict, now: datetime | None = None):
+        """公开 API：标记一条 reminder 记忆已触发（写 last_triggered_at）。与
+        self.memories 共享对象引用，save() 扫描自会落盘 memory_dedup 字段；
+        跨进程（cron）由该字段读回后经 _apply_memory_dedup 防重复触发。
+
+        `mem` 必须是 self.memories 列表内的 dict（trigger 层 data['memory'] 持有的
+        正是同一对象引用，原地标记即时对 evaluate 子路径生效）。"""
+        if not isinstance(mem, dict):
+            return
+        if now is None:
+            now = datetime.now(CST)
+        mem["last_triggered_at"] = now.isoformat()
+
+
+
+    def _migrate_personality_baseline(self, data: dict):
+        """v10 迁移：恢复持久化人格基线（回归目标）；旧状态无持久化基线 →
+        回退到 toml 构造函数初始基线（_personality_initial_baseline）。
+
+        等价前提：原实现把该恢复放在 `if pers_data:` 分支内（仅当 state 有
+        personality 时）；此处无条件执行 —— 因为加载路径总是先经
+        _apply_loaded_data 构造 `self.personality`（有 pers_data 用
+        personality_from_dict，无则用 toml 初始值），且 _personality_initial_baseline
+        恒记录构造值，无人中途改写 _baseline，故与原行为严格等价。
+
+        边界分支（save 不可达，防御语义）：若 data 含 `personality_baseline`
+        但完全无 `personality` 字段——原代码走 else 分支用 toml 构造
+        tsundere，不会触发 reset（此处却无条件执行 reset_baseline）。当前
+        _personality_initial_baseline 记录的就是 toml 构造值，因此即便该分支
+        触发也退化为恒等，不改变任何结果；仅当未来有人改动加载时
+        _personality_initial_baseline 的赋值源才产生语义差异，故显式注明。
+        """
+        saved_base = data.get("personality_baseline")
+        if isinstance(saved_base, dict) and saved_base:
+            self.personality.reset_baseline(saved_base)
+        else:
+            self.personality.reset_baseline(dict(self._personality_initial_baseline))
 
     def _audit(self, event: str, detail: str = ""):
         """私有审计（白盒测试沿用），委托持久化单类。"""

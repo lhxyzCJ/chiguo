@@ -68,8 +68,8 @@ for sec, keys in KEY_CHECKS.items():
 
 # 3) 关键键 ↔ 代码引用交叉断言（防键改代码没跟上）
 REF_CHECKS = [
-    ("[loop].retry_delay_seconds", "chiguo_daemon.py", "retry_delay_seconds"),
-    ("[loop].probe_interval_seconds", "chiguo_daemon.py", "probe_interval_seconds"),
+    ("[loop].retry_delay_seconds", "runner/loop.py", "retry_delay_seconds"),
+    ("[loop].probe_interval_seconds", "runner/loop.py", "probe_interval_seconds"),
     ("[health].fail_threshold", "scripts/agent_health.py", "fail_threshold"),
     ("[wechat].wechat_recipient", "scripts/chiguo-tick.sh", "wechat_recipient"),
     ("[memory].mem0_qdrant_path", "memory/factory.py", "mem0_qdrant_path"),

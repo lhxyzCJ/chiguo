@@ -167,7 +167,9 @@ try: print(json.load(sys.stdin).get("trigger",""))
 except: print("")' 2>/dev/null || true)"
 # 发送并透传失败原因（#224: "prepare failed" = context_token 过期 → 显式恢复指引，
 # 而不是笼统的"发送失败"——从微信给机器人发一条消息即刷新，无需重新扫码）
-SEND_RESP="$(curl -s --max-time 10 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
+# 主消息发送超时取 35s，与 chiguo_daemon.py _loop_send 的 /send 超时（35s）保持一致
+# （#261/CR-2: 对齐双路径超时，避免 cron 11-35s 窗口行为分叉；改此值须同步改 daemon）
+SEND_RESP="$(curl -s --max-time 35 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
   -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$BODY" 2>&1 || true)"
 if ! printf '%s' "$SEND_RESP" | grep -q '"ok": *true'; then
   case "$SEND_RESP" in
