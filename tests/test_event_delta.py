@@ -142,18 +142,4 @@ def test_apply_analysis_impact_wired():
     print("  OK test_apply_analysis_impact_wired")
 
 
-if __name__ == "__main__":
-    print("test_event_delta.py\n")
-    tests = [
-        test_default_off_identity,
-        test_event_delta_table_rule_hits,
-        test_extract_event_type_signals,
-        test_extract_event_type_explicit_key,
-        test_synonym_mapping,
-        test_unknown_event_noop,
-        test_apply_analysis_impact_wired,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} event-delta tests passed.")
+

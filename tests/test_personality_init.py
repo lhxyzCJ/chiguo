@@ -19,7 +19,4 @@ def test_default_traits_reasonable():
     assert p.tsundere_intensity >= 70
 
 
-if __name__ == "__main__":
-    test_default_style_is_classic_tsundere()
-    test_default_traits_reasonable()
-    print("test_personality_init OK")
+

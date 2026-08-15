@@ -273,12 +273,4 @@ def test_plan_store_and_confirm():
     print("  OK test_plan_store_and_confirm")
 
 
-if __name__ == "__main__":
-    print("test_schedule_override.py\n")
-    tests = [test_apply_and_file_schema, test_validation_matrix, test_interval_end_date_ordering,
-             test_idempotent_write, test_remove_override, test_cleanup_endpoints,
-             test_corrupt_and_migration_order, test_toml_exam_weeks_migration,
-             test_toml_special_dates_migration, test_plan_store_and_confirm]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
+

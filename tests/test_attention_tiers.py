@@ -164,10 +164,4 @@ def test_snapshot_attention_m2_cache():
     print("  OK test_snapshot_attention_m2_cache")
 
 
-if __name__ == "__main__":
-    print("test_attention_tiers.py\n")
-    tests = [test_t1_items, test_t2_block, test_t3_window_and_today_exceptions,
-             test_snapshot_attention_m2_cache]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
+

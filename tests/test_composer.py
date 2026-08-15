@@ -240,24 +240,4 @@ def test_fallback_text_followup_not_memory_templates():
     print("  OK test_fallback_text_followup_not_memory_templates")
 
 
-if __name__ == "__main__":
-    print("test_composer.py\n")
-    tests = [
-        test_select_combo_returns_valid,
-        test_combo_size_distribution,
-        test_different_triggers_different_intents,
-        test_cue_present_for_size_2plus,
-        test_cue_modulated_by_personality,
-        test_trigger_modulates_cue,
-        test_vibe_selection,
-        test_compose_situation,
-        test_all_trigger_types,
-        test_reflect_trigger_has_intent,
-        test_comfort_followup_have_own_intents,
-        test_fallback_text_comfort_not_generic,
-        test_fallback_text_followup_not_memory_templates,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} composer tests passed.")
+

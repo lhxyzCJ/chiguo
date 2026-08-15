@@ -518,18 +518,4 @@ def test_override_store_filters_oob_period():
     assert class_load_adjust(0.85, odd, between) in (0.85, 0.7, 0.5), "越界 period 不 KeyError"
 
 
-if __name__ == "__main__":
-    print("test_day_plan.py\n")
-    tests = [test_week_number_monday_alignment, test_week_courses_active_and_alternates,
-             test_day_plan_no_files_on_read,
-             test_resolve_classes_move_dual_slot, test_availability_tiers_and_overlap,
-             test_class_load_adjust,
-             test_rw_explicit_and_mmdd, test_rw_days, test_rw_weekday,
-             test_rw_week_offset_interval, test_rw_combo, test_rw_start_end,
-             test_rw_structural_rejects, test_api_shape_constraints, test_api_to_date_forms,
-             test_api_past_checks_by_kind, test_api_semester_boundary,
-             test_api_move_source_and_snapshot,
-             test_override_store_filters_oob_period]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
+

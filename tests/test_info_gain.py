@@ -124,16 +124,4 @@ def test_low_entropy_no_boost():
     print(f"  OK test_low_entropy_no_boost: entropy={r['entropy']:.3f}")
 
 
-if __name__ == "__main__":
-    print("test_info_gain.py\n")
-    tests = [
-        test_default_off_no_boost,
-        test_high_entropy_gets_boost,
-        test_state_info_gain_boost_end_to_end,
-        test_threshold_too_high_no_boost,
-        test_low_entropy_no_boost,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} info-gain tests passed.")
+

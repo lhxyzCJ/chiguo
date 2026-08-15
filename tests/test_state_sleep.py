@@ -211,23 +211,4 @@ def test_config_invalid_quiet_window_loads_and_runs():
     print("  OK test_config_invalid_quiet_window_loads_and_runs")
 
 
-if __name__ == "__main__":
-    _prev_mem0 = os.environ.get("CHIGUO_MEM0_DISABLED")
-    os.environ["CHIGUO_MEM0_DISABLED"] = "1"
-    try:
-        test_sleep_hours_cross_midnight_start_in_main_segment()
-        test_sleep_hours_cross_midnight_start_in_early_tail()
-        test_sleep_hours_cross_midnight_two_nights()
-        test_sleep_hours_cross_midnight_tail_plus_main()
-        test_sleep_hours_cross_midnight_boundary_at_qe()
-        test_sleep_hours_normal_window_regression()
-        test_load_string_numeric_fields_fall_back_defaults()
-        test_set_quiet_window_invalid_values_fall_back_default()
-        test_sync_quiet_window_invalid_bucket_values_fall_back()
-        test_config_invalid_quiet_window_loads_and_runs()
-    finally:
-        if _prev_mem0 is None:
-            os.environ.pop("CHIGUO_MEM0_DISABLED", None)
-        else:
-            os.environ["CHIGUO_MEM0_DISABLED"] = _prev_mem0
-    print("test_state_sleep.py: ALL PASS")
+

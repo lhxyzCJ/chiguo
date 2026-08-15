@@ -310,34 +310,4 @@ def test_apply_forgetting_score_boost():
     print("  OK test_apply_forgetting_score_boost")
 
 
-if __name__ == "__main__":
-    print("test_memory_reinforce.py\n")
-    tests = [
-        test_note_recalled_disabled_noop,
-        test_note_recalled_enabled_records,
-        test_note_recalled_zero_bonus_noop,
-        test_effective_importance_identity_when_disabled,
-        test_effective_importance_boosted_by_recall,
-        test_effective_importance_caps_at_one,
-        test_persist_recall_writes_recall_count,
-        test_note_recalled_persists_via_backend,
-        test_recall_count_accumulates_across_processes,
-        test_mock_backend_cross_process_accumulates,
-        test_search_with_forgetting_records_recall,
-        test_search_with_forgetting_noop_when_disabled,
-        test_random_memory_with_forgetting_records_recall,
-        test_apply_forgetting_score_boost,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            print(f"  FAIL {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    print(f"\n{'=' * 40}")
-    total = len(tests)
-    print(f"ALL {total} reinforce tests, {total - failed} passed, {failed} failed.")
-    sys.exit(1 if failed else 0)
+

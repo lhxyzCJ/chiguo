@@ -100,12 +100,4 @@ def test_loop_hot_reload_config():
             "语法错误应保留旧配置"
 
 
-if __name__ == "__main__":
-    tests = [
-        test_concurrent_cli_state_integrity,
-        test_loop_hot_reload_config,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")
+

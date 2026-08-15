@@ -98,9 +98,4 @@ def test_replan_pi_env_and_timeout():
     print("  OK test_replan_pi_env_and_timeout")
 
 
-if __name__ == "__main__":
-    print("test_schedule_plan.py\n")
-    tests = [test_dirty_matrix, test_skip_and_validate, test_replan_pi_env_and_timeout]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
+

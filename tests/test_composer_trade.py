@@ -92,16 +92,4 @@ def test_morning_no_caring_boost():
     print("  OK test_morning_no_caring_boost")
 
 
-if __name__ == "__main__":
-    print("test_composer_trade.py\n")
-    tests = [
-        test_cue_weights_rebalanced,
-        test_toml_composer_weights,
-        test_playful_no_xi_xi,
-        test_trade_tsundere_style,
-        test_morning_no_caring_boost,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} composer-trade tests passed.")
+

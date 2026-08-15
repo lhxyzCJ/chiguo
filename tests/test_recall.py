@@ -89,10 +89,4 @@ def test_recall_chinese_date_query():
     print("  OK test_recall_chinese_date_query")
 
 
-if __name__ == "__main__":
-    print("test_recall.py\n")
-    tests = [test_recall_by_date_window, test_recall_by_keyword_full_scan,
-             test_recall_chinese_date_query]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
+

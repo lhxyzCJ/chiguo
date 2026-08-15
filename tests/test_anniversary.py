@@ -136,13 +136,4 @@ def test_special_dates_merge_kept_behavior():
     print("  OK test_special_dates_merge_kept_behavior")
 
 
-if __name__ == "__main__":
-    print("test_anniversary.py\n")
-    tests = [test_crud_and_list, test_default_merge_missing_or_corrupt,
-             test_top_level_list_shaped_file_no_crash,
-             test_mmdd_to_date, test_get_today_upcoming_kept,
-             test_countdown_removed_and_migration_activated,
-             test_special_dates_merge_kept_behavior]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
+

@@ -142,10 +142,4 @@ def test_special_source_switch():
     print("  OK test_special_source_switch")
 
 
-if __name__ == "__main__":
-    print("test_trigger_scale.py\n")
-    tests = [test_scale_identity_without_plan, test_scale_ref_resolution,
-             test_engine_scale_loop, test_escape_valve_exempt, test_special_source_switch]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
+

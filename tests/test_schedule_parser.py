@@ -197,20 +197,4 @@ def test_refresh_disabled():
         print("  OK test_refresh_disabled")
 
 
-if __name__ == "__main__":
-    print("test_schedule_parser.py\n")
-    tests = [
-        test_parse_weeks_single, test_parse_weeks_range, test_parse_weeks_odd_even,
-        test_parse_weeks_comma, test_parse_weeks_garbage,
-        test_parse_cell_single_hyphen, test_parse_cell_single_space,
-        test_parse_cell_merged_two_courses, test_parse_cell_trailing_location_fragment,
-        test_parse_cell_truncated_course, test_parse_cell_empty,
-        test_current_period_boundaries,
-        test_refresh_creates_cache, test_refresh_reparses_on_mtime,
-        test_refresh_cache_corrupt_is_replaced, test_refresh_parse_failure_keeps_old_cache,
-        test_refresh_v1_migration_forces_reparse, test_refresh_disabled,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")
+

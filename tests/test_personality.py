@@ -154,23 +154,4 @@ def test_personality_delta_constants():
     print("  OK test_personality_delta_constants")
 
 
-if __name__ == "__main__":
-    print("test_personality.py\n")
-    tests = [
-        test_default_personality,
-        test_clamp,
-        test_evolve,
-        test_evolve_clamp,
-        test_dominant_profile,
-        test_balanced_profile,
-        test_anxiety_sensitivity,
-        test_openness_bonus,
-        test_serialization_roundtrip,
-        test_serialization_missing_fields,
-        test_evolve_non_contamination,
-        test_personality_delta_constants,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} personality tests passed.")
+

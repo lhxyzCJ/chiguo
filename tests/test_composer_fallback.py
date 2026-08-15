@@ -99,31 +99,4 @@ def test_fallback_text_intent_fallback():
     print("  OK test_fallback_text_intent_fallback")
 
 
-if __name__ == "__main__":
-    print("test_composer_fallback.py\n")
-    tests = [
-        test_cli_decision_file_success,
-        test_cli_decision_file_missing_trigger,
-        test_cli_decision_file_unreadable,
-        test_cli_trigger_flag,
-        test_cli_no_args_errors,
-        test_fallback_text_strips_line_annotations,
-        test_fallback_text_intent_fallback,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            print(f"  FAIL {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
 
-    print(f"\n{'='*40}")
-    total = len(tests)
-    passed = total - failed
-    print(f"ALL {total} tests, {passed} passed, {failed} failed.")
-    if failed:
-        sys.exit(1)
-    sys.exit(0)

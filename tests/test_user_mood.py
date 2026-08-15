@@ -434,26 +434,4 @@ def test_recv_dedup_recv_id_precise():
         assert st.cooldown.recv_dedup.get("text_sha") != "deadbeef"
 
 
-if __name__ == "__main__":
-    tests = [
-        test_impact_calm_or_zero_intensity_empty, test_impact_enabled_coefficients,
-        test_impact_all_moods, test_impact_intensity_scales,
-        test_note_calm_empty, test_note_kinds,
-        test_mood_fresh_ttl,
-        test_consume_mood_tolerance_matrix, test_consume_mood_valid_and_clamp,
-        test_apply_analysis_impact_applies_mood_delta,
-        test_apply_analysis_impact_ttl_gate_stale_mood,
-        test_apply_analysis_impact_replays_fresh_preserved_mood,
-        test_apply_analysis_impact_clamps_boundary,
-        test_old_state_missing_user_mood_defaults,
-        test_comfort_trigger_appears_when_enabled,
-        test_comfort_weight_monotonic_and_ttl,
-        test_anxiety_bonus_scales,
-        test_build_context_mood_note,
-        test_recv_dedup_upgrade_consumes_user_mood_once,
-        test_recv_dedup_recv_id_precise,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")
+

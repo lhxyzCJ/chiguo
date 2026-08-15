@@ -215,18 +215,4 @@ def test_topic_picker_read_side_wired():
     print("  OK test_topic_picker_read_side_wired")
 
 
-if __name__ == "__main__":
-    print("test_emotion_tagging.py\n")
-    tests = [
-        test_emotion_tag_snapshot_levels,
-        test_write_side_enabled_tags_metadata,
-        test_write_side_off_identity,
-        test_row_contract_passes_emotion_tag,
-        test_read_side_weighting_boosts_similar,
-        test_similarity_edge_cases,
-        test_topic_picker_read_side_wired,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} emotion-tagging tests passed.")
+

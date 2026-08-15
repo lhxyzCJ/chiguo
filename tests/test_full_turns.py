@@ -161,29 +161,4 @@ def test_autowrite_env_default_enabled():
     print("  OK test_autowrite_env_default_enabled")
 
 
-if __name__ == "__main__":
-    print("test_full_turns.py\n")
-    tests = [
-        test_default_single_user_turn,
-        test_enabled_writes_user_and_assistant,
-        test_enabled_no_recent_single_turn,
-        test_metadata_preserved,
-        test_short_message_skipped,
-        test_unavailable_bridge_skipped,
-        test_config_missing_defaults_false,
-        test_autowrite_env_switch_disables_write,
-        test_autowrite_env_default_enabled,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            print(f"  FAIL {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    print(f"\n{'=' * 40}")
-    total = len(tests)
-    print(f"ALL {total} full-turns tests, {total - failed} passed, {failed} failed.")
-    sys.exit(1 if failed else 0)
+

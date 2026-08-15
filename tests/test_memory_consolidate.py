@@ -313,32 +313,4 @@ def test_maybe_consolidate_triggers_and_persists():
     print("  OK test_maybe_consolidate_triggers_and_persists")
 
 
-if __name__ == "__main__":
-    print("test_memory_consolidate.py\n")
-    tests = [
-        test_plan_duplicate_demote,
-        test_plan_keeps_high_importance_when_equal_text,
-        test_plan_expire_old_low_importance,
-        test_plan_unknown_age_not_expired,
-        test_plan_no_false_positive_low_similarity,
-        test_consolidate_mem0_writeback,
-        test_consolidate_dry_run_no_write,
-        test_consolidate_unavailable,
-        test_maybe_consolidate_disabled,
-        test_maybe_consolidate_silent_too_low,
-        test_maybe_consolidate_interval_guard,
-        test_maybe_consolidate_triggers_and_persists,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            print(f"  FAIL {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    print(f"\n{'=' * 40}")
-    total = len(tests)
-    print(f"ALL {total} consolidate tests, {total - failed} passed, {failed} failed.")
-    sys.exit(1 if failed else 0)
+

@@ -386,26 +386,4 @@ def test_escape_valve_sends_when_sleeping_confidence_below_block():
 # 入口
 # ═══════════════════════════════════════════════════════════
 
-if __name__ == "__main__":
-    print("test_escape_valve.py\n")
-    tests = [
-        test_deadlock_eligible_no_last_msg,
-        test_deadlock_eligible_4_days_silence,
-        test_non_blocked_not_eligible,
-        test_insufficient_silence,
-        test_cooldown_active_1_day,
-        test_cooldown_expired_3_days,
-        test_disabled_via_config,
-        test_evaluate_triggers_escape_valve,
-        test_evaluate_triggers_no_escape_valve_when_not_eligible,
-        test_can_send_escape_valve_over_daily_limit,
-        test_can_send_daily_limit_blocks_when_not_eligible,
-        test_end_to_end_escape_valve_send,
-        test_escape_valve_bypasses_bayesian_sleeping,
-        test_sleeping_guard_blocks_escape_valve_at_high_confidence,
-        test_escape_valve_sends_when_sleeping_confidence_below_block,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} escape valve tests passed.")
+

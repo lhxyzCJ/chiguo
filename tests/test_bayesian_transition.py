@@ -192,22 +192,4 @@ def test_state_infer_user_state_carries_new_keys():
     print("  OK test_state_infer_user_state_carries_new_keys")
 
 
-if __name__ == "__main__":
-    print("test_bayesian_transition.py\n")
-    tests = [
-        test_transitions_rows_normalized,
-        test_transition_prior_matrix_vector,
-        test_transition_prior_mix_with_time,
-        test_infer_adds_entropy_and_prev_posterior,
-        test_default_off_no_entropy_keys,
-        test_transition_uses_stored_prev_posterior,
-        test_prev_posterior_persist_roundtrip,
-        test_prev_posterior_restore_fault_tolerant,
-        test_config_row_override,
-        test_default_off_identity,
-        test_state_infer_user_state_carries_new_keys,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} bayesian transition tests passed.")
+

@@ -284,19 +284,4 @@ def test_daemon_context_contains_follow_up_hint():
     print("  OK test_daemon_context_contains_follow_up_hint")
 
 
-if __name__ == "__main__":
-    test_analysis_topic_appends_and_dedupes()
-    test_topic_resolved_removes()
-    test_invalid_topic_ignored()
-    test_prune_expired_and_attempted()
-    test_pending_topics_persist()
-    test_follow_up_fires_in_age_window()
-    test_follow_up_single_attempt()
-    test_follow_up_outside_age_window()
-    test_follow_up_data_fields()
-    test_follow_up_expired_pruned()
-    test_follow_up_memory_fallback_fires()
-    test_follow_up_memory_fallback_ignores_old_memory()
-    test_follow_up_multiple_topics_younger_wins()
-    test_daemon_context_contains_follow_up_hint()
-    print("test_followup.py: ALL PASS")
+

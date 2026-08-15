@@ -198,22 +198,4 @@ def test_toml_has_regress_rate():
     print(f"  OK test_toml_has_regress_rate: regress_rate={rate}")
 
 
-if __name__ == "__main__":
-    print("test_adapt_personality.py\n")
-    tests = [
-        test_warm_replies_no_sweet_ification,
-        test_silence_no_extremism,
-        test_regress_rate_zero_disables,
-        test_regress_to_baseline_moves_toward_initial,
-        test_baseline_recorded_from_constructed_values,
-        test_reset_baseline,
-        test_state_adapt_warm_replies_regresses,
-        test_state_regress_rate_zero_disables,
-        test_personality_history_rolls_to_200,
-        test_state_persists_baseline_and_history,
-        test_toml_has_regress_rate,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} adapt-personality tests passed.")
+

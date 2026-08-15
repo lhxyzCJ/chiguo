@@ -129,19 +129,4 @@ def test_ebbinghaus_formula_math():
     print(f"  OK test_ebbinghaus_formula_math: weight={weight:.4f} ≈ {expected:.4f}")
 
 
-if __name__ == "__main__":
-    print("test_ebbinghaus.py\n")
-    tests = [
-        test_ebbinghaus_new_memory,
-        test_ebbinghaus_old_memory,
-        test_ebbinghaus_important_decays_slower,
-        test_ebbinghaus_min_weight,
-        test_ebbinghaus_custom_strength,
-        test_ebbinghaus_zero_timestamp,
-        test_ebbinghaus_negative_age,
-        test_ebbinghaus_formula_math,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} ebbinghaus tests passed.")
+

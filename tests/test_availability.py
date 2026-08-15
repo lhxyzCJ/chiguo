@@ -170,10 +170,4 @@ def test_lambda_monotonic():
     print("  OK test_lambda_monotonic")
 
 
-if __name__ == "__main__":
-    print("test_availability.py\n")
-    tests = [test_tier_matrix, test_exam_overlap_priority, test_cancel_changes_availability,
-             test_bayesian_layer, test_lambda_monotonic]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")
+
