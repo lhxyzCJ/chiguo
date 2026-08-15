@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# 全量测试链（59 py + 14 script）——本地与 CI 同一入口；任一失败即退出非零
+# 全量测试链——本地与 CI 同一入口；任一失败即退出非零。
+# 测试计数不硬编码：启动时动态扫描磁盘 tests/test_*（Q12/#262：杜绝与磁盘实际数目的魔数漂移）。
 # 前置: .venv 存在（本地 dev 机已有；CI 由 uv sync 创建）
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
+
+# 磁盘测试计数动态计算（Q12/#262）：只作自述/确认，执行仍走下方显式测试命令链。
+# py 与 script(含 .mjs/.sh) 分开统计，与 test_docs_sync 磁盘集合口径一致(ID 只取 test_*，fixture 不计)。
+py_count=$(find tests -maxdepth 1 -name 'test_*.py' | wc -l)
+script_count=$(find tests -maxdepth 1 \( -name 'test_*.mjs' -o -name 'test_*.sh' \) | wc -l)
+total_count=$((py_count + script_count))
+echo "[ci-test] 磁盘测试文件 ${total_count} 个（${py_count} py + ${script_count} script）"
 
 # CI stub：wechat-bridge 的 @wechatbot/wechatbot 是 file: 本地依赖（仓库外 wechatbot/ 目录），
 # 干净 checkout 不存在；bridge.mjs 顶层 import 它但测试从不实例化 → 用最小替身自举。
