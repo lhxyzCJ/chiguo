@@ -60,7 +60,7 @@
 - **一个模型 API key**（消息生成与情绪分析走 agent 后端——默认 agent 后端，支持任意 OpenAI 兼容后端；也可用 `[host].runner = command` 换成任意 CLI agent）
 - **可选**：一个微信账号（bot 收发）、ollama（记忆嵌入）、课表 Excel、网易云账号
 
-> 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API；登录态与对话数据仅存本机，不进 git。
+> 微信触达走官方 iLink Bot 通道（实测上游链 github.com/lhxyzCJ/wechatbot 的 `nodejs/` SDK，其上游为 [corespeed-io/wechatbot](https://github.com/corespeed-io/wechatbot)，MIT；已 vendor 入库 `wechat-bridge/vendor/wechatbot/`），扫码登录正规 API；登录态与对话数据仅存本机，不进 git。
 
 ---
 

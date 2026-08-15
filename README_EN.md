@@ -60,7 +60,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 - **A model API key** (message generation and mood analysis go through the agent backend — the default agent backend; any OpenAI-compatible backend works, or swap in any CLI agent via `[host].runner = command`)
 - **Optional**: a WeChat account (bot send/receive), ollama (memory embeddings), a schedule Excel, a NetEase account
 
-> WeChat delivery uses the official iLink Bot channel (upstream [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin), open source); QR login via the official API. Login state and conversation data stay on your machine — nothing goes into git.
+> WeChat delivery uses the official iLink Bot channel (upstream chain verified: github.com/lhxyzCJ/wechatbot `nodejs/` SDK, whose upstream is [corespeed-io/wechatbot](https://github.com/corespeed-io/wechatbot), MIT; vendored into `wechat-bridge/vendor/wechatbot/`); QR login via the official API. Login state and conversation data stay on your machine — nothing goes into git.
 
 ---
 
