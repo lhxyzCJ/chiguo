@@ -79,6 +79,7 @@ chiguo_daemon.py (DecisionEngine)
   │              + 退避，4xx/解析失败直接 None + schema 过滤）+ QR 登录；音乐话题素材组装
   │              （netease/netease_health.json，零 LLM 输出结构化话题 dict；peek/consume 两阶段接口——
   │              未选中不消费配额）；运行时文件锚定 <base_dir>/netease/，随仓库迁移
+  ├─ trigger_types.py   → 触发类型枚举单一事实来源（TriggerType StrEnum + 情绪/仪式分区 + replan scale key）
   ├─ chiguo_trigger.py  → sigmoid 加权随机触发（14 种类型（情绪类 8 + 仪式类 6，含 follow_up 接话茬、
   │                      comfort 安慰）+ 逃生阀直接触发 + A2 分类型回复率反馈闭环）
   ├─ chiguo_topics.py   → 8 源话题选择器（含 netease 委托）+ 人格调制 + Ebbinghaus 加权 + A9 内容级防复读
@@ -287,7 +288,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 
 ### 2.6 触发决策（sigmoid 权重 + 加权随机）
 
-**14 种触发类型 = 情绪类 8 + 仪式类 6**（`chiguo_trigger.py` `EMOTION_TRIGGERS` frozenset；仪式类豁免 A3 日程乘数 / A4 高段必选 / A5 退场禁发）。
+**14 种触发类型 = 情绪类 8 + 仪式类 6**（`trigger_types.py` `TriggerType` 枚举单一事实来源 + `EMOTION_TRIGGERS` frozenset，Q3 #265；仪式类豁免 A3 日程乘数 / A4 高段必选 / A5 退场禁发）。
 
 **仪式类（6 种）**：
 

@@ -42,6 +42,7 @@ from chiguo_composer import MessageComposer
 from chiguo_version import VERSION
 from chiguo_math import in_quiet_window, longing_accumulate, mood_fresh, user_mood_note
 from chiguo_circadian import bucket_for
+from trigger_types import TriggerType
 
 CST = timezone(timedelta(hours=8))
 
@@ -330,7 +331,7 @@ class DecisionEngine:
             # #79: reminder 一次性提醒去重——发送确认后经 state 公开 API 标记
             # (last_triggered_at)。Q7(#260): 标记并入 state JSON 持久化(memory_dedup),
             # cron 每 15 分钟新进程 load 时读回 → 窗口内多评估路径不再重复触发。
-            if trigger.type == "memory":
+            if trigger.type == TriggerType.MEMORY:
                 mem_ref = trigger.data.get("memory")
                 if isinstance(mem_ref, dict) and mem_ref.get("type") == "reminder":
                     self.state.mark_memory_triggered(mem_ref, now)
@@ -354,9 +355,9 @@ class DecisionEngine:
             # ── v6: 逃生阀破防 → 记录冷却时间 ──
             if trigger.data.get("escape_valve"):
                 self.state.on_longing_break(now)
-            if trigger.type == "morning":
+            if trigger.type == TriggerType.MORNING:
                 self.state.cooldown.morning_sent = True
-            elif trigger.type == "night":
+            elif trigger.type == TriggerType.NIGHT:
                 self.state.cooldown.night_sent = True
 
             # ── v4: 人格自适应（发消息后）──
@@ -948,7 +949,7 @@ class DecisionEngine:
         guidance = layer_guidance.get(emo.dominant_layer, "") + energy_note + rate_urgency_note + personality_note + safety_note + mood_note
 
         # ── v7: 接话茬提示 ──
-        if trigger.type == "follow_up":
+        if trigger.type == TriggerType.FOLLOW_UP:
             tpc = trigger.data.get("topic", "")
             src = trigger.data.get("source", "")
             age = trigger.data.get("age_hours", 0)
@@ -981,7 +982,7 @@ class DecisionEngine:
 
         # ── 话题注入 ──
         topic_data = None
-        if trigger.type in ("lonely_low", "lonely_mid"):
+        if trigger.type in (TriggerType.LONELY_LOW, TriggerType.LONELY_MID):
             cfg_topic = self.config.get("topic_picker", {})
             force_threshold = cfg_topic.get("force_topic_threshold", 3)
             topic_prob = cfg_topic.get("topic_probability", 0.7)
@@ -995,7 +996,8 @@ class DecisionEngine:
                 topic_data = self.topic_picker.pick(now)
                 if topic_data:
                     trigger.data["topic"] = topic_data
-        elif trigger.type not in ("follow_up", "reflect", "lonely_high", "longing"):
+        elif trigger.type not in (TriggerType.FOLLOW_UP, TriggerType.REFLECT,
+                                  TriggerType.LONELY_HIGH, TriggerType.LONGING):
             # v9 审计 F-4:仅 netease 源跨触发(其他 7 源仍限孤独破冰)。
             # 活跃时段(非睡眠/非上课)才可能产出(peek 内部门控)。
             # 排除列表:follow_up/reflect 已有专用素材注入路径;lonely_high(崩溃态)
@@ -1039,7 +1041,7 @@ class DecisionEngine:
             )
 
         # ── v7: 接话茬素材注入(供 pi-agent 生成)──
-        if trigger.type == "follow_up":
+        if trigger.type == TriggerType.FOLLOW_UP:
             instruction += (
                 f"\n用「{trigger.data.get('topic', '')}」这个之前没聊完的话题自然接话茬,"
                 "不要直接说『你上次说的那个……后来怎么样了』这种汇报句,"
