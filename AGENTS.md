@@ -11,7 +11,7 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 ## Iron rules
 
 - **Decision/generation separation**: the daemon outputs structured JSON, never messages. Do not merge LLM logic into the daemon.
-- **Security boundary**: mem0 记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db，gitignore），访问经 `memory/` 包（默认 `Mem0Backend`；`memory_bridge.py` 为兼容门面）；LLM key 读 `~/.pi/agent/auth.json` 的 opencode-go 条目，不进 git。
+- **Security boundary**: mem0 记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db，gitignore），访问经 `memory/` 包（默认 `Mem0Backend`，CLI 见 `python -m memory`）；LLM key 读 `~/.pi/agent/auth.json` 的 opencode-go 条目，不进 git。
 - Before fixing: make a plan/todolist, dispatch parallel subagents, and self-audit with subagents after finishing. Subagents inherit the main model (do not override via `model` param); never use opus without explicit user authorization.
 
 ## 工程原则

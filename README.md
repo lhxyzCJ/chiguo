@@ -246,7 +246,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 ### 记忆系统（记忆后端抽象）
 
-**作用**：迟菓的长期记忆——比情绪更持久的"记得"。它是**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类（`base.py`）+ `create_backend` 工厂（`factory.py`），根目录 `memory_bridge.py` 降为兼容门面，由 `chiguo_proactive.toml` 的 `[memory].backend` 指定——`mem0`（唯一后端，[mem0ai](https://github.com/mem0ai/mem0) 记忆层；仅 `mem0`/`auto`（遗留同义）合法）。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
+**作用**：迟菓的长期记忆——比情绪更持久的"记得"。它是**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类（`base.py`）+ `create_backend` 工厂（`factory.py`）+ `python -m memory` CLI（`--stats/--search/--random/--add`），由 `chiguo_proactive.toml` 的 `[memory].backend` 指定——`mem0`（唯一后端，[mem0ai](https://github.com/mem0ai/mem0) 记忆层；仅 `mem0`/`auto`（遗留同义）合法）。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
 
 **安装/配置**：`uv sync`（mem0ai + ollama 客户端为必需依赖），记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db；路径/LLM/embedding 由 `[memory]` 段 `mem0_*` 键配置，LLM key 缺省读 `~/.pi/agent/auth.json` 的 opencode-go 条目）。
 
@@ -422,8 +422,7 @@ chiguo_circadian.py      # 生物钟学习（双作息分桶；行数以 wc -l �
 chiguo_personality.py    # 人格加载与适配（行数以 wc -l 为准）
 chiguo_demo.py           # 交互式 Demo（纯模板，无 LLM；行数以 wc -l 为准）
 chiguo_rotation.py       # 日志轮转 & 对话存档（行数以 wc -l 为准）
-memory_bridge.py         # 记忆兼容门面（根目录；实现已迁移 memory/ 包）
-memory/                  # 记忆后端抽象（mem0 唯一后端；base/mem0_backend/factory）
+memory/                  # 记忆后端抽象（mem0 唯一后端；base/mem0_backend/factory/cli）
 schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan/parser/parsing/query）
 scripts/                 # tick/replan crontab 入口 + agent runner 抽象（agent-run.mjs，默认 agent）
