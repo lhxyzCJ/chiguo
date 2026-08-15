@@ -131,6 +131,9 @@ class TopicPicker:
             "preference_followup": config.get("preference_followup_weight", 0.10),
             "netease": config.get("netease_weight", 0.12),  # v9
         }
+        # Q4: 注册表驱动接线。默认模块级 TOPIC_REGISTRY；测试/调用方可按需覆写
+        # 为含自定义源的列表（新增源仅需在 registry 插入一条即被 pick 自动驱动）。
+        self.registry = TOPIC_REGISTRY
         self.solar_terms = SolarTerms()
 
     def pick(self, now: datetime) -> dict | None:
@@ -143,7 +146,7 @@ class TopicPicker:
         """
         mod_ctx = self._modulation_context(now)
         candidates = []
-        for spec in TOPIC_REGISTRY:
+        for spec in self.registry:
             base = spec.weight_fn(self, now)
             factor = spec.modulate_fn(mod_ctx)
             # 候选生成（顺序即注册表顺序，RNG 消耗序列与原手写接线一致）
