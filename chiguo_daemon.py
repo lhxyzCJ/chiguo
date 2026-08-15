@@ -28,6 +28,7 @@ import random
 import uuid
 import hashlib
 import tomllib
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -44,6 +45,67 @@ from chiguo_math import in_quiet_window, longing_accumulate, mood_fresh, user_mo
 from chiguo_circadian import bucket_for
 
 CST = timezone(timedelta(hours=8))
+
+
+def bridge_post(bridge_url: str, token: str, path: str, body: dict,
+                timeout: float = 10.0) -> dict:
+    """POST JSON 至 wechat-bridge，返回解析后的响应 dict。
+
+    Q24 (#275): 从 _loop_send 的嵌套 _post 提取为模块级复用入口——
+    主动发送（_loop_send）与告警微信推送（--alerts-push / scripts/alert-cron.sh）
+    共用同一发送链路，保证 token 注入 + 回环代理绕过（B5）行为一致。
+    """
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        f"{bridge_url}{path}", data=data,
+        headers={"Content-Type": "application/json"})
+    if token:
+        req.add_header("X-Bridge-Token", token)
+    # B5: 回环 bridge 调用绕系统代理（同 chiguo_envcheck._urlopen：本机有
+    # http_proxy 时 localhost 直连不被劫持，防回环请求走代理失败降级）
+    host = urllib.request.urlsplit(req.full_url).hostname or ""
+    if host in ("localhost", "127.0.0.1", "::1"):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        resp = opener.open(req, timeout=timeout)
+    else:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+    with resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _push_alerts_via_wechat(engine: "DecisionEngine", new_alerts: list[dict]) -> list[dict]:
+    """把 collect_new_alerts_to_push 返回的告警经微信 bridge /send 推送。
+
+    Q24 (#275): 解复用 loop 发送侧的 bridge 链路（bridge_post + token 注入 + 收件人解析）。
+    告警文案非 LLM 生成（运维/系统事件直发，与 agent_health transition 告警同性质）。
+    推送失败不阻断：返回已实际投递成功的告警（失败静默，下次 cron 不再重推——去重语义）。
+    """
+    if not new_alerts:
+        return []
+    wechat = (engine.config.get("wechat", {}) or {})
+    to = wechat.get("wechat_recipient", "")
+    if not to:
+        print("[chiguo_daemon] --alerts-push: wechat_recipient 未配置，跳过微信推送",
+              file=sys.stderr)
+        return []
+    loop_cfg = engine.config.get("loop", {}) or {}
+    bridge_url = str(loop_cfg.get("bridge_url", "http://127.0.0.1:18790")).rstrip("/")
+    token = os.environ.get("WECHAT_BRIDGE_TOKEN") or str(loop_cfg.get("bridge_token", "") or "")
+    pushed: list[dict] = []
+    for alert in new_alerts:
+        severity = alert.get("severity", "info")
+        alert_id = alert.get("alert_id", "?")
+        text = f"🚨 迟菓告警 [{severity}] {alert.get('type', 'unknown')}：{alert.get('message', '')}"
+        try:
+            resp = bridge_post(bridge_url, token, "/send", {"to": to, "text": text}, 10.0)
+            if not resp.get("ok"):
+                raise RuntimeError(str(resp.get("error") or "bridge /send ok=false"))
+            alert["delivered"] = True
+            pushed.append(alert)
+        except Exception as e:  # noqa: BLE001 - 单条推送失败不阻断其余告警
+            print(f"[chiguo_daemon] --alerts-push 推送失败 alert_id={alert_id}: {e}",
+                  file=sys.stderr)
+    return pushed
 
 
 class DecisionEngine:
@@ -80,11 +142,12 @@ class DecisionEngine:
         # ── v5: monotonic 锚点（不持久化，用于检测壁钟跳变）──
         self._monotonic_at_save: float = 0.0
 
-        # ── v5: 日志轮转（每次进程启动检查一次）──
+        # ── v5: 日志轮转（每次进程启动检查一次）；Q24: 名单含审计日志（与 chiguo_rotation.py 一致）──
         try:
             from chiguo_rotation import rotate_if_needed
             rotate_if_needed(
-                [str(self.log_path), str(self.messages_log_path)],
+                [str(self.log_path), str(self.messages_log_path),
+                 str(self._base_dir / "chiguo_state_audit.jsonl")],
                 self.config_path,
             )
         except Exception:
@@ -1406,8 +1469,6 @@ class DecisionEngine:
         transition（down→up 恢复）经 /send 发告警/恢复。发送段仍走 record_send_result 退款闭环。
         异常全部捕获返回结果 dict，不抛出（loop 循环不中断）。"""
 
-        import urllib.request
-
         out: dict = {"generated": False, "sent": False}
         bridge_url = str(loop_cfg.get("bridge_url", "http://127.0.0.1:18790")).rstrip("/")
         # token：env 优先（wechat-bridge.sh 生成，不进 git），回退 toml [loop]（向后兼容）
@@ -1425,22 +1486,7 @@ class DecisionEngine:
         intensity = decision.get("intensity")
 
         def _post(path: str, body: dict, t: float) -> dict:
-            data = json.dumps(body).encode("utf-8")
-            req = urllib.request.Request(
-                f"{bridge_url}{path}", data=data,
-                headers={"Content-Type": "application/json"})
-            if token:
-                req.add_header("X-Bridge-Token", token)
-            # B5: 回环 bridge 调用绕系统代理（同 chiguo_envcheck._urlopen：本机有
-            # http_proxy 时 localhost 直连不被劫持，防回环请求走代理失败降级）
-            host = urllib.request.urlsplit(req.full_url).hostname or ""
-            if host in ("localhost", "127.0.0.1", "::1"):
-                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                resp = opener.open(req, timeout=t)
-            else:
-                resp = urllib.request.urlopen(req, timeout=t)
-            with resp:
-                return json.loads(resp.read().decode("utf-8"))
+            return bridge_post(bridge_url, token, path, body, t)
 
         def _try_generate() -> tuple:
             """完整生成链（RPC 优先 → spawn 回退）。返回 (text, err)。"""
@@ -1857,6 +1903,10 @@ def main():
     parser.add_argument("--ack", type=str, default=None,
                         metavar="ALERT_ID",
                         help="确认告警 (配合 --alerts)")
+    # ── Q24 (#275): 告警 cron 化——微信推送入口 ──
+    parser.add_argument("--alerts-push", action="store_true",
+                        help="检出并持久化告警，将新增 critical/warn 告警经微信 bridge /send 推送"
+                             "（cron 经 scripts/alert-cron.sh 调用；复用 wechat-bridge 渠道）")
     # ── v5: 日志轮转 ──
     parser.add_argument("--rotate", action="store_true",
                         help="强制日志轮转")
@@ -1906,9 +1956,11 @@ def main():
     if args.rotate:
         from chiguo_rotation import force_rotate
         engine = DecisionEngine()
+        # Q24 (#275): 与 chiguo_rotation.py 轮转名单一致——对话日志 + 审计日志
         force_rotate(
             [str(engine._base_dir / "chiguo_decisions.jsonl"),
-             str(engine._base_dir / "chiguo_messages.jsonl")],
+             str(engine._base_dir / "chiguo_messages.jsonl"),
+             str(engine._base_dir / "chiguo_state_audit.jsonl")],
             archive_dir=str(engine._base_dir / "archive"),
         )
         print(json.dumps({"action": "rotate", "ok": True}, ensure_ascii=False))
@@ -2016,7 +2068,7 @@ def main():
         sys.exit(DecisionEngine().cli_consolidate())
 
     # ── 监控系统（stats / alerts / monitor）（v10: 锚定 base_dir，从任意 cwd 运行都读写项目文件）──
-    if args.stats is not None or args.alerts or args.monitor:
+    if args.stats is not None or args.alerts or args.monitor or args.alerts_push:
         from chiguo_monitor import ChiguoMonitor, AlertManager
         engine = DecisionEngine()
         mon = ChiguoMonitor(
@@ -2025,7 +2077,18 @@ def main():
             break_state_path=str(engine._base_dir / "break_state.json"),
             config_path=str(engine._base_dir / "chiguo_proactive.toml"),
             messages_log_path=str(engine._base_dir / "chiguo_messages.jsonl"),
+            alerts_path=str(engine._base_dir / "chiguo_alerts.json"),
+            events_path=str(engine._base_dir / "chiguo_events.jsonl"),
         )
+        # ── Q24 (#275): 告警微信推送（cron 化入口，--alerts-push 独立命中）──
+        if args.alerts_push:
+            from chiguo_monitor import collect_new_alerts_to_push
+            am = AlertManager(state_path=str(engine._base_dir / "chiguo_alerts.json"))
+            new_alerts = collect_new_alerts_to_push(mon, am)
+            pushed = _push_alerts_via_wechat(engine, new_alerts)
+            print(json.dumps({"action": "alerts_push", "pushed": len(pushed),
+                              "alerts": pushed}, ensure_ascii=False, indent=2))
+            return
         if args.alerts:
             am = AlertManager(state_path=str(engine._base_dir / "chiguo_alerts.json"))
             # --ack ALERT_ID

@@ -8,6 +8,7 @@
 # --loop 模式 = 仅启动时检查（loop 是调试模式，可接受）。
 # ============================================================
 
+import json
 import os
 import sys
 import tomllib
@@ -24,6 +25,28 @@ def _anchor_archive_dir(archive_dir: str) -> Path:
     if not p.is_absolute():
         p = Path(__file__).resolve().parent / p
     return p
+
+
+def _events_log_path() -> Path:
+    """轮转事件审计文件（chiguo_events.jsonl），锚定到模块目录（项目根）。
+    追加式 JSONL，一行一条：{event, kind, file, at}。供 monitor 时序指标消费。"""
+    return Path(__file__).resolve().parent / "chiguo_events.jsonl"
+
+
+def log_rotation_event(kind: str, filename: str):
+    """追加一条轮转事件到 chiguo_events.jsonl。
+    事件记录失败静默（不影响轮转主流程）；追加写不设锁（轮转本身低频）。"""
+    try:
+        line = json.dumps({
+            "event": "rotation",
+            "kind": kind,                       # monthly | force
+            "file": filename,
+            "at": datetime.now(CST).isoformat(),
+        }, ensure_ascii=False) + "\n"
+        with open(_events_log_path(), "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:  # noqa: BLE001 - 事件记账失败不影响轮转
+        pass
 
 
 def rotate_if_needed(log_paths: list[str],
@@ -84,6 +107,7 @@ def force_rotate(log_paths: list[str],
         try:
             os.rename(str(p), str(archive_name))
             p.touch()
+            log_rotation_event("force", str(p))
         except OSError as e:
             print(f"rotation: 强制轮转 {p} 失败: {e}", file=sys.stderr)
 
@@ -103,6 +127,7 @@ def _rotate_one(file_path: Path, archive_dir: str, mtime: datetime):
     try:
         os.rename(str(file_path), str(archive_name))
         file_path.touch()
+        log_rotation_event("monthly", str(file_path))
     except OSError as e:
         print(f"rotation: 轮转 {file_path} 失败: {e}", file=sys.stderr)
 
@@ -155,7 +180,15 @@ if __name__ == "__main__":
     p.add_argument("--dry-run", action="store_true", help="仅显示将要轮转的文件")
     args = p.parse_args()
 
-    log_files = ["chiguo_decisions.jsonl", "chiguo_messages.jsonl"]
+    # Q24 (#275): 轮转名单含对话日志 + 审计日志（chiguo_state_audit.jsonl）。
+    # 审计日志不再被明确排除——状态损坏/恢复事件的时间记也要按同一保留策略归档，
+    # 保证排查可追溯、不无限增长。轮转事件本身（月轮转/强制轮转）落 chiguo_events.jsonl
+    # 供 monitor 时序指标统计（复用 proactive_stats 的每日事件计数）。
+    log_files = [
+        "chiguo_decisions.jsonl",
+        "chiguo_messages.jsonl",
+        "chiguo_state_audit.jsonl",
+    ]
 
     if args.force:
         force_rotate(log_files)
