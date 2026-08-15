@@ -193,6 +193,7 @@ def test_topic_picker_read_side_wired():
                                       "emotion_tag_weight": weight}}
             self.memory_bridge = FakeBridge()
             self.cooldown = type("_Cd", (), {"trigger_history": []})()
+            self.cooldown.get_trigger_history = lambda: self.cooldown.trigger_history
             self.emotion = _E()
 
     fs = FakeState()

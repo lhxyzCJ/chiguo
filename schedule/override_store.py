@@ -5,12 +5,13 @@
 # ============================================================
 
 import json
-import os
 import sys
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
-CST = timezone(timedelta(hours=8))
+from chiguo_time import CST  # Q22: 共享时区常量
+from chiguo_atomic import atomic_write  # Q23: 共享原子写助手
+
 OVERRIDE_VERSION = 1
 KINDS = ("cancel", "move", "add", "exam_week", "reminder")
 MAX_FIELD_LEN = 100      # label/note/course 名 ≤ 100 字节
@@ -84,10 +85,7 @@ class OverrideStore:
     def _save(self):
         data = json.dumps({"override_version": OVERRIDE_VERSION, "items": self._items},
                           ensure_ascii=False)
-        tmp = Path(str(self._path) + ".tmp")
-        tmp.write_text(data)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self._path)
+        atomic_write(self._path, data, mode=0o600)
 
     # ── 读 ──
 
