@@ -350,7 +350,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
 
     # ── v4: longing 触发（概率累积溢出）──
     # held_count 高 + accumulated_lambda 高 → "累积的想念终于溢出"
-    held = getattr(state.cooldown, 'held_count', 0)
+    held = state.cooldown.get_held_count()
     acc_lam = state.cooldown.get_accumulated_lambda() or 0
     base_lambda = _to_float(state.config.get("poisson", {}).get("base_lambda", 0.25), 0.25)
     if state.is_longing_overflow() and base_lambda > 0:
@@ -440,7 +440,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # 回复时 replied+1），样本数 < min_samples 不调整（防冷启动误伤）。
     # 放在抖动后、三段选择前 → 只影响类型间相对概率，不扰动 A4 三段归属阈值。
     if trg_cfg.get("reply_feedback_enabled", 0):
-        stats = getattr(state.cooldown, "reply_stats", None) or {}
+        stats = state.cooldown.get_reply_stats() or {}
         rfb_damp = _to_float(trg_cfg.get("reply_feedback_damp", 0.0), 0.0)
         rfb_boost = _to_float(trg_cfg.get("reply_feedback_boost", 0.0), 0.0)
         rfb_low = _to_float(trg_cfg.get("reply_feedback_low_rate", 0.3), 0.3)

@@ -244,6 +244,9 @@ class CooldownState:
     def get_user_mood(self) -> dict | None:
         return self.user_mood
 
+    def get_reply_stats(self) -> dict:
+        return self.reply_stats
+
     def get_consolidate_last_at(self) -> str | None:
         return self.consolidate_last_at
 
@@ -813,6 +816,14 @@ class StatePersistence:
             except OSError:
                 pass
 
+    def lock_acquire(self, lock_path: str) -> bool:
+        """公开跨进程锁原语（T11·Q1：核心类/委托走公开 API，不强闯私有）。"""
+        return self._lock_acquire(lock_path)
+
+    def lock_release(self, lock_path: str):
+        """公开跨进程锁释放原语（T11·Q1）。"""
+        self._lock_release(lock_path)
+
     @contextmanager
     def state_lock(self):
         """持有 state 文件的跨进程独占锁（chiguo_state.json.lock）。"""
@@ -999,11 +1010,11 @@ class ChiguoState:
 
     def _audit(self, event: str, detail: str = ""):
         """私有审计（白盒测试沿用），委托持久化单类。"""
-        self._persistence._audit(event, detail)
+        self._persistence.audit(event, detail)
 
     def audit(self, event: str, detail: str = ""):
         """公开审计入口（T11·Q1：daemon 等外部走公开 API）。"""
-        self._persistence._audit(event, detail)
+        self._persistence.audit(event, detail)
 
     STATE_VERSION = 10  # v8: 双作息(circadian 分桶学习 + 迁移); v9: cooldown.recv_dedup; v10: personality_baseline + personality_history
 
@@ -1011,10 +1022,10 @@ class ChiguoState:
     # 这里保留公开委托入口，供核心决策与 daemon 复用同一把锁。
 
     def _lock_acquire(self, lock_path: str) -> bool:
-        return self._persistence._lock_acquire(lock_path)
+        return self._persistence.lock_acquire(lock_path)
 
     def _lock_release(self, lock_path: str):
-        self._persistence._lock_release(lock_path)
+        self._persistence.lock_release(lock_path)
 
     @contextmanager
     def state_lock(self):

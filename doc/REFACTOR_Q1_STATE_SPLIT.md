@@ -47,6 +47,10 @@
 > 注：拆分后 `chiguo_state.py` 总行数 2347 → 2507（+160）。增量来自新增的公开 getter/mutator
 > API（`CooldownState` ~85 行）与公开委托入口（`ChiguoState` ~15 行）——这是"字段/私有直访收口"
 > 的必要成本，换取的是**认知显著下降**：单类单一职责、核心类不再持有文件层复杂度。
+>
+> **验收④显式豁免**：总行数指标不设红线、不反向压减。本拆分的判据为「认知下降 + 职责单一」
+> （4 单类≤4、单体 `ChiguoState` ~2035→1672、责任集群 13→4 达标）；总行数反增属公开 API
+> 簿记的必要成本，不作回归指标。
 
 ## 二、职责归属映射（13 集群 → 4 单类）
 
@@ -72,7 +76,7 @@
 
 ## 四、cooldown 字段收口（CooldownState 公开 getter/mutator）
 
-- 读：`get_last_message_at / get_last_user_message_at / get_messages_today / get_messages_without_reply / get_trigger_history / get_event_timestamps / get_reply_latencies / get_busy_suppress_until / get_held_count / get_accumulated_lambda / get_recv_dedup / get_user_mood / get_consolidate_last_at / is_morning_sent / is_night_sent / get_current_date`
+- 读：`get_last_message_at / get_last_user_message_at / get_messages_today / get_messages_without_reply / get_trigger_history / get_event_timestamps / get_reply_latencies / get_busy_suppress_until / get_held_count / get_accumulated_lambda / get_recv_dedup / get_user_mood / get_reply_stats / get_consolidate_last_at / is_morning_sent / is_night_sent / get_current_date`
 - 改：`append_trigger_history / mark_morning_sent / mark_night_sent / increment_held / set_accumulated_lambda / set_consolidate_last_at / set_recv_dedup / set_last_message_at / set_last_user_message_at / set_user_mood`
 - 既有公开方法保留：`quiet_window / silent_hours / minutes_since_last_message / is_busy_suppressed`
 
