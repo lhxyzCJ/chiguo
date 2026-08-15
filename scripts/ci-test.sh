@@ -5,6 +5,13 @@
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 
+# 磁盘测试计数动态计算（Q12/#262）：只作自述/确认，执行仍走下方显式测试命令链。
+# py 与 script(含 .mjs/.sh) 分开统计，与 test_docs_sync 磁盘集合口径一致(ID 只取 test_*，fixture 不计)。
+py_count=$(find tests -maxdepth 1 -name 'test_*.py' | wc -l)
+script_count=$(find tests -maxdepth 1 \( -name 'test_*.mjs' -o -name 'test_*.sh' \) | wc -l)
+total_count=$((py_count + script_count))
+echo "[ci-test] 磁盘测试文件 ${total_count} 个（${py_count} py + ${script_count} script）"
+
 # CI stub：wechat-bridge 的 @wechatbot/wechatbot 是 file: 本地依赖（仓库外 wechatbot/ 目录），
 # 干净 checkout 不存在；bridge.mjs 顶层 import 它但测试从不实例化 → 用最小替身自举。
 # 本地已部署真 SDK（wechat-bridge/node_modules）时跳过。
@@ -26,7 +33,7 @@ PY_COUNT=$(printf '%s' "$PY_COL_COUNT" | grep -oE '^[0-9]+')
 
 # 1) 脚本链（mjs + sh，Q26 保留非 py 测试链）
 if ! (
-node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && \
+node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_auth.mjs && node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && \
 node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && \
 node tests/test_bridge_rotate.mjs && node tests/test_bridge_schedule.mjs && bash tests/test_install_agent.sh && \
 bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \

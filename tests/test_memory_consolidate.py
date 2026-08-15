@@ -233,6 +233,12 @@ class FakeCooldown:
     def silent_hours(self, now):
         return self._silent_h
 
+    def get_consolidate_last_at(self):
+        return self.consolidate_last_at
+
+    def set_consolidate_last_at(self, value):
+        self.consolidate_last_at = value
+
 
 class FakeBridge:
     def __init__(self):

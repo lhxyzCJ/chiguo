@@ -790,20 +790,51 @@ class _FakeResp:
         return False
 
 
-def _patch_urlopen(*behaviors):
-    """monkeypatch urllib.request.urlopen:按序产出 behaviors(异常实例 → raise,bytes → 响应体,
-    超出列表后重复最后一项)。返回 (orig, calls),calls["n"] 记录 urlopen 调用次数"""
-    calls = {"n": 0}
-    real = urllib.request.urlopen
+def patch_proxy_env(http_proxy):
+    """临时写入 http_proxy 环境变量(上下文退出即恢复原值)"""
+    import os
+    from contextlib import contextmanager
 
-    def fake(*a, **k):
-        calls["n"] += 1
-        b = behaviors[min(calls["n"] - 1, len(behaviors) - 1)]
-        if isinstance(b, Exception):
-            raise b
-        return _FakeResp(b)
+    @contextmanager
+    def _cm():
+        saved = os.environ.get("http_proxy")
+        if http_proxy is None:
+            os.environ.pop("http_proxy", None)
+        else:
+            os.environ["http_proxy"] = http_proxy
+        try:
+            yield
+        finally:
+            os.environ.pop("http_proxy", None)
+            if saved is not None:
+                os.environ["http_proxy"] = saved
 
-    urllib.request.urlopen = fake
+    return _cm()
+
+
+def _patch_opener(*behaviors):
+    """monkeypatch urllib.request.build_opener:返回 fake opener,按序产出 behaviors
+    (异常实例 → raise,bytes → 响应体,超出列表后重复最后一项)。
+    返回 (orig, calls),calls["n"] 记录 opener.open 调用次数,
+    calls["handlers"] 记录每次 build_opener 收到的 handler 列表(供无代理断言)。"""
+    calls = {"n": 0, "handlers": []}
+    real = urllib.request.build_opener
+
+    class _FakeOpener:
+        def __init__(self, *handlers):
+            calls["handlers"].append(list(handlers))
+
+        def open(self, *a, **k):
+            calls["n"] += 1
+            b = behaviors[min(calls["n"] - 1, len(behaviors) - 1)]
+            if isinstance(b, Exception):
+                raise b
+            return _FakeResp(b)
+
+    def fake(*handlers):
+        return _FakeOpener(*handlers)
+
+    urllib.request.build_opener = fake
     return real, calls
 
 
@@ -811,12 +842,12 @@ def test_api_get_retries_transient_failure():
     """第一次 urlopen 抛 URLError → 重试 → 第二次成功 → 返回 JSON,urlopen 恰好调用 2 次"""
     with tempfile.TemporaryDirectory() as td:
         b = NeteaseBridge(td, retry_count=1, retry_backoff=0.0)  # backoff=0,避免真实 sleep
-        real, calls = _patch_urlopen(urllib.error.URLError("conn refused"), b'{"code": 200}')
+        real, calls = _patch_opener(urllib.error.URLError("conn refused"), b'{"code": 200}')
         try:
             assert b._api_get("/x") == {"code": 200}
             assert calls["n"] == 2
         finally:
-            urllib.request.urlopen = real
+            urllib.request.build_opener = real
     print("  OK test_api_get_retries_transient_failure")
 
 
@@ -824,13 +855,13 @@ def test_api_get_no_retry_on_http_4xx():
     """HTTPError(403) → 非瞬时失败,立即 None,urlopen 只调 1 次"""
     with tempfile.TemporaryDirectory() as td:
         b = NeteaseBridge(td, retry_count=1, retry_backoff=0.0)
-        real, calls = _patch_urlopen(
+        real, calls = _patch_opener(
             urllib.error.HTTPError("http://x/", 403, "Forbidden", {}, None))
         try:
             assert b._api_get("/x") is None
             assert calls["n"] == 1
         finally:
-            urllib.request.urlopen = real
+            urllib.request.build_opener = real
     print("  OK test_api_get_no_retry_on_http_4xx")
 
 
@@ -838,14 +869,14 @@ def test_api_get_retries_http_5xx():
     """HTTPError(503) → 瞬时失败,重试后成功,urlopen 恰好调用 2 次"""
     with tempfile.TemporaryDirectory() as td:
         b = NeteaseBridge(td, retry_count=1, retry_backoff=0.0)
-        real, calls = _patch_urlopen(
+        real, calls = _patch_opener(
             urllib.error.HTTPError("http://x/", 503, "Service Unavailable", {}, None),
             b'{"code": 200}')
         try:
             assert b._api_get("/x") == {"code": 200}
             assert calls["n"] == 2
         finally:
-            urllib.request.urlopen = real
+            urllib.request.build_opener = real
     print("  OK test_api_get_retries_http_5xx")
 
 
@@ -853,13 +884,35 @@ def test_api_get_retry_policy_zero():
     """retry_count=0 → 不重试,URLError 立即 None(urlopen 只调 1 次)"""
     with tempfile.TemporaryDirectory() as td:
         b = NeteaseBridge(td, retry_count=0, retry_backoff=0.0)
-        real, calls = _patch_urlopen(urllib.error.URLError("down"))
+        real, calls = _patch_opener(urllib.error.URLError("down"))
         try:
             assert b._api_get("/x") is None
             assert calls["n"] == 1
         finally:
-            urllib.request.urlopen = real
+            urllib.request.build_opener = real
     print("  OK test_api_get_retry_policy_zero")
+
+
+def test_api_get_explicit_no_proxy():
+    """Q15: _api_get 用显式 ProxyHandler({}) 回环直连——即便环境带 http_proxy,
+    opener 的 proxy handler 代理表仍为空(隐式 no_proxy 不再被依赖),
+    隐私 MUSIC_U/__csrf cookie 不外发至系统代理。构建 opener 检查 handler 类型即验证。"""
+    with tempfile.TemporaryDirectory() as td:
+        b = NeteaseBridge(td, retry_count=0, retry_backoff=0.0)
+        real, calls = _patch_opener(b'{"code": 200}')
+        try:
+            with patch_proxy_env(http_proxy="http://127.0.0.1:3128"):
+                assert b._api_get("/x") == {"code": 200}
+        finally:
+            urllib.request.build_opener = real
+        assert calls["n"] == 1
+        # build_opener 收到一次 (ProxyHandler)
+        all_handlers = [h for hs in calls["handlers"] for h in hs]
+        proxies = [_p for _p in all_handlers
+                   if isinstance(_p, urllib.request.ProxyHandler)]  # type: ignore[name-defined]
+        assert proxies, "opener 必须包含 ProxyHandler"
+        assert proxies[0].proxies == {}, "ProxyHandler 应为空代理表(显式 ProxyHandler({}))"
+    print("  OK test_api_get_explicit_no_proxy")
 
 
 def test_daily_songs_schema_filter():
@@ -881,12 +934,12 @@ def test_daily_songs_schema_filter():
             {"id": 3, "name": "歌E", "ar": ["x", {"name": "手E"}, None], "al": "notadict"},
             {"id": 4, "name": "歌F", "ar": [], "dt": "long", "fee": "free"},  # 非 int dt/fee → 0
         ]
-        real, calls = _patch_urlopen(
+        real, calls = _patch_opener(
             json.dumps({"code": 200, "data": {"dailySongs": raw}}).encode("utf-8"))
         try:
             songs = b.fetch_daily_songs(limit=10, force_refresh=True)
         finally:
-            urllib.request.urlopen = real
+            urllib.request.build_opener = real
         assert calls["n"] == 1
         assert [s["id"] for s in songs] == [1, 2, 3, 4]
         assert songs[0] == {
@@ -912,11 +965,11 @@ def test_daily_songs_non_dict_resp():
         b._load_cache = lambda: None  # 不读真实缓存文件
         saved = []
         b._save_cache = lambda songs: saved.append(songs)  # 不写真实缓存文件
-        real, calls = _patch_urlopen(json.dumps([1, 2, 3]).encode("utf-8"))
+        real, calls = _patch_opener(json.dumps([1, 2, 3]).encode("utf-8"))
         try:
             assert b.fetch_daily_songs(force_refresh=True) is None
         finally:
-            urllib.request.urlopen = real
+            urllib.request.build_opener = real
         assert calls["n"] == 1
         assert saved == []  # 失败不写缓存
     print("  OK test_daily_songs_non_dict_resp")

@@ -29,10 +29,11 @@ import base64
 import urllib.request
 import urllib.error
 import argparse
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
-CST = timezone(timedelta(hours=8))
+from chiguo_time import CST  # Q22: 共享时区常量
+from chiguo_atomic import atomic_write  # Q23: 共享原子写助手
 
 
 class NeteaseBridge:
@@ -134,9 +135,13 @@ class NeteaseBridge:
         if cookie:
             headers["Cookie"] = cookie
         req = urllib.request.Request(url, headers=headers)
+        # Q15: 显式 ProxyHandler({}) 回环直连（等价 curl --noproxy '*',同 chiguo_envcheck._urlopen）。
+        # 本桥接请求携带隐私 MUSIC_U/__csrf cookie（凭据外发即泄露）且目标为本机 API 服务:
+        # 本机配 http_proxy 时显式绕代理可避免 cookie 随请求发往/被代理劫持渗漏。
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         for attempt in range(self.retry_count + 1):
             try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                with opener.open(req, timeout=timeout) as resp:
                     return json.loads(resp.read())
             except urllib.error.HTTPError as e:  # HTTPError 是 URLError 子类,必须在前
                 if e.code >= 500 and attempt < self.retry_count:
@@ -294,21 +299,17 @@ class NeteaseBridge:
             return None
 
     def _save_cache(self, songs):
-        """Persist daily songs to cache file (atomic tmp → os.replace;失败仅 warn)。
+        """Persist daily songs to cache file (Q23: 共享 atomic_write, 0600 一步到位)。
         权限 0600 一步到位：os.open(O_CREAT, 0o600) 落盘即 0600，无先写后 chmod 的泄露窗口。"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         today = datetime.now(CST).strftime("%Y-%m-%d")
         fetched_at = datetime.now(CST).isoformat()
-        tmp = f"{self.cache_file}.tmp"
         try:
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                json.dump({
-                    "date": today,
-                    "fetched_at": fetched_at,
-                    "songs": songs,
-                }, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, self.cache_file)
+            atomic_write(self.cache_file, json.dumps({
+                "date": today,
+                "fetched_at": fetched_at,
+                "songs": songs,
+            }, ensure_ascii=False, indent=2), mode=0o600)
         except Exception as e:
             print(f"[warn] 缓存写入失败: {e}", file=sys.stderr)
             return
@@ -470,15 +471,13 @@ class NeteaseBridge:
         return {"fetched_at": fetched_at, "plays": data["plays"]}
 
     def _save_recent_play_cache(self, cache_file, plays, fetched_at):
-        """Atomic write (tmp → os.replace); failure only warns, never blocks.
+        """Atomic write (Q23: 共享 atomic_write, 0600); failure only warns, never blocks.
         权限 0600 一步到位：os.open(O_CREAT, 0o600) 落盘即 0600（播放记录含歌名/时间/艺人，勿 0644）。"""
-        tmp = f"{cache_file}.tmp"
         try:
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                json.dump({"fetched_at": fetched_at.isoformat(), "plays": plays},
-                          f, ensure_ascii=False, indent=2)
-            os.replace(tmp, cache_file)
+            atomic_write(cache_file,
+                         json.dumps({"fetched_at": fetched_at.isoformat(), "plays": plays},
+                                    ensure_ascii=False, indent=2),
+                         mode=0o600)
         except Exception as e:
             print(f"[warn] 播放记录缓存写入失败: {e}", file=sys.stderr)
 

@@ -8,8 +8,8 @@ import math
 from datetime import datetime, timezone, timedelta
 CST = timezone(timedelta(hours=8))
 
-from memory_bridge import (
-    MemoryBridge,
+from memory import Mem0Backend as MemoryBridge
+from memory.base import (
     DEFAULT_EBBINGHAUS_STRENGTH,
     DEFAULT_EBBINGHAUS_MIN_WEIGHT,
 )
