@@ -19,7 +19,7 @@ CST = timezone(timedelta(hours=8))
 
 from chiguo_topics import TopicPicker
 from chiguo_state import ChiguoState
-from memory_bridge import MemoryBridge
+from memory import Mem0Backend as MemoryBridge
 
 
 def _picker_cfg() -> dict:
@@ -63,8 +63,11 @@ class MockState:
         self.memory_bridge = bridge
         self.personality = personality
         self.emotion = SimpleNamespace(loneliness_rate=lon_rate, anxiety_rate=anx_rate)
-        self.cooldown = SimpleNamespace(trigger_history=[],
-                                        quiet_window=lambda: quiet_window)
+        self.cooldown = SimpleNamespace(
+            trigger_history=[],
+            quiet_window=lambda: quiet_window,
+            get_trigger_history=lambda: self.cooldown.trigger_history,
+        )
         self.anniversary_mgr = anniversary_mgr if anniversary_mgr is not None else _EmptyAnniversaryMgr()
         self._schedule_status = schedule_status or {
             "in_class": False, "class_load": "free", "remaining_classes": 0,
@@ -692,6 +695,43 @@ def test_repeat_dedup_history_n_truncated():
 
 
 # ═══════════════════════════════════════════════════════════
+# Q4 注册表化验收：新增演示源仅改注册表即被接入
+# ═══════════════════════════════════════════════════════════
+
+def test_q4_registry_demo_source_plugged_in_by_registry_only():
+    """Q4 验收：新增源成本=1 点——只向注册表插入一条 TopicSource（weight_fn/pick_fn/
+    modulate_fn 三段）,pick() 无需任何改动即自动驱动该源。
+    演示源 weight 走高 → 确定性产出演示话题,证明"仅注册即接入"。"""
+    from chiguo_topics import TopicSource, _mod_identity, _weight_of, TOPIC_REGISTRY
+
+    # 默认注册表三段接线齐备
+    for s in TOPIC_REGISTRY:
+        assert callable(s.weight_fn) and callable(s.pick_fn) and callable(s.modulate_fn), s.name
+
+    # 演示源：dry_run 关心提示（仅注册,不改 pick 接线）
+    demo = TopicSource(
+        "demo_greeting",
+        _weight_of("demo_greeting"),
+        lambda pk, now: {"type": "demo_greeting",
+                         "hint": "演示源：仅注册即接入", "tone": "casual"},
+        _mod_identity,
+    )
+    registry = list(TOPIC_REGISTRY) + [demo]  # 不污染全局 TOPIC_REGISTRY
+
+    now = datetime(2026, 6, 15, 9, 0, tzinfo=CST)
+    state = MockState(schedule_status={"in_class": True}, bridge=FakeBridge([]))
+    picker = TopicPicker(state, _picker_cfg())
+    picker.weights["demo_greeting"] = 1000.0  # 演示源高权重 → 必被选中
+    picker.registry = registry
+    for i in range(30):
+        random.seed(30000 + i)
+        t = picker.pick(now)
+        assert t and t["type"] == "demo_greeting", f"seed {i}: 演示源应被选中, got {t}"
+        assert "仅注册即接入" in t["hint"], t
+    print("  OK test_q4_registry_demo_source_plugged_in_by_registry_only")
+
+
+# ═══════════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════════
 
@@ -727,6 +767,8 @@ if __name__ == "__main__":
         test_repeat_dedup_all_rejected_returns_none,
         test_repeat_dedup_threshold_configurable,
         test_repeat_dedup_history_n_truncated,
+        # Q4 注册表化验收
+        test_q4_registry_demo_source_plugged_in_by_registry_only,
     ]
     failed = 0
     for t in tests:

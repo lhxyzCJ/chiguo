@@ -8,15 +8,16 @@
 # ============================================================
 
 import json
-import os
 import random
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from netease.bridge import NeteaseBridge
+from chiguo_math import cfg_float
+from chiguo_time import CST  # Q22: 共享时区常量
+from chiguo_atomic import atomic_write  # Q23: 共享原子写助手
 
-CST = timezone(timedelta(hours=8))
 DEFAULT_HEALTH_FILE = "netease_health.json"
 HEALTH_SCHEMA_KEYS = ("api_alive", "logged_in", "faulty", "last_check",
                       "last_failure", "failure_reason",
@@ -36,20 +37,13 @@ class NeteaseService:
         except ValueError, TypeError:
             return default
 
-    @staticmethod
-    def _cfg_float(raw, default):
-        try:
-            return max(0.0, float(raw))
-        except ValueError, TypeError:
-            return default
-
     def __init__(self, config: dict, base_dir: str,
                  bridge: NeteaseBridge | None = None):
         net = config.get("netease", {}) or {}
         tp = config.get("topic_picker", {}) or {}
         self.retry_count = self._cfg_int(net.get("retry_count", 1), 1)
-        self.retry_backoff = self._cfg_float(net.get("retry_backoff_seconds", 2.0), 2.0)
-        self.reprobe_minutes = self._cfg_float(net.get("reprobe_minutes", 30.0), 30.0)
+        self.retry_backoff = cfg_float(net.get("retry_backoff_seconds", 2.0), 2.0, clamp_min=0.0)
+        self.reprobe_minutes = cfg_float(net.get("reprobe_minutes", 30.0), 30.0, clamp_min=0.0)
         self.daily_quota = self._cfg_int(tp.get("netease_daily_quota", 2), 2)
         self.fault_quota = self._cfg_int(tp.get("netease_fault_daily_quota", 1), 1)
         self.source_weights = [0.5, 0.5]
@@ -109,17 +103,12 @@ class NeteaseService:
             return self._default_health()
 
     def _save_health(self):
-        """原子写 .tmp → os.replace;失败仅 warn。"""
+        """原子写 .tmp → os.replace（Q23: 收敛至共享 atomic_write）；失败仅 warn。"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        tmp = f"{self.health_file}.tmp"
         try:
-            with open(tmp, "w") as f:
-                json.dump(self._health, f, ensure_ascii=False, indent=2)
-            try:
-                os.chmod(tmp, 0o600)  # B6: 运行时健康文件统一 0600（与 chiguo_state.save 同款）
-            except OSError:
-                pass
-            os.replace(tmp, self.health_file)
+            atomic_write(self.health_file,
+                         json.dumps(self._health, ensure_ascii=False, indent=2),
+                         mode=0o600)
         except Exception as e:
             print(f"[warn] netease_health 写入失败: {e}", file=sys.stderr)
 

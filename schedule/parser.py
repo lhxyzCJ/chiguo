@@ -4,12 +4,12 @@
 # 旧版 ScheduleParser 类的 .query() 生产零调用（读路径不走它），故收敛为纯刷新函数。
 
 import json
-import os
 import sys
 from datetime import date
 from pathlib import Path
 
 from schedule.parsing import parse_cell
+from chiguo_atomic import atomic_write  # Q23: 共享原子写助手
 
 
 def refresh_schedule_cache(xlsx_path: str, cache_path: str, semester_start: date,
@@ -105,13 +105,7 @@ def _save_cache(cp: Path, schedule: dict, parsed_at: float) -> None:
             for day, periods in schedule.items()
         }
     }
-    tmp_path = Path(str(cp) + ".tmp")
-    tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    try:
-        os.chmod(tmp_path, 0o600)  # B6: 运行时缓存统一 0600（与 chiguo_state.save 同款）
-    except OSError:
-        pass
-    os.replace(tmp_path, cp)
+    atomic_write(cp, json.dumps(data, indent=2, ensure_ascii=False), mode=0o600)
 
 
 def _load_cache(cp: Path) -> tuple[dict, float]:

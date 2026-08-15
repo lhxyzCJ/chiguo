@@ -367,7 +367,7 @@ def test_phantom_send_reply_path_refund_and_monitor():
     """v1.11+R2: --user-msg 命中 send → 幻影退款（能量/messages_today/messages_without_reply/
     Hawkes 事件数恢复），send_result 日志带 error='phantom_send_reply_path'，且
     ChiguoMonitor 的 send_failed 统计不计该幻影记录（NTH-3 回归）。"""
-    import chiguo_daemon
+    import decision.core as dcore
     from chiguo_trigger import Trigger
     with tempfile.TemporaryDirectory() as td:
         engine = _make_engine(td)
@@ -401,13 +401,13 @@ def test_phantom_send_reply_path_refund_and_monitor():
         # 使 evaluate 命中 send：替换触发评估为确定性 lonely_mid（回复链确有该路径——
         # 幻影记账正是由它造成；真实触发在情绪骤降后几乎不落 send，故测试用桩注入）
         decision = None
-        orig = chiguo_daemon.evaluate_triggers
-        chiguo_daemon.evaluate_triggers = lambda state, now, trigger_scale=None: \
+        orig = dcore.evaluate_triggers
+        dcore.evaluate_triggers = lambda state, now, trigger_scale=None: \
             Trigger("lonely_mid", "medium")
         try:
             decision = engine.evaluate()
         finally:
-            chiguo_daemon.evaluate_triggers = orig
+            dcore.evaluate_triggers = orig
 
         assert decision["action"] == "send", f"expect send, got {decision.get('action')!r}"
         msg_id = decision.get("msg_id", "")
