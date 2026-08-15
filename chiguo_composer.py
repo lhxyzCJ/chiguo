@@ -7,7 +7,6 @@
 
 import argparse
 import json
-import math
 import random
 import re
 import sys
@@ -16,16 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-
-def _to_float(value, default: float) -> float:
-    """composer 配置权重解析：非数值/NaN/inf 回退默认（不钳制，负值由调用处 max(0.0,·) 兜底）。"""
-    try:
-        fv = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    if not math.isfinite(fv):
-        return default
-    return fv
+from chiguo_math import cfg_float
 
 
 class MessageComposer:
@@ -209,21 +199,21 @@ class MessageComposer:
 
         # combo 尺寸权重（选几层组合）
         self.size_weights = {
-            1: max(0.0, _to_float(self.config.get("size_1_weight", 0.20), 0.20)),
-            2: max(0.0, _to_float(self.config.get("size_2_weight", 0.50), 0.50)),
-            3: max(0.0, _to_float(self.config.get("size_3_weight", 0.30), 0.30)),
+            1: max(0.0, cfg_float(self.config.get("size_1_weight", 0.20), 0.20)),
+            2: max(0.0, cfg_float(self.config.get("size_2_weight", 0.50), 0.50)),
+            3: max(0.0, cfg_float(self.config.get("size_3_weight", 0.30), 0.30)),
         }
 
         # cue 基础权重（会被 personality 调制）
         self.cue_weights = {
-            "tsundere_classic": max(0.0, _to_float(self.config.get("cue_tsundere_weight", 0.40), 0.40)),
-            "tsundere_soft": max(0.0, _to_float(self.config.get("cue_tsundere_soft_weight", 0.20), 0.20)),
-            "tsundere_cool": max(0.0, _to_float(self.config.get("cue_tsundere_cool_weight", 0.05), 0.05)),
-            "dere_dere": max(0.0, _to_float(self.config.get("cue_dere_weight", 0.05), 0.05)),
-            "playful_bubbly": max(0.0, _to_float(self.config.get("cue_playful_weight", 0.15), 0.15)),
-            "anxious_clingy": max(0.0, _to_float(self.config.get("cue_anxious_weight", 0.10), 0.10)),
-            "caring_gentle": max(0.0, _to_float(self.config.get("cue_caring_weight", 0.10), 0.10)),
-            "trade_tsundere": max(0.0, _to_float(self.config.get("cue_trade_weight", 0.15), 0.15)),
+            "tsundere_classic": max(0.0, cfg_float(self.config.get("cue_tsundere_weight", 0.40), 0.40)),
+            "tsundere_soft": max(0.0, cfg_float(self.config.get("cue_tsundere_soft_weight", 0.20), 0.20)),
+            "tsundere_cool": max(0.0, cfg_float(self.config.get("cue_tsundere_cool_weight", 0.05), 0.05)),
+            "dere_dere": max(0.0, cfg_float(self.config.get("cue_dere_weight", 0.05), 0.05)),
+            "playful_bubbly": max(0.0, cfg_float(self.config.get("cue_playful_weight", 0.15), 0.15)),
+            "anxious_clingy": max(0.0, cfg_float(self.config.get("cue_anxious_weight", 0.10), 0.10)),
+            "caring_gentle": max(0.0, cfg_float(self.config.get("cue_caring_weight", 0.10), 0.10)),
+            "trade_tsundere": max(0.0, cfg_float(self.config.get("cue_trade_weight", 0.15), 0.15)),
         }
 
         # personality toml 接线（Task 7）：cue ↔ 原著台词模板

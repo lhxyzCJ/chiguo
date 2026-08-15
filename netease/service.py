@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from netease.bridge import NeteaseBridge
+from chiguo_math import cfg_float
 
 CST = timezone(timedelta(hours=8))
 DEFAULT_HEALTH_FILE = "netease_health.json"
@@ -36,20 +37,13 @@ class NeteaseService:
         except ValueError, TypeError:
             return default
 
-    @staticmethod
-    def _cfg_float(raw, default):
-        try:
-            return max(0.0, float(raw))
-        except ValueError, TypeError:
-            return default
-
     def __init__(self, config: dict, base_dir: str,
                  bridge: NeteaseBridge | None = None):
         net = config.get("netease", {}) or {}
         tp = config.get("topic_picker", {}) or {}
         self.retry_count = self._cfg_int(net.get("retry_count", 1), 1)
-        self.retry_backoff = self._cfg_float(net.get("retry_backoff_seconds", 2.0), 2.0)
-        self.reprobe_minutes = self._cfg_float(net.get("reprobe_minutes", 30.0), 30.0)
+        self.retry_backoff = cfg_float(net.get("retry_backoff_seconds", 2.0), 2.0, clamp_min=0.0)
+        self.reprobe_minutes = cfg_float(net.get("reprobe_minutes", 30.0), 30.0, clamp_min=0.0)
         self.daily_quota = self._cfg_int(tp.get("netease_daily_quota", 2), 2)
         self.fault_quota = self._cfg_int(tp.get("netease_fault_daily_quota", 1), 1)
         self.source_weights = [0.5, 0.5]

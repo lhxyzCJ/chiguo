@@ -9,6 +9,27 @@ from datetime import datetime as _dt, timezone, timedelta
 _CST = timezone(timedelta(hours=8))
 
 
+# ── 配置浮点解析（Q25 收敛）──────────────────────────────
+# 统一 composer chiguo_trigger._to_float 与 netease.service._cfg_float 三份重复实现。
+
+def cfg_float(value, default: float, clamp_min: float | None = None) -> float:
+    """配置浮点解析——非数值/NaN/inf 回退默认；clamp_min 非空时对数值结果做下限钳制。
+
+    - float("nan")/float("inf") 不抛异常，会毒化权重（weight *= nan）；math.isfinite 兜底。
+    - clamp_min 用于 netease 的 retry_backoff_seconds/reprobe_minutes 等正数域字段
+      （负值钳制为 0）；composer/trigger 不传 clamp_min，负值语义由调用处 max(0.0,·) 兜底。
+    """
+    try:
+        fv = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(fv):
+        return default
+    if clamp_min is not None and fv < clamp_min:
+        fv = clamp_min
+    return fv
+
+
 # ── Sigmoid（逻辑函数）────────────────────────────────────
 # 替代硬阈值：x 在 midpoint 附近柔和过渡，k 控制陡峭度
 
