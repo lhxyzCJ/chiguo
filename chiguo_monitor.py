@@ -47,12 +47,18 @@ class ChiguoMonitor:
                  state_path: str = "chiguo_state.json",
                  break_state_path: str = "break_state.json",
                  config_path: str = "chiguo_proactive.toml",
-                 messages_log_path: str = "chiguo_messages.jsonl"):
+                 messages_log_path: str = "chiguo_messages.jsonl",
+                 alerts_path: str = "chiguo_alerts.json",
+                 events_path: str = "chiguo_events.jsonl"):
         self.log_path = Path(log_path)
         self.state_path = Path(state_path)
         self.break_state_path = Path(break_state_path)
         self.messages_log_path = Path(messages_log_path)
         self.config_path = Path(config_path)
+        # Q24 (#275): 时序指标数据源——告警持久化(chiguo_alerts.json)与
+        # 事件审计(chiguo_events.jsonl，轮转等)一并纳入 stats() 事件时间序列。
+        self.alerts_path = Path(alerts_path)
+        self.events_path = Path(events_path)
         self._monitor_config = self._load_monitor_config(self.config_path)
 
     def _load_monitor_config(self, config_path: Path) -> dict:
@@ -275,7 +281,7 @@ class ChiguoMonitor:
         mem0_ok_count = 0
         mem0_check_count = 0
 
-        # v6: 发送结果统计
+        # 发送结果统计
         send_success = 0
         send_failed = 0
 
@@ -454,6 +460,17 @@ class ChiguoMonitor:
 
         mem0_likely = mem0_ok_count > 0
 
+        # ── Q24 (#275): 事件时序（复用 proactive_stats 的每日计数口径）──
+        # 告警按 chiguo_alerts.json 各告警的 first_seen 归日计数；轮转等事件
+        # 按 chiguo_events.jsonl 的 at 字段归日计数。与统计窗口(days)对齐。
+        events = {}
+        alert_day_counts = self._alert_day_counts(days)
+        if alert_day_counts:
+            events["alerts_by_day"] = alert_day_counts
+        rot_day_counts = self._rotation_day_counts(days)
+        if rot_day_counts:
+            events["rotations_by_day"] = rot_day_counts
+
         # ── D1: 主动消息效果评估（按 trigger 分组：发送后 replied_within_h 内
         # 收到首条 user-msg 视为已回复；双指针流式，一次遍历 O(n)）──
         # 语义：一条 user-msg 至多算作一条主动消息的回复——命中窗口即消费
@@ -538,6 +555,9 @@ class ChiguoMonitor:
         # D1: 默认关闭恒等——proactive_eval=False 时不新增输出键
         if proactive_stats is not None:
             out["proactive_stats"] = proactive_stats
+        # Q24: 事件时序——仅在存在事件数据时新增输出键（保持空闲恒等）
+        if events:
+            out["events"] = events
         return out
 
     @staticmethod
@@ -561,6 +581,71 @@ class ChiguoMonitor:
         elif change < -threshold_ratio:
             return "falling"
         return "stable"
+
+    @staticmethod
+    def _event_day_counts(path: Path) -> dict[str, int]:
+        """从 JSONL 事件文件（chiguo_events.jsonl）按 at 日期计数。
+        文件缺失/损坏行/缺 at 字段 → 跳过，不崩溃。"""
+        counts: dict[str, int] = {}
+        if not path.exists():
+            return counts
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        rec = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    at = rec.get("at")
+                    if not at:
+                        continue
+                    day = at[:10]  # ISO YYYY-MM-DD
+                    if len(day) != 10:
+                        continue
+                    counts[day] = counts.get(day, 0) + 1
+        except OSError:
+            pass
+        return counts
+
+    def _filter_days(self, counts: dict[str, int], days: int) -> dict[str, int]:
+        """把按日计数裁剪到最近 days 天（days<=0 表示全部）。"""
+        if days is None or days <= 0:
+            return dict(counts)
+        cutoff = (self._now() - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+        return {d: c for d, c in counts.items() if d >= cutoff}
+
+    def _alert_day_counts(self, days: int) -> dict[str, int]:
+        """统计每日告警数：按 chiguo_alerts.json 各告警 first_seen 归日。
+        alerts_path 缺失/损坏 → 空 dict。与 --stats days 窗口对齐。"""
+        counts: dict[str, int] = {}
+        if not self.alerts_path.exists():
+            return {}
+        try:
+            data = json.loads(self.alerts_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            return {}
+        alerts = data.get("alerts", {}) if isinstance(data, dict) else {}
+        if not isinstance(alerts, dict):
+            return {}
+        for alert in alerts.values():
+            if not isinstance(alert, dict):
+                continue
+            first_seen = alert.get("first_seen") or alert.get("detected_at")
+            if not first_seen or not isinstance(first_seen, str) or len(first_seen) < 10:
+                continue
+            day = first_seen[:10]
+            counts[day] = counts.get(day, 0) + 1
+        return self._filter_days(counts, days)
+
+    def _rotation_day_counts(self, days: int) -> dict[str, int]:
+        """统计每日轮转/事件数：按 chiguo_events.jsonl 的 at 字段归日。
+        与 --stats days 窗口对齐。"""
+        return self._filter_days(self._event_day_counts(self.events_path), days)
 
     # ═══════════════════════════════════════════════════════════
     # 异常检测
@@ -1017,7 +1102,7 @@ class ChiguoMonitor:
 
 
 # ═══════════════════════════════════════════════════════════
-# v5: AlertManager — 告警生命周期管理
+# AlertManager — 告警生命周期管理
 # ═══════════════════════════════════════════════════════════
 
 class AlertManager:
@@ -1133,6 +1218,52 @@ class AlertManager:
     def list_all(self) -> list[dict]:
         """返回所有告警（含 resolved）。"""
         return list(self._alerts.values())
+
+
+# ═══════════════════════════════════════════════════════════
+# Q24 (#275): 告警 cron 化——微信推送入口
+# ═══════════════════════════════════════════════════════════
+
+def collect_new_alerts_to_push(monitor: "ChiguoMonitor",
+                               alert_manager: AlertManager,
+                               now: datetime | None = None) -> list[dict]:
+    """生成告警 → 摄入 AlertManager → 返回「本次新增、需经微信推送」的告警。
+
+    cron 侧（--alerts-push / scripts/alert-cron.sh）复用此入口，行为：
+    - 调 monitor.alerts() 检出当前异常
+    - 调 alert_manager.ingest() 持久化（active→acknowledged→resolved 生命周期）
+    - 仅推送「新增活跃」的 critical/warn 告警（推送前不存在于 active 集合）；
+      已在活跃态、cron 每次重复运行不再重推（按 alert type 天然去重）。
+    - 返回被推送的告警列表（empty = 本次无新告警需打扰）。
+
+    返回告警上附加的 `pushed`/`pushed_at` 为 **CLI 输出专用元数据，不持久化**——
+    `ingest()` 在附加前已 `_save()` 落盘 chiguo_alerts.json，且 cron 每次全新进程
+    也不会回写；它们仅供 --alerts-push 的 stdout JSON 展示，去重不依赖它们。
+
+    Args:
+        monitor: 已构造的 ChiguoMonitor（alerts() 数据源）。
+        alert_manager: 已构造的 AlertManager（持久化与去重）。
+        now: 可选固定时间（测试用）；缺省 datetime.now(CST)。
+    """
+    before = {a["alert_id"] for a in alert_manager.list_active()}
+    fresh_alerts = monitor.alerts()
+    active = alert_manager.ingest(fresh_alerts)  # active + acknowledged
+    pushed: list[dict] = []
+    _now = now or datetime.now(CST)
+    for alert in active:
+        alert_id = alert.get("alert_id")
+        if alert_id in before:
+            continue  # 已活跃，非本次新增，不重复推
+        severity = alert.get("severity")
+        if severity not in ("critical", "warn"):
+            continue  # info 级不打扰
+        if alert.get("status") != "active":
+            continue  # 新增即非 active（acknowledged/resolved）→ 不推
+        # pushed/pushed_at 仅 CLI 输出用元数据，不持久化（ingest 已 _save；cron 全新建进程不回写）
+        alert["pushed"] = True
+        alert["pushed_at"] = _now.isoformat()
+        pushed.append(alert)
+    return pushed
 
 
 # ═══════════════════════════════════════════════════════════

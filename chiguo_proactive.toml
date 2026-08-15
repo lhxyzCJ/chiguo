@@ -245,6 +245,37 @@ reply_feedback_low_rate = 0.3   # 回复率低于此 → 阻尼
 reply_feedback_high_rate = 0.7  # 回复率高于此 → 微加成
 reply_feedback_min_samples = 3  # 样本数下限（<此数不调整，防冷启动误伤）
 
+# ── Q10: 触发离散概率/魔法权重配置化（默认 = 现值，行为不变；审计 #276）──
+# 仪式类基础权重（乘 [cooldown].ritual_weight_scale，ritual_weight_scale 默认 1.0）。
+# 把原先硬编码在 chiguo_trigger.py 的 3.0/2.5/2.0/0.8/2.0/1.5 提到 toml，可安全灰度。
+ritual_special_weight = 3.0      # special（特殊日期）基础权重
+ritual_morning_weight = 2.5      # morning（早安窗口）基础权重
+ritual_night_weight = 2.0        # night（晚安窗口）基础权重
+ritual_meal_weight = 0.8         # meal（饭点）基础权重
+ritual_memory_weight = 2.0       # memory（JSON 手动记忆/习惯提醒到期）基础权重
+ritual_mem0_weight = 1.5         # memory（mem0 随机浮现）基础权重
+
+# 时间窗口触发概率（窗口内每分钟命中概率）
+morning_probability = 0.10       # 早安窗口触发概率
+night_probability = 0.12         # 晚安窗口触发概率
+meal_probability = 0.05          # 饭点触发概率
+
+# mem0 随机浮现（仅主人沉默超阈值时参与）
+mem0_surface_min_silent_hours = 6.0  # 沉默超此小时数才参与 mem0 浮现
+mem0_surface_probability = 0.08      # mem0 随机浮现概率
+
+# 接话茬记忆兜底（pending_topics 为空时，近 48h 用户相关记忆搜索的概率门控）
+followup_memory_probability = 0.5
+
+# habit 记忆触发概率
+habit_probability = 0.06
+
+# playful 基础权重（w = base × energy/100 × aff_factor × pers_extra_factor）
+playful_base_weight = 0.15
+# reflect 基础权重 + 概率门控
+reflect_base_weight = 0.08
+reflect_probability = 0.08
+
 [poisson]
 # ── Poisson 过程参数 ──
 # λ = base_lambda × sigmoid(loneliness) × sigmoid(anxiety)
@@ -372,7 +403,7 @@ regress_rate = 0.01                # 基线回归速率（每次互动后向初�
 learning_rate = 0.05             # 在线学习率（越小越保守）
 min_confidence_for_block = 0.5   # 置信度高于此才阻塞发送
 utility_threshold = 0.4          # 加权效用高于此推荐发送
-escape_valve_sleep_block = 0.9   # v7: 逃生阀豁免时，睡觉置信度≥此值仍降级（默认0.9）
+escape_valve_sleep_block = 0.9   # 逃生阀豁免时，睡觉置信度≥此值仍降级（默认0.9）
 # ── A1: 状态转移矩阵 + 前向滤波（默认关闭恒等，可灰度）──
 # transition_enabled=True 时 infer 用 prev_posterior × TRANSITIONS 作转移先验，
 # 与时间先验 0.5/0.5 线性混合（状态持续性平滑 + 时段分布兜底）。

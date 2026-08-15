@@ -122,7 +122,7 @@ class DecisionCoreMixin(DecisionEngineBase):
                     pass
     
                 # ── v8: 每次评估同步当前生效桶窗口(loop 模式跨桶翻转/听歌校正即时生效)──
-                self.state._sync_quiet_window(now)
+                self.state.sync_quiet_window(now)
     
                 # ── v8: 听歌反证(夜间活跃)——睡眠窗口内最近有播放 → 用户醒着 ──
                 # B1(#136): 先于 can_send 调用——内部会 recompute + _sync_quiet_window,
@@ -407,14 +407,10 @@ class DecisionCoreMixin(DecisionEngineBase):
                         play_proof = True
                         self.state.circadian.record_active(
                             dt, circ_cfg.get("history_days", 14), p_bucket)
-                # 活跃证据后重算窗口并同步门禁
+                # 活跃证据后重算窗口并同步门禁——Q30 收敛到 _relearn_windows 单门面
+                # （circadian 双源合并：on_user_message 与 _apply_play_proof 共用）。
                 if play_proof:
-                    self.state.circadian.recompute(
-                        min_sample_days=circ_cfg.get("min_sample_days", 7),
-                        history_days=circ_cfg.get("history_days", 14),
-                        min_width=circ_cfg.get("min_width", 5),
-                        max_width=circ_cfg.get("max_width", 12))
-                    self.state._sync_quiet_window(now)
+                    self.state._relearn_windows(now)
                 return play_proof
             except Exception as e:
                 print(f"[warn] netease play proof apply failed: {e}", file=sys.stderr)

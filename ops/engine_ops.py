@@ -293,15 +293,11 @@ class AccountingMixin(DecisionEngineBase):
                     pass
                 already_reported = self._has_send_result(msg_id)
                 if status == "failed" and not already_reported:
-                    # ── v6 修复: 仅当 msg_id 能在在途 Hawkes 事件中定位时退款 ──
-                    # 未知 msg_id → 只审计跳过，不执行退款副作用（防止凭空刷新逃生阀冷却/
-                    # 误删最后一条事件——旧实现恒走 pop()，乱序回传会删错事件）。
-                    # 兼容: 在途事件全部无 msg_id（旧 daemon 产生）→ 沿用旧语义退款。
-                    events = self.state.cooldown.event_timestamps
-                    matched = any(ev.get("msg_id") == msg_id for ev in events)
-                    legacy_events = bool(events) and all("msg_id" not in ev for ev in events)
-                    if matched or legacy_events:
-                        self.state.refund_send(now, msg_id=msg_id)
+                    # ── v6 修复: 仅当 msg_id 能在在途 Hawkes 事件中定位（或全部为 legacy
+                    #    事件）时才退款——未知 msg_id 不产生副作用（防凭空刷新逃生阀冷却/
+                    #    误删最后一条事件）。legacy/匹配判定已收敛到 state.refund_send 单处，
+                    #    由返回值决定是否落盘（Q30 legacy 事件两处复制收敛）。──
+                    if self.state.refund_send(now, msg_id=msg_id):
                         if not self.state.save():
                             # v12-R1: save 失败 → 不写 send_result 日志、refunded 保持
                             # False。幂等依据是日志：日志不写 = 可重试，下一进程会再次
@@ -320,7 +316,7 @@ class AccountingMixin(DecisionEngineBase):
                     else:
                         print(
                             f"[chiguo_daemon] refund skipped: msg_id={msg_id!r} "
-                            f"not found in {len(events)} in-flight events",
+                            f"not found in {len(self.state.cooldown.event_timestamps)} in-flight events",
                             file=sys.stderr,
                         )
                 result = {
@@ -341,14 +337,27 @@ class AccountingMixin(DecisionEngineBase):
             """A9 查重数据源：最近 n 条已发送消息文本（chiguo_messages.jsonl 倒序取）。
             记录由 --record-send --text 写入（含 direction=send + text 字段），
             不新增文件。文件缺失/损坏行 → 静默跳过（查重降级为不启用）。"""
+            # Q29 移植（#279 tail-read）：只读文件尾部最近 500 行（倒序原语），
+            # 不全量 readlines：日志随运行时间线性增长，全量扫描无必要（复用
+            # _has_send_result 的尾部读先例，seek 到末尾分块向前累计到窗口即停），
+            # 行为等价：仍只返回最近 n 条 direction=send 且有 text 的文本。
+            tail: list[str] = []
             try:
-                with open(self.messages_log_path, "r") as f:
-                    lines = f.readlines()
+                with open(self.messages_log_path, "rb") as f:
+                    f.seek(0, os.SEEK_END)
+                    pos = f.tell()
+                    buf = b""
+                    while pos > 0 and len(tail) < 500:
+                        step = min(65536, pos)
+                        pos -= step
+                        f.seek(pos)
+                        buf = f.read(step) + buf
+                        tail = buf.decode("utf-8", errors="replace").splitlines()
+                    tail = tail[-500:]
             except OSError:
                 return []
             texts: list[str] = []
-            # 只扫最近 500 行（倒序前截断）：日志随运行时间线性增长，全量扫描无必要
-            for line in reversed(lines[-500:]):
+            for line in reversed(tail):
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:

@@ -47,7 +47,7 @@ const DEBOUNCE_MS = 4000
 const AGENT_RUN_SCRIPT = process.env.WECHAT_BRIDGE_AGENT_RUN
   ?? new URL('../scripts/agent-run.mjs', import.meta.url).pathname
 // RPC 常驻(仿 OpenClaw gateway):env WECHAT_BRIDGE_AGENT_RPC=1 显式启用;失败自动回退 spawn。
-// v1.8: RPC 是 agent 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
+// RPC 是 agent 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
 const AGENT_RPC_ENABLED = RUNNER === 'agent' && process.env.WECHAT_BRIDGE_AGENT_RPC === '1'
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 // #84 /send 共享 token:未设置时跳过 token 校验(向后兼容 tick.sh 等既有调用);设置后必须匹配

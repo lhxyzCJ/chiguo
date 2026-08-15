@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""test_daemon_cli_snapshot.py — daemon CLI 35 参数快照（验收①）。
+"""test_daemon_cli_snapshot.py — daemon CLI 36 参数快照（验收①）。
 
 T10·Q2 daemon 上帝入口拆分：拆包后对外 CLI 行为必须完全不变。
 本 runner 对 cli.parser 的 argparse 做参数集合/类型/默认值/nargs/const/choices/
-metavar/action/help 全量快照断言，锁定 35 个用户参数契约（help 为 argparse 自动
-项，不计入 35）。任一参数增删/改默认/改文案都会在此 fail。
+metavar/action/help 全量快照断言，锁定 36 个用户参数契约（help 为 argparse 自动
+项，不计入 36）。任一参数增删/改默认/改文案都会在此 fail。
 
 快照值即拆分后（与拆分前逐字一致）的 argparse 实际产物。
 """
@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cli.parser import build_parser
 
 
-# 35 用户参数快照。字段: type名 | default | nargs | const | choices | metavar
+# 36 用户参数快照。字段: type名 | default | nargs | const | choices | metavar
 EXPECTED = {
     "version":         dict(type=None, default="==SUPPRESS==", nargs=0, const=None, choices=None, metavar=None),
     "loop":            dict(type="int", default=None, nargs="?", const=300, choices=None, metavar="SECONDS"),
@@ -52,10 +52,11 @@ EXPECTED = {
     "error":           dict(type="str", default=None, nargs=None, const=None, choices=None, metavar=None),
     "alerts_all":      dict(type=None, default=False, nargs=0, const=True, choices=None, metavar=None),
     "ack":             dict(type="str", default=None, nargs=None, const=None, choices=None, metavar="ALERT_ID"),
+    "alerts_push":     dict(type=None, default=False, nargs=0, const=True, choices=None, metavar=None),
     "rotate":          dict(type=None, default=False, nargs=0, const=True, choices=None, metavar=None),
 }
 
-# help 文本逐字快照（防拆分改文案）。全量覆盖 35 个参数。
+# help 文本逐字快照（防拆分改文案）。全量覆盖 36 个参数。
 HELP_SNAPSHOT = {
     "version": "show program's version number and exit",
     "loop": "循环评估间隔秒数（最小60）",
@@ -91,6 +92,7 @@ HELP_SNAPSHOT = {
     "error": "失败原因 (配合 --send-result)",
     "alerts_all": "显示所有告警（含已解决）",
     "ack": "确认告警 (配合 --alerts)",
+    "alerts_push": "Q24: 把新告警经微信 bridge /send 推送（scripts/alert-cron.sh 入口）",
     "rotate": "强制日志轮转",
 }
 
@@ -116,10 +118,10 @@ def test_cli_snapshot():
     parser = build_parser()
     actions = {a.dest: a for a in parser._actions}
     user_dests = [a.dest for a in parser._actions
-                  if a.option_strings and a.dest != "help"]  # help=-h 为 argparse 自动项，不计 35
+                  if a.option_strings and a.dest != "help"]  # help=-h 为 argparse 自动项，不计 36
 
-    if len(user_dests) != 35:
-        failures.append(f"用户参数应为 35，实际 {len(user_dests)}: {sorted(user_dests)}")
+    if len(user_dests) != 36:
+        failures.append(f"用户参数应为 36，实际 {len(user_dests)}: {sorted(user_dests)}")
     if set(user_dests) != set(EXPECTED):
         failures.append(f"参数集合不一致: 缺={set(EXPECTED) - set(user_dests)} 增={set(user_dests) - set(EXPECTED)}")
 
@@ -136,7 +138,7 @@ def test_cli_snapshot():
         if ah != HELP_SNAPSHOT.get(dest):
             failures.append(f"{dest}.help: 应={HELP_SNAPSHOT.get(dest)!r}, 实际={ah!r}")
 
-    # 确保 HELP_SNAPSHOT 恰好覆盖 35 参数（无孤儿文案）
+    # 确保 HELP_SNAPSHOT 恰好覆盖 36 参数（无孤儿文案）
     if set(HELP_SNAPSHOT) != set(EXPECTED):
         failures.append(f"HELP_SNAPSHOT 键与 EXPECTED 不一致: 缺={set(EXPECTED)-set(HELP_SNAPSHOT)} 增={set(HELP_SNAPSHOT)-set(EXPECTED)}")
 
@@ -146,4 +148,4 @@ def test_cli_snapshot():
         failures.append("version 参数应为 argparse._VersionAction")
 
     assert not failures, "\n".join("  - " + f for f in failures)
-    print("  OK 35 参数集合/类型/默认/nargs/const/choices/metavar/action/help 快照一致")
+    print("  OK 36 参数集合/类型/默认/nargs/const/choices/metavar/action/help 快照一致")

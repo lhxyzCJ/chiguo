@@ -14,7 +14,7 @@ os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CST = timezone(timedelta(hours=8))
 
-from chiguo_monitor import ChiguoMonitor, AlertManager
+from chiguo_monitor import ChiguoMonitor, AlertManager, collect_new_alerts_to_push
 from chiguo_rotation import rotate_if_needed, force_rotate, _cleanup_archives
 
 
@@ -1149,3 +1149,112 @@ def test_reply_latency_stats():
         # reply_rate: 2 replies / 3 sends-with-mwr>0
         assert abs(s["replies"]["reply_rate"] - 0.667) < 0.01
     print("  OK test_reply_latency_stats")
+
+
+# ── Q24 (#275): 轮转名单含审计 jsonl + 事件时序 + 告警微信推送 ──
+
+def test_rotation_audit_in_list():
+    """Q24: 轮转名单须含 chiguo_state_audit.jsonl（审计日志不再被排除）"""
+    import chiguo_rotation as rot
+    # 模块默认 CLI 名单（chiguo_rotation.py 底部 __main__ 内的 log_files）
+    src = Path(rot.__file__).read_text()
+    assert "chiguo_state_audit.jsonl" in src, \
+        "chiguo_rotation.py 轮转名单缺失 chiguo_state_audit.jsonl"
+    # 同一份名单应同时含对话日志与审计日志
+    assert "chiguo_decisions.jsonl" in src
+    assert "chiguo_messages.jsonl" in src
+    print("  OK test_rotation_audit_in_list")
+
+
+def test_rotation_event_logged():
+    """Q24: 轮转动作落 chiguo_events.jsonl（时序指标数据源）"""
+    import chiguo_rotation as rot
+    with tempfile.TemporaryDirectory() as td:
+        # 事件文件锚定项目根（模块目录），用临时目录无法改锚点 → monkeypatch 目标路径
+        orig_event = rot._events_log_path
+        ev = Path(td) / "chiguo_events.jsonl"
+        rot._events_log_path = lambda: ev
+        try:
+            log = Path(td) / "old.jsonl"
+            log.write_text('{"test": true}\n')
+            old = (datetime.now(CST) - timedelta(days=40)).timestamp()
+            os.utime(str(log), (old, old))
+            cfg = Path(td) / "cfg.toml"
+            cfg.write_text(f"[logging]\nretention_months = 12\n"
+                           f"archive_dir = \"{Path(td) / 'archive'}\"\n")
+            rotate_if_needed([str(log)], str(cfg))
+            assert ev.exists(), "轮转应写 chiguo_events.jsonl"
+            lines = [json.loads(l) for l in ev.read_text().splitlines() if l.strip()]
+            assert lines and lines[0]["event"] == "rotation"
+            assert lines[0]["kind"] in ("monthly", "force")
+            assert lines[0]["at"][0:10] == datetime.now(CST).strftime("%Y-%m-%d")
+        finally:
+            rot._events_log_path = orig_event
+    print("  OK test_rotation_event_logged")
+
+
+def test_stats_event_timeseries():
+    """Q24: stats() 输出 events.alerts_by_day / rotations_by_day 时序"""
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "decisions.jsonl"
+        log.write_text("")
+        state = Path(td) / "state.json"
+        state.write_text(json.dumps({"_version": 2,
+                                     "last_tick": datetime.now(CST).isoformat()}))
+        alerts = Path(td) / "chiguo_alerts.json"
+        alerts.write_text(json.dumps({
+            "_version": 1,
+            "alerts": {
+                "alert_no_state": {
+                    "alert_id": "alert_no_state", "type": "no_state",
+                    "severity": "critical", "status": "active",
+                    "first_seen": "2026-06-01T08:00:00+08:00",
+                    "last_seen": "2026-06-02T08:00:00+08:00",
+                },
+                "alert_crash": {
+                    "alert_id": "alert_crash", "type": "crash_gap",
+                    "severity": "warn", "status": "resolved",
+                    "first_seen": "2026-06-01T09:00:00+08:00",
+                    "last_seen": "2026-06-03T08:00:00+08:00",
+                },
+            },
+        }, ensure_ascii=False))
+        events = Path(td) / "chiguo_events.jsonl"
+        events.write_text("".join(
+            json.dumps({"event": "rotation", "kind": "monthly",
+                        "file": "x", "at": t}, ensure_ascii=False) + "\n"
+            for t in ["2026-06-01T00:00:00+08:00",
+                      "2026-06-01T01:00:00+08:00",
+                      "2026-06-05T00:00:00+08:00"]))
+        mon = ChiguoMonitor(str(log), str(state),
+                            alerts_path=str(alerts), events_path=str(events))
+        s = mon.stats(days=0)
+        ev = s.get("events")
+        assert ev is not None, f"stats 应输出 events 块: {list(s.keys())}"
+        assert ev["alerts_by_day"] == {"2026-06-01": 2}, ev["alerts_by_day"]
+        assert ev["rotations_by_day"] == {"2026-06-01": 2, "2026-06-05": 1}, \
+            ev["rotations_by_day"]
+    print("  OK test_stats_event_timeseries")
+
+
+def test_collect_new_alerts_to_push():
+    """Q24: 仅推送新增活跃 critical/warn 告警，重复运行不重推"""
+    with tempfile.TemporaryDirectory() as td:
+        # 构造一个会产生 crash_gap/no_state 的 monitor（state 缺失 → no_state critical）
+        ap = Path(td) / "alerts.json"
+        am = AlertManager(str(ap))
+        none_state = Path(td) / "none_state.json"  # 不存在 → no_state critical
+        log = Path(td) / "empty.jsonl"
+        log.write_text("")
+        mon = ChiguoMonitor(str(log), str(none_state), config_path=str(Path(td) / "c.toml"))
+
+        # 第一次：no_state 是新增 critical → 推送
+        first = collect_new_alerts_to_push(mon, am)
+        types1 = {a["type"] for a in first}
+        assert "no_state" in types1, f"no_state 应被推送: {types1}"
+        assert all(a["severity"] in ("critical", "warn") for a in first)
+
+        # 第二次：已活跃，非新增 → 不重推
+        second = collect_new_alerts_to_push(mon, am)
+        assert second == [], f"重复运行不应重推: {second}"
+    print("  OK test_collect_new_alerts_to_push")

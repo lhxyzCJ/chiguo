@@ -60,7 +60,7 @@
 - **一个模型 API key**（消息生成与情绪分析走 agent 后端——默认 agent 后端，支持任意 OpenAI 兼容后端；也可用 `[host].runner = command` 换成任意 CLI agent）
 - **可选**：一个微信账号（bot 收发）、ollama（记忆嵌入）、课表 Excel、网易云账号
 
-> 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API；登录态与对话数据仅存本机，不进 git。
+> 微信触达走官方 iLink Bot 通道（实测上游链 github.com/lhxyzCJ/wechatbot 的 `nodejs/` SDK，其上游为 [corespeed-io/wechatbot](https://github.com/corespeed-io/wechatbot)，MIT；已 vendor 入库 `wechat-bridge/vendor/wechatbot/`），扫码登录正规 API；登录态与对话数据仅存本机，不进 git。
 
 ---
 
@@ -238,7 +238,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 **作用**：消息的最后一段路——把生成好的文本真正发到微信，并接收用户的消息回传给 daemon 记账。常驻本机，登录态仅存本地（扫码一次）。
 
-**安装/配置**：`bash scripts/wechat-bridge.sh install`（自动克隆 [wechatbot](https://github.com/lhxyzCJ/wechatbot) iLink SDK 到 `$HOME/wechatbot` 并安装 npm 依赖，需 Node.js + npm）；登录 `bash scripts/wechat-bridge.sh login`。
+**安装/配置**：`bash scripts/wechat-bridge.sh install`（install 从仓库内 `wechat-bridge/vendor/wechatbot`（vendor 入库 SDK，含 MIT LICENSE）构建安装；`install update` 可从上游 [lhxyzCJ/wechatbot](https://github.com/lhxyzCJ/wechatbot) 刷新，需 Node.js + npm）；登录 `bash scripts/wechat-bridge.sh login`。
 
 **服务管理**：`bash scripts/service.sh <autostart|temp|status|stop|uninstall>`（autostart=systemd 开机自启 ollama+微信桥；temp=临时启动不注册自启；详见 doc/SYSTEM.md）。
 

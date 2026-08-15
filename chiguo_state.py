@@ -992,6 +992,27 @@ class ChiguoState:
         else:
             self._apply_quiet_window()
 
+    def sync_quiet_window(self, now: datetime | None = None):
+        """T11·Q1 公开 API：同步当前生效睡眠窗口（daemon 等外部经此调用，不直触私有）。"""
+        self._sync_quiet_window(now)
+
+    def _relearn_windows(self, now: datetime):
+        """单源：重算生物钟学习窗口并同步门禁。reply/active 记账由各自调用方先行。
+
+        Q30「circadian 双源」收敛——recompute + _sync_quiet_window 曾在
+        on_user_message（回复）与 daemon._apply_play_proof（听歌活跃）两处重复，
+        且 [circadian] 4 参数默认值被复制两遍。一律经此门面重算+同步，
+        [circadian] 参数默认只在此维护一份（行为不变）。
+        T11 协调：同步经公开 sync_quiet_window（避免双 API 并存）。"""
+        cfg = self.config.get("circadian", {})
+        self.circadian.recompute(
+            min_sample_days=cfg.get("min_sample_days", 7),
+            history_days=cfg.get("history_days", 14),
+            min_width=cfg.get("min_width", 5),
+            max_width=cfg.get("max_width", 12),
+        )
+        self.sync_quiet_window(now)
+
     def reload_config(self, new_config: dict):
         """热重载：替换 config 引用并重应用 config 派生组件（--loop 模式用）。
 
@@ -1030,10 +1051,6 @@ class ChiguoState:
             # 构造崩溃兜底(#83):与 __init__ 同语义,降级为无假日判定
             print(f"[warn] HolidayParser 构造失败，节假日判断降级: {exc}", file=sys.stderr)
             self.holiday_parser = None
-
-    def sync_quiet_window(self, now: datetime | None = None):
-        """T11·Q1 公开 API：同步当前生效睡眠窗口（daemon 等外部经此调用，不直触私有）。"""
-        self._sync_quiet_window(now)
 
     @property
     def state_path(self) -> Path:
@@ -2064,14 +2081,9 @@ class ChiguoState:
         # ── v7/v8: 生物钟学习(每次回复记录小时 + 重算窗口;v8 按当日分桶)──
         circ_cfg = self.config.get("circadian", {})
         self.circadian.record(now, circ_cfg.get("history_days", 14), self._current_bucket(now))
-        self.circadian.recompute(
-            min_sample_days=circ_cfg.get("min_sample_days", 7),
-            history_days=circ_cfg.get("history_days", 14),
-            min_width=circ_cfg.get("min_width", 5),
-            max_width=circ_cfg.get("max_width", 12),
-        )
         # v8: 与 record 使用同一 now(测试注入过去时间时桶选择语义一致)
-        self._sync_quiet_window(now)
+        # Q30: 重算+同步收敛到 _relearn_windows 单门面（circadian 双源合并）
+        self._relearn_windows(now)
 
         self._finalize(now)
 
@@ -2395,7 +2407,7 @@ class ChiguoState:
         """记录逃生阀破防时间，进入冷却。累积量由 on_character_message 归零。"""
         self.cooldown.last_longing_break_at = now.isoformat()
 
-    def refund_send(self, now: datetime, msg_id: str | None = None):
+    def refund_send(self, now: datetime, msg_id: str | None = None) -> bool:
         """发送失败退款（v6 反馈闭环）：退还元气/不安消耗、日计数、未回复计数。
         消息从未真正发出 → 情绪消耗与额度统计全部回滚，下次 tick 可重发。
         - 重置逃生阀冷却：未送达的消息不该白扣 3 天破防机会。
@@ -2403,8 +2415,36 @@ class ChiguoState:
         - loneliness 缓降不回滚（决策本身已产生释压感，语义合理）。
         - v6: 提供 msg_id 时按 msg_id 精确移除对应 Hawkes 事件（乱序回传不弹错）；
           未提供 → 回退移除最后一条（旧行为，向后兼容）；
-          提供但未匹配 → 不删任何事件，仅 stderr 告警（防误删，#83）。
-        - last_message_at 不还原（设计取舍，保持现状）。"""
+          提供但未匹配到任何在途事件（或在途为空）→ 不产生任何退款副作用，仅告警
+          （防凭空刷新逃生阀冷却/误删其他事件，#83）。
+        - legacy 事件（全部无 msg_id 键）→ 沿用旧回退 pop()（单一判定，见下）。
+        - last_message_at 不还原（设计取舍，保持现状）。
+        - 返回 True=已执行退款副作用（成本回滚+事件移除+逃生阀冷却重置）；
+          False=msg_id 未在任何在途事件中定位且存在带 msg_id 的事件（或事件为空），
+          调用方据此决定是否 save。msg_id 与 legacy 判定收敛于此单处。"""
+        # 单处判定：msg_id 非空时只需 匹配到该 msg_id or 全部事件为 legacy → 才执行退款。
+        # 事件为空 → 视为"未知 msg_id"，与历史 daemon 门控语义一致（不退款）。
+        if msg_id is not None:
+            events = self.cooldown.event_timestamps
+            if not events:
+                print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
+                return False
+            legacy_events = all("msg_id" not in ev for ev in events)
+            matched = False
+            for i, ev in enumerate(events):
+                if ev.get("msg_id") == msg_id:
+                    del self.cooldown.event_timestamps[i]
+                    matched = True
+                    break
+            if not matched and not legacy_events:
+                # 未匹配到该 msg_id → 不误删其他事件记录(#83)、不回滚（防凭空刷新冷却）
+                print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
+                return False
+            if not matched:
+                self.cooldown.event_timestamps.pop()  # legacy 事件：旧行为回退删除
+        elif self.cooldown.event_timestamps:
+            self.cooldown.event_timestamps.pop()
+        # ── 退款副作用：成本回滚 + 逃生阀冷却重置 ──
         cfg = self.config.get("emotion", {})
         cost = cfg.get("energy_cost_per_message", 20.0)
         self.emotion.energy = min(100.0, self.emotion.energy + cost)
@@ -2412,27 +2452,9 @@ class ChiguoState:
         self.emotion.anxiety = max(0.0, self.emotion.anxiety - anx_gain)
         self.cooldown.messages_today = max(0, self.cooldown.messages_today - 1)
         self.cooldown.messages_without_reply = max(0, self.cooldown.messages_without_reply - 1)
-        # 移除 Hawkes 事件记录（该消息从未发出，不应激发后续 λ）
-        if self.cooldown.event_timestamps:
-            if msg_id is not None:
-                # 事件均为 legacy（无 msg_id 键）→ 沿用旧回退 pop()（与 daemon legacy_events 判定一致）；
-                # 存在带 msg_id 的事件但都不匹配 → 不删任何事件，仅告警（防误删，#83）
-                legacy_events = all("msg_id" not in ev for ev in self.cooldown.event_timestamps)
-                matched = False
-                for i, ev in enumerate(self.cooldown.event_timestamps):
-                    if ev.get("msg_id") == msg_id:
-                        del self.cooldown.event_timestamps[i]
-                        matched = True
-                        break
-                if not matched and not legacy_events:
-                    # 未匹配到该 msg_id → 不误删其他事件记录(#83)
-                    print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
-                elif not matched:
-                    self.cooldown.event_timestamps.pop()  # legacy 事件：旧行为回退删除
-            else:
-                self.cooldown.event_timestamps.pop()
         self.cooldown.last_longing_break_at = None
         self._finalize(now)
+        return True
 
     def can_send(self, now: datetime, quiet_ok: bool = False) -> bool:
         cfg = self.config.get("cooldown", {})

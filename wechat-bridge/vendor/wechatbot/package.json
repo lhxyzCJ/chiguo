@@ -1,0 +1,38 @@
+{
+  "name": "@wechatbot/wechatbot",
+  "version": "2.2.0",
+  "description": "WeChat iLink Bot SDK — modular, extensible, production-grade",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./media": "./dist/media/index.js",
+    "./middleware": "./dist/middleware/index.js",
+    "./storage": "./dist/storage/index.js"
+  },
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --experimental-vm-modules node_modules/.bin/vitest run",
+    "test:watch": "node --experimental-vm-modules node_modules/.bin/vitest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/corespeed-io/wechatbot.git"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.8"
+  }
+}

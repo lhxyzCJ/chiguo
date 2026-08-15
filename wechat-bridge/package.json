@@ -5,6 +5,6 @@
   "type": "module",
   "description": "chiguo ↔ wechatbot (iLink Bot SDK) 桥接：主动发送端点 + 回复确定性回传",
   "dependencies": {
-    "@wechatbot/wechatbot": "file:../../wechatbot/nodejs"
+    "@wechatbot/wechatbot": "file:./vendor/wechatbot"
   }
 }

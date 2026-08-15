@@ -12,17 +12,16 @@ script_count=$(find tests -maxdepth 1 \( -name 'test_*.mjs' -o -name 'test_*.sh'
 total_count=$((py_count + script_count))
 echo "[ci-test] 磁盘测试文件 ${total_count} 个（${py_count} py + ${script_count} script）"
 
-# CI stub：wechat-bridge 的 @wechatbot/wechatbot 是 file: 本地依赖（仓库外 wechatbot/ 目录），
-# 干净 checkout 不存在；bridge.mjs 顶层 import 它但测试从不实例化 → 用最小替身自举。
-# 本地已部署真 SDK（wechat-bridge/node_modules）时跳过。
-if [ ! -f wechat-bridge/node_modules/@wechatbot/wechatbot/package.json ]; then
-  mkdir -p wechat-bridge/node_modules/@wechatbot/wechatbot
-  cat > wechat-bridge/node_modules/@wechatbot/wechatbot/package.json <<'EOF'
-{"name": "@wechatbot/wechatbot", "version": "0.0.0-ci-stub", "type": "module", "exports": {".": "./index.mjs"}}
-EOF
-  cat > wechat-bridge/node_modules/@wechatbot/wechatbot/index.mjs <<'EOF'
-export class WeChatBot { constructor() {} }
-EOF
+# wechat-bridge 的 @wechatbot/wechatbot 依赖随仓库 vendor（wechat-bridge/vendor/wechatbot，MIT，含 LICENSE）。
+# 干净 checkout 无已构建产物 → 构建真实 SDK（npm install 依赖 + tsc build），再从桥目录 npm install 建立 file: 链接。
+# 任一失败即中止（CI 由此验证 vendor 真实 SDK 可从源码构建）。
+if [ ! -f wechat-bridge/vendor/wechatbot/dist/index.js ]; then
+  echo "[ci-test] 构建 vendor SDK（wechat-bridge/vendor/wechatbot）..."
+  ( cd wechat-bridge/vendor/wechatbot && npm install --no-fund --no-audit && npm run build )
+fi
+if [ ! -d wechat-bridge/node_modules/@wechatbot ]; then
+  echo "[ci-test] 安装桥依赖（npm install file:./vendor/wechatbot）..."
+  ( cd wechat-bridge && npm install --no-fund --no-audit )
 fi
 
 # 动态计数（不硬编码数量，均按磁盘/pytest 收集结果实时计算）
@@ -33,7 +32,7 @@ PY_COUNT=$(printf '%s' "$PY_COL_COUNT" | grep -oE '^[0-9]+')
 
 # 1) 脚本链（mjs + sh，Q26 保留非 py 测试链）
 if ! (
-node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_auth.mjs && node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && \
+node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_sdk_vendor.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_auth.mjs && node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && \
 node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && \
 node tests/test_bridge_rotate.mjs && node tests/test_bridge_schedule.mjs && bash tests/test_install_agent.sh && \
 bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
