@@ -8,13 +8,13 @@ import os
 import subprocess
 import sys
 import time
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 from schedule.sources import load_sources
 from schedule.plan_store import PlanStore
+from chiguo_time import CST  # Q22: 共享时区常量
 
-CST = timezone(timedelta(hours=8))
 DIRTY_FILES = ("schedule_overrides.json", "holidays.json")   # mtime 文件集合(仅此二者,F12)
 TRIGGER_TYPES = ("special", "morning", "night", "memory", "meal",
                  "lonely_low", "lonely_mid", "lonely_high", "anxiety", "playful",

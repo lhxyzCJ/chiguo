@@ -8,11 +8,12 @@
 # ============================================================
 
 import json
-import os
 import uuid
 from dataclasses import dataclass, asdict
 from datetime import date
 from pathlib import Path
+
+from chiguo_atomic import atomic_write  # Q23: 共享原子写助手
 
 # CST 锚定不需要(纯日期,无时区)——本文件不引入 datetime timezone。
 
@@ -82,9 +83,7 @@ class AnniversaryManager:
         data = json.dumps({
             "anniversaries": [asdict(a) for a in self._items],
         }, indent=2, ensure_ascii=False)
-        tmp = Path(str(self._path) + ".tmp")
-        tmp.write_text(data)
-        os.replace(tmp, self._path)
+        atomic_write(self._path, data)
 
     @staticmethod
     def _valid(a: dict) -> bool:
