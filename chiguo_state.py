@@ -20,7 +20,7 @@ import shutil
 import sys
 import types
 import time as time_module
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from contextlib import contextmanager
@@ -45,13 +45,12 @@ from schedule.plan_store import PlanStore
 from memory import create_backend
 from chiguo_circadian import CircadianTracker, bucket_for
 from datetime import date as date_type
+from chiguo_time import CST
+import chiguo_locks as locks
+from chiguo_atomic import atomic_write
 
-CST = timezone(timedelta(hours=8))
-
-# ── v6: 跨进程锁的模块级状态。lock_path → fd（持锁中）与重入深度。
-# 同进程所有实例/调用共享同一 fd，避免对同一文件二次 open 造成 flock 自死锁。
-_LOCK_FDS: dict[str, int] = {}
-_LOCK_DEPTH: dict[str, int] = {}
+# ── Q21: 跨进程 fcntl 锁已收敛至共享模块 chiguo_locks（可重入;同进程共享
+# 同一 fd 与深度计数）。本模块经 state_lock/_in_lock 复用之。
 
 
 @dataclass
@@ -679,65 +678,22 @@ class ChiguoState:
 
     STATE_VERSION = 10  # v8: 双作息(circadian 分桶学习 + 迁移); v9: cooldown.recv_dedup; v10: personality_baseline + personality_history
 
-    # ── v6: 跨进程写锁（fcntl.flock）。锁文件常驻，os.replace 换 inode 不影响锁。
-    # 防止 cron + 手动运行多实例竞争写导致 checksum 不匹配→删重建。
-    # 可重入：模块级 _LOCK_FDS/_LOCK_DEPTH 保证同进程共享同一 fd 与深度计数，
-    # state_lock 与 save() 混用不阻塞、不提前释放。
+    # ── Q21: 跨进程写锁（fcntl.flock）已收敛至共享模块 chiguo_locks。
+    # 锁文件常驻，os.replace 换 inode 不影响锁；可重入（同进程共享同一 fd
+    # 与深度计数），防止 cron + 手动运行多实例竞争写导致 checksum 不匹配→删重建。
 
     def _lock_acquire(self, lock_path: str) -> bool:
-        """获取进程级独占锁（可重入）。返回 True 表示本次真正获得锁（需配套 release）。
-        重入（同进程已持有）直接通过且不递增深度——flock 为 fd 级互斥，
-        深度只需表达 0/1 持有态。非 POSIX 或 5s 内拿不到锁 → 降级无锁并审计。"""
-        if _LOCK_DEPTH.get(lock_path, 0) > 0:
-            return False
-        fd = _LOCK_FDS.get(lock_path)
-        if fd is None:
-            try:
-                import fcntl
-            except ImportError:
-                return False  # 非 POSIX → 降级无锁（与 v5 行为一致）
-            try:
-                fd = open(lock_path, "a+")
-            except OSError:
-                return False
-            try:
-                deadline = time_module.monotonic() + 5.0
-                while True:
-                    try:
-                        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except OSError:
-                        if time_module.monotonic() >= deadline:
-                            self._audit("state_lock_timeout", lock_path)
-                            fd.close()
-                            return False
-                        time_module.sleep(0.1)
-            except OSError:
-                try:
-                    fd.close()
-                except OSError:
-                    pass
-                return False
-            _LOCK_FDS[lock_path] = fd
-        _LOCK_DEPTH[lock_path] = 1
-        return True
+        """获取进程级独占锁（可重入，delegate → chiguo_locks.acquire）。
+        返回 True 表示本次真正获得锁（需配套 release）。非 POSIX 或 5s 内
+        拿不到锁 → 降级无锁并审计（超时回调）。"""
+        return locks.acquire(
+            lock_path,
+            on_timeout=lambda lp: self._audit("state_lock_timeout", lp),
+        )
 
     def _lock_release(self, lock_path: str):
-        """释放锁（仅持有者调用）。释放 fd 并清空持有标记。"""
-        if _LOCK_DEPTH.get(lock_path, 0) <= 0:
-            return
-        _LOCK_DEPTH.pop(lock_path, None)
-        fd = _LOCK_FDS.pop(lock_path, None)
-        if fd is not None:
-            try:
-                import fcntl
-                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
-            except (ImportError, OSError):
-                pass
-            try:
-                fd.close()
-            except OSError:
-                pass
+        """释放锁（仅持有者调用）。delegate → chiguo_locks.release。"""
+        locks.release(lock_path)
 
     @contextmanager
     def state_lock(self):
@@ -755,7 +711,7 @@ class ChiguoState:
 
     def _in_lock(self) -> bool:
         """当前进程是否已持有 state 锁（供 daemon 判断重入场景）。"""
-        return _LOCK_DEPTH.get(str(self.state_path) + ".lock", 0) > 0
+        return locks.in_lock(str(self.state_path) + ".lock")
 
     def save(self, _backup: bool = True, _increment_tick: bool = True):
         """原子写入：先写 .tmp，再 os.replace（避免写崩损坏正式文件）。
@@ -775,7 +731,6 @@ class ChiguoState:
         返回 False 不抛异常，旧调用点保持兼容。
         """
         p = self.state_path
-        tmp_path = Path(str(p) + ".tmp")
         bak_path = Path(str(p) + ".bak")
 
         lock_path = str(p) + ".lock"
@@ -841,34 +796,18 @@ class ChiguoState:
 
             data = json.dumps(payload, indent=2, ensure_ascii=False)
 
-            tmp_path.write_text(data)
-            # 状态文件含隐私（情绪/人格/对话相关）→ 正式文件与暂存均 0600；
-            # 若 tmp 已存在且权限过宽，这里统一收紧，os.replace 后正式文件也是 0600。
-            try:
-                os.chmod(tmp_path, 0o600)
-            except OSError:
-                pass  # 权限收紧失败不阻塞保存（与备份 chmod 同策略）
-
-            # ── v5: fsync 确保落盘 ──
-            try:
-                with open(tmp_path, 'rb') as _fsync_f:
-                    os.fsync(_fsync_f.fileno())
-            except OSError:
-                pass  # fd 在某些环境不可用，跳过
-
-            # ── v5: 验证 tmp 是合法 JSON ──
-            try:
-                _verify = json.loads(tmp_path.read_text())
-                if not isinstance(_verify, dict) or "_version" not in _verify:
+            # ── Q23: 原子写收敛至共享 chiguo_atomic.atomic_write
+            # （tmp 写入 0600 → fsync → 写前校验 → os.replace；
+            #  校验失败由 helper 清理 tmp 并抛 ValueError，此处捕获后跳过本次 save）。
+            def _verify_tmp(t):
+                _v = json.loads(Path(t).read_text())
+                if not isinstance(_v, dict) or "_version" not in _v:
                     raise ValueError("tmp validation failed: not a dict or no _version")
-            except (json.JSONDecodeError, ValueError, OSError):
-                try:
-                    tmp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                return False  # 跳过本次 save，不替换好状态
 
-            os.replace(tmp_path, self.state_path)
+            try:
+                atomic_write(p, data, mode=0o600, fsync=True, verify=_verify_tmp)
+            except (json.JSONDecodeError, ValueError):
+                return False  # 跳过本次 save，不替换好状态
 
         except OSError as e:
             # ── v5: 磁盘满/Permission denied → 不崩溃（v11: 返回 False 供告警）──

@@ -10,19 +10,22 @@ transition 只在 up→down 与 down→up 各输出一次（天然防重复告�
 """
 
 import argparse
-import fcntl
 import json
-import os
 import sys
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
-CST = timezone(timedelta(hours=8))
+# agent_health.py 以独立脚本执行（scripts/ 在 sys.path[0]，仓库根不在）→
+# 显式把仓库根加入 sys.path 以导入共享模块 chiguo_locks/chiguo_time/chiguo_atomic。
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from chiguo_time import CST
+import chiguo_locks as locks
+from chiguo_atomic import atomic_write
+
 DEFAULT_THRESHOLD = 3
-LOCK_TIMEOUT_S = 5.0
-_LOCK_FDS = {}
-_LOCK_DEPTH = {}
 
 
 def _anchor():
@@ -55,47 +58,11 @@ def _read_state(state_path):
 
 
 def _acquire(lock_path):
-    if _LOCK_DEPTH.get(lock_path, 0) > 0:
-        return False
-    fd = _LOCK_FDS.get(lock_path)
-    if fd is None:
-        try:
-            fd = open(lock_path, "a+")
-        except OSError:
-            return False
-        try:
-            deadline = time.monotonic() + LOCK_TIMEOUT_S
-            while True:
-                try:
-                    fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        fd.close()
-                        return False
-                    time.sleep(0.1)
-        except OSError:
-            fd.close()
-            return False
-        _LOCK_FDS[lock_path] = fd
-    _LOCK_DEPTH[lock_path] = 1
-    return True
+    return locks.acquire(lock_path)
 
 
 def _release(lock_path):
-    if _LOCK_DEPTH.get(lock_path, 0) <= 0:
-        return
-    _LOCK_DEPTH.pop(lock_path, None)
-    fd = _LOCK_FDS.pop(lock_path, None)
-    if fd is not None:
-        try:
-            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
-        except (ImportError, OSError):
-            pass
-        try:
-            fd.close()
-        except OSError:
-            pass
+    locks.release(lock_path)
 
 
 def _build_message(state, streak, reason):
@@ -141,13 +108,9 @@ def record(outcome, reason, state_path, config_path):
                 st["fail_streak"] = 0
                 st["fail_reason"] = None
 
-        tmp = state_path.with_name(state_path.name + ".tmp")
-        tmp.write_text(json.dumps(st, ensure_ascii=False, indent=2))
-        try:
-            os.chmod(tmp, 0o600)  # B6: 运行时状态统一 0600（与 chiguo_state.save 同款）
-        except OSError:
-            pass
-        os.replace(tmp, state_path)
+        # Q23: 原子写收敛至共享 chiguo_atomic.atomic_write（0600 一步到位）。
+        atomic_write(state_path, json.dumps(st, ensure_ascii=False, indent=2),
+                     mode=0o600)
     finally:
         if acquired:
             _release(lock_path)
