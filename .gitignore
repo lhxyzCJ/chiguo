@@ -37,6 +37,11 @@ wechat-bridge/node_modules/
 wechat-bridge/.env
 wechat-bridge/package-lock.json
 wechat-bridge/npm-debug.log*
+# wechat-bridge vendor SDK — 源码随仓库入库；构建产物忽略
+wechat-bridge/vendor/wechatbot/node_modules/
+wechat-bridge/vendor/wechatbot/dist/
+wechat-bridge/vendor/wechatbot/*.tsbuildinfo
+wechat-bridge/vendor/wechatbot/package-lock.json
 
 # tick cron 运行日志（运行时产物，不跟踪）
 logs/
