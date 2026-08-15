@@ -11,10 +11,10 @@
 import os
 import sys
 import tomllib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
-CST = timezone(timedelta(hours=8))
+from chiguo_time import CST  # Q22: 共享时区常量
 
 
 def _anchor_archive_dir(archive_dir: str) -> Path:
