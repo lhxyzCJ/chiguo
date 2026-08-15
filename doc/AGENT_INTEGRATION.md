@@ -144,6 +144,7 @@ Node/bridge 与 daemon 之间**无 socket 常驻进程**：全部经 CLI 子进�
 |---|---|---|
 | `--user-msg <原文>` | 记录消息（确定性，命令消息无分析） | recv_dedup 450s |
 | `--user-msg <原文> --analysis '<JSON>'` | 分析升级记账（upgradeAnalysis） | 不重复记账 |
+| `--user-msg <原文> --recv-id <uuid>` | 补报升级记账：bridge 本地生成的每条消息 uuid，同 id 只记一次(recv_dedup 精确去重)，不进 agent prompt | 与首次记账共用同一 id |
 | `--attention` | 回复侧注意力注入（T1/T2/T3 + 情感快照） | 零写副作用，毫秒级 |
 | `--memory-search <q>` | 回复侧记忆检索（mem0） | 失败降级跳过注入 |
 | `--schedule-recall <q>` | 回忆检索 | 失败 ok:false + exit 1 |
@@ -151,7 +152,7 @@ Node/bridge 与 daemon 之间**无 socket 常驻进程**：全部经 CLI 子进�
 | `--anniversary` | 纪念日增删查（add/list/remove） | buildReply 驱动 |
 | `--break` | 假期开关（on/off/status） | manual_override 语义 |
 
-daemon CLI 共 35 个参数（`--version --loop --user-msg --analysis --user-msg-file --analysis-file --status
+daemon CLI 共 35 个参数（`--version --loop --user-msg --analysis --recv-id --user-msg-file --analysis-file --status
 --compact --anniversary --break --health --attention --schedule-recall --schedule-change --memory-search --tune
 --stats --alerts --monitor --consolidate --conversation --conversation-days --export --record-send --fallback
 --text --trigger --intensity --send-result --send-status --error --alerts-all --ack --rotate`，

@@ -17,6 +17,7 @@ from chiguo_trigger import evaluate_triggers
 from chiguo_version import VERSION
 from chiguo_math import in_quiet_window, longing_accumulate
 from chiguo_circadian import bucket_for
+from trigger_types import TriggerType  # T7·Q3 (#265) 移植：触发类型枚举单一事实源
 
 CST = timezone(timedelta(hours=8))
 
@@ -170,12 +171,14 @@ class DecisionCoreMixin(DecisionEngineBase):
                 if len(self.state.cooldown.trigger_history) > history_max:
                     self.state.cooldown.trigger_history = \
                         self.state.cooldown.trigger_history[-history_max:]
-                # #79: reminder 一次性提醒去重——发送确认后在该 mem 上标记，
-                # trigger 层 (_memory_should_trigger) 据此跳过，同进程不重复触发。
-                if trigger.type == "memory":
+                # #79: reminder 一次性提醒去重——发送确认后经 state 公开 API 标记
+                # (last_triggered_at)。Q7(#260, T2 移植): 标记并入 state JSON 持久化
+                # (memory_dedup)，cron 每 15 分钟新进程 load 时读回 →
+                # 窗口内多评估路径不再重复触发。
+                if trigger.type == TriggerType.MEMORY:
                     mem_ref = trigger.data.get("memory")
                     if isinstance(mem_ref, dict) and mem_ref.get("type") == "reminder":
-                        mem_ref["last_triggered_at"] = now.isoformat()
+                        self.state.mark_memory_triggered(mem_ref, now)
     
                 # 4. 构建上下文（给 pi-agent 生成消息用）
                 context = self._build_context(trigger, now, user_state)
@@ -196,9 +199,9 @@ class DecisionCoreMixin(DecisionEngineBase):
                 # ── v6: 逃生阀破防 → 记录冷却时间 ──
                 if trigger.data.get("escape_valve"):
                     self.state.on_longing_break(now)
-                if trigger.type == "morning":
+                if trigger.type == TriggerType.MORNING:
                     self.state.cooldown.morning_sent = True
-                elif trigger.type == "night":
+                elif trigger.type == TriggerType.NIGHT:
                     self.state.cooldown.night_sent = True
     
                 # ── v4: 人格自适应（发消息后）──

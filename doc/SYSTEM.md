@@ -91,9 +91,10 @@ chiguo_daemon.py（薄 CLI facade，T10·Q2 拆分，Issue #268）
   │              + 退避，4xx/解析失败直接 None + schema 过滤）+ QR 登录；音乐话题素材组装
   │              （netease/netease_health.json，零 LLM 输出结构化话题 dict；peek/consume 两阶段接口——
   │              未选中不消费配额）；运行时文件锚定 <base_dir>/netease/，随仓库迁移
+  ├─ trigger_types.py   → 触发类型枚举单一事实来源（TriggerType StrEnum + 情绪/仪式分区 + replan scale key）
   ├─ chiguo_trigger.py  → sigmoid 加权随机触发（14 种类型（情绪类 8 + 仪式类 6，含 follow_up 接话茬、
   │                      comfort 安慰）+ 逃生阀直接触发 + A2 分类型回复率反馈闭环）
-  ├─ chiguo_topics.py   → 8 源话题选择器（含 netease 委托）+ 人格调制 + Ebbinghaus 加权 + A9 内容级防复读
+  ├─ chiguo_topics.py   → 8 源话题选择器（含 netease 委托）+ 人格调制 + Ebbinghaus 加权 + A9 内容级防复读；Q4 接线注册表化（TOPIC_REGISTRY）
   ├─ chiguo_composer.py → Intent × Cue × Vibe 三层消息组合 + 独立直出 CLI（不再被发送链调用）
   ├─ solar_terms.py     → 24 节气
   ├─ chiguo_monitor.py  → 流式 JSONL 分析（统计/告警/健康；D1 主动消息效果评估 proactive_stats）
@@ -299,7 +300,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 
 ### 2.6 触发决策（sigmoid 权重 + 加权随机）
 
-**14 种触发类型 = 情绪类 8 + 仪式类 6**（`chiguo_trigger.py` `EMOTION_TRIGGERS` frozenset；仪式类豁免 A3 日程乘数 / A4 高段必选 / A5 退场禁发）。
+**14 种触发类型 = 情绪类 8 + 仪式类 6**（`trigger_types.py` `TriggerType` 枚举单一事实来源 + `EMOTION_TRIGGERS` frozenset，Q3 #265；仪式类豁免 A3 日程乘数 / A4 高段必选 / A5 退场禁发）。
 
 **仪式类（6 种）**：
 
@@ -681,7 +682,6 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
   ① JSON 手动（data/chiguo_memories.json，相对路径经 `_anchored` 解析）
      类型: reminder（定时）/ habit（习惯窗口）
      → daemon 直接读取
-
   ② mem0 记忆（mem0ai 记忆层，v1.9 唯一内置后端）
      路径: data/mem0/（qdrant 嵌入式向量库 + history.db，相对路径经 `_anchored` 解析，gitignore）
      访问: memory/ 包（默认 Mem0Backend：LLM 事实提取写入 + 向量语义检索 + Ebbinghaus 加权；mem0 唯一后端）
@@ -699,6 +699,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
      MemoryBackend 基类共享 ebbinghaus_weight()/search_with_forgetting()/user_relevant_with_forgetting()/random_memory_with_forgetting()（后端无关）
 ```
 
+**Q7 reminder 去重标记持久化（#79/#260）**：`data/chiguo_memories.json` 是记忆内容**唯一事实源**，daemon 发送 reminder 后在记忆条目上写 `last_triggered_at` 去重标记仅存内存、不写回该文件（内容文件不变量）。为避免 cron 每 15 分钟新进程丢标记、窗口内多评估路径重复触发，该去重标记并入 `chiguo_state.json` 顶层 `memory_dedup` 字段（键 = 记忆去重键 = 剥离标记字段后的稳定 JSON，值 = `last_triggered_at`）：daemon 经 `ChiguoState.mark_memory_triggered()`（公开 API）标记并随 `save()` 落盘；`_load()` 读回并回写到 `self.memories` 对应条目，`trigger` 层 `_memory_should_trigger` 据此跳过。空标记不写该字段（状态文件保持干净，同 bayesian 策略）。
 **B2 情绪-记忆耦合（v1.12）**：写侧 `emotion_tagging=True`（默认 False）时，daemon 对话写入 mem0 把当前情绪快照打标进 `metadata.emotion_tag`（`emotion_tag_snapshot()`：loneliness/affection/anxiety/energy → low/mid/high 三档（≤30 low / ≥70 high）+ `user_mood`）；读侧 `emotion_tag_weight > 0`（默认 0）时，`_apply_forgetting` 检索对带 `emotion_tag` 的记忆按情绪相近度加权——`_score *= (1 + emotion_tag_weight × sim)`（`emotion_tag_similarity`：记忆或请求任一缺 emotion_tag → 0 不加权）。对标情绪状态相关的记忆优先浮现。
 
 **C1 空闲期确定性记忆巩固（v1.12，零 LLM）**：对标 Letta dreaming / CowAgent Deep Dream，吸收思想不换库、不调 LLM——`MemoryBackend.consolidate_plan` 纯函数生成巩固计划（不写库）：
@@ -734,6 +735,7 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 | netease | 0.12 | NeteaseService (netease/service.py) | v9: 网易云音乐话题（策略层委托） |
 
 - `chiguo_topics.py`: TopicPicker 类，`pick(now)` → weighted_trigger_choice
+- Q4: 话题源接线收敛到集中注册表 `TOPIC_REGISTRY`（源名 → `weight_fn`/`pick_fn`/`modulate_fn` 三段），`pick()` 逐源 compute 有效权重（基础×调制）并生成候选，顺序即候选生成顺序（RNG 序列不变，行为纯重构）；新增源成本 1 点——仅向注册表插入一条 `TopicSource` 即被 `pick` 自动驱动（默认模块级注册表，经 `picker.registry` 可覆写）
 - v9: `TopicPicker.__init__(state, config, netease_service=None)` — 策略层可注入可省略（None → 静默跳过，向后兼容）；daemon 构造与热重载分支均已注入 `NeteaseService`；`_netease_music_topic(now)` 计算上课/睡眠门控（schedule_status + cooldown.quiet_window + `in_quiet_window` 跨午夜语义；门控信息异常 → fail-closed 不发）后委托 `peek_music_topic`（不消费配额），抽选命中 netease_music/netease_fault 后才 consume——配额只在真正发出时消耗；未注入/异常 → 返回 None 不阻塞话题选择；委托细节见 §2.12
 - 连续 3 次孤独触发 → 强制注入话题
 - `topic_probability=0.70` 控制注入概率
@@ -742,7 +744,10 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 ### 4.2 节气
 
-24 节气近似日期硬编码在 `solar_terms.py`。±1 天窗口命中。零依赖。
+24 节气日期**单一事实源** = `update_holidays.get_solar_terms_for(year)`（#259，Q5/Q17）：
+- 2026/2027 为天文权威校准精确表（源：lunar_python 北京时间计算 + HKO 交叉复核）；
+- 其余年份由 2027 权威表按 `~6h/年`（≈0.25 天/年）线性估算。
+`solar_terms.py` 是**按年动态消费者**：不再硬编码任何年份表，按查询日期所在年份生成 24 节气表，±1 天窗口命中。零依赖。
 
 ### 4.3 纪念日
 
@@ -854,7 +859,7 @@ agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准（表�
 
 Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 层（Intent × Cue × Vibe）30%。
 
-**发送侧可靠性（U2/#227，替代 v1.10 A8 兜底）**：`chiguo_composer.py` 保留独立 `CLI`（传入 decision JSON 或 `--trigger`，从模板池直出可发送文本；cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败用 `_FALLBACK_LINES`）——但**发送链不再调用它兜底**。`scripts/chiguo-tick.sh` 与 `chiguo_daemon.py --loop` 的 `_loop_send` 统一：agent 生成失败 → sleep `[loop].retry_delay_seconds`(5) 整链重试一次（抖动缓冲，重试成功不计故障）→ 仍失败即**中止发送**并经 `agent_health.py record --outcome fail` 记账（fail_streak+1）；连续失败达 `[health].fail_threshold`(3) → 状态 down + transition 经微信发「后端异常」告警（仅翻转一次）→ 暂停探测（loop 跳过尝试；cron 读 down 态 exit 0 不发）。修复后重启 loop（重启后首次 probe 放行）或下个 cron probe 成功 → record success → state up + transition 发「已恢复」。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
+**发送侧可靠性（U2/#227，替代 v1.10 A8 兜底）**：`chiguo_composer.py` 保留独立 `CLI`（传入 decision JSON 或 `--trigger`，从模板池直出可发送文本；cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败用 `_FALLBACK_LINES`）——但**发送链不再调用它兜底**。`scripts/chiguo-tick.sh` 与 `chiguo_daemon.py --loop` 的 `_loop_send` 统一：agent 生成失败 → sleep `[loop].retry_delay_seconds`(5) 整链重试一次（抖动缓冲，重试成功不计故障）→ 仍失败即**中止发送**并经 `agent_health.py record --outcome fail` 记账（fail_streak+1）；连续失败达 `[health].fail_threshold`(3) → 状态 down + transition 经微信发「后端异常」告警（仅翻转一次）→ 暂停探测（loop 跳过尝试；cron 读 down 态 exit 0 不发）。修复后重启 loop（重启后首次 probe 放行）或下个 cron probe 成功 → record success → state up + transition 发「已恢复」。两路径对 bridge `/send` 超时**统一 35s**（`_loop_send` 的 `_post("/send", …) 35.0` 与 tick.sh 主发送 `curl --max-time 35` 互引一致，见 #261/CR-2，改值须两端同步）。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
 
 ---
 
@@ -873,7 +878,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_trigger.py` | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
 | `chiguo_composer.py` | Intent × Cue × Vibe 三层组合 + 独立直出 CLI（发送链不再调用） |
 | `chiguo_bayesian.py` | Bayesian 用户状态推断（6 状态在线学习 + A1 转移矩阵 + A3 信息增益门控） |
-| `chiguo_topics.py` | 8 源话题选择器 TopicPicker + 人格调制 + Ebbinghaus 加权 + A9 防复读 + netease 委托 |
+| `chiguo_topics.py` | 8 源话题选择器 TopicPicker + 人格调制 + Ebbinghaus 加权 + A9 防复读 + netease 委托；Q4 话题源注册表化（TOPIC_REGISTRY） |
 | `chiguo_math.py` | 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix |
 | `chiguo_envcheck.py` | 环境检查（python/依赖/bridge/agent/crontab） |
 | `chiguo_circadian.py` | 生物钟学习（双作息双桶 + 听歌活跃合并） |
@@ -881,7 +886,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_demo.py` | 交互式 Demo |
 | `chiguo_rotation.py` | 对话日志轮转归档 + 告警持久化 + 索引查询 |
 | `update_holidays.py` | 节假日数据跨年合并生成（R22 防覆盖） |
-| `solar_terms.py` | 24 节气近似日期（±1 天窗口命中，零依赖） |
+| `solar_terms.py` | 24 节气按年动态查询（消费者，单一事实源在 update_holidays.get_solar_terms_for） |
 | `memory_bridge.py` | 兼容门面（`MemoryBridge = Mem0Backend` 别名 + CLI，经工厂创建） |
 | `chiguo_version.py` | VERSION = "1.15"（MINOR+1 次版本步进） |
 
@@ -966,7 +971,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 | 文件 | 说明 |
 |------|------|
-| `chiguo_state.json` | 状态持久化（原子写 tmp→os.replace + SHA256 校验 + 审计 `chiguo_state_audit.jsonl`） |
+| `chiguo_state.json` | 状态持久化（原子写 tmp→os.replace + SHA256 校验 + 审计 `chiguo_state_audit.jsonl`；含顶层 `memory_dedup` = reminder 去重标记 `{记忆去重键: last_triggered_at}`，见 §3.4，仅存标记不存 memories 全文） |
 | `chiguo_decisions.jsonl` | 决策日志（追加式，monitor/轮转/索引消费） |
 | `chiguo_messages.jsonl` | 完整对话归档 |
 | `data/chiguo_memories.json` | 手动记忆（reminder/habit） |
@@ -1027,6 +1032,9 @@ python3 chiguo_daemon.py --status
 
 # 记录用户消息
 python3 chiguo_daemon.py --user-msg "用户发的消息原文"
+
+# 记录用户消息（携带 bridge 本地生成的每条消息 uuid：同 id 补报升级只记一次，recv_dedup 精确去重，不进 agent prompt）
+python3 chiguo_daemon.py --user-msg "用户发的消息原文" --recv-id <uuid>
 
 # 持续运行（调试用，每 N 秒评估一次；最小间隔 60 秒，低于 60 自动按 60 处理并 stderr 提示）
 python3 chiguo_daemon.py --loop 120
@@ -1874,8 +1882,8 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 - bridge 的 RPC 常驻模式仅 `runner=agent` 且 `WECHAT_BRIDGE_AGENT_RPC=1` 时启用；`chiguo_envcheck.py` 的 check_agent
   支持 runner/agent_command 参数按 runner 检查
 
-1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_agent.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/agent-run.mjs`（`AGENTRUN_SESSION=chiguo-send`）按 `personality/迟菓人格-精简版.md` 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
-2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（`personality/迟菓人格-精简版.md` 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，450s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
+1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_agent.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/agent-run.mjs`（`AGENTRUN_SESSION=chiguo-send`）按 `personality/迟菓人格-精简版.md` 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`；主发送 `--max-time 35`，对齐 `_loop_send` 的 /send 35s）→ `--record-send <msg_id> --text <text>` 回写
+2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg --recv-id <uuid>`（无分析；bridge 每条消息本地生成 uuid，daemon recv_dedup 按 id 精确去重）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（`personality/迟菓人格-精简版.md` 人格）→ 有 analysis 时 bridge 补 `--user-msg --recv-id <同 uuid> --analysis '<JSON>'`（daemon recv_dedup 升级语义，同 id 补报只微调不重复记账，不进 agent prompt）→ 回复文本发回微信
 
 ### 11.1 特殊命令（纪念日/假期，bridge 规则化）
 

@@ -84,6 +84,7 @@ class AnniversaryManager:
         }, indent=2, ensure_ascii=False)
         tmp = Path(str(self._path) + ".tmp")
         tmp.write_text(data)
+        os.chmod(tmp, 0o600)  # Q13: 纪念日属隐私文件 → tmp 即 0600，os.replace 后正式文件同权限
         os.replace(tmp, self._path)
 
     @staticmethod

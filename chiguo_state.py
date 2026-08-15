@@ -53,6 +53,18 @@ CST = timezone(timedelta(hours=8))
 _LOCK_FDS: dict[str, int] = {}
 _LOCK_DEPTH: dict[str, int] = {}
 
+# ── Q7 (#79/#260): reminder 去重标记（last_triggered_at）跨进程持久化。
+# 该标记是运行时写上的去重状态，不属于记忆内容本身——持久化时从记忆的
+# 「内容键」（排除标记字段）中剥离，状态 payload 只存标记（不进 memories 全文）。
+# _memory_dedup_key 见下方；chiguo_memories.json 仍是记忆内容的唯一事实源。
+_MEMORY_MARKER_KEYS = ("last_triggered_at",)
+
+
+def _memory_dedup_key(mem: dict) -> str:
+    """记忆去重/内容键：排除运行时标记字段后的稳定标识（跨进程可匹配）。"""
+    key = {k: v for k, v in mem.items() if k not in _MEMORY_MARKER_KEYS}
+    return json.dumps(key, sort_keys=True, ensure_ascii=False)
+
 
 @dataclass
 class ChiguoEmotion:
@@ -327,6 +339,10 @@ class ChiguoState:
         self.circadian = CircadianTracker()
         self._apply_quiet_window()
         self.memories: list[dict] = []
+        # ── Q7 (#260): reminder 去重标记持久化缓存 {记忆内容键: last_triggered_at}。
+        # load 时读回 state 的 memory_dedup 字段，经 _apply_memory_dedup 回写到
+        # self.memories；save 时从 self.memories 扫描已标记条目落盘。──
+        self._memory_dedup: dict[str, str] = {}
         # ── v7: 待接续话题(接话茬)。[{topic, source, created_at, attempted}] ──
         self.pending_topics: list[dict] = []
         self.tick_seq: int = 0  # v5: 单调递增 tick 计数器，用于检测遗漏
@@ -521,9 +537,45 @@ class ChiguoState:
                                  if isinstance(data, list) else [])
             except Exception:
                 pass
+        # ── Q7 (#260): 读回持久化的 reminder 去重标记 → 回写到刚加载的记忆 ──
+        self._apply_memory_dedup()
+
+    def _apply_memory_dedup(self):
+        """把本进程已持久化的 reminder 去重标记（self._memory_dedup）回写到
+        self.memories 对应条目上，使跨进程（cron 每 15 分钟新进程）不再重复触发。
+        内容键匹配：记忆文件仍是内容唯一事实源，此处仅补回 last_triggered_at。"""
+        if not self._memory_dedup:
+            return
+        for mem in self.memories:
+            if not isinstance(mem, dict):
+                continue
+            key = _memory_dedup_key(mem)
+            marked = self._memory_dedup.get(key)
+            if marked:
+                mem["last_triggered_at"] = marked
+
+    def mark_memory_triggered(self, mem: dict, now: datetime | None = None):
+        """公开 API：标记一条 reminder 记忆已触发（写 last_triggered_at）。与
+        self.memories 共享对象引用，save() 扫描自会落盘 memory_dedup 字段；
+        跨进程（cron）由该字段读回后经 _apply_memory_dedup 防重复触发。
+
+        `mem` 必须是 self.memories 列表内的 dict（trigger 层 data['memory'] 持有的
+        正是同一对象引用，原地标记即时对 evaluate 子路径生效）。"""
+        if not isinstance(mem, dict):
+            return
+        if now is None:
+            now = datetime.now(CST)
+        mem["last_triggered_at"] = now.isoformat()
 
     def _apply_loaded_data(self, data: dict):
-        """解析并应用已加载的状态数据。v4/v5/v6 兼容。"""
+        """解析并应用已加载的状态数据。v1→v10 兼容。
+
+        职责划分：
+        - 数据防御（coerce）：字段过滤 + 数值类型强转 + type-drift 兜底，
+          与版本无关、无条件应用（见 _coerce_dataclass_fields）。
+        - 结构迁移：版本化升级（旧版本结构 → 当前结构），集中在
+          `_VERSION_MIGRATIONS` 表有序应用（见 `_apply_version_migrations`）。
+        """
         # ── v5: 校验和验证 ──
         # ── v6: 校验和不匹配 → 强制拒绝加载，走 _load 的 .bak 恢复链。
         # 位翻转/手改后 JSON 可解析但数据损坏，宁可回退 .bak 也不带病运行。
@@ -543,61 +595,82 @@ class ChiguoState:
             self._audit("state_future_version",
                 f"stored={ver} current={self.STATE_VERSION} loading anyway")
 
-        # 过滤未知字段，防止未来版本新增字段导致 dataclass __init__ 崩溃
+        # ── 数据防御层（coerce）：与版本无关，无条件应用 ──
         emo_fields = {k: v for k, v in data.get("emotion", {}).items()
                       if k in ChiguoEmotion.__dataclass_fields__}
-        # ── v11: 数值字段类型强转(字符串/None → 回退默认),防 clamp() TypeError ──
+        # v11: 数值字段类型强转(字符串/None → 回退默认),防 clamp() TypeError
         emo_fields = _coerce_dataclass_fields(emo_fields, ChiguoEmotion)
         self.emotion = ChiguoEmotion(**emo_fields)
         cd_fields = {k: v for k, v in data.get("cooldown", {}).items()
                      if k in CooldownState.__dataclass_fields__}
-        # ── v11: 数值字段类型强转(如 messages_today 字符串 → 回退默认),防 can_send TypeError ──
+        # v11: 数值字段类型强转(如 messages_today 字符串 → 回退默认),防 can_send TypeError
         cd_fields = _coerce_dataclass_fields(cd_fields, CooldownState)
-        # ── v5: accumulated_lambda null → 0.0 (type drift fix) ──
+        # v5: accumulated_lambda null → 0.0 (type drift fix, 数据防御)
         if cd_fields.get("accumulated_lambda") is None:
             cd_fields["accumulated_lambda"] = 0.0
         self.cooldown = CooldownState(**cd_fields)
-        # ── v6: 旧版本（无 crash_timestamps）迁移：从 last_crash_at 恢复单条记录 ──
-        if (not self.cooldown.crash_timestamps and
-                self.cooldown.last_crash_at):
-            self.cooldown.crash_timestamps = [self.cooldown.last_crash_at]
-        # ── v7: 生物钟学习器加载(字段过滤,旧版本无 circadian 字段 → 默认值)──
+
+        # ── 基础加载（字段过滤 + dataclass 构造，覆盖各版本 → 当前结构）──
         circ_fields = {k: v for k, v in (data.get("circadian") or {}).items()
                        if k in CircadianTracker.__dataclass_fields__}
         self.circadian = CircadianTracker(**circ_fields)
-        # ── v8: 双作息迁移(旧格式补桶 + 旧单桶窗口 → weekday_*)──
-        self._migrate_circadian_v8()
-        self._sync_quiet_window()
-        # ── v7: 待接续话题加载(普通 list,isinstance 检查兜底)──
         pending = data.get("pending_topics")
         self.pending_topics = pending if isinstance(pending, list) else []
         self.last_tick = data.get("last_tick")
-        # ── 单调锚点对加载（类型校验；旧文件缺字段 → None 回退语义）──
         mono = data.get("mono_anchor")
         self.mono_anchor = (
             mono if isinstance(mono, (int, float)) and not isinstance(mono, bool) else None)
         wall = data.get("wall_anchor")
         self.wall_anchor = wall if (isinstance(wall, str) and wall) else None
-        # ── v5: tick_seq ──
         self.tick_seq = data.get("tick_seq", 0)
-        # ── v4: 加载人格 ──
         pers_data = data.get("personality")
         if pers_data:
             self.personality = personality_from_dict(pers_data)
-            # ── v10: 恢复持久化基线（回归目标）；旧状态无 → 回退 toml 初始值 ──
-            saved_base = data.get("personality_baseline")
-            if isinstance(saved_base, dict) and saved_base:
-                self.personality.reset_baseline(saved_base)
-            else:
-                self.personality.reset_baseline(dict(self._personality_initial_baseline))
         else:
             emo_data = data.get("emotion", {})
             tsun = emo_data.get("tsundere_index", 70.0)
             self.personality.tsundere_intensity = tsun
-        # ── v10: 人格演变历史（普通 list，isinstance 检查兜底）──
         ph = data.get("personality_history")
         self.personality_history = ph if isinstance(ph, list) else []
-        # v2→v3 迁移：trigger_history 有数据但 event_timestamps 空
+        self._bayesian_restored = data.get("bayesian")
+        # ── Q7 (#260): reminder 去重标记还原（{记忆内容键: last_triggered_at}）。
+        # 缺失/非 dict → 空（旧状态/手改损坏不致崩，与未标记等价）。──
+        dedup = data.get("memory_dedup")
+        self._memory_dedup = (dict(dedup)
+                              if isinstance(dedup, dict)
+                              else {})
+
+        # ── 结构迁移层：版本化迁移表有序应用（v2→v3 / v6 / v8 / v10）──
+        self._apply_version_migrations(data)
+        # 迁移后再同步当前生效睡眠窗口（v8 迁移会先补 weekday_*/weekend_*，
+        # sync 才能取到桶窗口；兼容字段 quiet_start/quiet_end 为当前桶快照）。
+        self._sync_quiet_window()
+
+    # 版本化迁移表 {from_version: 迁移实例方法名}，按 from_version 升序应用。
+    # 每个迁移为幂等条件迁移（把旧版本结构跃迁到当前结构）。
+    # 数据防御（coerce，字段过滤/类型强转/type-drift 兜底）不在此表，
+    # 与版本无关、无条件应用 —— 见 _apply_loaded_data 的数据防御层。
+    _VERSION_MIGRATIONS = {
+        2: "_migrate_trigger_history_to_event_timestamps",   # v2→v3: trigger_history → event_timestamps
+        6: "_migrate_crash_timestamps_from_last_crash",      # v6: last_crash_at → crash_timestamps(滑动窗口)
+        8: "_migrate_circadian_v8",                          # v8: 单桶 → 双作息分桶(weekday_*)
+        10: "_migrate_personality_baseline",                 # v10: 恢复持久化人格基线
+    }
+
+    def _apply_version_migrations(self, data: dict):
+        """版本化迁移表有序应用（from_version 升序）。
+
+        每个迁移幂等且无条件执行（条件内判），保证所有旧版本（v1→v10）
+        路径都能稳妥跃迁到当前结构；对已是最新结构的 state 是无副作用。
+        迁移只改结构，不做数值类型防护（那属于数据防御层）。
+        """
+        for from_version in sorted(self._VERSION_MIGRATIONS):
+            method_name = self._VERSION_MIGRATIONS[from_version]
+            getattr(self, method_name)(data)
+
+    def _migrate_trigger_history_to_event_timestamps(self, data: dict):
+        """v2→v3 迁移：trigger_history 有数据但 event_timestamps 空 →
+        按 last_message_at 倒推近似时间戳（幂等：event_timestamps 非空则跳过）。"""
         if (self.cooldown.trigger_history and
                 not self.cooldown.event_timestamps and
                 self.cooldown.last_message_at):
@@ -613,10 +686,13 @@ class ChiguoState:
             except (ValueError, TypeError):
                 pass
 
-        # ── v1.11+R3: Bayesian 在线学习缓存（EMA 调优）还原——延迟初始化时交给 estimator ──
-        self._bayesian_restored = data.get("bayesian")
+    def _migrate_crash_timestamps_from_last_crash(self, data: dict):
+        """v6 迁移：旧版本（无 crash_timestamps）从 last_crash_at 恢复单条记录。"""
+        if (not self.cooldown.crash_timestamps and
+                self.cooldown.last_crash_at):
+            self.cooldown.crash_timestamps = [self.cooldown.last_crash_at]
 
-    def _migrate_circadian_v8(self):
+    def _migrate_circadian_v8(self, data: dict):
         """v8 双作息迁移(幂等,加载时执行一次):
         ① reply_days/active_days 无 bucket 条目 → 按日期启发式补桶(调休优先 → 节假日 → 周几,解析失败丢弃);
         ② 旧单桶窗口迁移到 weekday_*:若 weekday_* 与 weekend_* 均为默认且旧 confidence > 0
@@ -662,6 +738,29 @@ class ChiguoState:
             self.circadian.weekday_quiet_start = self.circadian.quiet_start
             self.circadian.weekday_quiet_end = self.circadian.quiet_end
             self.circadian.weekday_confidence = legacy_conf
+
+    def _migrate_personality_baseline(self, data: dict):
+        """v10 迁移：恢复持久化人格基线（回归目标）；旧状态无持久化基线 →
+        回退到 toml 构造函数初始基线（_personality_initial_baseline）。
+
+        等价前提：原实现把该恢复放在 `if pers_data:` 分支内（仅当 state 有
+        personality 时）；此处无条件执行 —— 因为加载路径总是先经
+        _apply_loaded_data 构造 `self.personality`（有 pers_data 用
+        personality_from_dict，无则用 toml 初始值），且 _personality_initial_baseline
+        恒记录构造值，无人中途改写 _baseline，故与原行为严格等价。
+
+        边界分支（save 不可达，防御语义）：若 data 含 `personality_baseline`
+        但完全无 `personality` 字段——原代码走 else 分支用 toml 构造
+        tsundere，不会触发 reset（此处却无条件执行 reset_baseline）。当前
+        _personality_initial_baseline 记录的就是 toml 构造值，因此即便该分支
+        触发也退化为恒等，不改变任何结果；仅当未来有人改动加载时
+        _personality_initial_baseline 的赋值源才产生语义差异，故显式注明。
+        """
+        saved_base = data.get("personality_baseline")
+        if isinstance(saved_base, dict) and saved_base:
+            self.personality.reset_baseline(saved_base)
+        else:
+            self.personality.reset_baseline(dict(self._personality_initial_baseline))
 
     def _audit(self, event: str, detail: str = ""):
         """v5: 状态损坏审计日志。追加到 chiguo_state_audit.jsonl。v6: 路径锚定。"""
@@ -827,6 +926,17 @@ class ChiguoState:
                 "wall_anchor": datetime.now(CST).isoformat(),
                 "tick_seq": self.tick_seq,
             }
+            # ── Q7 (#260): reminder 去重标记持久化。从 self.memories 扫描带
+            # last_triggered_at 的条目（daemon 经 mark_memory_triggered 原地标记，
+            # 与 self.memories 共享对象），推导 {内容键: last_triggered_at} 落盘。
+            # 空 → 不写字段，状态文件保持干净（与 bayesian 字段同策略）。──
+            dedup_payload = {
+                _memory_dedup_key(m): m["last_triggered_at"]
+                for m in self.memories
+                if isinstance(m, dict) and m.get("last_triggered_at")
+            }
+            if dedup_payload:
+                payload["memory_dedup"] = dedup_payload
             # ── v1.11+R3: Bayesian 在线学习缓存持久化（本进程创建过或磁盘已有缓存
             # 才写入；未使用 Bayesian 且磁盘无缓存的进程不写入 → 状态文件保持干净）──
             if self._bayesian_estimator is not None or self._bayesian_restored:

@@ -9,6 +9,7 @@ import random
 from decision.base import DecisionEngineBase
 from chiguo_math import mood_fresh, user_mood_note
 from chiguo_paths import PROJECT_ROOT
+from trigger_types import TriggerType  # T7·Q3 (#265) 移植：触发类型枚举单一事实源
 
 
 class ContextMixin(DecisionEngineBase):
@@ -98,7 +99,7 @@ class ContextMixin(DecisionEngineBase):
             guidance = layer_guidance.get(emo.dominant_layer, "") + energy_note + rate_urgency_note + personality_note + safety_note + mood_note
     
             # ── v7: 接话茬提示 ──
-            if trigger.type == "follow_up":
+            if trigger.type == TriggerType.FOLLOW_UP:
                 tpc = trigger.data.get("topic", "")
                 src = trigger.data.get("source", "")
                 age = trigger.data.get("age_hours", 0)
@@ -131,7 +132,7 @@ class ContextMixin(DecisionEngineBase):
     
             # ── 话题注入 ──
             topic_data = None
-            if trigger.type in ("lonely_low", "lonely_mid"):
+            if trigger.type in (TriggerType.LONELY_LOW, TriggerType.LONELY_MID):
                 cfg_topic = self.config.get("topic_picker", {})
                 force_threshold = cfg_topic.get("force_topic_threshold", 3)
                 topic_prob = cfg_topic.get("topic_probability", 0.7)
@@ -145,7 +146,8 @@ class ContextMixin(DecisionEngineBase):
                     topic_data = self.topic_picker.pick(now)
                     if topic_data:
                         trigger.data["topic"] = topic_data
-            elif trigger.type not in ("follow_up", "reflect", "lonely_high", "longing"):
+            elif trigger.type not in (TriggerType.FOLLOW_UP, TriggerType.REFLECT,
+                                      TriggerType.LONELY_HIGH, TriggerType.LONGING):
                 # v9 审计 F-4:仅 netease 源跨触发(其他 7 源仍限孤独破冰)。
                 # 活跃时段(非睡眠/非上课)才可能产出(peek 内部门控)。
                 # 排除列表:follow_up/reflect 已有专用素材注入路径;lonely_high(崩溃态)
@@ -189,7 +191,7 @@ class ContextMixin(DecisionEngineBase):
                 )
     
             # ── v7: 接话茬素材注入(供 pi-agent 生成)──
-            if trigger.type == "follow_up":
+            if trigger.type == TriggerType.FOLLOW_UP:
                 instruction += (
                     f"\n用「{trigger.data.get('topic', '')}」这个之前没聊完的话题自然接话茬,"
                     "不要直接说『你上次说的那个……后来怎么样了』这种汇报句,"
