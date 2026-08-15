@@ -11,15 +11,22 @@ transition 只在 up→down 与 down→up 各输出一次（天然防重复告�
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
-# agent_health.py 以独立脚本执行（scripts/ 在 sys.path[0]，仓库根不在）→
-# 显式把仓库根加入 sys.path 以导入共享模块 chiguo_locks/chiguo_time/chiguo_atomic。
-_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+# agent_health.py 以独立脚本执行（scripts/ 在 sys.path[0]，仓库根不在）→ 显式把
+# 仓库根加入 sys.path 以导入共享模块 chiguo_locks/chiguo_time/chiguo_atomic。
+# 仓库根候选：优先 __file__ 的父父目录（产线/直跑即仓库根）；测试把本脚本拷贝到
+# tmp 目录执行时该路径退化为 tmp，故追加 CWD 兜底（测试/桥进程的 CWD = 仓库根）。
+_REPO_CANDIDATES = [
+    str(Path(__file__).resolve().parent.parent),
+    str(Path.cwd()),
+]
+for _c in _REPO_CANDIDATES:
+    if _c and _c not in sys.path:
+        sys.path.insert(0, _c)
 
 from chiguo_time import CST
 import chiguo_locks as locks
