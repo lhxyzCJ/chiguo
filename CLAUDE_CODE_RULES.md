@@ -41,7 +41,7 @@ python3 chiguo_rotation.py --force
 
 **No build step. No pip install.** Python 3.14-only（PEP 758 无括号 `except E1, E2:`、延迟注解——禁止加 `from __future__ import annotations`）。可选依赖：`openpyxl`（schedule）、`mem0ai` + `ollama`（记忆层）。`memory/mem0_backend.py`（`Mem0Backend`）在 `available` 探测内**惰性导入** `mem0`；缺失时 `available=False` 优雅降级，记忆查询软降级返回空，daemon 不会因缺 mem0 崩溃。
 
-### daemon CLI（34 个参数）
+### daemon CLI（35 个参数）
 `--ack --alerts --alerts-all --analysis --analysis-file --anniversary --attention --break --compact --consolidate --conversation --conversation-days --error --export --fallback --health --intensity --loop --memory-search --monitor --record-send --rotate --schedule-change --schedule-recall --send-result --send-status --stats --status --text --trigger --tune --user-msg --user-msg-file --version`
 
 各参数语义见 doc/SYSTEM.md CLI 章节。

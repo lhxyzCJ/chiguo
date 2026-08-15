@@ -151,7 +151,7 @@ Node/bridge 与 daemon 之间**无 socket 常驻进程**：全部经 CLI 子进�
 | `--anniversary` | 纪念日增删查（add/list/remove） | buildReply 驱动 |
 | `--break` | 假期开关（on/off/status） | manual_override 语义 |
 
-daemon CLI 共 34 个参数（`--version --loop --user-msg --analysis --user-msg-file --analysis-file --status
+daemon CLI 共 35 个参数（`--version --loop --user-msg --analysis --user-msg-file --analysis-file --status
 --compact --anniversary --break --health --attention --schedule-recall --schedule-change --memory-search --tune
 --stats --alerts --monitor --consolidate --conversation --conversation-days --export --record-send --fallback
 --text --trigger --intensity --send-result --send-status --error --alerts-all --ack --rotate`，
