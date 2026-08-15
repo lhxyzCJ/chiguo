@@ -798,9 +798,13 @@ class ChiguoState:
 
             # ── Q23: 原子写收敛至共享 chiguo_atomic.atomic_write
             # （tmp 写入 0600 → fsync → 写前校验 → os.replace；
-            #  校验失败由 helper 清理 tmp 并抛 ValueError，此处捕获后跳过本次 save）。
+            #  校验失败由 helper 清理 tmp 并抛异常，此处捕获后跳过本次 save——
+            #  与重构前一致：任何校验/读取失败都静默返回 False，不覆盖好状态）。
             def _verify_tmp(t):
-                _v = json.loads(Path(t).read_text())
+                try:
+                    _v = json.loads(Path(t).read_text())
+                except OSError as _e:
+                    raise ValueError("tmp validation failed: unreadable") from _e
                 if not isinstance(_v, dict) or "_version" not in _v:
                     raise ValueError("tmp validation failed: not a dict or no _version")
 
