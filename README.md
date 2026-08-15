@@ -97,7 +97,7 @@
 
 **主动发送链**：系统 crontab 每 15 分钟唤醒 `scripts/chiguo-tick.sh`（或 `CHIGUO_DAEMON_LOOP=1` 常驻，见 [AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md)）→ 跑 `chiguo_daemon.py --compact` 做**零 LLM 决策门控**（情绪/门控/触发/话题全本地计算）→ 决策不是 send 就直接退出；是 send 则调 `scripts/agent-run.mjs --send-mode`（agent 抽象，默认 agent 后端）让 LLM 按人格把决策 JSON 变成微信文本（独立会话 `chiguo-send`）→ HTTP POST 微信桥 `/send` 送达 → 发送结果回传 daemon 记账（`--record-send`）。agent 生成失败**不做 composer 兜底**：首次失败 sleep 5s 整链重试一次（抖动缓冲，重试成功不计故障）；仍失败即**中止发送**并计入 agent_health——连续失败达阈值后经微信发告警「后端异常」并暂停探测，修复后重启（loop）/下个 cron probe 成功即恢复（transition 发「已恢复」）。
 
-**被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg` **确定性记账**（情绪实时响应，recv_dedup 防重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `agent-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `agent-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon → 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
+**被动回复链**：微信消息进入桥 → **OWNER_ID 鉴权门**（非本人只走普通聊天回复，不记账、不进任何命令/回忆路径）→ `chiguo_daemon.py --user-msg --recv-id <uuid>` **确定性记账**（bridge 每条消息本地生成 uuid，情绪实时响应，recv_dedup 按 id 精确去重）→ 先过 `command-detect.mjs` 规则化检测：**特殊命令**（纪念日/假期/放假）确定性直接执行并回复，不经 LLM；**安排写命令**（停课/调课/加课/考试周/提醒/取消）走 `agent-run.mjs --schedule-extract` 提取 → `--schedule-verify` 校验双 agent（独立会话，信息不足返回问题进追问循环，澄清记录 6 小时有效）→ daemon `--schedule-change` 原子写入（确认文案带星期+日期）；普通消息先取 `--attention` 轻量注入（今日重要日子/生效区间事实/本周课表），再走 `agent-run.mjs --analysis-mode` 一次完成「情绪分析 JSON + 回复文本」，分析若带 recall 信号（涉及已登记事实/过去日期）则查事实后第二趟作答 → 分析结果 `--analysis` 去重升级回 daemon（同 id 补报只微调不重复记账）→ 回复发回微信。回复侧常驻串行（TurnQueue，会话 `chiguo-main`），与主动发送双进程零共享。
 
 **共享与告警**：daemon 状态原子写 `chiguo_state.json`（tmp→os.replace + 校验）、决策追加 `chiguo_decisions.jsonl`；记忆（`[memory].backend` 唯一 mem0）与网易云音乐桥为决策引擎提供话题输入；`chiguo_monitor.py` 独立巡检。两条链的 agent 调用成败都记入 `agent_health.py` 假死状态机——连续失败阈值达峰时经微信桥自动发告警，恢复时发恢复通知（零额外 LLM 调用）。
 
@@ -115,7 +115,7 @@ flowchart LR
     end
     subgraph 被动回复链
         WX -->|新消息| BR[bridge 收消息<br/>OWNER_ID 门<br/>TurnQueue 串行]
-        BR --> UR[daemon --user-msg<br/>记账 recv_dedup]
+        BR --> UR[daemon --user-msg --recv-id<br/>记账 recv_dedup]
         UR --> SP{command-detect<br/>特殊命令?}
         SP -->|纪念日/假期/放假| SC[daemon CLI 执行<br/>直接回复]
         SP -->|停课/调课/考试周/提醒…| SX[extract/verify 双 agent<br/>追问循环 clarify]
@@ -246,7 +246,7 @@ bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败
 
 ### 记忆系统（记忆后端抽象）
 
-**作用**：迟菓的长期记忆——比情绪更持久的"记得"。它是**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类（`base.py`）+ `create_backend` 工厂（`factory.py`），根目录 `memory_bridge.py` 降为兼容门面，由 `chiguo_proactive.toml` 的 `[memory].backend` 指定——`mem0`（唯一后端，[mem0ai](https://github.com/mem0ai/mem0) 记忆层；仅 `mem0`/`auto`（遗留同义）合法）。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
+**作用**：迟菓的长期记忆——比情绪更持久的"记得"。它是**记忆后端抽象**：`memory/` 包提供 `MemoryBackend` 抽象基类（`base.py`）+ `create_backend` 工厂（`factory.py`）+ `python -m memory` CLI（`--stats/--search/--random/--add`），由 `chiguo_proactive.toml` 的 `[memory].backend` 指定——`mem0`（唯一后端，[mem0ai](https://github.com/mem0ai/mem0) 记忆层；仅 `mem0`/`auto`（遗留同义）合法）。mem0 模式下：对话后 daemon **自动写入**（`_mem0_autowrite`，LLM 事实提取：deepseek-v4-flash 经 opencode 网关），检索走**向量语义搜索**（本地 ollama `qwen3-embedding:0.6b`，零 API 成本），存储为 qdrant 嵌入式本地库（`data/mem0/`，无需 docker）+ SQLite 操作历史。决策引擎**只读召回**（语义检索 + Ebbinghaus 加权），作为 8 大话题源之一：随机浮现旧事、触发上下文注入回忆。召回带 **Ebbinghaus 遗忘曲线加权**——越久远的记忆权重越低，但最低权重 0.1 保证不会彻底遗忘；`importance` 过滤掉无关内容。记忆库不可用时 60 秒节流重试，故障恢复后自动自愈。
 
 **安装/配置**：`uv sync`（mem0ai + ollama 客户端为必需依赖），记忆库位于 `data/mem0/`（qdrant 嵌入式 + history.db；路径/LLM/embedding 由 `[memory]` 段 `mem0_*` 键配置，LLM key 缺省读 `~/.pi/agent/auth.json` 的 opencode-go 条目）。
 
@@ -422,8 +422,7 @@ chiguo_circadian.py      # 生物钟学习（双作息分桶；行数以 wc -l �
 chiguo_personality.py    # 人格加载与适配（行数以 wc -l 为准）
 chiguo_demo.py           # 交互式 Demo（纯模板，无 LLM；行数以 wc -l 为准）
 chiguo_rotation.py       # 日志轮转 & 对话存档（行数以 wc -l 为准）
-memory_bridge.py         # 记忆兼容门面（根目录；实现已迁移 memory/ 包）
-memory/                  # 记忆后端抽象（mem0 唯一后端；base/mem0_backend/factory）
+memory/                  # 记忆后端抽象（mem0 唯一后端；base/mem0_backend/factory/cli）
 schedule/                # 时间安排中心（holiday/anniversary/override_store/plan_store/
                          #   sources/day_plan/resolve_when/attention/recall/api/confirm/replan/parser/parsing/query）
 scripts/                 # tick/replan crontab 入口 + agent runner 抽象（agent-run.mjs，默认 agent）

@@ -41,8 +41,8 @@ python3 chiguo_rotation.py --force
 
 **No build step. No pip install.** Python 3.14-only（PEP 758 无括号 `except E1, E2:`、延迟注解——禁止加 `from __future__ import annotations`）。可选依赖：`openpyxl`（schedule）、`mem0ai` + `ollama`（记忆层）。`memory/mem0_backend.py`（`Mem0Backend`）在 `available` 探测内**惰性导入** `mem0`；缺失时 `available=False` 优雅降级，记忆查询软降级返回空，daemon 不会因缺 mem0 崩溃。
 
-### daemon CLI（34 个参数）
-`--ack --alerts --alerts-all --analysis --analysis-file --anniversary --attention --break --compact --consolidate --conversation --conversation-days --error --export --fallback --health --intensity --loop --memory-search --monitor --record-send --rotate --schedule-change --schedule-recall --send-result --send-status --stats --status --text --trigger --tune --user-msg --user-msg-file --version`
+### daemon CLI（36 个参数）
+`--ack --alerts --alerts-all --alerts-push --analysis --analysis-file --anniversary --attention --break --compact --consolidate --conversation --conversation-days --error --export --fallback --health --intensity --loop --memory-search --monitor --recv-id --record-send --rotate --schedule-change --schedule-recall --send-result --send-status --stats --status --text --trigger --tune --user-msg --user-msg-file --version`
 
 各参数语义见 doc/SYSTEM.md CLI 章节。
 
@@ -58,7 +58,8 @@ python3 chiguo_rotation.py --force
 ## 3. 关键模式与约定 (Key Patterns & Conventions)
 
 ### 状态持久化
-- **原子写**：`.tmp` 文件 → 校验 JSON → `os.replace()` 覆盖目标
+- **原子写**：统一走共享 `chiguo_atomic.atomic_write`（`.tmp` 文件 → 校验 JSON → `os.replace()` 覆盖目标；0600 一步到位可选）
+- **跨进程写锁**：统一走共享 `chiguo_locks`（fcntl 可重入锁；`chiguo_state`/`agent_health` 共用一份实现）
 - **备份**：覆盖前 `.bak` 副本
 - **校验和**：`_checksum` 字段 SHA256（校验但不因 mismatch 拒绝）
 - **审计日志**：`chiguo_state_audit.jsonl` 记录损坏/恢复事件
@@ -70,10 +71,14 @@ python3 chiguo_rotation.py --force
 - 缺失文件/空文件/损坏行不崩溃
 - `DecisionIndex` 构建字节偏移索引，按 trigger/date/action O(1) 查询
 
-### 配置热重载
-- `_maybe_reload_config()` 每次 `evaluate()` 前检查 TOML mtime
-- 重建状态对象，`_bayesian_estimator` 重置为 None（惰性重初始化）
-- 仅 `--loop` 模式有意义；cron 每次起新进程
+### 配置热重载（--loop 常驻态）
+- `_maybe_reload_config()` 每次 `evaluate()` 前检查 TOML mtime（仅 `--loop` 模式有意义；cron 每次起新进程）
+- mtime 变化且 TOML 合法时，替换 config 引用并重建 config 派生组件，重建集合（Q19 补全）：
+  - `ChiguoState.reload_config()`：重建 personality 初始基线（`_personality_initial_baseline`）、holiday_parser（重读 `holidays.json`）、cooldown 静默窗口（`_sync_quiet_window`，置信度达标用学习窗口否则回退新 config 默认）
+  - daemon 侧重建 `NeteaseService` / `TopicPicker` / `MessageComposer`（策略/配额/模板参数可能被改）
+  - `_bayesian_estimator` 重置为 None（惰性重初始化）
+  - runtime 持久化状态（情绪/人格演变/cooldown 字段/生物钟学习）不动
+- TOML 语法错误/读取失败 → 保留旧配置，打 stderr 告警继续运行
 
 ### 测试隔离
 - `tests/test_monitor.py` 用 `tempfile.TemporaryDirectory`；其余为纯函数测试，无共享状态
@@ -111,7 +116,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | `anniversaries.json` | schedule/anniversary.py | Anniversary records (countdown deprecated, migrated to reminder) |
 | `break_state.json` | chiguo_daemon.py | Vacation override (written by --break CLI) |
 | `holidays.json` | update_holidays.py | Override holiday data for future years |
-| `solar_terms.json` | update_holidays.py | Override solar terms for future years |
+| `solar_terms.json` | update_holidays.py | 某年节气快照（`--solar` 生成物；运行期不被读取，节气单一事实源见 §5） |
 | `netease/netease_cache.json` | netease/bridge.py | Daily song recommendations cache |
 | `netease/netease_cookie.txt` | netease/bridge.py | Netease API auth cookie (chmod 600) |
 | `netease/recent_play_cache.json` | netease/bridge.py | Recent-play cache (v8, atomic write, 15-min TTL) |
@@ -125,7 +130,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 - **M5**: Ritual trigger weights (2.5-3.0) dominate emotion weights (0.01-0.9) → by design; tune `ritual_weight_scale` to adjust
 - **Hawkes dt==0 exclusion**: Events at `now` are the current event itself, not historical excitation — intentional
 - **Lunar holiday estimation in update_holidays.py**: ~11 day/year drift for non-2027 years. Requires manual update of `KNOWN_HOLIDAYS` when State Council notice published
-- **Solar terms estimation**: ~6h/year drift. Requires annual update of `SOLAR_TERMS_2027`
+- **Solar terms single source (#259, Q5/Q17)**: 节气日期唯一权威入口 = `update_holidays.get_solar_terms_for(year)`。2026/2027 为天文权威校准精确表（lunar_python 北京时间计算 + HKO 交叉复核）；其余年份按 `~6h/year`（≈0.25 天/年）线性估算，跨年不用再每年代码级维护 `SOLAR_TERMS_2027`。`solar_terms.py` 为按年动态消费者。
 
 ---
 

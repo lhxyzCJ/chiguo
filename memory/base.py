@@ -13,11 +13,10 @@
 import math
 import random
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 from chiguo_math import jaccard_3gram  # C1: 文本相似度（零新依赖，3-gram Jaccard）
-
-CST = timezone(timedelta(hours=8))
+from chiguo_time import CST  # Q22: 共享时区常量
 
 # ── C1: 确定性记忆巩固默认参数（config [memory].consolidate_* 可覆盖）──
 DEFAULT_CONSOLIDATE_SIM_THRESHOLD = 0.85   # jaccard_3gram 相似度阈值，≥ 视为近似重复

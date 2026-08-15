@@ -15,8 +15,11 @@ import statistics
 import sys
 import tomllib
 from collections import Counter
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timedelta, date
 from pathlib import Path
+
+from chiguo_time import CST
+from chiguo_atomic import atomic_write
 
 try:
     import mem0  # noqa: F401
@@ -24,7 +27,7 @@ try:
 except ImportError:
     _HAS_MEM0 = False
 
-CST = timezone(timedelta(hours=8))
+from decision_schema import validate as validate_decision  # Q16: 消费同一 schema
 
 
 def _num(v):
@@ -111,7 +114,12 @@ class ChiguoMonitor:
         return datetime.now(CST)
 
     def _iter_decisions(self, since: datetime | None = None):
-        """流式迭代 decisions.jsonl，一次一行。损坏行静默跳过。"""
+        """流式迭代 decisions.jsonl，一次一行。损坏行静默跳过。
+
+        Q16：每条 dict 记录都经决策 schema（decision_schema.validate）消费——
+        旧 jsonl 无 contract 键按缺省 1 处理（兼容不跳）；仍 yield 原记录，
+        不据此跳过（不破坏历史读取）。真正的形状防御由下游 _normalize_entry。
+        """
         if not self.log_path.exists():
             return
         try:
@@ -126,6 +134,8 @@ class ChiguoMonitor:
                         continue
                     if not isinstance(d, dict):
                         continue  # 合法 JSON 但非 dict（形状漂移）→ 跳过，防 AttributeError
+                    # 消费同一 schema（非破坏：仅校验不跳过，历史无 contract 兼容）
+                    validate_decision(d)
                     if since:
                         ts = self._extract_time(d)
                         if ts and ts < since:
@@ -1120,19 +1130,13 @@ class AlertManager:
             self._alerts = {}
 
     def _save(self):
-        """原子写入：tmp → os.replace。"""
+        """原子写入：tmp → os.replace（Q23: 收敛至共享 chiguo_atomic）。"""
         try:
             data = json.dumps({
                 "_version": 1,
                 "alerts": self._alerts,
             }, ensure_ascii=False, indent=2)
-            tmp = Path(str(self.state_path) + ".tmp")
-            tmp.write_text(data)
-            try:
-                os.chmod(tmp, 0o600)  # B6: 运行时文件含状态 → 统一 0600（与 chiguo_state.save 同款）
-            except OSError:
-                pass
-            os.replace(str(tmp), str(self.state_path))
+            atomic_write(self.state_path, data, mode=0o600)
         except OSError as e:
             print(f"[monitor] AlertManager._save 写入失败: {e}", file=sys.stderr)
 
