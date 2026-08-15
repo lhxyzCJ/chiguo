@@ -845,7 +845,7 @@ agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准（表�
 
 Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 层（Intent × Cue × Vibe）30%。
 
-**发送侧可靠性（U2/#227，替代 v1.10 A8 兜底）**：`chiguo_composer.py` 保留独立 `CLI`（传入 decision JSON 或 `--trigger`，从模板池直出可发送文本；cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败用 `_FALLBACK_LINES`）——但**发送链不再调用它兜底**。`scripts/chiguo-tick.sh` 与 `chiguo_daemon.py --loop` 的 `_loop_send` 统一：agent 生成失败 → sleep `[loop].retry_delay_seconds`(5) 整链重试一次（抖动缓冲，重试成功不计故障）→ 仍失败即**中止发送**并经 `agent_health.py record --outcome fail` 记账（fail_streak+1）；连续失败达 `[health].fail_threshold`(3) → 状态 down + transition 经微信发「后端异常」告警（仅翻转一次）→ 暂停探测（loop 跳过尝试；cron 读 down 态 exit 0 不发）。修复后重启 loop（重启后首次 probe 放行）或下个 cron probe 成功 → record success → state up + transition 发「已恢复」。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
+**发送侧可靠性（U2/#227，替代 v1.10 A8 兜底）**：`chiguo_composer.py` 保留独立 `CLI`（传入 decision JSON 或 `--trigger`，从模板池直出可发送文本；cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败用 `_FALLBACK_LINES`）——但**发送链不再调用它兜底**。`scripts/chiguo-tick.sh` 与 `chiguo_daemon.py --loop` 的 `_loop_send` 统一：agent 生成失败 → sleep `[loop].retry_delay_seconds`(5) 整链重试一次（抖动缓冲，重试成功不计故障）→ 仍失败即**中止发送**并经 `agent_health.py record --outcome fail` 记账（fail_streak+1）；连续失败达 `[health].fail_threshold`(3) → 状态 down + transition 经微信发「后端异常」告警（仅翻转一次）→ 暂停探测（loop 跳过尝试；cron 读 down 态 exit 0 不发）。修复后重启 loop（重启后首次 probe 放行）或下个 cron probe 成功 → record success → state up + transition 发「已恢复」。两路径对 bridge `/send` 超时**统一 35s**（`_loop_send` 的 `_post("/send", …) 35.0` 与 tick.sh 主发送 `curl --max-time 35` 互引一致，见 #261/CR-2，改值须两端同步）。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
 
 ---
 
@@ -1858,7 +1858,7 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 - bridge 的 RPC 常驻模式仅 `runner=agent` 且 `WECHAT_BRIDGE_AGENT_RPC=1` 时启用；`chiguo_envcheck.py` 的 check_agent
   支持 runner/agent_command 参数按 runner 检查
 
-1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_agent.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/agent-run.mjs`（`AGENTRUN_SESSION=chiguo-send`）按 `personality/迟菓人格-精简版.md` 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`）→ `--record-send <msg_id> --text <text>` 回写
+1. **发送侧（cron 门控）**：系统 crontab `*/15 * * * * scripts/chiguo-tick.sh`（安装由 `scripts/install_agent.sh` 管理）→ 脚本零模型执行 `chiguo_daemon.py --compact` → idle 静默退出（~90% 评估不唤醒 LLM），send 走 `scripts/agent-run.mjs`（`AGENTRUN_SESSION=chiguo-send`）按 `personality/迟菓人格-精简版.md` 生成消息 → curl bridge `/send`（端点取 toml `[host].wechat_bridge_url`；主发送 `--max-time 35`，对齐 `_loop_send` 的 /send 35s）→ `--record-send <msg_id> --text <text>` 回写
 2. **回复侧（bridge 内联分析）**：微信消息到达 → bridge 确定性 `--user-msg`（无分析）→ 特殊命令检测（见下）→ 未命中才 `scripts/agent-run.mjs --prompt <原文> --analysis-mode` 一次完成「情绪分析 JSON + 回复」（`personality/迟菓人格-精简版.md` 人格）→ 有 analysis 时 bridge 补 `--user-msg --analysis '<JSON>'`（daemon recv_dedup 升级语义，450s 窗口内只补分析微调不重复记账）→ 回复文本发回微信
 
 ### 11.1 特殊命令（纪念日/假期，bridge 规则化）
