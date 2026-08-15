@@ -730,7 +730,10 @@ lonely_low/mid 触发时，从 8 个来源加权随机选话题，让消息成�
 
 ### 4.2 节气
 
-24 节气近似日期硬编码在 `solar_terms.py`。±1 天窗口命中。零依赖。
+24 节气日期**单一事实源** = `update_holidays.get_solar_terms_for(year)`（#259，Q5/Q17）：
+- 2026/2027 为天文权威校准精确表（源：香港天文台 HKO + 独立太阳黄经复盘）；
+- 其余年份由 2027 权威表按 `~6h/年`（≈0.25 天/年）线性估算。
+`solar_terms.py` 是**按年动态消费者**：不再硬编码任何年份表，按查询日期所在年份生成 24 节气表，±1 天窗口命中。零依赖。
 
 ### 4.3 纪念日
 
@@ -868,7 +871,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_demo.py` | 交互式 Demo |
 | `chiguo_rotation.py` | 对话日志轮转归档 + 告警持久化 + 索引查询 |
 | `update_holidays.py` | 节假日数据跨年合并生成（R22 防覆盖） |
-| `solar_terms.py` | 24 节气近似日期（±1 天窗口命中，零依赖） |
+| `solar_terms.py` | 24 节气按年动态查询（消费者，单一事实源在 update_holidays.get_solar_terms_for） |
 | `memory_bridge.py` | 兼容门面（`MemoryBridge = Mem0Backend` 别名 + CLI，经工厂创建） |
 | `chiguo_version.py` | VERSION = "1.15"（MINOR+1 次版本步进） |
 

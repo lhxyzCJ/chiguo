@@ -125,7 +125,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 - **M5**: Ritual trigger weights (2.5-3.0) dominate emotion weights (0.01-0.9) → by design; tune `ritual_weight_scale` to adjust
 - **Hawkes dt==0 exclusion**: Events at `now` are the current event itself, not historical excitation — intentional
 - **Lunar holiday estimation in update_holidays.py**: ~11 day/year drift for non-2027 years. Requires manual update of `KNOWN_HOLIDAYS` when State Council notice published
-- **Solar terms estimation**: ~6h/year drift. Requires annual update of `SOLAR_TERMS_2027`
+- **Solar terms single source (#259, Q5/Q17)**: 节气日期唯一权威入口 = `update_holidays.get_solar_terms_for(year)`。2026/2027 为天文权威校准精确表（HKO + 独立太阳黄经复盘）；其余年份按 `~6h/year`（≈0.25 天/年）线性估算，跨年不用再每年代码级维护 `SOLAR_TERMS_2027`。`solar_terms.py` 为按年动态消费者。
 
 ---
 
