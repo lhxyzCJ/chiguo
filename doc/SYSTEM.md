@@ -489,7 +489,7 @@ on_user_message(now)
 - 置信度 < 0.5 → 该桶学习窗口不生效，回退配置默认
 - 损坏记录（非法日期/缺 hours 键/越界小时/无 bucket 字段）→ 逐条防护不崩溃，非法条目丢弃
 - 窗口语义与 cooldown 一致：`quiet_end` 不含 end，`qe < qs` 表示跨午夜
-- 热重载：`_maybe_reload_config()` 检测 toml mtime 变化后重新 `_sync_quiet_window()`，避免学习窗口陈旧
+- 热重载：`_maybe_reload_config()` 检测 toml mtime 变化后经 `ChiguoState.reload_config()` 重建 config 派生组件（personality 初始基线 + holiday_parser + cooldown 静默窗口）并重新 `_sync_quiet_window()`，避免学习窗口陈旧
 
 ### 2.10 接话茬（follow_up，v7）
 
@@ -566,7 +566,7 @@ evaluate(now)
 
 **健康与降级链**：`netease_health.json` 健康文件（tmp→os.replace 原子写，缺失/损坏/非 dict → 默认重建不崩溃）；`refresh_health(now)` 真实探针（api_alive=False → faulty=unreachable；api_alive 且未登录 → faulty=login_expired；均 OK → 恢复并清 last_failure）；faulty 且未到 `reprobe_minutes`（默认 30）→ 跳过网络直出故障话题；`_sync_success` 拉取成功即恢复。`chiguo_monitor` 只读健康文件展示，**不触发探针**。
 
-**热重载**：`_maybe_reload_config()` 检测到 toml mtime 变化后同步重建 `NeteaseService` 与 TopicPicker（chiguo_daemon.py:121-124，重试/配额参数可能被改）——非法 `retry_count` 已由 `netease/service.py` `_cfg_int` 数值兜底回默认（不抛异常，配置错误不再快速失败）。
+**热重载（Q19 补全重建集合）**：`_maybe_reload_config()` 检测到 toml mtime 变化后经 `ChiguoState.reload_config()` 重建 config 派生组件（personality 初始基线 / holiday_parser / cooldown 静默窗口），并同步重建 `NeteaseService`、`TopicPicker` 与 `MessageComposer`（重试/配额/模板参数可能被改），`_bayesian_estimator` 重置惰性重初始化——非法 `retry_count` 已由 `netease/service.py` `_cfg_int` 数值兜底回默认（不抛异常，配置错误不再快速失败）。
 
 **素材安全**：fault/daily/recent 话题 data 仅 `{source, reason}` / `{source, name, artist}`，不含 share_url/链接（链接由发送层按需拼接）。
 

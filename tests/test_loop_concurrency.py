@@ -100,10 +100,59 @@ def test_loop_hot_reload_config():
             "语法错误应保留旧配置"
 
 
+def test_loop_hot_reload_rebuild_set():
+    """Q19: 热重载重建集合——改 personality / cooldown 静默窗口起始 / holiday_parser
+    相关配置 → _maybe_reload_config 后重建生效。"""
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "chiguo_proactive.toml"
+        _setup(td)
+        # 钉住初始值：personality 傲娇基线 + cooldown 静默窗口（不依赖仓库默认）
+        txt = cfg_path.read_text()
+        txt = re.sub(r"(?m)^tsundere_intensity\s*=.*$",
+                     "tsundere_intensity = 31.0", txt, count=1)
+        txt = re.sub(r"(?m)^quiet_start\s*=\s*(\d+)", "quiet_start = 21", txt)
+        txt = re.sub(r"(?m)^quiet_end\s*=\s*(\d+)", "quiet_end = 23", txt)
+        cfg_path.write_text(txt)
+
+        from chiguo_daemon import DecisionEngine
+        engine = DecisionEngine(str(cfg_path),
+                                str(Path(td) / "chiguo_decisions.jsonl"))
+        # 变更前基线断言（确定性，非默认值）
+        assert engine.state._personality_initial_baseline["tsundere_intensity"] == 31.0, \
+            f"personality 初始基线应钉为 31.0: {engine.state._personality_initial_baseline}"
+        assert engine.state.cooldown.quiet_window() == (21, 23), \
+            f"cooldown 静默窗口应钉为 (21,23): {engine.state.cooldown.quiet_window()}"
+        old_hp = engine.state.holiday_parser
+
+        # 修改 config：personality 傲娇 / cooldown 静默窗口
+        txt = cfg_path.read_text()
+        txt = re.sub(r"(?m)^tsundere_intensity\s*=.*$",
+                     "tsundere_intensity = 79.0", txt, count=1)
+        txt = re.sub(r"(?m)^quiet_start\s*=\s*(\d+)", "quiet_start = 1", txt)
+        txt = re.sub(r"(?m)^quiet_end\s*=\s*(\d+)", "quiet_end = 3", txt)
+        cfg_path.write_text(txt)
+
+        engine._maybe_reload_config()
+
+        # ① 改 personality 配置 → 初始基线重建生效
+        assert engine.config["personality"]["tsundere_intensity"] == 79.0
+        assert engine.state._personality_initial_baseline["tsundere_intensity"] == 79.0, \
+            f"改 personality → _personality_initial_baseline 应重建: " \
+            f"{engine.state._personality_initial_baseline['tsundere_intensity']}"
+        # ② 改 cooldown 静默窗口起始 → quiet_window() 重建生效
+        assert engine.state.cooldown.quiet_window() == (1, 3), \
+            f"改 cooldown 静默窗口起始 → quiet_window() 应重建: " \
+            f"{engine.state.cooldown.quiet_window()}"
+        # ③ holiday_parser 随热重载重建（重读 holidays.json，新实例）
+        assert engine.state.holiday_parser is not old_hp, \
+            "holiday_parser 应随热重载重建（新实例）"
+
+
 if __name__ == "__main__":
     tests = [
         test_concurrent_cli_state_integrity,
         test_loop_hot_reload_config,
+        test_loop_hot_reload_rebuild_set,
     ]
     for t in tests:
         t()

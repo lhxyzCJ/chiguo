@@ -71,10 +71,14 @@ python3 chiguo_rotation.py --force
 - 缺失文件/空文件/损坏行不崩溃
 - `DecisionIndex` 构建字节偏移索引，按 trigger/date/action O(1) 查询
 
-### 配置热重载
-- `_maybe_reload_config()` 每次 `evaluate()` 前检查 TOML mtime
-- 重建状态对象，`_bayesian_estimator` 重置为 None（惰性重初始化）
-- 仅 `--loop` 模式有意义；cron 每次起新进程
+### 配置热重载（--loop 常驻态）
+- `_maybe_reload_config()` 每次 `evaluate()` 前检查 TOML mtime（仅 `--loop` 模式有意义；cron 每次起新进程）
+- mtime 变化且 TOML 合法时，替换 config 引用并重建 config 派生组件，重建集合（Q19 补全）：
+  - `ChiguoState.reload_config()`：重建 personality 初始基线（`_personality_initial_baseline`）、holiday_parser（重读 `holidays.json`）、cooldown 静默窗口（`_sync_quiet_window`，置信度达标用学习窗口否则回退新 config 默认）
+  - daemon 侧重建 `NeteaseService` / `TopicPicker` / `MessageComposer`（策略/配额/模板参数可能被改）
+  - `_bayesian_estimator` 重置为 None（惰性重初始化）
+  - runtime 持久化状态（情绪/人格演变/cooldown 字段/生物钟学习）不动
+- TOML 语法错误/读取失败 → 保留旧配置，打 stderr 告警继续运行
 
 ### 测试隔离
 - `tests/test_monitor.py` 用 `tempfile.TemporaryDirectory`；其余为纯函数测试，无共享状态
