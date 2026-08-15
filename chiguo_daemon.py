@@ -28,7 +28,7 @@ import random
 import uuid
 import hashlib
 import tomllib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # v8: 模块级 os.chdir 已移除 —— import 不再劫持调用方 cwd。
@@ -42,8 +42,7 @@ from chiguo_composer import MessageComposer
 from chiguo_version import VERSION
 from chiguo_math import in_quiet_window, longing_accumulate, mood_fresh, user_mood_note
 from chiguo_circadian import bucket_for
-
-CST = timezone(timedelta(hours=8))
+from chiguo_time import CST  # Q22: 共享时区常量
 
 
 class DecisionEngine:
