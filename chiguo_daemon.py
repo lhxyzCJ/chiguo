@@ -1637,6 +1637,10 @@ class DecisionEngine:
                         # False。幂等依据是日志：日志不写 = 可重试，下一进程会再次
                         # 尝试退款直至落盘；若此处照写日志，退款将永久丢失。
                         print("[chiguo_daemon] state_save_failed: 退款未落盘，下轮重试", file=sys.stderr)
+                        # 注：此返回值为非持久化 send_result 形状（仅作返回值，不写
+                        # chiguo_decisions.jsonl），字段与 decision_schema 的
+                        # send_result 对齐但无 contract 键——有意设计（v12-R1：日志不写
+                        # = 可重试，下一进程再次退款），勿误判为绕过写路径。
                         return {
                             "action": "send_result",
                             "msg_id": msg_id,
