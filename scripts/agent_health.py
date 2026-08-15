@@ -11,7 +11,6 @@ transition 只在 up→down 与 down→up 各输出一次（天然防重复告�
 
 import argparse
 import json
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
