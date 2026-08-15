@@ -918,7 +918,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `service.sh` | systemd 服务管理 |
 | `netease-api.sh` | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
 | `chiguo-tick.sh` | cron 门控入口（零模型，读 daemon 输出 → send → 5s 重试 → record-send；无 composer 兜底，health 告警/暂停） |
-| `ci-test.sh` | 全量测试链（计数以(`scripts/ci-test.sh`)为准，CI stub 自举） |
+| `ci-test.sh` | 全量测试链（py 走 pytest 收集 + mjs/sh 脚本链，计数动态化以 `scripts/ci-test.sh` 为准；CI stub 自举） |
 | `agent-auth.sh` | agent 认证 |
 | `replan-tick.sh` | loop 形态 replan 判脏轮询 |
 | `chiguo-daemon.service` | systemd 单元（loop 常驻形态） |
@@ -972,7 +972,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 ### 6.10 测试（`tests/`）
 
-`tests/` 测试集合以 `scripts/ci-test.sh` 为唯一权威（计数不硬编码，由 test_docs_sync 双向校验）；fixture `_loop_worker.py`、`fake-agent-rpc.mjs` 不以 `test_` 开头不入链。详见 §十 与 AGENT_INTEGRATION.md §测试。
+`tests/` 的 Python 测试由 **pytest** 驱动（Q26 迁移：61 个原手写 runner 已去 `__name__ == "__main__"` 脚手架，保留 `def test_*`）。全链入口唯一权威为 `scripts/ci-test.sh`：`uv run pytest tests/ -q` 跑全部 py 测试，并保留 mjs/sh 脚本链；计数不硬编码，按 pytest 收集结果与磁盘 mjs/sh 文件数动态计算。全局隔离由 `tests/conftest.py` 统一提供（CWD 固定项目根 + 每测试还原 os.environ），fixture `_loop_worker.py`、`fake-agent-rpc.mjs` 不以 `test_` 开头不入链。test_docs_sync 校验「磁盘 test_*.py 集合 == pytest 收集集合」及「磁盘 mjs/sh 集合 == ci-test.sh 脚本引用链」。详见 §十 与 AGENT_INTEGRATION.md §测试。
 
 ### 6.11 文档（`doc/`）
 

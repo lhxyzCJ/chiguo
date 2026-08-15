@@ -206,7 +206,7 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: counts authoritative in scripts/ci-test.sh, self-checked by the blueprint; standalone runners, no pytest)
+# Core tests (full suite: py via pytest, mjs/sh script chain kept; counts authoritative & dynamic in scripts/ci-test.sh)
 bash scripts/ci-test.sh   # same entry point as GitHub Actions; any failure exits non-zero
 ```
 
@@ -369,7 +369,7 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 
 Any contribution is welcome — especially ones that help *her* grow:
 
-- **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each `test_*.py` in `tests/` is a standalone runner, exit-code driven.
+- **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each Python test in `tests/` is a `def test_*` function (pytest-driven).
 - **Run the full suite before submitting**: see `AGENTS.md` (test counts authoritative in scripts/ci-test.sh), all green before commit.
 - **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md` (repo rule).
 - **Commit style**: `feat:` / `fix:` / `docs:` / `chore:` prefix + Chinese description.
@@ -431,7 +431,7 @@ scripts/                 # tick/replan crontab entries + agent runner abstractio
 wechat-bridge/           # WeChat bridge (bridge.mjs + command-detect.mjs + agent-rpc.mjs)
 personality/             # persona files (迟菓人格-精简版.md runtime spec + archive/ source material + toml material + tool/memory guides)
 doc/                     # system docs (SYSTEM.md / DEPLOYMENT.md / AGENT_INTEGRATION.md / 日光雨 script 17099 lines)
-tests/                   # tests (standalone runners, no pytest; count via scripts/ci-test.sh)
+tests/                   # tests (py via pytest, mjs/sh script chain kept; count via scripts/ci-test.sh)
 data/                    # data files (schedule / mem0 store / NetEase QR, never committed)
 ```
 

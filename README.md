@@ -206,7 +206,7 @@ uv run python chiguo_demo.py         # 交互式 Demo（纯模板，无 LLM）
 uv run python chiguo_daemon.py       # 单次决策 → 输出 JSON
 uv run python chiguo_daemon.py --status   # 查看当前状态
 
-# 核心测试（完整测试链：计数以 scripts/ci-test.sh 为准，由蓝本自批，独立 runner、无 pytest）
+# 核心测试（完整测试链：py 走 pytest、mjs/sh 脚本链保留；计数以 scripts/ci-test.sh 为准，动态化）
 bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败退出非零
 ```
 
@@ -369,7 +369,7 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 
 欢迎任何形式的贡献——尤其是"她"的成长：
 
-- **测试先行（TDD）**：铁律是先写失败测试再实现（红→绿），`tests/` 下每个 `test_*.py` 是独立 runner
+- **测试先行（TDD）**：铁律是先写失败测试再实现（红→绿），`tests/` 下每个 Python 测试是 `def test_*` 函数（pytest 驱动）
 - **改完跑全链**：完整测试链见 `AGENTS.md`（计数以 scripts/ci-test.sh 为准），全绿再提交
 - **文档同步**：行为变化必须同步 `doc/SYSTEM.md`
 - **Commit 风格**：`feat:` / `fix:` / `docs:` / `chore:` 前缀 + 中文描述
@@ -431,7 +431,7 @@ scripts/                 # tick/replan crontab 入口 + agent runner 抽象（ag
 wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs + agent-rpc.mjs）
 personality/             # 人格（迟菓人格-精简版.md 运行时规范 + archive/ 原著素材 + 措辞 toml + 工具/记忆用法）
 doc/                     # 系统文档（SYSTEM.md / DEPLOYMENT.md / AGENT_INTEGRATION.md / 日光雨剧本 17099 行）
-tests/                   # 测试（独立 runner，无 pytest；计数以 scripts/ci-test.sh 为准）
+tests/                   # 测试（py 走 pytest，mjs/sh 脚本链保留；计数以 scripts/ci-test.sh 为准）
 data/                    # 数据文件（课表/记忆库 data/mem0/ 等，不进 git）
 ```
 
