@@ -8,15 +8,15 @@
 # ============================================================
 
 import json
-import os
 import random
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from netease.bridge import NeteaseBridge
+from chiguo_time import CST  # Q22: 共享时区常量
+from chiguo_atomic import atomic_write  # Q23: 共享原子写助手
 
-CST = timezone(timedelta(hours=8))
 DEFAULT_HEALTH_FILE = "netease_health.json"
 HEALTH_SCHEMA_KEYS = ("api_alive", "logged_in", "faulty", "last_check",
                       "last_failure", "failure_reason",
@@ -109,17 +109,12 @@ class NeteaseService:
             return self._default_health()
 
     def _save_health(self):
-        """原子写 .tmp → os.replace;失败仅 warn。"""
+        """原子写 .tmp → os.replace（Q23: 收敛至共享 atomic_write）；失败仅 warn。"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        tmp = f"{self.health_file}.tmp"
         try:
-            with open(tmp, "w") as f:
-                json.dump(self._health, f, ensure_ascii=False, indent=2)
-            try:
-                os.chmod(tmp, 0o600)  # B6: 运行时健康文件统一 0600（与 chiguo_state.save 同款）
-            except OSError:
-                pass
-            os.replace(tmp, self.health_file)
+            atomic_write(self.health_file,
+                         json.dumps(self._health, ensure_ascii=False, indent=2),
+                         mode=0o600)
         except Exception as e:
             print(f"[warn] netease_health 写入失败: {e}", file=sys.stderr)
 
