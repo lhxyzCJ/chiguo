@@ -340,29 +340,3 @@ def test_holidays_generate_cross_year_merge():
             uh.generate(2026)
             assert p.read_text(encoding="utf-8") == before, "已含 2026 数据应拒绝覆盖"
     print("  OK test_holidays_generate_cross_year_merge")
-
-
-if __name__ == "__main__":
-    # Bug1
-    test_2028_spring_earlier_than_2027()
-    test_lunar_offset_exact_2028()
-    test_lunar_offset_2026_direction()
-    # Bug2
-    test_cc_dict_branch_namedtuple()
-    test_cc_dict_branch_date_value()
-    test_cc_dict_branch_str_value()
-    test_cc_dict_branch_range_kept()
-    test_cc_dict_branch_multi_day_same_name_aggregated()
-    # Q5/Q17 节气收敛单一事实源
-    test_solar_terms_2026_authoritative()
-    test_solar_terms_2027_authoritative()
-    test_solar_terms_divergent_dates_calibrated()
-    test_solar_terms_cross_year_estimation()
-    # Bug4
-    test_demo_state_path_isolated()
-    test_demo_run_keeps_production_state_untouched()
-    # R22
-    test_holidays_file_covers_year()
-    test_holidays_merge_semantics()
-    test_holidays_generate_cross_year_merge()
-    print(f"test_demo.py: ALL {17} TESTS PASSED")

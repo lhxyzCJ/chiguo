@@ -224,32 +224,3 @@ def test_fmt_search_row_falls_back_to_abstract():
     out = fmt_search_row({"category": "e", "text": long_text})
     assert out == f"[e] {'字' * 80}", f"应截断到 80 字, got {len(out)}"
     print("  OK test_fmt_search_row_falls_back_to_abstract")
-
-
-if __name__ == "__main__":
-    print("test_metadata_cleanup.py\n")
-    tests = [
-        test_memory_topic_text_primary,
-        test_memory_topic_falls_back_to_abstract,
-        test_memory_topic_category_priority,
-        test_memory_topic_empty_text_no_hint,
-        test_preference_followup_text_primary,
-        test_preference_followup_falls_back_to_abstract,
-        test_trigger_followup_memory_text_primary,
-        test_trigger_followup_memory_falls_back_to_abstract,
-        test_fmt_search_row_text_primary,
-        test_fmt_search_row_falls_back_to_abstract,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            print(f"  FAIL {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    print(f"\n{'=' * 40}")
-    total = len(tests)
-    print(f"ALL {total} metadata-cleanup tests, {total - failed} passed, {failed} failed.")
-    sys.exit(1 if failed else 0)

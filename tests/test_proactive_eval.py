@@ -195,29 +195,3 @@ def test_mixed_triggers_rate_summary():
         assert abs(ps["lonely_high"]["reply_rate"] - 1.0) < 1e-9
         assert ps["overall"]["sent"] == 3 and ps["overall"]["replied"] == 2
     print("  OK test_mixed_triggers_rate_summary")
-
-
-if __name__ == "__main__":
-    print("test_proactive_eval.py\n")
-    tests = [
-        test_disabled_no_new_key,
-        test_enabled_grouped_by_trigger,
-        test_recv_before_send_not_counted,
-        test_reply_outside_window_not_counted,
-        test_custom_reply_window,
-        test_no_sends_no_stats_key,
-        test_mixed_triggers_rate_summary,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            print(f"  FAIL {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    print(f"\n{'=' * 40}")
-    total = len(tests)
-    print(f"ALL {total} proactive-eval tests, {total - failed} passed, {failed} failed.")
-    sys.exit(1 if failed else 0)

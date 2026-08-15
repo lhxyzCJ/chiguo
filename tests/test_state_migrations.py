@@ -16,6 +16,8 @@ import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -49,6 +51,14 @@ def teardown():
 
 def make_engine(cfg_path: Path) -> DecisionEngine:
     return DecisionEngine(str(cfg_path), str(cfg_path.parent / "chiguo_decisions.jsonl"))
+
+
+@pytest.fixture(scope="module")
+def cfg_path():
+    """Q26 迁移：setup()/teardown() 逻辑改为 pytest 模块级 fixture（原 __main__ 注入）。"""
+    path = setup()
+    yield path
+    teardown()
 
 
 # ── 历史版本 state 样本构造 ──────────────────────────────
@@ -229,17 +239,3 @@ def test_v8_bucket_backfill_and_weekday_inherit(cfg_path: Path):
     assert st.circadian.weekday_quiet_end == 7
     assert st.circadian.weekday_confidence == 0.8
     print("  OK v8 bucket backfill + weekday inherit")
-
-
-if __name__ == "__main__":
-    print("test_state_migrations.py\n")
-    try:
-        cfg = setup()
-        tests = [test_all_versions_migrate_to_current_structure,
-                 test_v8_bucket_backfill_and_weekday_inherit]
-        for t in tests:
-            t(cfg)
-        print("\n" + "=" * 40)
-        print(f"ALL {len(tests)} migration tests passed.")
-    finally:
-        teardown()

@@ -156,14 +156,14 @@ def _refund_matrix_run(td, events, msg_id, expect_save: bool, removed_events,
     print(f"  OK matrix: msg_id={msg_id!r} events={events} → refund_send={r} save={expect_save}")
 
 
-def _test_empty_inflight():
+def test_empty_inflight():
     # 分支 1：空在途（msg_id 非空但无事件）→ False，不退款不删
     with tempfile.TemporaryDirectory() as td:
         _refund_matrix_run(td, events=[], msg_id="never_sent",
                            expect_save=False, removed_events=[])
 
 
-def _test_unknown_msg_id():
+def test_unknown_msg_id():
     # 分支 2：未知 msg_id（modern 事件不匹配）→ False，不退款不删（现代事件保留）
     events = [{"msg_id": "m1", "time": "t1"}, {"msg_id": "m2", "time": "t2"}]
     with tempfile.TemporaryDirectory() as td:
@@ -171,7 +171,7 @@ def _test_unknown_msg_id():
                            expect_save=False, removed_events=events)
 
 
-def _test_matched_msg_id():
+def test_matched_msg_id():
     # 分支 3：匹配 msg_id → 删除命中事件 + 回滚，返回 True
     events = [{"msg_id": "m1", "time": "t1"}, {"type": "lonely_mid", "time": "t2"}]
     removed = [{"type": "lonely_mid", "time": "t2"}]  # 仅 m1 被删除，其余保留
@@ -180,37 +180,10 @@ def _test_matched_msg_id():
                            expect_save=True, removed_events=removed)
 
 
-def _test_all_legacy():
+def test_all_legacy():
     # 分支 4：全 legacy（无 msg_id 旧事件）→ pop 回滚，返回 True
     events = [{"type": "lonely_mid", "time": "t1"}, {"type": "anxiety", "time": "t2"}]
     removed = [{"type": "lonely_mid", "time": "t1"}]  # pop 最后一条
     with tempfile.TemporaryDirectory() as td:
         _refund_matrix_run(td, events=events, msg_id="m9",
                            expect_save=True, removed_events=removed)
-
-
-if __name__ == "__main__":
-    print("test_refund_send.py\n")
-    tests = [
-        _test_empty_inflight,
-        _test_unknown_msg_id,
-        _test_matched_msg_id,
-        _test_all_legacy,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            print(f"  FAIL {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-
-    print(f"\n{'='*40}")
-    total = len(tests)
-    passed = total - failed
-    print(f"ALL {total} tests, {passed} passed, {failed} failed.")
-    if failed:
-        sys.exit(1)
-    sys.exit(0)

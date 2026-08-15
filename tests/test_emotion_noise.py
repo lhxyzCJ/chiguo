@@ -241,19 +241,3 @@ def test_noise_loop_total_does_not_scale_with_tick_count():
     # bug 版：Σx_i ≈ 0.15×N → N=400 时 ~58，必爆。3.0 是 10σ 安全边界。
     assert abs(s100) < 3.0 and abs(s400) < 3.0, \
         f"累积噪声应平稳有界（OU 平稳级），而非随 tick 放大: s100={s100}, s400={s400}"
-
-
-if __name__ == "__main__":
-    tests = [
-        test_ou_step_zero_dt_identity, test_ou_step_deterministic_seed,
-        test_ou_step_statistics, test_ou_step_mean_reversion,
-        test_noise_cap_bounds,
-        test_tick_disabled_identity, test_tick_enabled_stays_in_bounds,
-        test_tick_enabled_does_not_pollute_global_rng,
-        test_noise_loop_delta_increment_semantics,
-        test_noise_loop_total_does_not_scale_with_tick_count,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")

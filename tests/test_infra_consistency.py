@@ -194,7 +194,3 @@ def run_all():
     t("CST-共享常量单一来源", test_cst_shared_constant)
     print(f"\n{passed} passed, {failed} failed")
     return 0 if failed == 0 else 1
-
-
-if __name__ == "__main__":
-    sys.exit(run_all())

@@ -168,12 +168,3 @@ def test_lambda_monotonic():
         lam_exam = s.current_lambda(dt(2026, 3, 4, 14, 0))
         assert lam_exam < lam_free, f"考试周 λ 低于空闲: {lam_exam} vs {lam_free}"
     print("  OK test_lambda_monotonic")
-
-
-if __name__ == "__main__":
-    print("test_availability.py\n")
-    tests = [test_tier_matrix, test_exam_overlap_priority, test_cancel_changes_availability,
-             test_bayesian_layer, test_lambda_monotonic]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

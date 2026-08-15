@@ -143,15 +143,3 @@ def test_monitor_reads_historical_without_contract():
         actions = [r["action"] for r in rows]
         assert actions == ["send", "idle"], actions
     print("  OK test_monitor_reads_historical_without_contract")
-
-
-if __name__ == "__main__":
-    test_valid_records()
-    test_actions_enum()
-    test_invalid_records()
-    test_require_contract()
-    test_with_contract_idempotent()
-    test_send_top_level_fields_stable()
-    test_daemon_log_adds_contract_and_validates()
-    test_monitor_reads_historical_without_contract()
-    print("test_decision_schema: ALL PASSED")

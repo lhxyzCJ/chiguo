@@ -13,3 +13,8 @@ dependencies = [
 schedule = [
     "openpyxl",
 ]   # 课表 xlsx 解析；不装 → schedule_valid=False → availability 基确 1.0（见 schedule/day_plan.py）
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

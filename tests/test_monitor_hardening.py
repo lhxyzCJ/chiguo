@@ -238,26 +238,3 @@ def test_state_file_invalid_utf8_falls_back():
         s2 = mon.stats(days=0)
         assert s2["activity"]["total_sends"] == 1, f"非法 UTF-8 行应跳过: {s2}"
     print("  OK test_state_file_invalid_utf8_falls_back")
-
-
-if __name__ == "__main__":
-    print("test_monitor_hardening.py\n")
-    tests = [
-        test_state_file_bad_shape,
-        test_break_state_file_bad_shape,
-        test_extract_time_iso_fallback,
-        test_iso_time_entries_counted_in_stats,
-        test_log_line_bad_shape_skipped,
-        test_state_file_invalid_utf8_falls_back,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            failed += 1
-            import traceback
-            print(f"  FAIL {t.__name__}: {e}")
-            traceback.print_exc()
-    print(f"\n{len(tests) - failed}/{len(tests)} passed")
-    sys.exit(1 if failed else 0)

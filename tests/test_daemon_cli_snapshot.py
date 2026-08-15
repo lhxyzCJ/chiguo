@@ -112,7 +112,8 @@ def _actual(action):
     )
 
 
-def main():
+def test_cli_snapshot():
+    """Q26 迁移：pytest 断言式 assert（pytest 收集 def test_*，无 __main__ runner）。"""
     failures = []
     parser = build_parser()
     actions = {a.dest: a for a in parser._actions}
@@ -146,14 +147,5 @@ def main():
     if not isinstance(actions.get("version"), _VersionAction):
         failures.append("version 参数应为 argparse._VersionAction")
 
-    if failures:
-        print(f"FAIL {len(failures)}:")
-        for f in failures:
-            print("  -", f)
-        sys.exit(1)
+    assert not failures, "\n".join("  - " + f for f in failures)
     print("  OK 36 参数集合/类型/默认/nargs/const/choices/metavar/action/help 快照一致")
-    print(f"\n{'='*40}\nALL snapshot tests passed.")
-
-
-if __name__ == "__main__":
-    main()

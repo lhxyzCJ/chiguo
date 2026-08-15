@@ -146,11 +146,3 @@ def test_state_access_closure_all_engine_modules():
             continue
         _assert_module_clean(fname)
     print("  OK test_state_access_closure_all_engine_modules")
-
-
-if __name__ == "__main__":
-    print("test_state_private_access_guard.py\n")
-    tests = [test_daemon_private_access_closure, test_state_access_closure_all_engine_modules]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

@@ -82,12 +82,3 @@ def test_schedule_recall_shape():
         assert any("生日" in m.get("label", "") for m in r["matches"]), f"got {r}"
         assert r["query"] == "生日"
     print("  OK test_schedule_recall_shape")
-
-
-if __name__ == "__main__":
-    print("test_schedule_cli.py\n")
-    tests = [test_attention_shape_and_zero_write, test_schedule_change_success_and_shapes,
-             test_schedule_recall_shape]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

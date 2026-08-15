@@ -17,9 +17,3 @@ def test_default_traits_reasonable():
     assert p.extraversion >= 55, "外向性应体现小太阳人设"
     assert p.agreeableness <= 68, "宜人性不应过高（毒舌但善良）"
     assert p.tsundere_intensity >= 70
-
-
-if __name__ == "__main__":
-    test_default_style_is_classic_tsundere()
-    test_default_traits_reasonable()
-    print("test_personality_init OK")

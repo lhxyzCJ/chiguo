@@ -443,39 +443,3 @@ def test_phantom_send_reply_path_refund_and_monitor():
         sr = s.get("send_result", {})
         assert sr["failed"] == 0, f"phantom refund must not count as send_failed, got {sr}"
     print("  OK test_phantom_send_reply_path_refund_and_monitor")
-
-
-if __name__ == "__main__":
-    print("test_feedback.py\n")
-    tests = [
-        test_record_send_result_failed,
-        test_record_send_result_success,
-        test_monitor_stats_send_result,
-        test_cli_send_result_branch,
-        test_record_send_result_return_value,
-        test_monitor_empty_send_result,
-        test_record_send_result_idempotent,
-        test_refund_then_can_send_after_min_interval,
-        test_recv_dedup_same_text_skipped,
-        test_recv_dedup_analysis_upgrade,
-        test_recv_dedup_different_text_full_record,
-        test_analysis_string_values_sanitized,
-        test_phantom_send_reply_path_refund_and_monitor,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-        except Exception as e:
-            print(f"  FAIL {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-
-    print(f"\n{'='*40}")
-    total = len(tests)
-    passed = total - failed
-    print(f"ALL {total} tests, {passed} passed, {failed} failed.")
-    if failed:
-        sys.exit(1)
-    sys.exit(0)

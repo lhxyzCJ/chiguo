@@ -150,18 +150,3 @@ def test_cli_config_threshold_string_passthrough():
         assert rc == 0
         assert seen["sim_threshold"] == "0.85", f"字符串阈值应透传: {seen}"
     print("  OK test_cli_config_threshold_string_passthrough")
-
-
-if __name__ == "__main__":
-    print("test_consolidate_cli.py\n")
-    tests = [
-        test_cli_no_backend_returns_1,
-        test_cli_report_ok_strips_text,
-        test_cli_report_not_ok_returns_1,
-        test_cli_consolidate_raises_structured_error,
-        test_cli_config_threshold_string_passthrough,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} consolidate-cli tests passed.")

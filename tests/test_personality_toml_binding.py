@@ -139,20 +139,3 @@ def test_select_combo_attaches_templates():
             break
     assert found, "300 次内应至少选中一次 tsundere_classic"
     print("  OK test_select_combo_attaches_templates")
-
-
-if __name__ == "__main__":
-    print("test_toml_binding.py\n")
-    tests = [
-        test_toml_files_exist,
-        test_meta_name_is_chiguo,
-        test_cue_meta_by_cue_id,
-        test_trigger_templates_loaded,
-        test_template_lines_for,
-        test_situation_contains_templates,
-        test_select_combo_attaches_templates,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} toml-binding tests passed.")

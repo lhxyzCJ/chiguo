@@ -285,25 +285,3 @@ def test_reply_pending_queue_bounded():
     s.record_trigger_replied()
     assert s.cooldown.reply_pending[0] == "t17"
     print("  OK test_reply_pending_queue_bounded")
-
-
-if __name__ == "__main__":
-    print("test_reply_feedback.py\n")
-    tests = [
-        test_reply_stats_accounting,
-        test_reply_stats_persist_roundtrip,
-        test_default_off_identity,
-        test_low_reply_rate_damp,
-        test_high_reply_rate_boost,
-        test_min_samples_guard,
-        test_mid_rate_no_adjust,
-        test_daemon_record_send_persists_sent,
-        test_daemon_user_msg_persists_replied,
-        test_daemon_record_send_disabled_no_stats,
-        test_reply_attribution_fifo,
-        test_reply_pending_queue_bounded,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} reply-feedback tests passed.")

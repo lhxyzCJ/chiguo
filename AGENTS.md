@@ -39,10 +39,11 @@ Reasonix 宿主在 final-answer 时检查四类验收项，报错模式固定，
 
 ## Test & run
 
-No pytest. Each `test_*.py` is a standalone runner with plain `assert`s; every runner exits non-zero on failure, so chain with `&&` or check `$?`.
+Python 测试由 pytest 驱动（Q26 迁移；`scripts/ci-test.sh` 对 py 走 `uv run pytest tests/ -q`）。各 `test_*.py` 保留 `def test_*` 函数结构，不再有 `__name__ == "__main__"` runner 与手写 `tests=[...]` 列表；全局隔离由 `tests/conftest.py` 统一提供（CWD 固定项目根 + 每测试还原 os.environ），`random.seed(42)` + 固定 CST 时间保确定性。
 
 ```bash
-bash scripts/ci-test.sh   # full suite — 计数以 scripts/ci-test.sh 为准；本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
+bash scripts/ci-test.sh   # full suite — py 走 pytest（计数按 pytest 收集动态化，不硬编码）；mjs/sh 脚本链保留；本地与 GitHub Actions ci.yml 同一入口；任一失败退出非零
+uv run pytest tests/ -q   # 仅 py 测试（等价 pytest 全量）
 ```
 
 - Python 3.14 via uv (`.venv` exists, Python 3.14.7). 3.14-only syntax is intentional: bracketless `except E1, E2:`, deferred annotations — do NOT add `from __future__ import annotations`.

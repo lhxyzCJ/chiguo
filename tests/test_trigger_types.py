@@ -70,13 +70,3 @@ def test_sanitize_plan_prunes_invalid_keeps_valid():
         assert kept[0]["trigger_scale"]["comfort"] == 1.5, "comfort 合法 key 保留"
         assert len(warns) >= 4, f"应有告警(未登录剔除), got {len(warns)}: {warns}"
     print("  OK test_sanitize_plan_prunes_invalid_keeps_valid")
-
-
-if __name__ == "__main__":
-    print("test_trigger_types.py\n")
-    tests = [test_enum_consistency_trigger_subset_replan, test_enum_partition,
-             test_value_set_matches_enum, test_comfort_accepted_by_replan,
-             test_sanitize_plan_prunes_invalid_keeps_valid]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

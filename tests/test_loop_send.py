@@ -386,21 +386,3 @@ def test_alerts_push_wechat_chain():
             assert again == [], f"重复运行不应重推: {again}"
     finally:
         srv.shutdown()
-
-
-if __name__ == "__main__":
-    tests = [
-        test_loop_send_rpc_ok,
-        test_loop_send_rpc_fail_fallback_spawn,
-        test_loop_send_all_fail,
-        test_loop_send_send_failure_refund,
-        test_loop_send_retry_success_no_fail,
-        test_loop_send_3_fail_down_alert,
-        test_loop_health_probe_rhythm,
-        test_loop_health_restart_recovers,
-        test_alerts_push_wechat_chain,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")

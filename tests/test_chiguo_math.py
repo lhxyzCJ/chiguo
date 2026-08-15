@@ -350,34 +350,3 @@ def test_jaccard_partial_overlap():
     assert 0.0 < j_partial < 1.0
     assert jaccard_3gram("今天天气不错呀", "今天天气不错呢") > jaccard_3gram("今天天气不错呀", "午饭吃了吗哥哥")
     print("  OK test_jaccard_partial_overlap")
-
-
-if __name__ == "__main__":
-    print("test_chiguo_math.py\n")
-    tests = [
-        test_sigmoid_midpoint, test_sigmoid_bounds, test_sigmoid_monotonic,
-        test_sigmoid_extreme_inputs_no_overflow,
-        test_decay_half_life, test_decay_zero_time, test_decay_long_time,
-        test_decay_negative_half_life_guard,
-        test_recover_half_life, test_recover_zero_time, test_recover_full,
-        test_recover_negative_half_life_guard,
-        test_elastic_recover_far_gap_faster, test_elastic_recover_near_target_approx_original,
-        test_elastic_recover_baseline_parameterized, test_elastic_recover_nonpositive_baseline_guard,
-        test_drop_damp_progression, test_drop_damp_parameterized,
-        test_dynamic_lambda_bounds, test_dynamic_lambda_monotonic,
-        test_weighted_choice_deterministic, test_weighted_choice_empty, test_weighted_choice_all_zero,
-        test_weighted_choice_negative_weights,
-        # Hawkes
-        test_hawkes_no_events, test_hawkes_one_event, test_hawkes_multiple_events,
-        test_hawkes_old_events, test_hawkes_monotonic,
-        test_hawkes_naive_and_broken_ts_guarded,
-        # jaccard_3gram (A9)
-        test_jaccard_same_text_is_1, test_jaccard_unrelated_text_is_0,
-        test_jaccard_short_text_boundary, test_jaccard_empty_handling,
-        test_jaccard_partial_overlap,
-    ]
-    for t in tests:
-        t()
-
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")

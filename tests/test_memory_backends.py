@@ -354,24 +354,3 @@ def test_capability_missing_warns_once():
     out = buf.getvalue()
     assert out.count("缺") == 1, f"应只告警一次: {out}"
     print("  OK test_capability_missing_warns_once")
-
-
-if __name__ == "__main__":
-    test_row_contract()
-    test_row_defaults()
-    test_row_non_string_created_at()
-    test_search_basic()
-    test_search_unavailable()
-    test_random_memory_weighted()
-    test_stats()
-    test_stats_qdrant_count()
-    test_add_messages()
-    test_ebbinghaus_inherited()
-    test_factory_mem0()
-    test_factory_custom_class()
-    test_factory_custom_class_bad()
-    test_factory_unknown_string()
-    test_disabled_env_forced_unavailable()
-    test_available_throttle_retry()
-    test_capability_missing_warns_once()
-    print(f"test_memory_backends.py: ALL 17 TESTS PASSED")

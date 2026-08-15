@@ -10,37 +10,22 @@
 """
 import pathlib
 import sys
-import traceback
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FAIL = []
 
 
 def check(name, cond, detail=""):
+    """断言式 check：失败即抛 AssertionError（pytest 感知为失败），不再用 FAIL 列表掩盖。"""
     if cond:
         print(f"  ok - {name}")
     else:
-        FAIL.append(name)
-        print(f"  FAIL - {name} {detail}")
-
-
-tests = []
+        raise AssertionError(f"{name} {detail}")
 
 
 def goto(name):
-    tests.append(name)
     print(f"\n## {name}")
-
-
-def run(t):
-    try:
-        t()
-    except Exception:
-        traceback.print_exc()
-        return False
-    return True
 
 
 def _all_same(mod_a, mod_b):
@@ -140,16 +125,3 @@ def test_netease_alignment():
                               base_dir=td)
         check("合法 retry_backoff_seconds=3 → 3.0", svc2.retry_backoff == 3.0)
         check("合法 reprobe_minutes=45 → 45.0", svc2.reprobe_minutes == 45.0)
-
-
-if __name__ == "__main__":
-    for t in (test_shared_single_implementation, test_cfg_float_semantics,
-              test_trigger_alignment, test_composer_alignment,
-              test_netease_alignment):
-        run(t)
-
-    print(f"\n{'-'*40}")
-    if FAIL:
-        print(f"{len(FAIL)} 项失败: {FAIL}", file=sys.stderr)
-        sys.exit(1)
-    print(f"ALL config-util alignment tests passed ({len(tests)}).")

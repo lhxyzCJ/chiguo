@@ -166,18 +166,3 @@ def test_tsundere_isolated_from_baseline():
             st1.tick(1.0, now + timedelta(hours=i))
             st2.tick(1.0, now + timedelta(hours=i))
         assert st1.emotion.tsundere_index == st2.emotion.tsundere_index
-
-
-if __name__ == "__main__":
-    tests = [
-        test_shift_very_slow_reply, test_shift_cold_reply, test_shift_warm_reply,
-        test_shift_send_no_reply, test_shift_send_replied_and_neutral,
-        test_default_disabled_identity, test_drift_direction_and_magnitude,
-        test_drift_bounded, test_forgetting_returns_to_default,
-        test_tick_target_uses_baseline, test_old_state_missing_baseline_defaults,
-        test_tsundere_isolated_from_baseline,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")

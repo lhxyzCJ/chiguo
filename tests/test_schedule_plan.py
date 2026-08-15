@@ -205,14 +205,3 @@ def test_lock_acquire_timeout_takeover():
         with mock.patch.object(rp.time, "sleep"):
             assert rp._lock(td) is True, "陈旧锁 → 强制接管 true"
     print("  OK test_lock_acquire_timeout_takeover")
-
-
-if __name__ == "__main__":
-    print("test_schedule_plan.py\n")
-    tests = [test_dirty_matrix, test_skip_and_validate, test_replan_pi_env_and_timeout,
-             test_run_replan_success, test_run_replan_agent_fail,
-             test_run_replan_parse_exception, test_run_replan_timeout,
-             test_lock_acquire_timeout_takeover]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}\nALL {len(tests)} tests passed.")

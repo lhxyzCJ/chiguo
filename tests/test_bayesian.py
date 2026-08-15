@@ -283,30 +283,3 @@ def test_state_save_preserves_persisted_bayesian_cache():
         assert s3._bayesian_restored.get("chatting.reply_latency.fast") == learned
         assert s3.bayesian_estimator._get_likelihood("chatting", "reply_latency", "fast") == learned
     print("  OK test_state_save_preserves_persisted_bayesian_cache")
-
-
-if __name__ == "__main__":
-    print("test_bayesian.py\n")
-    tests = [
-        test_time_based_prior_midnight,
-        test_time_based_prior_work_hours,
-        test_time_based_prior_evening,
-        test_time_based_prior_weekend,
-        test_classify_latency,
-        test_classify_msg_length,
-        test_classify_silence,
-        test_infer_chatting,
-        test_infer_sleeping,
-        test_utility_calculation,
-        test_in_class_boosts_busy,
-        test_should_send_bayesian,
-        test_learner_update_from_label,
-        test_record_observation_supervised,
-        test_all_states_in_posterior,
-        test_likelihood_cache_persist_roundtrip,
-        test_state_save_preserves_persisted_bayesian_cache,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} bayesian tests passed.")

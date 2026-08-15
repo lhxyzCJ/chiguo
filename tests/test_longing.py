@@ -69,20 +69,3 @@ def test_longing_decay_full_recovery():
     new_lam = longing_decay(1.5, base, decay_factor=0.0)
     assert new_lam == 0.25
     print(f"  OK test_longing_decay_full_recovery: {new_lam}")
-
-
-if __name__ == "__main__":
-    print("test_longing.py\n")
-    tests = [
-        test_normal_accumulation,
-        test_anxiety_block,
-        test_max_cap,
-        test_held_count_effect,
-        test_longing_decay,
-        test_anxiety_at_threshold,
-        test_longing_decay_full_recovery,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} longing tests passed.")

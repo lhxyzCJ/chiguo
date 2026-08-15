@@ -183,10 +183,3 @@ def test_reminder_dedup_empty_payload_stays_clean():
         import shutil
         shutil.rmtree(base, ignore_errors=True)
     print("  OK test_reminder_dedup_empty_payload_stays_clean")
-
-
-if __name__ == "__main__":
-    test_reminder_dedup_cross_process_two_processes()
-    test_reminder_dedup_state_roundtrip_preserves_marker()
-    test_reminder_dedup_empty_payload_stays_clean()
-    print("\ntest_reminder_dedup_persist.py: ALL PASS")

@@ -103,16 +103,3 @@ def test_override_merge_and_corrupt():
         hp2 = HolidayParser(str(bad))
         assert hp2.range_of("国庆节") == (date(2026, 10, 1), date(2026, 10, 7)), "损坏 override → 跳过仅用内嵌"
     print("  OK test_override_merge_and_corrupt")
-
-
-if __name__ == "__main__":
-    print("test_holiday_parser.py\n")
-    tests = [
-        test_known_holiday, test_holiday_range, test_non_holiday,
-        test_makeup_workday, test_weekend, test_school_day, test_query,
-        test_range_of_and_all_ranges, test_override_merge_and_corrupt,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")

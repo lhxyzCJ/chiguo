@@ -180,21 +180,3 @@ def test_clamp_boundary_with_energy():
         st._apply_emotion_impact({"warmth": 1.0, "effort": 0.0, "attention": 1.0})
         # 压缩后 +4 → 99.0（clamp 上限 100 未触达）
         assert abs(st.emotion.energy - 99.0) < 1e-6
-
-
-if __name__ == "__main__":
-    tests = [
-        test_inertia_zero_identity, test_inertia_half_compression,
-        test_negative_uses_neg_key, test_positive_uses_pos_key,
-        test_affection_mod_damps_less_when_closer, test_clamp_at_090,
-        test_zero_delta,
-        test_default_toml_identity, test_enabled_compresses_delta,
-        test_negative_warmth_compressed_by_neg_key,
-        test_inertia_before_sensitivity_order,
-        test_tsundere_softening_uses_positive_key,
-        test_clamp_boundary_with_energy,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")

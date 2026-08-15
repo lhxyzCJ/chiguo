@@ -98,8 +98,6 @@ def test_loop_hot_reload_config():
         engine._maybe_reload_config()
         assert engine.config["trigger"]["comfort_weight_base"] == 0.42, \
             "语法错误应保留旧配置"
-
-
 def test_loop_hot_reload_rebuild_set():
     """Q19: 热重载重建集合——改 personality / cooldown 静默窗口起始 / holiday_parser
     相关配置 → _maybe_reload_config 后重建生效。"""
@@ -146,15 +144,3 @@ def test_loop_hot_reload_rebuild_set():
         # ③ holiday_parser 随热重载重建（重读 holidays.json，新实例）
         assert engine.state.holiday_parser is not old_hp, \
             "holiday_parser 应随热重载重建（新实例）"
-
-
-if __name__ == "__main__":
-    tests = [
-        test_concurrent_cli_state_integrity,
-        test_loop_hot_reload_config,
-        test_loop_hot_reload_rebuild_set,
-    ]
-    for t in tests:
-        t()
-    print(f"\n{'='*40}")
-    print(f"ALL {len(tests)} tests passed.")

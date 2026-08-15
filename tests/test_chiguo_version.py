@@ -57,10 +57,3 @@ def test_consumer_modules_loadable():
     for mod in ("chiguo_envcheck", "chiguo_monitor"):
         assert importlib.import_module(mod) is not None, f"import {mod} 失败"
     print("  OK test_consumer_modules_loadable")
-
-
-if __name__ == "__main__":
-    tests = [fn for name, fn in globals().items() if name.startswith("test_") and callable(fn)]
-    for fn in tests:
-        fn()
-    print(f"\n全部通过 ({len(tests)} 用例)")
