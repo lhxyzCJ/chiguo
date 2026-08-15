@@ -168,6 +168,3 @@ def test_lambda_monotonic():
         lam_exam = s.current_lambda(dt(2026, 3, 4, 14, 0))
         assert lam_exam < lam_free, f"考试周 λ 低于空闲: {lam_exam} vs {lam_free}"
     print("  OK test_lambda_monotonic")
-
-
-

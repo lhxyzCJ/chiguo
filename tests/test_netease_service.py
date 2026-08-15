@@ -843,6 +843,3 @@ def test_fetch_daily_songs_force_refresh_stdout_pure():
         assert songs is not None and songs[0]["name"] == "歌1"
         assert out.getvalue() == "", f"stdout 泄漏: {out.getvalue()!r}"
         assert "[ok]" in err.getvalue(), "stderr 应含 [ok] 缓存保存提示"
-
-
-

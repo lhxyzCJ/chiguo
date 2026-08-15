@@ -195,6 +195,3 @@ def test_refresh_disabled():
         assert ok is False
         assert not cp.exists()
         print("  OK test_refresh_disabled")
-
-
-

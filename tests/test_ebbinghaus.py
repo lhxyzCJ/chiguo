@@ -127,6 +127,3 @@ def test_ebbinghaus_formula_math():
     expected = math.exp(-1.0)
     assert abs(weight - expected) < 0.01
     print(f"  OK test_ebbinghaus_formula_math: weight={weight:.4f} ≈ {expected:.4f}")
-
-
-

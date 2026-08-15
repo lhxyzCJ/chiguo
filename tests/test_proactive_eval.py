@@ -195,6 +195,3 @@ def test_mixed_triggers_rate_summary():
         assert abs(ps["lonely_high"]["reply_rate"] - 1.0) < 1e-9
         assert ps["overall"]["sent"] == 3 and ps["overall"]["replied"] == 2
     print("  OK test_mixed_triggers_rate_summary")
-
-
-

@@ -139,6 +139,3 @@ def test_select_combo_attaches_templates():
             break
     assert found, "300 次内应至少选中一次 tsundere_classic"
     print("  OK test_select_combo_attaches_templates")
-
-
-

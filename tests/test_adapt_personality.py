@@ -196,6 +196,3 @@ def test_toml_has_regress_rate():
     rate = cfg["personality"]["regress_rate"]
     assert isinstance(rate, float) and 0.0 <= rate <= 1.0, f"regress_rate 非法: {rate!r}"
     print(f"  OK test_toml_has_regress_rate: regress_rate={rate}")
-
-
-

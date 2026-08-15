@@ -238,6 +238,3 @@ def test_fallback_text_followup_not_memory_templates():
         assert t in pool, f"follow_up 兜底未走专属池: {t!r}"
     assert seen_cue > 0, "应出现带 cue 的 follow_up combo"
     print("  OK test_fallback_text_followup_not_memory_templates")
-
-
-

@@ -98,6 +98,3 @@ def test_loop_hot_reload_config():
         engine._maybe_reload_config()
         assert engine.config["trigger"]["comfort_weight_base"] == 0.42, \
             "语法错误应保留旧配置"
-
-
-

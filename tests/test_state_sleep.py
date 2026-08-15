@@ -209,6 +209,3 @@ def test_config_invalid_quiet_window_loads_and_runs():
         assert s.cooldown.silent_hours(now) >= 0.0
         s.can_send(now)  # 不抛
     print("  OK test_config_invalid_quiet_window_loads_and_runs")
-
-
-

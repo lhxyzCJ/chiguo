@@ -213,6 +213,3 @@ def test_topic_picker_read_side_wired():
     kind2, tag2, w2 = fs_off.memory_bridge.calls[0]
     assert tag2 is None and w2 == 0.0, f"关闭应恒等: {tag2}/{w2}"
     print("  OK test_topic_picker_read_side_wired")
-
-
-

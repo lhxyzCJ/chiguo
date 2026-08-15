@@ -698,6 +698,3 @@ def test_migrate_confidence_type_drift_gate():
         assert s2.circadian.weekday_confidence == 0.0  # 视为 0 → 不继承
         assert s2.circadian.weekend_confidence == 0.0
     print("  OK test_migrate_confidence_type_drift_gate")
-
-
-

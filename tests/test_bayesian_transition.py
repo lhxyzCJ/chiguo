@@ -190,6 +190,3 @@ def test_state_infer_user_state_carries_new_keys():
         assert "entropy" in r2 and "prev_posterior" in r2
         assert r2["most_likely"] == "browsing"
     print("  OK test_state_infer_user_state_carries_new_keys")
-
-
-

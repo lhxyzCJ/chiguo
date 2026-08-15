@@ -283,6 +283,3 @@ def test_state_save_preserves_persisted_bayesian_cache():
         assert s3._bayesian_restored.get("chatting.reply_latency.fast") == learned
         assert s3.bayesian_estimator._get_likelihood("chatting", "reply_latency", "fast") == learned
     print("  OK test_state_save_preserves_persisted_bayesian_cache")
-
-
-

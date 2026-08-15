@@ -97,6 +97,3 @@ def test_fallback_text_intent_fallback():
     many = {"cue": {"templates": [f"模板{i}" for i in range(5)]}}
     assert len(_fallback_text(many).split("\n")) == 3, "最多 3 句"
     print("  OK test_fallback_text_intent_fallback")
-
-
-

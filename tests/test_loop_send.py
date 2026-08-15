@@ -345,6 +345,3 @@ def test_loop_health_restart_recovers():
                 _restore_env(old_r, ah)
     finally:
         srv.shutdown()
-
-
-

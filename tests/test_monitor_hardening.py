@@ -238,6 +238,3 @@ def test_state_file_invalid_utf8_falls_back():
         s2 = mon.stats(days=0)
         assert s2["activity"]["total_sends"] == 1, f"非法 UTF-8 行应跳过: {s2}"
     print("  OK test_state_file_invalid_utf8_falls_back")
-
-
-

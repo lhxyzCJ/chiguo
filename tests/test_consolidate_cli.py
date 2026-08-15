@@ -150,6 +150,3 @@ def test_cli_config_threshold_string_passthrough():
         assert rc == 0
         assert seen["sim_threshold"] == "0.85", f"字符串阈值应透传: {seen}"
     print("  OK test_cli_config_threshold_string_passthrough")
-
-
-

@@ -377,6 +377,3 @@ def test_sanitize_url_bad_port_and_ipv6():
     s = ec._sanitize_url("http://[::1]:11434?token=x")
     assert s == "http://[::1]:11434", s
     print("  OK test_sanitize_url_bad_port_and_ipv6")
-
-
-

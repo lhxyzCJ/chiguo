@@ -432,6 +432,3 @@ def test_recv_dedup_recv_id_precise():
             ' "user_mood": "low", "user_mood_intensity": 0.5}')
         # text_sha 不匹配 → 非升级，走完整记录
         assert st.cooldown.recv_dedup.get("text_sha") != "deadbeef"
-
-
-

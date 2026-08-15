@@ -308,6 +308,3 @@ def test_apply_forgetting_score_boost():
         assert scored[0]["id"] == "recalled", \
             f"被召回记忆应排前, got {[m['id'] for m in scored]}"
     print("  OK test_apply_forgetting_score_boost")
-
-
-

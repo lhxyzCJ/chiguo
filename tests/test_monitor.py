@@ -1149,6 +1149,3 @@ def test_reply_latency_stats():
         # reply_rate: 2 replies / 3 sends-with-mwr>0
         assert abs(s["replies"]["reply_rate"] - 0.667) < 0.01
     print("  OK test_reply_latency_stats")
-
-
-

@@ -140,6 +140,3 @@ def test_special_source_switch():
         assert c.get("special", 0) > 0, f"anniversary 当天应触发 special, got {c}"
         assert c.get("special", 0) < 100, f"×0.5 后不得全中, got {c}"
     print("  OK test_special_source_switch")
-
-
-

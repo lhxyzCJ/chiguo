@@ -271,6 +271,3 @@ def test_plan_store_and_confirm():
         q2, m2 = build_question("no_source_class")
         assert "没有课" in q2 and "period" in m2
     print("  OK test_plan_store_and_confirm")
-
-
-

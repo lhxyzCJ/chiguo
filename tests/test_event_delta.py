@@ -140,6 +140,3 @@ def test_apply_analysis_impact_wired():
         assert abs(s_on.emotion.affection - base[1] - 2.0) < 1e-9, \
             f"praise 事件 delta affection+2 未叠加: {base[1]} → {s_on.emotion.affection}"
     print("  OK test_apply_analysis_impact_wired")
-
-
-

@@ -162,6 +162,3 @@ def test_snapshot_attention_m2_cache():
             st.snapshot(now2)    # 同日 again → 命中
             assert m.call_count == 2, f"跨日后同日再 snapshot 不重算, got {m.call_count}"
     print("  OK test_snapshot_attention_m2_cache")
-
-
-

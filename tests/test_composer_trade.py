@@ -90,6 +90,3 @@ def test_morning_no_caring_boost():
         w = c._modulate_cue_weights(tt)
         assert w["caring_gentle"] == c.cue_weights["caring_gentle"], f"{tt} 不应放大 caring"
     print("  OK test_morning_no_caring_boost")
-
-
-

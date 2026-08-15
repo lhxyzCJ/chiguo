@@ -447,6 +447,3 @@ def test_9_exam_weekend_overlap(cfg):
     avail = s.availability(dt(2026, 6, 13, 14, 0))   # 周六
     assert avail == 0.5, f"考周×周末 → 0.5, got {avail}"
     print("  OK test_9_exam_weekend_overlap")
-
-
-

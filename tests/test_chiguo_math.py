@@ -350,6 +350,3 @@ def test_jaccard_partial_overlap():
     assert 0.0 < j_partial < 1.0
     assert jaccard_3gram("今天天气不错呀", "今天天气不错呢") > jaccard_3gram("今天天气不错呀", "午饭吃了吗哥哥")
     print("  OK test_jaccard_partial_overlap")
-
-
-

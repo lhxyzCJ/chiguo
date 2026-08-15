@@ -354,6 +354,3 @@ def test_capability_missing_warns_once():
     out = buf.getvalue()
     assert out.count("缺") == 1, f"应只告警一次: {out}"
     print("  OK test_capability_missing_warns_once")
-
-
-

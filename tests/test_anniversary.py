@@ -134,6 +134,3 @@ def test_special_dates_merge_kept_behavior():
         assert not any(a.name == "迟菓生日" for a in api.anniversary_mgr.list_all()), \
             "文件存在不合并默认(用户曾删默认)"
     print("  OK test_special_dates_merge_kept_behavior")
-
-
-

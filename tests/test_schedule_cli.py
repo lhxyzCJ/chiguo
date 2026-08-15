@@ -82,6 +82,3 @@ def test_schedule_recall_shape():
         assert any("生日" in m.get("label", "") for m in r["matches"]), f"got {r}"
         assert r["query"] == "生日"
     print("  OK test_schedule_recall_shape")
-
-
-

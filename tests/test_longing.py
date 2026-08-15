@@ -69,6 +69,3 @@ def test_longing_decay_full_recovery():
     new_lam = longing_decay(1.5, base, decay_factor=0.0)
     assert new_lam == 0.25
     print(f"  OK test_longing_decay_full_recovery: {new_lam}")
-
-
-

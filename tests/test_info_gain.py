@@ -122,6 +122,3 @@ def test_low_entropy_no_boost():
     r = est.infer(_low_entropy_obs(), now)
     assert "info_gain_boost" not in r
     print(f"  OK test_low_entropy_no_boost: entropy={r['entropy']:.3f}")
-
-
-

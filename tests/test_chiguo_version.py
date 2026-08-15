@@ -57,6 +57,3 @@ def test_consumer_modules_loadable():
     for mod in ("chiguo_envcheck", "chiguo_monitor"):
         assert importlib.import_module(mod) is not None, f"import {mod} 失败"
     print("  OK test_consumer_modules_loadable")
-
-
-

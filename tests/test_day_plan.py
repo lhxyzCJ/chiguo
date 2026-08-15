@@ -516,6 +516,3 @@ def test_override_store_filters_oob_period():
            12: {"period": 12, "course": "x", "source": "schedule", "cancelled": False}}
     between = datetime(2026, 8, 5, 9, 36, tzinfo=CST)
     assert class_load_adjust(0.85, odd, between) in (0.85, 0.7, 0.5), "越界 period 不 KeyError"
-
-
-

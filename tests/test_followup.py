@@ -282,6 +282,3 @@ def test_daemon_context_contains_follow_up_hint():
         assert "接话茬" in context["instruction"]
         assert "比赛" in context["instruction"]
     print("  OK test_daemon_context_contains_follow_up_hint")
-
-
-

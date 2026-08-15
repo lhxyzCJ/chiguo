@@ -257,6 +257,3 @@ def test_holidays_generate_cross_year_merge():
             uh.generate(2026)
             assert p.read_text(encoding="utf-8") == before, "已含 2026 数据应拒绝覆盖"
     print("  OK test_holidays_generate_cross_year_merge")
-
-
-

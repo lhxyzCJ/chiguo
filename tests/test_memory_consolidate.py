@@ -311,6 +311,3 @@ def test_maybe_consolidate_triggers_and_persists():
     assert eng.state.cooldown.consolidate_last_at is not None
     assert eng.state.saves >= 1
     print("  OK test_maybe_consolidate_triggers_and_persists")
-
-
-

@@ -241,6 +241,3 @@ def test_noise_loop_total_does_not_scale_with_tick_count():
     # bug 版：Σx_i ≈ 0.15×N → N=400 时 ~58，必爆。3.0 是 10σ 安全边界。
     assert abs(s100) < 3.0 and abs(s400) < 3.0, \
         f"累积噪声应平稳有界（OU 平稳级），而非随 tick 放大: s100={s100}, s400={s400}"
-
-
-

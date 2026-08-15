@@ -285,6 +285,3 @@ def test_reply_pending_queue_bounded():
     s.record_trigger_replied()
     assert s.cooldown.reply_pending[0] == "t17"
     print("  OK test_reply_pending_queue_bounded")
-
-
-

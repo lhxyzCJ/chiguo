@@ -152,6 +152,3 @@ def test_personality_delta_constants():
     assert -0.2 < PersonalityDeltas.COLD_REPLY.neuroticism < 0.3
     assert PersonalityDeltas.SENT_NO_REPLY.tsundere_intensity > 0  # 无回复 → 傲娇增强
     print("  OK test_personality_delta_constants")
-
-
-

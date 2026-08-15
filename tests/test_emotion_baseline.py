@@ -166,6 +166,3 @@ def test_tsundere_isolated_from_baseline():
             st1.tick(1.0, now + timedelta(hours=i))
             st2.tick(1.0, now + timedelta(hours=i))
         assert st1.emotion.tsundere_index == st2.emotion.tsundere_index
-
-
-

@@ -47,6 +47,3 @@ def test_state_is_only_bridge():
     mods = [getattr(n, "module", "") for n in imps]
     assert any(m and m.startswith("schedule") for m in mods), "chiguo_state 应经 schedule 纯函数"
     print("  OK test_state_is_only_bridge")
-
-
-

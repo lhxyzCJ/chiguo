@@ -180,6 +180,3 @@ def test_clamp_boundary_with_energy():
         st._apply_emotion_impact({"warmth": 1.0, "effort": 0.0, "attention": 1.0})
         # 压缩后 +4 → 99.0（clamp 上限 100 未触达）
         assert abs(st.emotion.energy - 99.0) < 1e-6
-
-
-

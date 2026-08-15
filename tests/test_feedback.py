@@ -443,6 +443,3 @@ def test_phantom_send_reply_path_refund_and_monitor():
         sr = s.get("send_result", {})
         assert sr["failed"] == 0, f"phantom refund must not count as send_failed, got {sr}"
     print("  OK test_phantom_send_reply_path_refund_and_monitor")
-
-
-

@@ -222,6 +222,3 @@ def test_fmt_search_row_falls_back_to_abstract():
     out = fmt_search_row({"category": "e", "text": long_text})
     assert out == f"[e] {'字' * 80}", f"应截断到 80 字, got {len(out)}"
     print("  OK test_fmt_search_row_falls_back_to_abstract")
-
-
-

@@ -87,6 +87,3 @@ def test_recall_chinese_date_query():
         r = recall("8月20日", src, TODAY)
         assert any(m.get("label") == "交材料" for m in r["matches"])
     print("  OK test_recall_chinese_date_query")
-
-
-

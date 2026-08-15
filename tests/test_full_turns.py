@@ -159,6 +159,3 @@ def test_autowrite_env_default_enabled():
         if saved is not None:
             os.environ["CHIGUO_MEM0_AUTOWRITE"] = saved
     print("  OK test_autowrite_env_default_enabled")
-
-
-
