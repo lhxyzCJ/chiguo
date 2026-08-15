@@ -1374,6 +1374,24 @@ reply_feedback_low_rate = 0.3
 reply_feedback_high_rate = 0.7
 reply_feedback_min_samples = 3
 
+# Q10 (#276) 触发离散概率/魔法权重配置化（默认 = 现值，行为不变）
+ritual_special_weight = 3.0        # 仪式类基础权重（×[cooldown].ritual_weight_scale）
+ritual_morning_weight = 2.5
+ritual_night_weight = 2.0
+ritual_meal_weight = 0.8
+ritual_memory_weight = 2.0
+ritual_mem0_weight = 1.5
+morning_probability = 0.10         # 早安窗口触发概率
+night_probability = 0.12           # 晚安窗口触发概率
+meal_probability = 0.05            # 饭点触发概率
+mem0_surface_min_silent_hours = 6.0  # mem0 随机浮现沉默阈值
+mem0_surface_probability = 0.08    # mem0 随机浮现概率
+followup_memory_probability = 0.5  # 接话茬记忆兜底概率门控
+habit_probability = 0.06           # habit 记忆触发概率
+playful_base_weight = 0.15         # playful 基础权重
+reflect_base_weight = 0.08         # reflect 基础权重
+reflect_probability = 0.08         # reflect 概率门控
+
 [poisson]    # Poisson 过程参数（μ 的基础部分）
 base_lambda = 0.25                 # 基础事件率（次/小时）
 lambda_loneliness_mid = 50
