@@ -289,7 +289,7 @@ function runCli(spawnFn, args, timeoutMs = 30_000) {
   return runCmd(spawnFn, process.execPath, args, timeoutMs)
 }
 
-/** 任意命令 spawn（v1.8：记忆斜杠命令走 memory_bridge.py CLI(mem0 后端)）。 */
+/** 任意命令 spawn（v1.8/Q9：记忆斜杠命令走 memory 包 CLI(mem0 后端)）。 */
 function runCmd(spawnFn, cmd, args, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const c = spawnFn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs })
@@ -328,14 +328,14 @@ function fmtTokens(n) {
 }
 
 /** 执行斜杠命令(纯 node 侧:文件操作 + 记忆后端 CLI),不经 pi/daemon。
- *  v1.8: 记忆命令走 memory_bridge.py CLI(mem0 唯一记忆后端),
+ *  Q9: 记忆命令直接走 memory 包 CLI(python -m memory, mem0 唯一记忆后端),
  *  /记忆、/记得什么 均可用。 */
 export async function executeSlashCommand(spawnFn, spec, cwd) {
   const repo = process.env.CHIGUO_REPO ?? dirname(cwd)
   const backups = join(homedir(), '.chiguo', 'session-backups')
-  // 记忆后端 CLI：解释器/脚本均可 env 覆盖（测试注入 fake；生产默认 .venv python + 仓库脚本）
+  // 记忆后端 CLI：解释器/argv 均可 env 覆盖（测试注入 fake；生产默认 .venv python + -m memory）
   const memPy = process.env.WECHAT_BRIDGE_MEMORY_PY ?? join(repo, '.venv', 'bin', 'python')
-  const memBridge = process.env.WECHAT_BRIDGE_MEMORY_BRIDGE ?? join(repo, 'memory_bridge.py')
+  const memCli = (process.env.WECHAT_BRIDGE_MEMORY_CLI ?? '-m memory').split(' ')
   switch (spec.action) {
     case 'new_session': {
       try {
@@ -365,7 +365,7 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
         } catch {}
         let memCount = '?'
         try {
-          const out = await runCmd(spawnFn, memPy, [memBridge, '--stats'])
+          const out = await runCmd(spawnFn, memPy, [...memCli, '--stats'])
           const m = out.match(/"total_memories":\s*(\d+)/)
           if (m) memCount = m[1]
         } catch {}
@@ -381,7 +381,7 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
     }
     case 'memory_stats': {
       try {
-        const out = await runCmd(spawnFn, memPy, [memBridge, '--stats'])
+        const out = await runCmd(spawnFn, memPy, [...memCli, '--stats'])
         let n = '?'
         try { n = JSON.parse(out).total_memories ?? '?' } catch {}
         return { ok: true, reply: `记忆库共 ${n} 条。哼，重要的事我都记着呢。` }
@@ -392,7 +392,7 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
     case 'memory_search': {
       if (!spec.arg) return { ok: true, reply: '想查什么？给我个词呀——比如说「记得什么 火锅」。' }
       try {
-        const out = await runCmd(spawnFn, memPy, [memBridge, '--search', spec.arg])
+        const out = await runCmd(spawnFn, memPy, [...memCli, '--search', spec.arg])
         const lines = out.split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 3)
         if (!lines.length) return { ok: true, reply: `……「${spec.arg}」？没印象。哼，记性不好的是你吧。` }
         const items = lines.map((l) => l.replace(/^\[[^\]]*\]\s*/, '').slice(0, 60))

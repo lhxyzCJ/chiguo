@@ -408,7 +408,7 @@ t('slash: /new 移走最近 chiguo-main 会话文件到备份目录（HOME 注�
     fs.rmSync(home, { recursive: true, force: true })
   }
 })
-t('slash: /记忆 → memory_bridge.py --stats（经 memory 抽象 CLI，不硬编码 agent 扩展）', async () => {
+t('slash: /记忆 → memory CLI --stats（经 memory 抽象 CLI，不硬编码 agent 扩展）', async () => {
   const fs = await import('node:fs')
   const os = await import('node:os')
   const path = await import('node:path')
@@ -421,9 +421,9 @@ else if (args[0] === '--search') {
   if (args[1] !== '不存在的东西') console.log('[preferences] 一起吃过火锅\\n[events] 火锅店新开张')
 }
 `)
-  const prev = [process.env.WECHAT_BRIDGE_MEMORY_PY, process.env.WECHAT_BRIDGE_MEMORY_BRIDGE, process.env.CHIGUO_REPO]
+  const prev = [process.env.WECHAT_BRIDGE_MEMORY_PY, process.env.WECHAT_BRIDGE_MEMORY_CLI, process.env.CHIGUO_REPO]
   process.env.WECHAT_BRIDGE_MEMORY_PY = process.execPath
-  process.env.WECHAT_BRIDGE_MEMORY_BRIDGE = fake
+  process.env.WECHAT_BRIDGE_MEMORY_CLI = fake
   process.env.CHIGUO_REPO = td
   try {
     const r = await executeSlashCommand(spawn, { action: 'memory_stats' }, td)
@@ -437,8 +437,8 @@ else if (args[0] === '--search') {
     assert.ok(r3.reply.includes('没印象'), r3.reply)
   } finally {
     for (let i = 0; i < 3; i++) {
-      if (prev[i] === undefined) delete process.env[['WECHAT_BRIDGE_MEMORY_PY', 'WECHAT_BRIDGE_MEMORY_BRIDGE', 'CHIGUO_REPO'][i]]
-      else process.env[['WECHAT_BRIDGE_MEMORY_PY', 'WECHAT_BRIDGE_MEMORY_BRIDGE', 'CHIGUO_REPO'][i]] = prev[i]
+      if (prev[i] === undefined) delete process.env[['WECHAT_BRIDGE_MEMORY_PY', 'WECHAT_BRIDGE_MEMORY_CLI', 'CHIGUO_REPO'][i]]
+      else process.env[['WECHAT_BRIDGE_MEMORY_PY', 'WECHAT_BRIDGE_MEMORY_CLI', 'CHIGUO_REPO'][i]] = prev[i]
     }
     fs.rmSync(td, { recursive: true, force: true })
   }

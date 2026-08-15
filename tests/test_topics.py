@@ -19,7 +19,7 @@ CST = timezone(timedelta(hours=8))
 
 from chiguo_topics import TopicPicker
 from chiguo_state import ChiguoState
-from memory_bridge import MemoryBridge
+from memory import Mem0Backend as MemoryBridge
 
 
 def _picker_cfg() -> dict:
