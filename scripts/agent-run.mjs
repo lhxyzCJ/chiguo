@@ -287,7 +287,22 @@ export function buildBaseAgentArgs({ analysisMode = false, sessionId = SESSION_I
     '--thinking', analysisMode ? REPLY_THINKING : THINKING]
 }
 
-/** send-mode 主动消息模板（print 与 RPC 共用）。 */
+/**
+ * send-mode 主动消息模板（print 与 RPC 共用）。
+ *
+ * Q16 契约互引：决策 JSON 字段名清单以 Python 侧 decision_schema.py 为单一权威
+ * （本文件无法 import Python schema，只能对齐字段名）。send 记录稳定字段：
+ *   action="send"（必）、contract（契约键=1，由 daemon 写前统一加，历史 jsonl 缺省 1）、
+ *   version（项目版本号，非 contract）、msg_id、trigger、intensity(soft|medium|intense)、
+ *   context（含 layer_guidance/instruction 等给 agent 的生成指引）、
+ *   state、bayesian?、data_warning?。
+ * 本模板仅消费 context 中的生成指引；字段增减请同步 decision_schema.py 与维护此注释。
+ * keep-in-sync: decision_schema.py::_REQUIRED['send']/['idle']
+ */
+export const DECISION_SEND_FIELDS = [
+  'action', 'bayesian', 'contract', 'context', 'data_warning', 'intensity',
+  'msg_id', 'next_evaluation_at', 'state', 'trigger', 'version',
+]
 export function buildSendPrompt(decisionJson) {
   return `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${decisionJson}`
 }
