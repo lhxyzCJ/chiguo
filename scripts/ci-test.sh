@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 全量测试链（59 py + 14 script）——本地与 CI 同一入口；任一失败即退出非零
+# 全量测试链（62 py + 14 script）——本地与 CI 同一入口；任一失败即退出非零
 # 前置: .venv 存在（本地 dev 机已有；CI 由 uv sync 创建）
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,7 +23,8 @@ node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && \
 node tests/test_bridge_rotate.mjs && node tests/test_bridge_schedule.mjs && bash tests/test_install_agent.sh && \
 bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
 bash tests/test_tick_health.sh && bash tests/test_service.sh && \
-uv run python tests/test_chiguo_math.py && uv run python tests/test_emotion_dynamics.py && \
+uv run python tests/test_chiguo_math.py && uv run python tests/test_config_util.py && \
+uv run python tests/test_emotion_dynamics.py && \
 uv run python tests/test_emotion_noise.py && uv run python tests/test_emotion_baseline.py && uv run python tests/test_loop_send.py && uv run python tests/test_loop_concurrency.py && \
 uv run python tests/test_holiday_parser.py && \
 uv run python tests/test_schedule_parser.py && \
