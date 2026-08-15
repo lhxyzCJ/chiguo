@@ -408,6 +408,52 @@ t('slash: /new 移走最近 chiguo-main 会话文件到备份目录（HOME 注�
     fs.rmSync(home, { recursive: true, force: true })
   }
 })
+t("slash: 默认配置 memory CLI cwd=repo + argv=['-m','memory']（生产 bridge CWD=BRIDGE_DIR 亦可 import memory）", async () => {
+  const { EventEmitter } = await import('node:events')
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const td = fs.mkdtempSync(path.join(tmpdir(), 'slash-default-cwd-'))
+  const fakeRepo = path.join(td, 'repo')
+  const bridgeDir = path.join(fakeRepo, 'wechat-bridge')
+  fs.mkdirSync(bridgeDir, { recursive: true })
+  const captured = []
+  const fakeSpawn = (cmd, args, opts) => {
+    captured.push({ cmd, args, opts })
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    child.stdout.setEncoding = () => {}
+    child.stderr.setEncoding = () => {}
+    child.kill = () => {}
+    setImmediate(() => {
+      child.stdout.emit('data', JSON.stringify({ total_memories: 7 }))
+      child.emit('close', 0)
+    })
+    return child
+  }
+  const prev = [process.env.WECHAT_BRIDGE_MEMORY_PY, process.env.WECHAT_BRIDGE_MEMORY_CLI, process.env.CHIGUO_REPO]
+  process.env.WECHAT_BRIDGE_MEMORY_PY = 'python-pytest-dummy'
+  delete process.env.WECHAT_BRIDGE_MEMORY_CLI   // 关键：不注入 CLI，验证默认 argv 数组
+  process.env.CHIGUO_REPO = fakeRepo
+  try {
+    // 模拟生产：bridge 进程 CWD=wechat-bridge/，cwd 参数即 BRIDGE_DIR
+    const r = await executeSlashCommand(fakeSpawn, { action: 'memory_stats' }, bridgeDir)
+    assert.strictEqual(r.ok, true)
+    assert.ok(r.reply.includes('7'), r.reply)
+    assert.strictEqual(captured.length, 1, '恰好一次 memory CLI 调用')
+    const call = captured[0]
+    assert.deepStrictEqual(call.args.slice(0, 2), ['-m', 'memory'], '默认 CLI argv 应为数组 [-m, memory]')
+    assert.strictEqual(call.args[call.args.length - 1], '--stats', '应拼接 --stats')
+    assert.strictEqual(call.opts.cwd, fakeRepo, 'memory CLI 子进程 cwd 应锚定 repo 根（而非 bridge 目录）')
+  } finally {
+    for (let i = 0; i < 3; i++) {
+      const k = ['WECHAT_BRIDGE_MEMORY_PY', 'WECHAT_BRIDGE_MEMORY_CLI', 'CHIGUO_REPO'][i]
+      if (prev[i] === undefined) delete process.env[k]
+      else process.env[k] = prev[i]
+    }
+    fs.rmSync(td, { recursive: true, force: true })
+  }
+})
 t('slash: /记忆 → memory CLI --stats（经 memory 抽象 CLI，不硬编码 agent 扩展）', async () => {
   const fs = await import('node:fs')
   const os = await import('node:os')
