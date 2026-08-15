@@ -120,7 +120,7 @@ def check_agent(agent_bin: str = "pi", skip_agent: bool = False,
                 runner: str = "agent", agent_command: list[str] = None) -> dict:
     """消息生成后端可执行且可报告版本。缺失/不可运行 → critical(消息生成端缺失);
     --skip-agent 下缺失降为 warn(用户显式跳过,不阻塞部署但如实报告降级)。
-    v1.8: runner=command 时检查自定义 agent 命令(任意 CLI 后端,
+    runner=command 时检查自定义 agent 命令(任意 CLI 后端,
     经 scripts/agent-run.mjs 契约调用,见 doc/AGENT_INTEGRATION.md)。"""
     if runner != "agent":
         # 自定义 agent 后端:检查 agent_command[0] 可执行(绝对路径或 PATH)
@@ -345,7 +345,7 @@ def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = Non
     agent_auth = home / ".pi" / "agent" / "auth.json"
     ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
     provider = cfg.get("host", {}).get("provider") or "opencode-go"
-    # v1.8: agent 后端抽象（runner=agent 默认；command=自定义 CLI agent）
+    # agent 后端抽象（runner=agent 默认；command=自定义 CLI agent）
     runner = cfg.get("host", {}).get("runner") or "agent"
     agent_command = cfg.get("host", {}).get("agent_command") or None
     # 记忆后端检查（mem0 为唯一后端，恒直检；具体可用性由后端自身降级）

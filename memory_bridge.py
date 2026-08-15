@@ -1,5 +1,5 @@
 # ============================================================
-# memory_bridge.py — 记忆桥接门面（v1.8 已解耦到 memory/ 包；v1.9 后端 = mem0）
+# memory_bridge.py — 记忆桥接门面（已解耦到 memory/ 包；mem0 为唯一后端）
 #
 # 实现迁移至 memory/ 包：Mem0Backend（memory/mem0_backend.py）、
 # 工厂 create_backend（memory/factory.py）。
@@ -40,7 +40,7 @@ def _default_bridge():
     return create_backend(cfg.get("memory", {}), base_dir=repo)
 
 
-# ── C3: 展示用读——text 优先（l0_abstract 已废弃，仅作空值兜底）。──
+# ── 展示用读——text 优先（l0_abstract 已废弃，仅作空值兜底）。──
 
 def fmt_search_row(m: dict) -> str:
     """search 结果单行展示：text 优先，l0_abstract 兜底（不依赖死字段）。"""

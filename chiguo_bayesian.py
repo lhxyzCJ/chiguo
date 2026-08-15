@@ -487,7 +487,7 @@ class UserStateEstimator:
         if actual_state:
             self.learner.update_from_label(observations, actual_state)
 
-    # ── 持久化（v1.11+R3: 在线学习 EMA 调优跨进程保留）──────────────
+    # ── 持久化（在线学习 EMA 调优跨进程保留）──────────────
 
     def to_state_dict(self) -> dict:
         """序列化似然缓存供状态落盘（tuple key → "state.obs_key.obs_value"）。

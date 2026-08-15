@@ -1,5 +1,5 @@
 # ============================================================
-# memory/factory.py — 记忆后端工厂（v1.8 解耦；v1.9 默认 mem0）
+# memory/factory.py — 记忆后端工厂（已解耦；mem0 为唯一后端）
 #
 # mem0 为唯一记忆后端（[memory].backend 仅接受 "mem0"/"auto" 遗留值）：
 #   "mem0"   （默认）mem0 AI 记忆后端（mem0ai 库；库缺失/无 key/

@@ -130,7 +130,7 @@ def _load_cache(cp: Path) -> tuple[dict, float]:
             for period_str, course in periods.items():
                 c = dict(course)
                 c["weeks"] = set(c.get("weeks", []))  # list → set
-                # v2: 合并单元格的备选课程（旧缓存无此字段 → 空列表）
+                # 合并单元格的备选课程（旧缓存无此字段 → 空列表）
                 c["alternates"] = [
                     {**a, "weeks": set(a.get("weeks", []))}
                     for a in (c.get("alternates") or [])
@@ -142,7 +142,7 @@ def _load_cache(cp: Path) -> tuple[dict, float]:
         except OSError:
             pass
         return {}, 0
-    # v2: 旧版本缓存（合并单元格课被吞进 location）→ 强制重解析（xlsx 存在时）
+    # 旧版本缓存（合并单元格课被吞进 location）→ 强制重解析（xlsx 存在时）
     if data.get("cache_version", 1) < 2:
         parsed_at = 0
     return schedule, parsed_at

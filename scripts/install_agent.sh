@@ -88,7 +88,7 @@ else
 fi
 
 # ── 阶段 0b: 清理 pi 记忆扩展残留（memory-lancedb-pro 已移除；mem0 唯一后端）──
-# v1.15 起 mem0 为唯一记忆后端，该扩展不再安装/加载；对历史部署机幂等清理，
+# mem0 现为唯一记忆后端，该扩展不再安装/加载；对历史部署机幂等清理，
 # 无扩展机器零副作用。dry-run 只报告；ask/yes 执行（ask 模式一次性 confirm）。
 cleanup_memory_extension() {
   local SET="$HOME/.pi/agent/settings.json"
@@ -260,7 +260,7 @@ cron_check_commented() {
 }
 
 # ── 阶段 6: crontab 注册 chiguo-tick ───────────────────────
-# v1.11 C: CHIGUO_DAEMON_LOOP=1 → 决策引擎改 systemd 常驻（--loop，发送侧内聚），
+# CHIGUO_DAEMON_LOOP=1 → 决策引擎改 systemd 常驻（--loop，发送侧内聚），
 # 跳过 tick 条目（cron tick 与 loop 并存会双发消息，必须互斥）。
 if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
   say "CHIGUO_DAEMON_LOOP=1 → 跳过 chiguo-tick crontab（决策引擎改由 chiguo-daemon.service 常驻）"
