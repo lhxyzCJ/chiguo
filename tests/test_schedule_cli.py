@@ -7,7 +7,7 @@ os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pathlib import Path
 
-import chiguo_daemon as D
+import cli.commands as C
 
 
 def _tmp_cfg(td, sched_overrides=None):
@@ -33,7 +33,7 @@ def _run(fn, *args):
 def test_attention_shape_and_zero_write():
     with tempfile.TemporaryDirectory() as td:
         cfg_p = _tmp_cfg(td)
-        code, r, _, _ = _run(D._cmd_attention, cfg_p)
+        code, r, _, _ = _run(C._cmd_attention, cfg_p)
         assert code == 0 and r["ok"] is True
         assert set(r["attention"]) == {"t1", "t2", "t3", "week_num", "today_exceptions"}
         assert isinstance(r["attention"]["t1"], list) and isinstance(r["attention"]["t3"], dict)
@@ -45,26 +45,26 @@ def test_attention_shape_and_zero_write():
 def test_schedule_change_success_and_shapes():
     with tempfile.TemporaryDirectory() as td:
         cfg_p = _tmp_cfg(td)
-        code, r, _, _ = _run(D._cmd_schedule_change,
+        code, r, _, _ = _run(C._cmd_schedule_change,
                              '{"kind": "reminder", "when": {"date": "2026-08-20"}, "label": "交材料"}',
                              cfg_p)
         assert code == 0 and r["action"] == "schedule_change" and r["ok"] is True
         assert "8月20日" in r["text"] and "周四" in r["text"], f"A4 text=确认文案(含星期+日期), got {r['text']}"
         # 畸形 JSON → ok:false + bad_json + 不写入(十九轮安全钉)
         before = Path(td, "schedule_overrides.json").read_text()
-        code, r, _, err = _run(D._cmd_schedule_change, "{not json", cfg_p)
+        code, r, _, err = _run(C._cmd_schedule_change, "{not json", cfg_p)
         assert code == 1 and r["ok"] is False and r["reason"] == "bad_json"
         assert r["question"] == "处理失败,再试一次?"
         assert Path(td, "schedule_overrides.json").read_text() == before, "畸形 JSON 不写入"
         assert "畸形" in err, "stderr 诊断"
         # ApiRejection → reason 类别 + H5 question
-        code, r, _, _ = _run(D._cmd_schedule_change,
+        code, r, _, _ = _run(C._cmd_schedule_change,
                              '{"kind": "reminder", "when": {"date": "2026-08-01"}, "label": "过去"}',
                              cfg_p)
         assert code == 1 and r["ok"] is False and r["reason"] == "past_date"
         assert "过去了" in r["question"] and r.get("missing") == ["date"], f"got {r}"
         # remove 路由
-        code, r, _, _ = _run(D._cmd_schedule_change,
+        code, r, _, _ = _run(C._cmd_schedule_change,
                              '{"kind": "remove", "match": {"date": "2026-08-20", "label": "交材料"}}',
                              cfg_p)
         assert code == 0 and r["ok"] is True
@@ -77,7 +77,7 @@ def test_schedule_recall_shape():
         Path(td, "anniversaries.json").write_text(json.dumps({"anniversaries": [
             {"id": "a1", "type": "anniversary", "name": "哥哥的生日", "date": "05-11",
              "note": "", "created_at": "2026-01-01"}]}))
-        code, r, _, _ = _run(D._cmd_schedule_recall, "生日", cfg_p)
+        code, r, _, _ = _run(C._cmd_schedule_recall, "生日", cfg_p)
         assert code == 0 and r["action"] == "schedule_recall" and r["ok"] is True
         assert any("生日" in m.get("label", "") for m in r["matches"]), f"got {r}"
         assert r["query"] == "生日"

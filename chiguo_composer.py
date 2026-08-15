@@ -7,25 +7,17 @@
 
 import argparse
 import json
-import math
 import random
 import re
 import sys
 import tomllib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-
-def _to_float(value, default: float) -> float:
-    """composer 配置权重解析：非数值/NaN/inf 回退默认（不钳制，负值由调用处 max(0.0,·) 兜底）。"""
-    try:
-        fv = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    if not math.isfinite(fv):
-        return default
-    return fv
+from chiguo_math import cfg_float
+from chiguo_time import CST  # Q22: 共享时区常量
+from trigger_types import TriggerType
 
 
 class MessageComposer:
@@ -209,21 +201,21 @@ class MessageComposer:
 
         # combo 尺寸权重（选几层组合）
         self.size_weights = {
-            1: max(0.0, _to_float(self.config.get("size_1_weight", 0.20), 0.20)),
-            2: max(0.0, _to_float(self.config.get("size_2_weight", 0.50), 0.50)),
-            3: max(0.0, _to_float(self.config.get("size_3_weight", 0.30), 0.30)),
+            1: max(0.0, cfg_float(self.config.get("size_1_weight", 0.20), 0.20)),
+            2: max(0.0, cfg_float(self.config.get("size_2_weight", 0.50), 0.50)),
+            3: max(0.0, cfg_float(self.config.get("size_3_weight", 0.30), 0.30)),
         }
 
         # cue 基础权重（会被 personality 调制）
         self.cue_weights = {
-            "tsundere_classic": max(0.0, _to_float(self.config.get("cue_tsundere_weight", 0.40), 0.40)),
-            "tsundere_soft": max(0.0, _to_float(self.config.get("cue_tsundere_soft_weight", 0.20), 0.20)),
-            "tsundere_cool": max(0.0, _to_float(self.config.get("cue_tsundere_cool_weight", 0.05), 0.05)),
-            "dere_dere": max(0.0, _to_float(self.config.get("cue_dere_weight", 0.05), 0.05)),
-            "playful_bubbly": max(0.0, _to_float(self.config.get("cue_playful_weight", 0.15), 0.15)),
-            "anxious_clingy": max(0.0, _to_float(self.config.get("cue_anxious_weight", 0.10), 0.10)),
-            "caring_gentle": max(0.0, _to_float(self.config.get("cue_caring_weight", 0.10), 0.10)),
-            "trade_tsundere": max(0.0, _to_float(self.config.get("cue_trade_weight", 0.15), 0.15)),
+            "tsundere_classic": max(0.0, cfg_float(self.config.get("cue_tsundere_weight", 0.40), 0.40)),
+            "tsundere_soft": max(0.0, cfg_float(self.config.get("cue_tsundere_soft_weight", 0.20), 0.20)),
+            "tsundere_cool": max(0.0, cfg_float(self.config.get("cue_tsundere_cool_weight", 0.05), 0.05)),
+            "dere_dere": max(0.0, cfg_float(self.config.get("cue_dere_weight", 0.05), 0.05)),
+            "playful_bubbly": max(0.0, cfg_float(self.config.get("cue_playful_weight", 0.15), 0.15)),
+            "anxious_clingy": max(0.0, cfg_float(self.config.get("cue_anxious_weight", 0.10), 0.10)),
+            "caring_gentle": max(0.0, cfg_float(self.config.get("cue_caring_weight", 0.10), 0.10)),
+            "trade_tsundere": max(0.0, cfg_float(self.config.get("cue_trade_weight", 0.15), 0.15)),
         }
 
         # personality toml 接线（Task 7）：cue ↔ 原著台词模板
@@ -401,30 +393,30 @@ class MessageComposer:
             weights["caring_gentle"] *= 0.4
 
         # trigger_type 调制
-        if trigger_type == "lonely_high":
+        if trigger_type == TriggerType.LONELY_HIGH:
             weights["tsundere_classic"] *= 0.2  # 崩溃时不太可能嘴硬
             weights["anxious_clingy"] *= 2.0
             weights["dere_dere"] *= 1.5
-        elif trigger_type == "lonely_low":
+        elif trigger_type == TriggerType.LONELY_LOW:
             weights["playful_bubbly"] *= 1.3
             weights["tsundere_soft"] *= 1.2
-        elif trigger_type == "anxiety":
+        elif trigger_type == TriggerType.ANXIETY:
             weights["anxious_clingy"] *= 2.5
             weights["tsundere_classic"] *= 0.3
-        elif trigger_type == "playful":
+        elif trigger_type == TriggerType.PLAYFUL:
             weights["playful_bubbly"] *= 3.0
             weights["caring_gentle"] *= 0.5
-        elif trigger_type in ("morning", "meal"):
+        elif trigger_type in (TriggerType.MORNING, TriggerType.MEAL):
             weights["playful_bubbly"] *= 1.2
-        elif trigger_type == "night":
+        elif trigger_type == TriggerType.NIGHT:
             weights["tsundere_soft"] *= 1.2
-        elif trigger_type == "comfort":
+        elif trigger_type == TriggerType.COMFORT:
             # 安慰语境 → 安抚系 cue 占优，压嘴硬/玩闹（review R8：勿用试探傲娇语气安慰）
             weights["caring_gentle"] *= 1.8
             weights["dere_dere"] *= 1.3
             weights["tsundere_classic"] *= 0.3
             weights["playful_bubbly"] *= 0.5
-        elif trigger_type == "follow_up":
+        elif trigger_type == TriggerType.FOLLOW_UP:
             # 接话茬 → 自然延续，轻快系微升
             weights["playful_bubbly"] *= 1.2
             weights["tsundere_soft"] *= 1.2
@@ -575,7 +567,6 @@ def _fallback_text(combo: dict, trigger_type: str = "") -> str:
 
 def _cli_main(argv=None) -> int:
     """A8 兜底 CLI 入口。退出码：0=成功（文本已输出）；非零=失败。"""
-    cst = timezone(timedelta(hours=8))
     parser = argparse.ArgumentParser(
         prog="chiguo_composer",
         description="A8 确定性兜底：从 decision JSON 生成可发送消息文本（零 LLM）",
@@ -608,7 +599,7 @@ def _cli_main(argv=None) -> int:
     # AttributeError 保护自动降级（cue 权重不调制 + 按当前时间选 vibe）。
     state_stub = SimpleNamespace()
     composer = MessageComposer(state_stub, config={})
-    now = datetime.now(cst)
+    now = datetime.now(CST)
     combo = composer.select_combo(trigger_type, now)
     text = _fallback_text(combo, trigger_type)
     if not text:

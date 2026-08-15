@@ -10,11 +10,12 @@
 import os
 import shutil
 import tomllib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 PROJ_DIR = Path(__file__).resolve().parent
-CST = timezone(timedelta(hours=8))
+
+from chiguo_time import CST  # Q22: 共享时区常量
 
 from chiguo_state import ChiguoState
 from chiguo_trigger import evaluate_triggers
@@ -78,9 +79,9 @@ class Demo:
         self.sent.append({"time": self.sim_now.isoformat(), "message": situation})
         self.state.on_character_message(self.sim_now, trigger.type)
         if trigger.type == "morning":
-            self.state.cooldown.morning_sent = True
+            self.state.cooldown.mark_morning_sent()
         elif trigger.type == "night":
-            self.state.cooldown.night_sent = True
+            self.state.cooldown.mark_night_sent()
 
     def user_msg(self, text: str):
         print(f"\n{Color.GRN}📩 主人: {text}{Color.R}")

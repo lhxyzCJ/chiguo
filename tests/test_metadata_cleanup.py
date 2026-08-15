@@ -48,7 +48,9 @@ class MockState:
         self.memory_bridge = bridge
         self.personality = personality if personality is not None else PersonalityTraits()
         self.emotion = mock.Mock(loneliness_rate=0.0, anxiety_rate=0.0)
-        self.cooldown = mock.Mock(trigger_history=[])
+        self.cooldown = mock.Mock()
+        self.cooldown.trigger_history = []
+        self.cooldown.get_trigger_history.return_value = self.cooldown.trigger_history
         self.anniversary_mgr = _EmptyAnniversaryMgr()
         self.config = {"memory": {}}
         self._schedule_status = {"in_class": False, "class_load": "free",

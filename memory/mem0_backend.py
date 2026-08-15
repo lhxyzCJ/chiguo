@@ -21,9 +21,9 @@ import random
 import sys
 import threading
 import time as _time_module
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
-CST = timezone(timedelta(hours=8))
+from chiguo_time import CST  # Q22: 共享时区常量
 
 from memory.base import (
     DEFAULT_CONSOLIDATE_MAX_AGE_HOURS,
