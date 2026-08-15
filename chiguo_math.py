@@ -4,9 +4,10 @@
 
 import math
 import random
-from datetime import datetime as _dt, timezone, timedelta
+from datetime import datetime as _dt
 
-_CST = timezone(timedelta(hours=8))
+from chiguo_time import CST  # Q22: 共享时区常量
+
 
 
 # ── 配置浮点解析（Q25 收敛）──────────────────────────────
@@ -242,7 +243,7 @@ def mood_fresh(mood: dict | None, now, ttl_minutes: float = 360.0) -> bool:
     except (ValueError, TypeError):
         return False
     if at.tzinfo is None:
-        at = at.replace(tzinfo=_CST)
+        at = at.replace(tzinfo=CST)
     try:
         age_minutes = (now - at).total_seconds() / 60.0
     except TypeError:
@@ -360,7 +361,7 @@ def hawkes_intensity(
     if isinstance(now, str):
         now = _dt.fromisoformat(now)
     if isinstance(now, _dt) and now.tzinfo is None:
-        now = now.replace(tzinfo=_CST)
+        now = now.replace(tzinfo=CST)
     for ev in events:
         ev_time = ev.get("time")
         if isinstance(ev_time, str):
@@ -372,7 +373,7 @@ def hawkes_intensity(
             continue
         # naive 事件时间（旧状态迁移/手改文件可能写入无 tz 时间戳）→ 补 CST，防 TypeError
         if ev_time.tzinfo is None:
-            ev_time = ev_time.replace(tzinfo=_CST)
+            ev_time = ev_time.replace(tzinfo=CST)
         try:
             dt_hours = (now - ev_time).total_seconds() / 3600
         except TypeError:

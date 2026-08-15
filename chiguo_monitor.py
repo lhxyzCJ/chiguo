@@ -15,16 +15,17 @@ import statistics
 import sys
 import tomllib
 from collections import Counter
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timedelta, date
 from pathlib import Path
+
+from chiguo_time import CST
+from chiguo_atomic import atomic_write
 
 try:
     import mem0  # noqa: F401
     _HAS_MEM0 = True
 except ImportError:
     _HAS_MEM0 = False
-
-CST = timezone(timedelta(hours=8))
 
 
 def _num(v):
@@ -1035,19 +1036,13 @@ class AlertManager:
             self._alerts = {}
 
     def _save(self):
-        """原子写入：tmp → os.replace。"""
+        """原子写入：tmp → os.replace（Q23: 收敛至共享 chiguo_atomic）。"""
         try:
             data = json.dumps({
                 "_version": 1,
                 "alerts": self._alerts,
             }, ensure_ascii=False, indent=2)
-            tmp = Path(str(self.state_path) + ".tmp")
-            tmp.write_text(data)
-            try:
-                os.chmod(tmp, 0o600)  # B6: 运行时文件含状态 → 统一 0600（与 chiguo_state.save 同款）
-            except OSError:
-                pass
-            os.replace(str(tmp), str(self.state_path))
+            atomic_write(self.state_path, data, mode=0o600)
         except OSError as e:
             print(f"[monitor] AlertManager._save 写入失败: {e}", file=sys.stderr)
 
