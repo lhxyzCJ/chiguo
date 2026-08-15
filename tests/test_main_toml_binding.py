@@ -42,7 +42,12 @@ KEY_CHECKS = {
                 "energy_warmth_factor", "impact_inertia_positive"],
     "sigmoid": ["loneliness_high_mid", "anxiety_mid"],
     "trigger": ["min_activation", "must_send_activation",
-                "reply_feedback_enabled", "user_mood_ttl_minutes"],
+                "reply_feedback_enabled", "user_mood_ttl_minutes",
+                "ritual_special_weight", "ritual_mem0_weight",
+                "morning_probability", "night_probability", "meal_probability",
+                "mem0_surface_min_silent_hours", "mem0_surface_probability",
+                "followup_memory_probability", "habit_probability",
+                "playful_base_weight", "reflect_base_weight", "reflect_probability"],
     "poisson": ["base_lambda"],
     "topic_picker": ["netease_weight", "netease_daily_quota",
                      "repeat_jaccard_threshold"],
@@ -75,6 +80,9 @@ REF_CHECKS = [
     ("[memory].mem0_qdrant_path", "memory/factory.py", "mem0_qdrant_path"),
     ("[cooldown].longing_break_enabled", "chiguo_state.py", "longing_break_enabled"),
     ("[trigger].reply_feedback_enabled", "chiguo_trigger.py", "reply_feedback_enabled"),
+    ("[trigger].ritual_special_weight", "chiguo_trigger.py", "ritual_special_weight"),
+    ("[trigger].mem0_surface_probability", "chiguo_trigger.py", "mem0_surface_probability"),
+    ("[trigger].morning_probability", "chiguo_trigger.py", "morning_probability"),
     ("[netease].play_cache_ttl_minutes", "netease/service.py", "play_cache_ttl_minutes"),
 ]
 for label, code_file, key in REF_CHECKS:
