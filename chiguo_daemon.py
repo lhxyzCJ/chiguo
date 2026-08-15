@@ -1613,15 +1613,11 @@ class DecisionEngine:
                 pass
             already_reported = self._has_send_result(msg_id)
             if status == "failed" and not already_reported:
-                # ── v6 修复: 仅当 msg_id 能在在途 Hawkes 事件中定位时退款 ──
-                # 未知 msg_id → 只审计跳过，不执行退款副作用（防止凭空刷新逃生阀冷却/
-                # 误删最后一条事件——旧实现恒走 pop()，乱序回传会删错事件）。
-                # 兼容: 在途事件全部无 msg_id（旧 daemon 产生）→ 沿用旧语义退款。
-                events = self.state.cooldown.event_timestamps
-                matched = any(ev.get("msg_id") == msg_id for ev in events)
-                legacy_events = bool(events) and all("msg_id" not in ev for ev in events)
-                if matched or legacy_events:
-                    self.state.refund_send(now, msg_id=msg_id)
+                # ── v6 修复: 仅当 msg_id 能在在途 Hawkes 事件中定位（或全部为 legacy
+                #    事件）时才退款——未知 msg_id 不产生副作用（防凭空刷新逃生阀冷却/
+                #    误删最后一条事件）。legacy/匹配判定已收敛到 state.refund_send 单处，
+                #    由返回值决定是否落盘（Q30 legacy 事件两处复制收敛）。
+                if self.state.refund_send(now, msg_id=msg_id):
                     if not self.state.save():
                         # v12-R1: save 失败 → 不写 send_result 日志、refunded 保持
                         # False。幂等依据是日志：日志不写 = 可重试，下一进程会再次
@@ -1640,7 +1636,7 @@ class DecisionEngine:
                 else:
                     print(
                         f"[chiguo_daemon] refund skipped: msg_id={msg_id!r} "
-                        f"not found in {len(events)} in-flight events",
+                        f"not found in {len(self.state.cooldown.event_timestamps)} in-flight events",
                         file=sys.stderr,
                     )
             result = {
