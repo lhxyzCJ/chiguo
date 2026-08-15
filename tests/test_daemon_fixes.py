@@ -728,6 +728,71 @@ def test_tick_no_cap_when_anchor_older_than_monotonic(cfg_path: Path):
 
 
 # ═══════════════════════════════════════════════════════
+# Issue #279 (Q29): recent_sent_texts 复用尾部倒序读
+# ═══════════════════════════════════════════════════════
+
+def test_recent_sent_texts_tail_read(cfg_path: Path):
+    """Q29: recent_sent_texts 复用尾部倒序读（不全量 readlines）。
+
+    只读文件尾部最近 500 行：窗口外（文件前部）的 send 记录不被返回；
+    窗口内按倒序返回最近 n 条 direction=send 且有 text 的文本。
+    损坏行 / send 但空 text / 非 send 记录均被跳过——行为与原语义一致。
+    自包含：使用独立临时 base_dir，不依赖共享 tempdir 里的既有 messages 文件。
+    """
+    with tempfile.TemporaryDirectory(prefix="chiguo_test_q29_") as tmp:
+        tmp_dir = Path(tmp)
+        src = Path("chiguo_proactive.toml").read_text()
+        src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                     f'mem0_qdrant_path = "{tmp_dir / "no_qdrant"}"', src)
+        src = re.sub(r"(?m)^mem0_history_db\s*=.*$",
+                     f'mem0_history_db = "{tmp_dir / "no_history.db"}"', src)
+        iso_cfg = tmp_dir / "chiguo_proactive.toml"
+        iso_cfg.write_text(src)
+        eng = make_engine(iso_cfg)
+        path = eng.messages_log_path
+        # ① 文件不存在 → 静默返回 []（查重降级为不启用）
+        assert not path.exists()
+        assert eng.recent_sent_texts() == []
+
+        def send(text: str) -> str:
+            return json.dumps({"direction": "send", "text": text})
+
+        # 构造 606 行：前 106 行在尾部 500 窗口外（含 2 条 send，应被忽略），
+        # 后 500 行在窗口内（含 4 条 send + 损坏行 + 空 text send，应正确处理）。
+        lines: list[str] = []
+        for i in range(100):  # 窗口外纯噪声
+            lines.append(json.dumps({"direction": "recv", "text": f"noise-top-{i}"}))
+        lines.append(send("OLD-OUTSIDE-1"))          # 101（窗口外，应忽略）
+        lines.append(send("OLD-OUTSIDE-2"))          # 102（窗口外，应忽略）
+        for _ in range(106 - len(lines)):            # 补到窗口边界
+            lines.append(json.dumps({"direction": "recv", "text": "pad"}))
+        assert len(lines) == 106
+        # 窗口内 500 行：中间纯噪声，末尾含 send 记录
+        for i in range(492):
+            lines.append(json.dumps({"direction": "recv", "text": f"mid-{i}"}))
+        lines.append(json.dumps({"direction": "recv", "text": "wall-1"}))
+        lines.append(send("TAIL-1"))
+        lines.append(json.dumps({"direction": "recv", "text": "wall-2"}))
+        lines.append(send("TAIL-2"))
+        lines.append("Not valid json {{{")            # 损坏行 → 跳过
+        lines.append(send("TAIL-3"))
+        lines.append(json.dumps({"direction": "send", "text": ""}))  # send 但空 text → 跳过
+        lines.append(send("TAIL-4"))
+        # 共 606 行：前 106 行在尾部 500 窗口之外（OLD-OUTSIDE 位于其中）
+        assert len(lines) == 606, len(lines)
+        path.write_text("\n".join(lines) + "\n")
+
+        # ② 返回最近 n 条 send 文本（倒序，跳过损坏/空 text/非 send）
+        out = eng.recent_sent_texts(n=3)
+        assert out == ["TAIL-4", "TAIL-3", "TAIL-2"], out
+        # ③ 默认 n=5 → 取回窗口内全部 4 条 send；窗口外 OLD-OUTSIDE 恒不返回
+        out5 = eng.recent_sent_texts()
+        assert out5 == ["TAIL-4", "TAIL-3", "TAIL-2", "TAIL-1"], out5
+        assert "OLD-OUTSIDE-1" not in out5 and "OLD-OUTSIDE-2" not in out5, out5
+    print("  OK test_recent_sent_texts_tail_read")
+
+
+# ═══════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════
 
@@ -752,6 +817,7 @@ if __name__ == "__main__":
             test_state_monotonic_anchor_missing_defaults,
             test_tick_caps_wall_jump_via_persisted_anchor,
             test_tick_no_cap_when_anchor_older_than_monotonic,
+            test_recent_sent_texts_tail_read,
         ]
         for t in tests:
             t(cfg_path)
