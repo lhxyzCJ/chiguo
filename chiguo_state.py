@@ -207,6 +207,92 @@ class CooldownState:
     reply_pending: list[str] = field(default_factory=list)  # A2: FIFO 归因队列（未回复发送的 trigger 类型，回复时 pop 最旧一条，防多未回复时全记给最新）
     consolidate_last_at: str | None = None  # C1: 上次记忆巩固时间 ISO（空闲静默路径防每 tick 重复）
 
+    # ── 公开只读访问器（T11·Q1 字段收口：外部只读应走 getter，不直取字段）──
+    def get_last_message_at(self) -> str | None:
+        return self.last_message_at
+
+    def get_last_user_message_at(self) -> str | None:
+        return self.last_user_message_at
+
+    def get_messages_today(self) -> int:
+        return self.messages_today
+
+    def get_messages_without_reply(self) -> int:
+        return self.messages_without_reply
+
+    def get_trigger_history(self) -> list[str]:
+        return self.trigger_history
+
+    def get_event_timestamps(self) -> list[dict]:
+        return self.event_timestamps
+
+    def get_reply_latencies(self) -> list[float]:
+        return self.reply_latencies
+
+    def get_busy_suppress_until(self) -> str | None:
+        return self.busy_suppress_until
+
+    def get_held_count(self) -> int:
+        return self.held_count
+
+    def get_accumulated_lambda(self) -> float:
+        return self.accumulated_lambda
+
+    def get_recv_dedup(self) -> dict | None:
+        return self.recv_dedup
+
+    def get_user_mood(self) -> dict | None:
+        return self.user_mood
+
+    def get_consolidate_last_at(self) -> str | None:
+        return self.consolidate_last_at
+
+    def is_morning_sent(self) -> bool:
+        return self.morning_sent
+
+    def is_night_sent(self) -> bool:
+        return self.night_sent
+
+    def get_current_date(self) -> str:
+        return self.current_date
+
+    # ── 公开变更方法（T11·Q1 字段收口：外部变更应走方法，不直写字段）──
+
+    def append_trigger_history(self, trigger_type: str, max_len: int = 6):
+        """记录一次已发送触发类型（话题多样性）。超出按 FIFO 截断。"""
+        self.trigger_history.append(trigger_type)
+        if len(self.trigger_history) > max_len:
+            self.trigger_history = self.trigger_history[-max_len:]
+
+    def mark_morning_sent(self):
+        self.morning_sent = True
+
+    def mark_night_sent(self):
+        self.night_sent = True
+
+    def increment_held(self) -> int:
+        """累计一次空闲抑制（概率累积）。返回新的 held_count。"""
+        self.held_count += 1
+        return self.held_count
+
+    def set_accumulated_lambda(self, value: float):
+        self.accumulated_lambda = float(value)
+
+    def set_consolidate_last_at(self, value: str | None):
+        self.consolidate_last_at = value
+
+    def set_recv_dedup(self, dedup: dict | None):
+        self.recv_dedup = dedup
+
+    def set_last_message_at(self, value: str | None):
+        self.last_message_at = value
+
+    def set_last_user_message_at(self, value: str | None):
+        self.last_user_message_at = value
+
+    def set_user_mood(self, value: dict | None):
+        self.user_mood = value
+
     def __post_init__(self):
         # v6: 睡眠窗口来源配置（非 dataclass 字段，不序列化）。ChiguoState 负责注入。
         self._quiet_start = 0
@@ -310,11 +396,309 @@ class CooldownState:
             return False
 
 
+class StatePersistence:
+    """T11·Q1 持久化单类：负责 chiguo_state.json 的原子读写 / 备份 / 校验和 /
+    跨进程 flock / 审计日志 / 版本迁移触发。
+
+    持有 owner（ChiguoState）的引用，序列化/反序列化时通过 owner 的各公开字段
+    （emotion/cooldown/circadian/personality/…）读写成整份状态快照；加载完成后
+    交由 owner._apply_loaded_data / owner._migrate_circadian_v8 / owner._sync_quiet_window
+    就地重建可变子对象。如此把文件层关注点从核心状态类中剥离，ChiguoState 只保留
+    决策/情绪/课表等人格逻辑。
+    """
+
+    STATE_VERSION = 10  # v8: 双作息(circadian 分桶学习 + 迁移); v9: cooldown.recv_dedup; v10: personality_baseline + personality_history
+
+    def __init__(self, config: dict, owner):
+        self.config = config
+        self.owner = owner
+
+    # ── v6: 路径锚定。运行时文件基于 _base_dir（config 所在目录）解析，
+    # 不依赖 cwd —— 修复 cron 工作目录漂移导致的状态丢失/重建。
+    def anchored(self, *parts: str) -> Path:
+        base = self.config.get("_base_dir", ".") or "."
+        return Path(base) / Path(*parts)
+
+    @property
+    def state_path(self) -> Path:
+        return self.anchored("chiguo_state.json")
+
+    @property
+    def break_state_path(self) -> Path:
+        return self.anchored("break_state.json")
+
+    @property
+    def memories_path(self) -> Path:
+        mp = self.config.get("memory", {}).get("manual_path", "data/chiguo_memories.json")
+        # 绝对路径（测试/用户指定）原样保留；相对路径锚定到 base_dir
+        p = Path(mp)
+        if p.is_absolute():
+            return p
+        return self.anchored(mp)
+
+    # ── 持久化 ──────────────────────────────────────────
+
+    def load(self):
+        """从磁盘加载状态并应用到 owner。优先读正式文件，不存在则从 .tmp 恢复。
+        .bak 损坏回退链 + 审计一致：损坏任一 → 删除主文件，下次 save 重建。"""
+        p = self.state_path
+        tmp = Path(str(p) + ".tmp")
+        bak = Path(str(p) + ".bak")
+        if not p.exists() and tmp.exists():
+            try:
+                os.replace(tmp, p)
+            except OSError:
+                pass
+
+        restored = False
+        if p.exists():
+            try:
+                data = json.loads(p.read_text())
+                self.owner._apply_loaded_data(data)
+                restored = True
+            except Exception as e:
+                # ── v5: 先尝试从 .bak 恢复 ──
+                if bak.exists():
+                    try:
+                        data = json.loads(bak.read_text())
+                        self.owner._apply_loaded_data(data)
+                        # 写入恢复后的主文件
+                        self.save(_backup=False, _increment_tick=False)
+                        restored = True
+                        self.audit("state_recovered_from_bak", str(e))
+                    except Exception as e2:
+                        self.audit("state_bak_also_corrupt", str(e2))
+                else:
+                    self.audit("state_corrupted", str(e))
+
+                if not restored:
+                    # .bak 也损坏或不存在 → 删除主文件，下次 save 重建
+                    try:
+                        p.unlink()
+                    except OSError:
+                        pass
+                    self.owner.last_tick = None
+        else:
+            self.owner.last_tick = None
+
+        if not restored and self.owner.last_tick is None:
+            # 从未运行过，或状态全部丢失
+            self.audit("state_fresh_start", "no state file found")
+
+        self._load_memories()
+
+    def _load_memories(self):
+        """加载独立 memories 文件（data/chiguo_memories.json，形状防御）。"""
+        mp = self.memories_path
+        if mp.exists():
+            try:
+                data = json.loads(mp.read_text())
+                # 数据防御：memories JSON 应为数组；dict 形状（遍历得键字符串）或含
+                # 非 dict 条目（mem.get 崩）→ 净化。
+                self.owner.memories = ([m for m in data if isinstance(m, dict)]
+                                       if isinstance(data, list) else [])
+            except Exception:
+                pass
+
+    def save(self, _backup: bool = True, _increment_tick: bool = True) -> bool:
+        """原子写入：先写 .tmp，再 os.replace（避免写崩损坏正式文件）。返回 bool。"""
+        p = self.state_path
+        tmp_path = Path(str(p) + ".tmp")
+        bak_path = Path(str(p) + ".bak")
+        lock_path = str(p) + ".lock"
+        lock_acquired = self._lock_acquire(lock_path)
+        # ── #165: 锁获取失败（超时/降级）→ 不写盘，与 OSError 路径一致返回 False。
+        if not lock_acquired and not self.in_lock():
+            return False
+        try:
+            # ── v5: 写前备份 ──
+            if _backup and p.exists():
+                try:
+                    shutil.copy2(str(p), str(bak_path))
+                except OSError:
+                    pass
+                try:
+                    os.chmod(bak_path, 0o600)  # 备份含隐私状态 → 0600
+                except OSError:
+                    pass
+
+            if _increment_tick:
+                # ── v11 (#75): tick_seq 单调 CAS——写盘前读磁盘当前值，
+                # 若磁盘领先则内存值跳至磁盘值+1。
+                disk_seq = None
+                try:
+                    with open(p, "r", encoding="utf-8") as _f:
+                        _disk_seq = json.load(_f).get("tick_seq")
+                    if isinstance(_disk_seq, int):
+                        disk_seq = _disk_seq
+                except Exception:
+                    pass
+                if disk_seq is not None and disk_seq > self.owner.tick_seq:
+                    self.owner.tick_seq = disk_seq + 1
+                self.owner.tick_seq += 1
+
+            # 构建数据（不含 _checksum，先算哈希再添加）
+            payload = self._build_payload()
+            # ── v5: 校验和（SHA256 of compact JSON，防位翻转）──
+            checksum = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+            ).hexdigest()
+            payload["_checksum"] = checksum
+
+            data = json.dumps(payload, indent=2, ensure_ascii=False)
+            tmp_path.write_text(data)
+            try:
+                os.chmod(tmp_path, 0o600)
+            except OSError:
+                pass
+            try:
+                with open(tmp_path, 'rb') as _fsync_f:
+                    os.fsync(_fsync_f.fileno())
+            except OSError:
+                pass
+            # ── v5: 验证 tmp 是合法 JSON ──
+            try:
+                _verify = json.loads(tmp_path.read_text())
+                if not isinstance(_verify, dict) or "_version" not in _verify:
+                    raise ValueError("tmp validation failed: not a dict or no _version")
+            except (json.JSONDecodeError, ValueError, OSError):
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return False
+            os.replace(tmp_path, self.state_path)
+
+        except OSError as e:
+            print(f"[chiguo_state] save failed: {e}", file=sys.stderr)
+            return False
+        finally:
+            if lock_acquired:
+                self._lock_release(lock_path)
+        return True
+
+    def _build_payload(self) -> dict:
+        """从 owner 各可变子对象组装序列化载荷（不含 _checksum）。"""
+        o = self.owner
+        payload = {
+            "_version": self.STATE_VERSION,
+            "emotion": asdict(o.emotion),
+            "cooldown": asdict(o.cooldown),
+            "circadian": asdict(o.circadian),
+            "pending_topics": o.pending_topics,
+            "personality": personality_to_dict(o.personality),
+            "personality_baseline": dict(o.personality._baseline),
+            "personality_history": o.personality_history,
+            "last_tick": datetime.now(CST).isoformat(),
+            "mono_anchor": time_module.monotonic(),
+            "wall_anchor": datetime.now(CST).isoformat(),
+            "tick_seq": o.tick_seq,
+        }
+        # ── v1.11+R3: Bayesian 在线学习缓存持久化 ──
+        if o._bayesian_estimator is not None or o._bayesian_restored:
+            payload["bayesian"] = (o.bayesian_estimator.to_state_dict()
+                                   if o._bayesian_estimator is not None
+                                   else o._bayesian_restored)
+        return payload
+
+    def _audit(self, event: str, detail: str = ""):
+        """v5: 状态损坏审计日志。追加到 chiguo_state_audit.jsonl。v6: 路径锚定。"""
+        try:
+            audit_path = self.anchored("chiguo_state_audit.jsonl")
+            entry = {
+                "event": event,
+                "time": datetime.now(CST).isoformat(),
+                "detail": detail,
+            }
+            with open(audit_path, "a") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # audit 失败不影响主流程
+
+    def audit(self, event: str, detail: str = ""):
+        """公开审计入口（daemon/核心公共 API 用）。"""
+        self._audit(event, detail)
+
+    # ── v6: 跨进程写锁（fcntl.flock）。同进程可重入（模块级 _LOCK_FDS/_LOCK_DEPTH）。──
+
+    def _lock_acquire(self, lock_path: str) -> bool:
+        if _LOCK_DEPTH.get(lock_path, 0) > 0:
+            return False
+        fd = _LOCK_FDS.get(lock_path)
+        if fd is None:
+            try:
+                import fcntl
+            except ImportError:
+                return False
+            try:
+                fd = open(lock_path, "a+")
+            except OSError:
+                return False
+            try:
+                deadline = time_module.monotonic() + 5.0
+                while True:
+                    try:
+                        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except OSError:
+                        if time_module.monotonic() >= deadline:
+                            self._audit("state_lock_timeout", lock_path)
+                            fd.close()
+                            return False
+                        time_module.sleep(0.1)
+            except OSError:
+                try:
+                    fd.close()
+                except OSError:
+                    pass
+                return False
+            _LOCK_FDS[lock_path] = fd
+        _LOCK_DEPTH[lock_path] = 1
+        return True
+
+    def _lock_release(self, lock_path: str):
+        if _LOCK_DEPTH.get(lock_path, 0) <= 0:
+            return
+        _LOCK_DEPTH.pop(lock_path, None)
+        fd = _LOCK_FDS.pop(lock_path, None)
+        if fd is not None:
+            try:
+                import fcntl
+                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
+            try:
+                fd.close()
+            except OSError:
+                pass
+
+    @contextmanager
+    def state_lock(self):
+        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock）。"""
+        lock_path = str(self.state_path) + ".lock"
+        acquired = self._lock_acquire(lock_path)
+        try:
+            yield
+        finally:
+            if acquired:
+                self._lock_release(lock_path)
+
+    def in_lock(self) -> bool:
+        """当前进程是否已持有 state 锁。"""
+        return _LOCK_DEPTH.get(str(self.state_path) + ".lock", 0) > 0
+
+    def monotonic_anchor_pair(self) -> tuple[float | None, str | None]:
+        """返回持久化的单调锚点对 (mono, wall)，缺失/损坏为 None。"""
+        return self.owner.mono_anchor, self.owner.wall_anchor
+
+
 class ChiguoState:
     """迟菓全局状态管理 v2"""
 
     def __init__(self, config: dict):
         self.config = config
+        # ── T11·Q1: 持久化单类（文件层读写/锁/审计/校验和），持有 owner=self ──
+        self._persistence = StatePersistence(config, self)
         emo_cfg = config.get("emotion", {})
         self.emotion = ChiguoEmotion(
             loneliness=emo_cfg.get("loneliness", 15.0),
@@ -412,8 +796,8 @@ class ChiguoState:
     # 不依赖 cwd —— 修复 cron 工作目录漂移导致的状态丢失/重建。
 
     def _anchored(self, *parts: str) -> Path:
-        base = self.config.get("_base_dir", ".") or "."
-        return Path(base) / Path(*parts)
+        """v6: 路径锚定（委托到持久化单类）。运行时文件基于 _base_dir 解析。"""
+        return self._persistence.anchored(*parts)
 
     def _apply_quiet_window(self):
         """v6: 从 config [schedule] 注入睡眠窗口到 cooldown（替代硬编码 0-8）。"""
@@ -452,75 +836,21 @@ class ChiguoState:
 
     @property
     def state_path(self) -> Path:
-        return self._anchored("chiguo_state.json")
+        return self._persistence.state_path
 
     @property
     def memories_path(self) -> Path:
-        mp = self.config.get("memory", {}).get("manual_path", "data/chiguo_memories.json")
-        # 绝对路径（测试/用户指定）原样保留；相对路径锚定到 base_dir
-        p = Path(mp)
-        if p.is_absolute():
-            return p
-        return self._anchored(mp)
+        return self._persistence.memories_path
 
-    # ── 持久化 ──────────────────────────────────────────
+    # ── 持久化（文件层委托到 StatePersistence 单类；数据应用留在核心类）──
 
     def _load(self):
-        # 优先读正式文件，不存在则从 .tmp 恢复（原子写入中途崩溃时）
-        p = self.state_path
-        tmp = Path(str(p) + ".tmp")
-        bak = Path(str(p) + ".bak")
-        if not p.exists() and tmp.exists():
-            try:
-                os.replace(tmp, p)
-            except OSError:
-                pass
+        """私有加载（测试白盒沿用），委托持久化单类。"""
+        self._persistence.load()
 
-        restored = False
-        if p.exists():
-            try:
-                data = json.loads(p.read_text())
-                self._apply_loaded_data(data)
-                restored = True
-            except Exception as e:
-                # ── v5: 先尝试从 .bak 恢复 ──
-                if bak.exists():
-                    try:
-                        data = json.loads(bak.read_text())
-                        self._apply_loaded_data(data)
-                        # 写入恢复后的主文件
-                        self.save(_backup=False, _increment_tick=False)
-                        restored = True
-                        self._audit("state_recovered_from_bak", str(e))
-                    except Exception as e2:
-                        self._audit("state_bak_also_corrupt", str(e2))
-                else:
-                    self._audit("state_corrupted", str(e))
-
-                if not restored:
-                    # .bak 也损坏或不存在 → 删除主文件，下次 save 重建
-                    try:
-                        p.unlink()
-                    except OSError:
-                        pass
-                    self.last_tick = None
-        else:
-            self.last_tick = None
-
-        if not restored and self.last_tick is None:
-            # 从未运行过，或状态全部丢失
-            self._audit("state_fresh_start", "no state file found")
-
-        if self.memories_path.exists():
-            try:
-                data = json.loads(self.memories_path.read_text())
-                # 数据防御：memories JSON 应为数组；dict 形状（遍历得键字符串）或含
-                # 非 dict 条目（mem.get 崩）→ 净化。同类 anniversary/schedule/holiday
-                # 加载路径均有形状校验，此处补齐（review R9）。
-                self.memories = ([m for m in data if isinstance(m, dict)]
-                                 if isinstance(data, list) else [])
-            except Exception:
-                pass
+    def load(self):
+        """公开加载（T11·Q1：daemon 等外部走公开 API，不强闯私有）。"""
+        self._persistence.load()
 
     def _apply_loaded_data(self, data: dict):
         """解析并应用已加载的状态数据。v4/v5/v6 兼容。"""
@@ -539,9 +869,10 @@ class ChiguoState:
 
         # ── v6: 未来版本状态 → 记录审计并保守继续加载（字段过滤兜底）──
         ver = data.get("_version")
-        if isinstance(ver, int) and ver > self.STATE_VERSION:
+        state_version = self._persistence.STATE_VERSION
+        if isinstance(ver, int) and ver > state_version:
             self._audit("state_future_version",
-                f"stored={ver} current={self.STATE_VERSION} loading anyway")
+                f"stored={ver} current={state_version} loading anyway")
 
         # 过滤未知字段，防止未来版本新增字段导致 dataclass __init__ 崩溃
         emo_fields = {k: v for k, v in data.get("emotion", {}).items()
@@ -664,224 +995,42 @@ class ChiguoState:
             self.circadian.weekday_confidence = legacy_conf
 
     def _audit(self, event: str, detail: str = ""):
-        """v5: 状态损坏审计日志。追加到 chiguo_state_audit.jsonl。v6: 路径锚定。"""
-        try:
-            audit_path = self._anchored("chiguo_state_audit.jsonl")
-            entry = {
-                "event": event,
-                "time": datetime.now(CST).isoformat(),
-                "detail": detail,
-            }
-            with open(audit_path, "a") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
-            pass  # audit 失败不影响主流程
+        """私有审计（白盒测试沿用），委托持久化单类。"""
+        self._persistence._audit(event, detail)
+
+    def audit(self, event: str, detail: str = ""):
+        """公开审计入口（T11·Q1：daemon 等外部走公开 API）。"""
+        self._persistence._audit(event, detail)
 
     STATE_VERSION = 10  # v8: 双作息(circadian 分桶学习 + 迁移); v9: cooldown.recv_dedup; v10: personality_baseline + personality_history
 
-    # ── v6: 跨进程写锁（fcntl.flock）。锁文件常驻，os.replace 换 inode 不影响锁。
-    # 防止 cron + 手动运行多实例竞争写导致 checksum 不匹配→删重建。
-    # 可重入：模块级 _LOCK_FDS/_LOCK_DEPTH 保证同进程共享同一 fd 与深度计数，
-    # state_lock 与 save() 混用不阻塞、不提前释放。
+    # ── v6: 跨进程写锁（fcntl.flock）。文件层实现已委托到 StatePersistence；
+    # 这里保留公开委托入口，供核心决策与 daemon 复用同一把锁。
 
     def _lock_acquire(self, lock_path: str) -> bool:
-        """获取进程级独占锁（可重入）。返回 True 表示本次真正获得锁（需配套 release）。
-        重入（同进程已持有）直接通过且不递增深度——flock 为 fd 级互斥，
-        深度只需表达 0/1 持有态。非 POSIX 或 5s 内拿不到锁 → 降级无锁并审计。"""
-        if _LOCK_DEPTH.get(lock_path, 0) > 0:
-            return False
-        fd = _LOCK_FDS.get(lock_path)
-        if fd is None:
-            try:
-                import fcntl
-            except ImportError:
-                return False  # 非 POSIX → 降级无锁（与 v5 行为一致）
-            try:
-                fd = open(lock_path, "a+")
-            except OSError:
-                return False
-            try:
-                deadline = time_module.monotonic() + 5.0
-                while True:
-                    try:
-                        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except OSError:
-                        if time_module.monotonic() >= deadline:
-                            self._audit("state_lock_timeout", lock_path)
-                            fd.close()
-                            return False
-                        time_module.sleep(0.1)
-            except OSError:
-                try:
-                    fd.close()
-                except OSError:
-                    pass
-                return False
-            _LOCK_FDS[lock_path] = fd
-        _LOCK_DEPTH[lock_path] = 1
-        return True
+        return self._persistence._lock_acquire(lock_path)
 
     def _lock_release(self, lock_path: str):
-        """释放锁（仅持有者调用）。释放 fd 并清空持有标记。"""
-        if _LOCK_DEPTH.get(lock_path, 0) <= 0:
-            return
-        _LOCK_DEPTH.pop(lock_path, None)
-        fd = _LOCK_FDS.pop(lock_path, None)
-        if fd is not None:
-            try:
-                import fcntl
-                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
-            except (ImportError, OSError):
-                pass
-            try:
-                fd.close()
-            except OSError:
-                pass
+        self._persistence._lock_release(lock_path)
 
     @contextmanager
     def state_lock(self):
-        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock）。
-        同进程重入（同一线程递归调用）直接通过；跨进程互斥；
-        5s 内获取失败则降级无锁并记录审计。锁路径 = state_path + '.lock'。
-        仅单线程语义，多线程需外部串行化。"""
-        lock_path = str(self.state_path) + ".lock"
-        acquired = self._lock_acquire(lock_path)
-        try:
+        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock），委托持久化单类。"""
+        with self._persistence.state_lock():
             yield
-        finally:
-            if acquired:
-                self._lock_release(lock_path)
 
     def _in_lock(self) -> bool:
         """当前进程是否已持有 state 锁（供 daemon 判断重入场景）。"""
-        return _LOCK_DEPTH.get(str(self.state_path) + ".lock", 0) > 0
+        return self._persistence.in_lock()
 
-    def save(self, _backup: bool = True, _increment_tick: bool = True):
-        """原子写入：先写 .tmp，再 os.replace（避免写崩损坏正式文件）。
-
-        v5 增强：
-        - 写前备份到 .bak（可恢复上次正确状态）
-        - fsync 确保落盘
-        - 验证 tmp 可读再替换
-        - tick_seq 递增
-        - OSError 保护
-        v6: fcntl.flock 跨进程写锁（写-写竞争防护；读加载不持锁，
-        读-写竞争窗口窄且由原子 replace 兜底）。锁可重入：save 在
-        state_lock 内被调用时复用同一 fd，不阻塞。
-        v11 (#75): ① tick_seq 写盘前对磁盘值做 CAS——磁盘领先则内存
-        跳到磁盘值+1，保证跨进程单调；② 返回 bool（成功 True/失败
-        False），失败不再静默吞掉（调用方检测 False 输出告警）。
-        返回 False 不抛异常，旧调用点保持兼容。
-        """
-        p = self.state_path
-        tmp_path = Path(str(p) + ".tmp")
-        bak_path = Path(str(p) + ".bak")
-
-        lock_path = str(p) + ".lock"
-        lock_acquired = self._lock_acquire(lock_path)
-        # ── #165: 锁获取失败（超时/降级）→ 不写盘，与 OSError 路径一致返回 False。
-        # 重入（本进程已持锁）时 _lock_acquire 返回 False 但 _in_lock() 为 True，仍正常写盘。
-        if not lock_acquired and not self._in_lock():
-            return False
-        try:
-            # ── v5: 写前备份 ──
-            if _backup and p.exists():
-                try:
-                    shutil.copy2(str(p), str(bak_path))
-                except OSError:
-                    pass  # 备份失败不阻塞 save
-                try:
-                    os.chmod(bak_path, 0o600)  # 备份含隐私状态 → 0600
-                except OSError:
-                    pass
-
-            if _increment_tick:
-                # ── v11 (#75): tick_seq 单调 CAS——写盘前读磁盘当前值，
-                # 若磁盘领先（其他进程已写入）则内存值跳至磁盘值+1，
-                # 至少保证全局单调不回退。读盘失败（不存在/损坏）→ 以内存值为准。
-                disk_seq = None
-                try:
-                    with open(p, "r", encoding="utf-8") as _f:
-                        _disk_seq = json.load(_f).get("tick_seq")
-                    if isinstance(_disk_seq, int):
-                        disk_seq = _disk_seq
-                except Exception:
-                    pass
-                if disk_seq is not None and disk_seq > self.tick_seq:
-                    self.tick_seq = disk_seq + 1
-                self.tick_seq += 1
-
-            # 构建数据（不含 _checksum，先算哈希再添加）
-            payload = {
-                "_version": self.STATE_VERSION,
-                "emotion": asdict(self.emotion),
-                "cooldown": asdict(self.cooldown),
-                "circadian": asdict(self.circadian),
-                "pending_topics": self.pending_topics,
-                "personality": personality_to_dict(self.personality),
-                "personality_baseline": dict(self.personality._baseline),
-                "personality_history": self.personality_history,
-                "last_tick": datetime.now(CST).isoformat(),
-                "mono_anchor": time_module.monotonic(),
-                "wall_anchor": datetime.now(CST).isoformat(),
-                "tick_seq": self.tick_seq,
-            }
-            # ── v1.11+R3: Bayesian 在线学习缓存持久化（本进程创建过或磁盘已有缓存
-            # 才写入；未使用 Bayesian 且磁盘无缓存的进程不写入 → 状态文件保持干净）──
-            if self._bayesian_estimator is not None or self._bayesian_restored:
-                payload["bayesian"] = (self.bayesian_estimator.to_state_dict()
-                                       if self._bayesian_estimator is not None
-                                       else self._bayesian_restored)
-            # ── v5: 校验和（SHA256 of compact JSON，防位翻转）──
-            checksum = hashlib.sha256(
-                json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
-            ).hexdigest()
-            payload["_checksum"] = checksum
-
-            data = json.dumps(payload, indent=2, ensure_ascii=False)
-
-            tmp_path.write_text(data)
-            # 状态文件含隐私（情绪/人格/对话相关）→ 正式文件与暂存均 0600；
-            # 若 tmp 已存在且权限过宽，这里统一收紧，os.replace 后正式文件也是 0600。
-            try:
-                os.chmod(tmp_path, 0o600)
-            except OSError:
-                pass  # 权限收紧失败不阻塞保存（与备份 chmod 同策略）
-
-            # ── v5: fsync 确保落盘 ──
-            try:
-                with open(tmp_path, 'rb') as _fsync_f:
-                    os.fsync(_fsync_f.fileno())
-            except OSError:
-                pass  # fd 在某些环境不可用，跳过
-
-            # ── v5: 验证 tmp 是合法 JSON ──
-            try:
-                _verify = json.loads(tmp_path.read_text())
-                if not isinstance(_verify, dict) or "_version" not in _verify:
-                    raise ValueError("tmp validation failed: not a dict or no _version")
-            except (json.JSONDecodeError, ValueError, OSError):
-                try:
-                    tmp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                return False  # 跳过本次 save，不替换好状态
-
-            os.replace(tmp_path, self.state_path)
-
-        except OSError as e:
-            # ── v5: 磁盘满/Permission denied → 不崩溃（v11: 返回 False 供告警）──
-            print(f"[chiguo_state] save failed: {e}", file=sys.stderr)
-            return False
-        finally:
-            if lock_acquired:
-                self._lock_release(lock_path)
-        return True
+    def save(self, _backup: bool = True, _increment_tick: bool = True) -> bool:
+        """原子写盘（委托 StatePersistence）：.tmp→os.replace + 备份 + fsync + 校验和。
+        返回 bool（成功 True / 失败 False），失败不抛异常。"""
+        return self._persistence.save(_backup=_backup, _increment_tick=_increment_tick)
 
     def monotonic_anchor(self) -> tuple[float | None, str | None]:
         """返回持久化的单调锚点对 (mono, wall)，缺失/损坏为 None。"""
-        return self.mono_anchor, self.wall_anchor
+        return self._persistence.monotonic_anchor_pair()
 
     # ── v4：Bayesian 用户状态推断器（延迟初始化）────────────
 
@@ -1058,7 +1207,7 @@ class ChiguoState:
 
     @property
     def break_state_path(self) -> Path:
-        return self._anchored("break_state.json")
+        return self._persistence.break_state_path
 
     def _read_break_state(self) -> dict | None:
         """读取 break_state.json，不存在或损坏返回 None"""
