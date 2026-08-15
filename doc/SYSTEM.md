@@ -10,7 +10,12 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                    chiguo_daemon.py（决策引擎）                    │
+│          chiguo_daemon.py（CLI 入口 facade）                          │
+│  ┌─ cli/      参数解析+子命令分发 ──┐    ┌─ decision/  决策逻辑        │
+│  │ runner/    loop/cron 发送形态     │    │   (base/core/context 引擎) │
+│  │ ops/       记账/审计              │    └────────────────────────    │
+│  └──────────────────────────────────┘                                  │
+│  evaluate 决策链路（decision/）：tick 情绪推进 → can_send → evaluate_triggers │
 │                                                                    │
 │  tick 情绪推进 ─→ can_send 检查 ─→ evaluate_triggers 评估          │
 │       │                │                    │                      │
@@ -57,7 +62,14 @@ POST 走本地回环**绕系统代理**直连（防 http_proxy 劫持导致回�
 ### 模块依赖
 
 ```
-chiguo_daemon.py (DecisionEngine)
+chiguo_daemon.py（薄 CLI facade，T10·Q2 拆分，Issue #268）
+  ├─ cli/        → 参数解析(cli/parser.py 35 参数) + 子命令分发(cli/dispatch.py main/run)
+  │              + 轻量子命令(cli/commands.py: --attention/--schedule-* /--memory-search / _load_light_config)
+  ├─ runner/     → loop/cron 形态(runner/loop.py: LoopSenderMixin._loop_send + run_loop PID/动态休眠编排)
+  ├─ decision/   → 决策引擎(decision/engine.py 组合 DecisionEngine；base 基础infra / core 核心决策
+  │                 evaluate/tick/idle / context 上下文构建 _build_context)
+  ├─ ops/        → 记账/审计(ops/engine_ops.py AccountingMixin: record_* / recv / 召回 / consolidate)
+  │
   ├─ chiguo_state.py     → 5-dimension emotion engine + 8-dim personality + Bayesian inference + schedule + holidays + memory
   │                       （v1.12 B1 事件类型化情绪 delta + B2 情绪-记忆耦合）
   │     ├─ chiguo_math.py      → 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix
@@ -859,7 +871,8 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 | 文件 | 职责 |
 |------|------|
-| `chiguo_daemon.py` | 决策引擎入口：DecisionEngine / evaluate 决策链路 / can_send 门控 / CLI / 配置热重载 / loop 常驻 |
+| `chiguo_daemon.py` | 决策引擎 CLI 薄入口 facade（T10·Q2 拆分）：参数解析+分发→cli/、决策引擎→decision/、loop/cron→runner/、记账审计→ops/；对外 CLI 契约不变 |
+| `decision/` `cli/` `runner/` `ops/` | 拆包：decision/base+core+context（DecisionEngine）、cli/parser+commands+dispatch、runner/loop（LoopSenderMixin+run_loop）、ops/engine_ops（AccountingMixin） |
 | `chiguo_state.py` | ChiguoState：5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线 + 状态持久化（原子写/SHA256/审计日志） |
 | `chiguo_monitor.py` | 流式 JSONL 分析：统计/告警/健康 + D1 proactive_stats |
 | `chiguo_trigger.py` | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
@@ -994,6 +1007,12 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 ## 七、CLI 参考
 
 ### chiguo_daemon.py
+
+> **T10·Q2 拆包（Issue #268）**：`chiguo_daemon.py` 已是薄 facade（CLI 入口 + 兼容 re-export）。
+> 35 参数 argparse 在 `cli/parser.py`；子命令分发在 `cli/dispatch.py`；`DecisionEngine` 由
+> `decision/engine.py` 组合（base 基础infra / core 核心决策 / context 上下文构建 /
+> ops.engine_ops 记账审计 / runner.loop 发送内聚）；loop 常驻编排在 `runner/loop.py::run_loop`。
+> 对外 CLI 行为（参数/子命令/JSON/exit code）与拆分前逐字一致（`tests/test_daemon_cli_snapshot.py` 守护）。
 
 ```bash
 # 单次决策（输出 JSON 到 stdout）

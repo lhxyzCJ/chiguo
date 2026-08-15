@@ -86,7 +86,7 @@ def _doc_cli_manifest(txt, anchor_pat):
 # Q12/#262：daemon CLI 参数清单守卫——从 argparse 动态提取，与文档全量清单双向比对。
 # 守护「新增 CLI 参数未文档化」：daemon 每新增 add_argument，若未同步写入全量清单文档即可失败；
 # 同理文档清单里若出现 daemon 本不存在的参数（悬空/过期）也失败。
-daemon_src = (ROOT / "chiguo_daemon.py").read_text()
+daemon_src = (ROOT / "cli" / "parser.py").read_text()
 daemon_args = set(re.findall(r'parser\.add_argument\("(--[a-z][a-z0-9-]*)"', daemon_src))
 _CLI_MANIFEST_DOCS = {
     "CLAUDE_CODE_RULES.md": r'### daemon CLI（(\d+) 个参数）\n(`[^`]*`)',
