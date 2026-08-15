@@ -115,14 +115,14 @@ class DecisionEngine:
             self.state.config = self.config
             # ── v7: 热重载后同步生物钟窗口(置信度达标用学习窗口,否则回退配置默认,
             # 否则 cooldown 内注入的窗口保持旧值,silent_hours/逃生阀判定陈旧)──
-            self.state._sync_quiet_window()
+            self.state.sync_quiet_window()
             # v9: 热重载时同步重建策略层(重试/配额参数可能被改)与 TopicPicker
             self.netease_service = NeteaseService(self.config, str(self._base_dir))
             self.topic_picker = TopicPicker(self.state, self.config.get("topic_picker", {}),
                                             netease_service=self.netease_service,
                                             recent_sent_texts=self.recent_sent_texts())
             self.composer = MessageComposer(self.state, self.config.get("composer", {}))
-            self.state._bayesian_estimator = None
+            self.state.reset_bayesian_estimator()
 
     def _dynamic_sleep_interval(self, now, decision: dict) -> float:
         """
@@ -255,7 +255,7 @@ class DecisionEngine:
         plays = self._fetch_play_proof(now)
 
         with self.state.state_lock():
-            self.state._load()
+            self.state.load()
 
             # 1. 时间推进
             self._tick(now)
@@ -268,7 +268,7 @@ class DecisionEngine:
                 pass
 
             # ── v8: 每次评估同步当前生效桶窗口(loop 模式跨桶翻转/听歌校正即时生效)──
-            self.state._sync_quiet_window(now)
+            self.state.sync_quiet_window(now)
 
             # ── v8: 听歌反证(夜间活跃)——睡眠窗口内最近有播放 → 用户醒着 ──
             # B1(#136): 先于 can_send 调用——内部会 recompute + _sync_quiet_window,
@@ -290,7 +290,7 @@ class DecisionEngine:
             bayesian_block_conf = self._bayesian_block_confidence()
             escape_valve_sleep_block = self.config.get("bayesian", {}).get("escape_valve_sleep_block", 0.9)
             sleeping_guard = False
-            never_interacted = self.state.cooldown.last_user_message_at is None
+            never_interacted = self.state.cooldown.get_last_user_message_at() is None
             raw_conf = user_state.get("confidence", 0) if user_state else 0.0
             effective_conf = raw_conf
             if play_proof:
@@ -323,10 +323,7 @@ class DecisionEngine:
             # 3.5 记录触发历史（用于话题多样性检查）
             cfg_topic = self.config.get("topic_picker", {})
             history_max = cfg_topic.get("trigger_history_max", 6)
-            self.state.cooldown.trigger_history.append(trigger.type)
-            if len(self.state.cooldown.trigger_history) > history_max:
-                self.state.cooldown.trigger_history = \
-                    self.state.cooldown.trigger_history[-history_max:]
+            self.state.cooldown.append_trigger_history(trigger.type, history_max)
             # #79: reminder 一次性提醒去重——发送确认后在该 mem 上标记，
             # trigger 层 (_memory_should_trigger) 据此跳过，同进程不重复触发。
             if trigger.type == "memory":
@@ -342,7 +339,7 @@ class DecisionEngine:
 
             # 4.5 保存 prev_send_was_replied（必须在 on_character_message 递增 messages_without_reply 之前）
             # NOTE: prev_send_was_replied means "was the PREVIOUS character message replied to"
-            prev_send_was_replied = self.state.cooldown.messages_without_reply == 0
+            prev_send_was_replied = self.state.cooldown.get_messages_without_reply() == 0
 
             # 4.6 v6 修复: 决策时生成 msg_id，写入 Hawkes 事件 + decision JSON，
             # 供 --send-result 回传后按 msg_id 精确退款（乱序回传不再删错事件）
@@ -354,9 +351,9 @@ class DecisionEngine:
             if trigger.data.get("escape_valve"):
                 self.state.on_longing_break(now)
             if trigger.type == "morning":
-                self.state.cooldown.morning_sent = True
+                self.state.cooldown.mark_morning_sent()
             elif trigger.type == "night":
-                self.state.cooldown.night_sent = True
+                self.state.cooldown.mark_night_sent()
 
             # ── v4: 人格自适应（发消息后）──
             try:
@@ -401,8 +398,8 @@ class DecisionEngine:
 
     def _tick(self, now: datetime):
         """根据上次事件时间推进情绪。v5: monotonic 时钟防护。"""
-        last_msg = self.state.cooldown.last_message_at
-        last_user = self.state.cooldown.last_user_message_at
+        last_msg = self.state.cooldown.get_last_message_at()
+        last_user = self.state.cooldown.get_last_user_message_at()
 
         if not last_msg and not last_user:
             self.state.tick(0, now)
@@ -454,7 +451,7 @@ class DecisionEngine:
             msg = f"clock went backward: elapsed={elapsed:.1f}h (last_time={last_time.isoformat()}, now={now.isoformat()})"
             print(f"[chiguo_daemon] {msg}", file=sys.stderr)
             try:
-                self.state._audit("clock_backward", msg)
+                self.state.audit("clock_backward", msg)
             except Exception:
                 pass
             return
@@ -483,7 +480,7 @@ class DecisionEngine:
                        f"capping to monotonic")
                 print(f"[chiguo_daemon] {msg}", file=sys.stderr)
                 try:
-                    self.state._audit("clock_jump_forward", msg)
+                    self.state.audit("clock_jump_forward", msg)
                 except Exception:
                     pass
                 elapsed = elapsed_mono
@@ -558,7 +555,7 @@ class DecisionEngine:
                     history_days=circ_cfg.get("history_days", 14),
                     min_width=circ_cfg.get("min_width", 5),
                     max_width=circ_cfg.get("max_width", 12))
-                self.state._sync_quiet_window(now)
+                self.state.sync_quiet_window(now)
             return play_proof
         except Exception as e:
             print(f"[warn] netease play proof apply failed: {e}", file=sys.stderr)
@@ -579,19 +576,19 @@ class DecisionEngine:
         # C1: 空闲静默路径确定性记忆巩固（config 门控默认关闭；失败不阻断主链路）
         self._maybe_consolidate(now)
         if reason in ("no_trigger", "user_busy"):
-            self.state.cooldown.held_count += 1
+            self.state.cooldown.increment_held()
             cfg_cooldown = self.config.get("cooldown", {})
             base_lambda = self.config.get("poisson", {}).get("base_lambda", 0.25)
-            current_lam = self.state.cooldown.accumulated_lambda or self.state.current_lambda(now)
+            current_lam = self.state.cooldown.get_accumulated_lambda() or self.state.current_lambda(now)
             new_lam, _ = longing_accumulate(
                 current_lam, base_lambda,
                 growth_factor=cfg_cooldown.get("longing_growth_factor", 0.08),
                 anxiety=self.state.emotion.anxiety,
                 anxiety_block_threshold=cfg_cooldown.get("anxiety_block_threshold", 70.0),
-                held_count=self.state.cooldown.held_count,
+                held_count=self.state.cooldown.get_held_count(),
                 max_lambda_multiplier=cfg_cooldown.get("max_lambda_multiplier", 5.0),
             )
-            self.state.cooldown.accumulated_lambda = new_lam
+            self.state.cooldown.set_accumulated_lambda(new_lam)
 
         # v11 (#75): save 返回 bool，失败输出 state_save_failed 告警
         if not self.state.save():
@@ -634,7 +631,7 @@ class DecisionEngine:
             silent_h = self.state.cooldown.silent_hours(now)
             if silent_h < float(mem_cfg.get("consolidate_idle_silent_hours", 24.0)):
                 return
-            last = self.state.cooldown.consolidate_last_at
+            last = self.state.cooldown.get_consolidate_last_at()
             if last:
                 last_dt = datetime.fromisoformat(last)
                 if last_dt.tzinfo is None:
@@ -660,7 +657,7 @@ class DecisionEngine:
             # 后端/配置错误导致每 15 分钟全量 get_all+扫描重试）。失败原因已打到 stderr，
             # 显式 --consolidate CLI 仍可手动兜底。
             if attempted:
-                self.state.cooldown.consolidate_last_at = now.isoformat()
+                self.state.cooldown.set_consolidate_last_at(now.isoformat())
                 if not self.state.save():
                     print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
 
@@ -734,7 +731,7 @@ class DecisionEngine:
         silent_h = self.state.cooldown.silent_hours(now)
         daily_max = self.config.get("cooldown", {}).get(
             "max_daily_active", 4) if silent_h < 8 else self.config.get("cooldown", {}).get("max_daily_silent", 2)
-        if self.state.cooldown.messages_today >= daily_max:
+        if self.state.cooldown.get_messages_today() >= daily_max:
             # L4 (#234, D4): 逃生阀放行 → 继续走后续门禁，不直接 return daily_limit。
             # 与 can_send:2169-2172 的 longing 溢出逃生阀语义对齐——can_send 内部已含
             # 逃生阀（is_longing_overflow + 冷却期）判定，若 it 放行则 daily_limit 不应
@@ -795,9 +792,9 @@ class DecisionEngine:
 
         if idle_reason == "min_interval":
             min_int = cfg_cooldown.get("min_interval_minutes", 30)
-            if self.state.cooldown.last_message_at:
+            if self.state.cooldown.get_last_message_at():
                 try:
-                    last = datetime.fromisoformat(self.state.cooldown.last_message_at)
+                    last = datetime.fromisoformat(self.state.cooldown.get_last_message_at())
                     if last.tzinfo is None:
                         last = last.replace(tzinfo=CST)  # 与 _parse_tz 一致：naive → 补 CST
                     nxt = last + timedelta(minutes=min_int + 2)
@@ -842,9 +839,9 @@ class DecisionEngine:
                 return (now + timedelta(hours=h)).isoformat()
 
         elif idle_reason == "busy_suppressed":
-            if self.state.cooldown.busy_suppress_until:
+            if self.state.cooldown.get_busy_suppress_until():
                 try:
-                    until = datetime.fromisoformat(self.state.cooldown.busy_suppress_until)
+                    until = datetime.fromisoformat(self.state.cooldown.get_busy_suppress_until())
                     if until > now:
                         return until.isoformat()
                 except (ValueError, TypeError):
@@ -936,7 +933,7 @@ class DecisionEngine:
         # ── v1.11 ①: 用户情绪感知语气注解（mood_note；开关默认关闭）──
         # 对标 ESConv：感知到低落 → 语气更温柔克制；仅叠加注解，不改变人格铁律。
         mood_note = ""
-        mood = self.state.cooldown.user_mood
+        mood = self.state.cooldown.get_user_mood()
         trg_cfg = self.config.get("trigger", {})
         if (trg_cfg.get("user_mood_note_enabled", 0) != 0
                 and mood and mood_fresh(mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0))):
@@ -985,7 +982,7 @@ class DecisionEngine:
             force_threshold = cfg_topic.get("force_topic_threshold", 3)
             topic_prob = cfg_topic.get("topic_probability", 0.7)
 
-            history = self.state.cooldown.trigger_history
+            history = self.state.cooldown.get_trigger_history()
             recent_lonely = sum(
                 1 for t in history[-force_threshold:] if t.startswith("lonely_")
             )
@@ -1069,7 +1066,7 @@ class DecisionEngine:
             },
             "silent_hours": round(silent_h, 1),
             "poisson_lambda": round(self.state.current_lambda(now), 4),
-            "accumulated_lambda": round(self.state.cooldown.accumulated_lambda or self.state.current_lambda(now), 4),
+            "accumulated_lambda": round(self.state.cooldown.get_accumulated_lambda() or self.state.current_lambda(now), 4),
             "follow_up": {
                 "topic": trigger.data.get("topic", ""),
                 "source": trigger.data.get("source", ""),
@@ -1115,7 +1112,7 @@ class DecisionEngine:
         # 重载幂等且安全。──
         with self.state.state_lock():
             try:
-                self.state._load()
+                self.state.load()
             except Exception:  # noqa: BLE001 - 重载失败维持现有内存状态
                 pass
             # ── v9: recv 去重（升级语义）──────────────────────
@@ -1126,7 +1123,7 @@ class DecisionEngine:
             # bridge 补报的升级副本；其余同文本（已升级过的、或时间差较长的）
             # 一律视为用户真实重发 → 走完整 on_user_message。
             text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            dedup = self.state.cooldown.recv_dedup
+            dedup = self.state.cooldown.get_recv_dedup()
             is_upgrade = (
                 analysis_dict is not None
                 and bool(dedup)
@@ -1148,13 +1145,13 @@ class DecisionEngine:
 
             if is_upgrade:
                 if analysis_dict:
-                    self.state._apply_analysis_impact(analysis_dict, now)
-                    self.state.cooldown.recv_dedup = {
+                    self.state.apply_analysis_impact(analysis_dict, now)
+                    self.state.cooldown.set_recv_dedup({
                         "text_sha": text_sha,
                         "at": now.isoformat(),
                         "analysis": True,
                         "recv_id": recv_id,
-                    }
+                    })
                     if not self.state.save():
                         print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
                     self._monotonic_at_save = time.monotonic()  # v5
@@ -1168,16 +1165,16 @@ class DecisionEngine:
                 return
 
             # ── v4: 保存发送前状态用于追踪 ──
-            prev_send_was_replied = self.state.cooldown.messages_without_reply > 0
+            prev_send_was_replied = self.state.cooldown.get_messages_without_reply() > 0
             self.state.on_user_message(now, len(text), analysis=analysis_dict)
 
             # ── v9: 更新去重标记（记录是否已含分析；U5: recv_id 精确去重持久化）──
-            self.state.cooldown.recv_dedup = {
+            self.state.cooldown.set_recv_dedup({
                 "text_sha": text_sha,
                 "at": now.isoformat(),
                 "analysis": analysis_dict is not None,
                 "recv_id": recv_id,
-            }
+            })
 
             # ── v4: 人格自适应（收到回复后）──
             if prev_send_was_replied:
@@ -1248,7 +1245,7 @@ class DecisionEngine:
             metadata = {"category": "conversation", "scope": "global", "source": "daemon"}
             if self.config.get("memory", {}).get("emotion_tagging", False):
                 tag = emotion_tag_snapshot(self.state.emotion)
-                mood = self.state.cooldown.user_mood
+                mood = self.state.cooldown.get_user_mood()
                 if isinstance(mood, dict) and str(mood.get("mood", "")).strip():
                     tag["user_mood"] = str(mood.get("mood"))
                 metadata["emotion_tag"] = tag
@@ -1322,7 +1319,7 @@ class DecisionEngine:
                 # 为一次性进程，不 save 则 sent 计数随进程退出丢失；与 --user-msg
                 # 并发时基于最新落盘状态记账，防止覆盖丢更新。
                 with self.state.state_lock():
-                    self.state._load()
+                    self.state.load()
                     self.state.record_trigger_sent(trigger)
                     self.state.save()
             except Exception:
@@ -1608,7 +1605,7 @@ class DecisionEngine:
             # 均无未保存的进程内修改（evaluate 各出口无条件 save；--loop 的
             # _loop_send 在 evaluate 锁释放后才执行）。
             try:
-                self.state._load()
+                self.state.load()
             except Exception:  # noqa: BLE001 - 重载失败维持现有内存状态
                 pass
             already_reported = self._has_send_result(msg_id)
@@ -1617,7 +1614,7 @@ class DecisionEngine:
                 # 未知 msg_id → 只审计跳过，不执行退款副作用（防止凭空刷新逃生阀冷却/
                 # 误删最后一条事件——旧实现恒走 pop()，乱序回传会删错事件）。
                 # 兼容: 在途事件全部无 msg_id（旧 daemon 产生）→ 沿用旧语义退款。
-                events = self.state.cooldown.event_timestamps
+                events = self.state.cooldown.get_event_timestamps()
                 matched = any(ev.get("msg_id") == msg_id for ev in events)
                 legacy_events = bool(events) and all("msg_id" not in ev for ev in events)
                 if matched or legacy_events:
@@ -1971,7 +1968,7 @@ def main():
     # ── 参数校准 ──
     if args.tune:
         engine = DecisionEngine()
-        latencies = engine.state.cooldown.reply_latencies
+        latencies = engine.state.cooldown.get_reply_latencies()
         if len(latencies) < 5:
             print(json.dumps({
                 "action": "tune",

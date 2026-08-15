@@ -834,6 +834,10 @@ class ChiguoState:
         else:
             self._apply_quiet_window()
 
+    def sync_quiet_window(self, now: datetime | None = None):
+        """T11·Q1 公开 API：同步当前生效睡眠窗口（daemon 等外部经此调用，不直触私有）。"""
+        self._sync_quiet_window(now)
+
     @property
     def state_path(self) -> Path:
         return self._persistence.state_path
@@ -1046,6 +1050,10 @@ class ChiguoState:
             if self._bayesian_restored:
                 self._bayesian_estimator.restore_state_dict(self._bayesian_restored)
         return self._bayesian_estimator
+
+    def reset_bayesian_estimator(self):
+        """T11·Q1 公开 API：热重载时强制重建 Bayesian 推断器（清缓存，下次惰性重初始化）。"""
+        self._bayesian_estimator = None
 
     def infer_user_state(self, now: datetime = None, msg_length: int = None) -> dict:
         """
@@ -1692,6 +1700,10 @@ class ChiguoState:
         # user_mood 后可能越界（如 anxiety≈99 + 冷淡升级 → 102.3），直接落盘存续到下次
         # _finalize 才钳回；此处幂等 clamp 到 [0,100]（on_user_message 亦覆盖）。──
         self.emotion.clamp()
+
+    def apply_analysis_impact(self, analysis: dict, now: datetime | None = None):
+        """T11·Q1 公开 API：仅补分析微调路径（recv_dedup 升级），与 _apply_analysis_impact 同源。"""
+        self._apply_analysis_impact(analysis, now)
 
     def _consume_user_mood(self, analysis: dict, now: datetime):
         """v1.11 ①: 解析 analysis 的 user_mood/user_mood_intensity → cooldown.user_mood。
