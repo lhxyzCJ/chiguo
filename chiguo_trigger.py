@@ -98,15 +98,15 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     ritual_scale = cfg_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0)
 
     # Q10: 仪式类基础权重（默认 = 现值；乘 ritual_scale，可独立调参/灰度）
-    ritual_special = _to_float(trg_cfg.get("ritual_special_weight", 3.0), 3.0)
-    ritual_morning = _to_float(trg_cfg.get("ritual_morning_weight", 2.5), 2.5)
-    ritual_night = _to_float(trg_cfg.get("ritual_night_weight", 2.0), 2.0)
-    ritual_meal = _to_float(trg_cfg.get("ritual_meal_weight", 0.8), 0.8)
-    ritual_memory = _to_float(trg_cfg.get("ritual_memory_weight", 2.0), 2.0)
-    ritual_mem0 = _to_float(trg_cfg.get("ritual_mem0_weight", 1.5), 1.5)
+    ritual_special = cfg_float(trg_cfg.get("ritual_special_weight", 3.0), 3.0)
+    ritual_morning = cfg_float(trg_cfg.get("ritual_morning_weight", 2.5), 2.5)
+    ritual_night = cfg_float(trg_cfg.get("ritual_night_weight", 2.0), 2.0)
+    ritual_meal = cfg_float(trg_cfg.get("ritual_meal_weight", 0.8), 0.8)
+    ritual_memory = cfg_float(trg_cfg.get("ritual_memory_weight", 2.0), 2.0)
+    ritual_mem0 = cfg_float(trg_cfg.get("ritual_mem0_weight", 1.5), 1.5)
 
     # Q10: mem0 随机浮现条件（沉默阈值 + 概率门控，默认 = 现值）
-    mem0_min_silent = _to_float(trg_cfg.get("mem0_surface_min_silent_hours", 6.0), 6.0)
+    mem0_min_silent = cfg_float(trg_cfg.get("mem0_surface_min_silent_hours", 6.0), 6.0)
     mem0_prob = _clamp01(trg_cfg.get("mem0_surface_probability", 0.08), 0.08)
 
     # ── 固定事件（权重固定，会概率性参与竞争） ──────────
@@ -322,7 +322,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         # v4: 外向性调制 playful；基础权重经 [trigger].playful_base_weight 可配（默认 0.15）
         pers_extra = getattr(getattr(state, 'personality', None), 'extraversion', 60.0)
         pers_extra_factor = 0.5 + (pers_extra / 100) * 1.0  # 0.5~1.5
-        w_bored = (_to_float(trg_cfg.get("playful_base_weight", 0.15), 0.15)
+        w_bored = (cfg_float(trg_cfg.get("playful_base_weight", 0.15), 0.15)
                    * (emo.energy / 100) * aff_factor * pers_extra_factor)
         if w_bored > 0.03:
             weighted_candidates.append({
@@ -338,7 +338,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         # Q10: 概率门控经 [trigger].reflect_probability 可配（默认 0.08）
         if (emo.affection > 70 and silent_h < 2 and emo.energy > 60
                 and neuroticism < 70 and random.random() < _clamp01(trg_cfg.get("reflect_probability", 0.08), 0.08)):
-            w_reflect = _to_float(trg_cfg.get("reflect_base_weight", 0.08), 0.08) \
+            w_reflect = cfg_float(trg_cfg.get("reflect_base_weight", 0.08), 0.08) \
                 * (emo.affection / 100) * (1 - neuroticism / 100) * (emo.energy / 100)
             if w_reflect > 0.02:
                 weighted_candidates.append({
