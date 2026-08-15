@@ -23,13 +23,10 @@
 
 from cli.dispatch import main, run, parse_args
 from decision.engine import DecisionEngine
-from cli.commands import (_load_light_config, _cmd_attention,
-                          _cmd_schedule_recall, _cmd_schedule_change, _cmd_memory_search)
+from cli.commands import _cmd_memory_search  # 仅测试经 chiguo_daemon 入口消费，故保留
 from chiguo_version import VERSION
 
-__all__ = ["DecisionEngine", "main", "run", "parse_args",
-           "_load_light_config", "_cmd_attention", "_cmd_schedule_recall",
-           "_cmd_schedule_change", "_cmd_memory_search", "VERSION"]
+__all__ = ["DecisionEngine", "main", "run", "parse_args", "_cmd_memory_search", "VERSION"]
 
 
 if __name__ == "__main__":
