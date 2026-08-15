@@ -246,7 +246,7 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
 - 进程内 `TurnQueue` 串行 agent 调用（同一会话 chiguo-main 不允许并发 turn）
 - 环境变量：`WECHAT_BRIDGE_AGENT_RUN`（默认仓库内 agent-run.mjs）、`WECHAT_BRIDGE_DAEMON_PY`、
   `WECHAT_BRIDGE_DAEMON`、`WECHAT_BRIDGE_OWNER`、`WECHAT_BRIDGE_SEND_PORT`、`WECHAT_BRIDGE_STORAGE`、
-  `WECHAT_BRIDGE_MEMORY_PY`/`WECHAT_BRIDGE_MEMORY_BRIDGE`（斜杠命令记忆 CLI）、
+  `WECHAT_BRIDGE_MEMORY_PY`/`WECHAT_BRIDGE_MEMORY_CLI`（斜杠命令记忆 CLI：解释器/argv；默认 `.venv/bin/python -m memory`）、
   `WECHAT_BRIDGE_ACTIVITY_FILE`/`CHIGUO_ACTIVITY_FILE`（轮换活动时间戳覆盖，测试隔离用）
 - 会话轮换配置在 toml `[host].session_rotate_*`：`enabled`（默认 true）、`check_minutes`（默认 60）、
   `idle_minutes`（默认 60）；send 每轮全新由 bridge `/agent/prompt` + `AGENTRUN_ROTATE_SESSION=1` 实现（§6.1 下方）
@@ -261,9 +261,9 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
 | 命令 | 作用 | 执行 |
 |---|---|---|
 | `/new` | 清空当前对话上下文（记忆保留） | 备份最近一个 chiguo-main 会话文件到 `~/.chiguo/session-backups/<ts>-chiguo-main.jsonl`；RPC 模式下同时重启常驻会话 |
-| `/status` | 上下文/缓存/记忆状态（纯技术） | 读 `logs/agent-run.log` 最后一行遥测 + 会话文件大小 + `memory_bridge.py --stats` |
-| `/记忆` | 记忆库统计 | `memory_bridge.py --stats`（mem0） |
-| `/记得什么 <词>` | 搜索记忆 | `memory_bridge.py --search <词>` |
+| `/status` | 上下文/缓存/记忆状态（纯技术） | 读 `logs/agent-run.log` 最后一行遥测 + 会话文件大小 + `python -m memory --stats` |
+| `/记忆` | 记忆库统计 | `python -m memory --stats`（mem0） |
+| `/记得什么 <词>` | 搜索记忆 | `python -m memory --search <词>` |
 | `/help` | 命令列表 | 本表 |
 
 其余任何 `/` 开头消息 → "这是什么咒语啦？我可不会~"，不进 LLM。用户侧说明见 [doc/微信命令.md](微信命令.md)。
@@ -414,7 +414,7 @@ agent_command = ["node", "/path/to/agent.mjs"]  # 必填：可执行命令 + 固
 
 ## 十、记忆后端（[memory].backend）
 
-v1.8 起记忆模块解耦为 `memory/` 包（`memory_bridge.py` 保留兼容门面：MemoryBridge=Mem0Backend 别名 + CLI）。
+v1.8 起记忆模块解耦为 `memory/` 包（v1.8 的根目录兼容门面 `memory_bridge.py` 已删除；CLI 下沉为 `python -m memory`）。
 **mem0 是唯一记忆后端**（v1.15 已移除 memory-lancedb-pro 扩展，install_agent.sh 阶段 0b 幂等清理残留）——
 `[memory].backend` 仅 `mem0` / `auto`（遗留同义）合法，其他值抛 ValueError；
 `MemoryBackend` 抽象基类保留作内部测试桩/复用层：

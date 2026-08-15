@@ -711,7 +711,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
 
 **C2 Ebbinghaus 复习强化（v1.12）**：对标 FSRS「成功召回 → 强度增大」——`note_recalled` 在记忆被召回（`search_with_forgetting`/`random_memory_with_forgetting` 返回）时 `recall_count+1`，`_effective_importance = importance × (1 + reinforce_bonus × recall_count)` 参与读侧加权（被反复成功召回的旧记忆不随遗忘曲线沉底）；写回经 `_persist_recall` 钩子（基类 no-op，Mem0Backend 覆写为 mem0 `update_memory` 写 `metadata.recall_count`，无该 API 仅内存侧）。`[memory].reinforce_enabled=false` / `reinforce_bonus=0.0`（默认关闭恒等）。
 
-**C3 死 metadata 清理（v1.12）**：新版 mem0 不再产出的 `memory_category`/`l0_abstract` 死字段从读路径移除——`chiguo_topics.py`/`chiguo_trigger.py`/`memory_bridge.py` 全部改为 **text 优先**（`text` 空时才回退 `l0_abstract`，category 优先现成 `category` 字段）；`consolidate_plan` 排序键对 ISO/None/非数值 timestamp 归一化（防 float < str TypeError）。
+**C3 死 metadata 清理（v1.12）**：新版 mem0 不再产出的 `memory_category`/`l0_abstract` 死字段从读路径移除——`chiguo_topics.py`/`chiguo_trigger.py`（读侧）+ `memory/` CLI `fmt_search_row`（展示侧）全部改为 **text 优先**（`text` 空时才回退 `l0_abstract`，category 优先现成 `category` 字段）；`consolidate_plan` 排序键对 ISO/None/非数值 timestamp 归一化（防 float < str TypeError）。
 
 **C4 写全对话轮次（v1.12）**：`[memory].write_full_turns=true`（默认 False 恒等）时，`_mem0_autowrite` 把最近一条 assistant 回复（`recent_sent_texts(n=1)`）追加为 assistant 轮，组成 **user + assistant 两轮**写入——mem0 据此提取「迟菓回应了什么」的上下文事实；默认单条 user 写入恒等。
 
@@ -890,7 +890,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo_rotation.py` | 对话日志轮转归档 + 告警持久化 + 索引查询 |
 | `update_holidays.py` | 节假日数据跨年合并生成（R22 防覆盖） |
 | `solar_terms.py` | 24 节气按年动态查询（消费者，单一事实源在 update_holidays.get_solar_terms_for） |
-| `memory_bridge.py` | 兼容门面（`MemoryBridge = Mem0Backend` 别名 + CLI，经工厂创建） |
+| `memory/` | 记忆后端抽象（mem0 唯一后端；base/factory/mem0_backend + `python -m memory` CLI cli.py；根目录 memory_bridge.py 门面已删） |
 | `chiguo_version.py` | VERSION = "1.15"（MINOR+1 次版本步进） |
 
 ### 6.2 `schedule/` 包（课表/假期/纪念日/安排）
@@ -1134,17 +1134,17 @@ uv run python -m schedule.holiday 2026-10-01
 |------|------|
 | `mem0` | mem0ai 记忆层（默认；库缺失/无 key/ollama 未启动 → available=False 优雅降级） |
 
-`memory_bridge.py` 保留为兼容门面（`MemoryBridge = Mem0Backend` 别名 + CLI 保留，经工厂创建、尊重 toml backend）：
+记忆 CLI 经 `python -m memory` 提供（经 `create_backend` 工厂、尊重 toml backend；原根目录兼容门面 `memory_bridge.py` 已删除）：
 
 ```bash
 # 统计
-python3 memory_bridge.py --stats
+python3 -m memory --stats
 
 # FTS 搜索
-python3 memory_bridge.py --search "菓菓"
+python3 -m memory --search "菓菓"
 
 # 随机记忆
-python3 memory_bridge.py --random
+python3 -m memory --random
 ```
 
 特性：
