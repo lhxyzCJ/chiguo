@@ -1523,6 +1523,8 @@ class DecisionEngine:
             # ── v1.15 (#164): /send 超时 10s→35s（微信 bridge 网络抖动下
             # 10s 易误判失败退款）；并校验返回体 ok 字段——bridge 返回
             # ok=false 视为发送失败走退款闭环，不再假记账 sent+1。
+            # 35s 与 scripts/chiguo-tick.sh 主消息发送 curl --max-time 35 保持一致
+            # （#261/CR-2: 对齐 cron / loop 双路径超时；改此值须同步改 tick.sh）。
             resp = _post("/send", {"to": to, "text": text}, 35.0)
             if not resp.get("ok"):
                 raise RuntimeError(str(resp.get("error") or "bridge /send ok=false"))
