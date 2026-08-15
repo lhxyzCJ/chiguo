@@ -60,7 +60,7 @@ The system serves one user only: 哥哥 (gēge, her in-character name for the us
 - **A model API key** (message generation and mood analysis go through the agent backend — the default agent backend; any OpenAI-compatible backend works, or swap in any CLI agent via `[host].runner = command`)
 - **Optional**: a WeChat account (bot send/receive), ollama (memory embeddings), a schedule Excel, a NetEase account
 
-> WeChat delivery uses the official iLink Bot channel (upstream [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin), open source); QR login via the official API. Login state and conversation data stay on your machine — nothing goes into git.
+> WeChat delivery uses the official iLink Bot channel (upstream chain verified: github.com/lhxyzCJ/wechatbot `nodejs/` SDK, whose upstream is [corespeed-io/wechatbot](https://github.com/corespeed-io/wechatbot), MIT; vendored into `wechat-bridge/vendor/wechatbot/`); QR login via the official API. Login state and conversation data stay on your machine — nothing goes into git.
 
 ---
 
@@ -238,7 +238,7 @@ A complete Chiguo is assembled from the components below. Only two are essential
 
 **Role**: the last mile — actually delivers generated text to WeChat and receives the user's messages back for the daemon to record. Runs as a resident process; login state stays local (one QR scan).
 
-**Setup**: `bash scripts/wechat-bridge.sh install` (auto-clones the [wechatbot](https://github.com/lhxyzCJ/wechatbot) iLink SDK to `$HOME/wechatbot` and installs npm dependencies — requires Node.js + npm); login with `bash scripts/wechat-bridge.sh login`.
+**Setup**: `bash scripts/wechat-bridge.sh install` (install builds from the in-repo `wechat-bridge/vendor/wechatbot` — the vendored SDK with its MIT LICENSE; `install update` may refresh from upstream [lhxyzCJ/wechatbot](https://github.com/lhxyzCJ/wechatbot) — requires Node.js + npm); login with `bash scripts/wechat-bridge.sh login`.
 
 **Service management**: `bash scripts/service.sh <autostart|temp|status|stop|uninstall>` (autostart = systemd boot autostart for ollama + bridge; temp = temporary start without autostart registration; see doc/SYSTEM.md for details).
 

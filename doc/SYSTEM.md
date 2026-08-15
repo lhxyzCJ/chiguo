@@ -945,7 +945,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `service.sh` | systemd 服务管理 |
 | `netease-api.sh` | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
 | `chiguo-tick.sh` | cron 门控入口（零模型，读 daemon 输出 → send → 5s 重试 → record-send；无 composer 兜底，health 告警/暂停） |
-| `ci-test.sh` | 全量测试链（计数以(`scripts/ci-test.sh`)为准，CI stub 自举） |
+| `ci-test.sh` | 全量测试链（计数以(`scripts/ci-test.sh`)为准，CI 构建 vendor 真实 SDK） |
 | `agent-auth.sh` | agent 认证 |
 | `replan-tick.sh` | loop 形态 replan 判脏轮询 |
 | `chiguo-daemon.service` | systemd 单元（loop 常驻形态） |
@@ -958,7 +958,8 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `command-detect.mjs` | 特殊命令规则化检测（纪念日/假期 → CLI，不经 agent） |
 | `agent-rpc.mjs` | 常驻 agent RPC（analysis chiguo-main / send chiguo-send 双会话） |
 | `session-rotate.mjs` | 主会话每日轮换（每小时检查 + 空闲保护 + 幂等标记 + RPC 先杀进程） |
-| `package.json` | file: 本地依赖 @wechatbot/wechatbot（CI stub 自举） |
+| `package.json` | file: 本地依赖 @wechatbot/wechatbot（`file:./vendor/wechatbot`，真实 SDK） |
+| `vendor/wechatbot/` | vendor 入库的 wechatbot 真实 SDK（实测链 lhxyzCJ → corespeed-io，MIT，含 LICENSE；CI 从这里 npm install + tsc 构建） |
 
 ### 6.7 `personality/`（人格文件）
 

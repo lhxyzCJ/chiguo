@@ -7,13 +7,13 @@
 
 一个零 LLM 的数学决策引擎（`chiguo_daemon.py`）决定何时、以什么心情主动发消息，agent 后端（LLM）按人格生成微信消息，wechat-bridge 负责收发；全部计算在本机完成。默认由 crontab 每 15 分钟评估一次，需要时才调模型；也可切换为 `CHIGUO_DAEMON_LOOP=1` 常驻形态（决策引擎 `--loop` 常驻 + agent RPC 常驻，见 §六、部署形态）。
 
-> 微信触达走官方 iLink Bot 通道（上游 [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin) 开源协议），扫码登录正规 API，无封号风险；隐私数据（登录态/对话/状态）仅存本机，不进 git。
+> 微信触达走官方 iLink Bot 通道（实测上游链 **github.com/lhxyzCJ/wechatbot**（个人 fork；其上游为 [corespeed-io/wechatbot](https://github.com/corespeed-io/wechatbot)，MIT 开源协议）的 `nodejs/` SDK），扫码登录正规 API，无封号风险；SDK 已 **vendor 入库**（`wechat-bridge/vendor/wechatbot/`，含 MIT LICENSE），无需联网 clone 即可安装。隐私数据（登录态/对话/状态）仅存本机，不进 git。
 
 ## 二、外部依赖（2 个 GitHub 公开仓库）
 
 | 仓库 | 用途 | 落点 | 由谁安装 |
 |------|------|------|----------|
-| github.com/lhxyzCJ/wechatbot（wechatbot iLink SDK 的个人 fork） | 微信登录/收发 SDK | `$HOME/wechatbot` | `wechat-bridge.sh install` 自动 clone + npm 安装 |
+| lhxyzCJ/wechatbot 的 `nodejs/` SDK（**vendor 入库**：`wechat-bridge/vendor/wechatbot/`，MIT LICENSE；实测链 lhxyzCJ → [corespeed-io/wechatbot](https://github.com/corespeed-io/wechatbot)） | 微信登录/收发 SDK | 仓库内 `wechat-bridge/vendor/wechatbot/` | `wechat-bridge.sh install`（vendor 优先，无需 clone；`install update` 可选从上游刷新） |
 | github.com/NeteaseCloudMusicApiEnhanced/api-enhanced（跟随上游最新 tag） | 网易云数据源（可选） | `/opt/netease-api` | `netease-api.sh install` |
 
 wechatbot 必需，网易云可选跳过（`--skip-netease`）。
@@ -66,7 +66,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 `bash scripts/ci-test.sh`：全量测试链（计数以此脚本为准，独立 runner、无 pytest），任一失败即中止。验证：看输出「ALL TESTS PASSED」。
 
-该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot`（`ci-test.sh` 自动自举 stub）与 `data/xskb.xlsx`（课表 fixture 由 test_7/test_trigger 测试内自包含生成），因此本地与 CI 结果一致。
+该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot`（`ci-test.sh` 从 **vendor 真实 SDK**（`wechat-bridge/vendor/wechatbot/`）执行 npm install + tsc 构建，干净 checkout 即可跑）与 `data/xskb.xlsx`（课表 fixture 由 test_7/test_trigger 测试内自包含生成），因此本地与 CI 结果一致。
 
 ### 4. 环境检查
 
@@ -101,7 +101,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 | 路径 | 内容 | 进 git | 可迁移（新机器拷贝即用） |
 |------|------|--------|--------------------------|
 | 仓库根（clone 位置） | 系统本体 | 是 | git clone |
-| `$HOME/wechatbot` | wechatbot SDK（iLink） | 否 | 重装自动 clone |
+| 仓库内 `wechat-bridge/vendor/wechatbot/` | wechatbot SDK（iLink，vendor 入库，含 MIT LICENSE） | 是 | git clone 自带 |
 | 仓库内 `wechat-bridge/node_modules` + `.env` | bridge 依赖与运行环境 | 否 | install 重建 |
 | `~/.chiguo/auth/`（`wechat/credentials.json`、`netease_cookie.txt`、`agent-auth.json`） | 微信登录态/网易云 cookie/agent key 迁移源 | 否 | 拷贝即用（微信/网易云跨设备可能自动重登一次） |
 | `data/mem0/`（qdrant 嵌入式向量库 + history.db，gitignore） | mem0 记忆层 | 否 | 拷贝 |

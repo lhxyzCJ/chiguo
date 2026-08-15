@@ -18,8 +18,10 @@ ENV_FILE="$BRIDGE_DIR/.env"
 # 精确匹配我们的 bridge.mjs 进程（绝对路径 + 转义 .）："node .*bridge.mjs" 正则过宽，会误匹配他项目同名脚本
 BRIDGE_PGREP="node .*${BRIDGE_DIR}/bridge\.mjs"
 LOG_FILE="${WECHAT_BRIDGE_LOG:-/tmp/opencode/wechat-bridge.log}"
+# vendor SDK 随仓库入库（wechat-bridge/vendor/wechatbot），install 默认直接用；以下仅作“更新参考”时的上游 clone 参数
 WECHATBOT_DIR="${WECHATBOT_DIR:-$HOME/wechatbot}"
 WECHATBOT_REPO="${WECHATBOT_REPO:-https://github.com/lhxyzCJ/wechatbot.git}"
+VENDOR_DIR="$BRIDGE_DIR/vendor/wechatbot"
 SEND_PORT="${WECHAT_BRIDGE_SEND_PORT:-18790}"
 # 集中认证目录（可迁移：拷贝 ~/.chiguo/auth/ 到新机器即可接入；微信登录态失效会自动重登）
 AUTH_DIR="${CHIGUO_AUTH_DIR:-$HOME/.chiguo/auth}"
@@ -85,33 +87,39 @@ EOF
     chmod 600 "$ENV_FILE"
 }
 
+# 更新参考：从上游 lhxyzCJ/wechatbot（实测链 lhxyzCJ → corespeed-io/wechatbot）克隆并把 nodejs/ + LICENSE 覆盖到 vendor。
+# 默认 install 不 clone（vendor 已随仓库入库）；仅在显式要求时用于同步上游新版本。
+do_update_vendor_from_upstream() {
+    say "从上游更新 vendor SDK（参考用）：$WECHATBOT_REPO → $WECHATBOT_DIR → $VENDOR_DIR ..."
+    mkdir -p "$WECHATBOT_DIR" "$VENDOR_DIR"
+    git clone --depth 1 "$WECHATBOT_REPO" "$WECHATBOT_DIR" 2>/dev/null \
+      || { [ -d "$WECHATBOT_DIR/.git" ] && ( cd "$WECHATBOT_DIR" && git pull --ff-only >/dev/null 2>&1 ) \
+        || fail "更新失败（先手工清理 $WECHATBOT_DIR）"; }
+    [ -d "$WECHATBOT_DIR/nodejs" ] || fail "上游仓库缺少 nodejs/ SDK 目录"
+    # nodejs/ 整目录拷贝（含 src/tests/examples/config），并在 vendor 中放置 fork 根 LICENSE（MIT 合规）
+    cp -r "$WECHATBOT_DIR/nodejs/." "$VENDOR_DIR/"
+    cp -f "$WECHATBOT_DIR/LICENSE" "$VENDOR_DIR/LICENSE"
+    # 清掉更新产生的构建/锁产物（vendor 只跟踪源码）
+    rm -rf "$VENDOR_DIR/dist" "$VENDOR_DIR/node_modules" "$VENDOR_DIR/package-lock.json"
+    say "vendor SDK 已从上游刷新（src 已覆盖；LICENSE 随 vendor 保留）"
+}
+
 do_install() {
-    say "安装 wechat-bridge（可移植：wechatbot SDK 克隆到 \$HOME/wechatbot，登录态随 chiguo 仓库）..."
+    say "安装 wechat-bridge（vendor SDK 随仓库：wechat-bridge/vendor/wechatbot）..."
     [ -x "$PROJECT_DIR/.venv/bin/python" ] || fail "chiguo .venv 不存在，请先跑 deploy.sh"
     mkdir -p "$WX_STORAGE" && chmod 700 "$AUTH_DIR" "$WX_STORAGE" 2>/dev/null || true
-    if [ ! -d "$WECHATBOT_DIR/.git" ]; then
-        say "克隆 wechatbot SDK → $WECHATBOT_DIR ..."
-        git clone --depth 1 "$WECHATBOT_REPO" "$WECHATBOT_DIR" || fail "git clone wechatbot 失败（$WECHATBOT_REPO）"
-    else
-        say "wechatbot SDK 已存在，更新中..."
-        git -C "$WECHATBOT_DIR" pull --ff-only >/dev/null 2>&1 || warn "wechatbot pull 失败（保持现有版本继续）"
-    fi
-    if [ ! -d "$WECHATBOT_DIR/nodejs" ]; then
-        fail "wechatbot 仓库缺少 nodejs/ SDK 目录，无法安装"
-    fi
-    # SDK 是 TS 源码：dist 被上游 gitignore，npm install file: 只拷源码不构建 →
-    # 缺 dist/index.js 时 bridge.mjs 顶层 import 必挂（干净部署实测）。与 install_agent.sh
-    # 幂等：dist 已存在跳过。
-    if [ ! -f "$WECHATBOT_DIR/nodejs/dist/index.js" ]; then
-        say "SDK 未构建（dist 缺失），执行 npm install && npm run build ..."
-        ( cd "$WECHATBOT_DIR/nodejs" && npm install --no-fund --no-audit >/dev/null 2>&1 \
+    [ -f "$VENDOR_DIR/src/index.ts" ] || fail "vendor SDK 缺失（$VENDOR_DIR/src/index.ts）——不应删除仓库内 vendor 源码"
+    # SDK 是 TS 源码：dist 被忽略不入库 → 缺 dist/index.js 时先 npm install 依赖 + tsc 构建（与 install_agent.sh 幂等）
+    if [ ! -f "$VENDOR_DIR/dist/index.js" ]; then
+        say "构建 vendor SDK（dist 缺失，npm install + npm run build）..."
+        ( cd "$VENDOR_DIR" && npm install --no-fund --no-audit >/dev/null 2>&1 \
             && npm run build >/dev/null 2>&1 ) \
-            || fail "SDK 构建失败（手工: cd $WECHATBOT_DIR/nodejs && npm install && npm run build）"
+            || fail "vendor SDK 构建失败（手工: cd $VENDOR_DIR && npm install && npm run build）"
     else
-        say "SDK 已构建（dist 存在，跳过 build）"
+        say "vendor SDK 已构建（dist 存在，跳过 build）"
     fi
-    say "安装 npm 依赖（@wechatbot/wechatbot <- $WECHATBOT_DIR/nodejs）..."
-    ( cd "$BRIDGE_DIR" && npm install "@wechatbot/wechatbot@file:$WECHATBOT_DIR/nodejs" --no-fund --no-audit >/dev/null ) \
+    say "安装 npm 依赖（@wechatbot/wechatbot <- ./vendor/wechatbot）..."
+    ( cd "$BRIDGE_DIR" && npm install --no-fund --no-audit >/dev/null ) \
         || fail "npm install 失败"
     write_env
     say "install 完成（.env 已生成；登录态目录: $WX_STORAGE（集中认证，可随 ~/.chiguo/auth/ 迁移））"
@@ -206,12 +214,18 @@ do_login() {
 }
 
 case "${1:-}" in
-    install) do_install ;;
+    install)
+        # 默认 vendor 优先（不 clone）。`install update` 或 WECHATBOT_BOOTSTRAP_FROM_CLONE=1 →
+        # 先从上游克隆覆盖 vendor（仅作更新参考，非必需）。
+        if [ "${2:-}" = "update" ] || [ "${WECHATBOT_BOOTSTRAP_FROM_CLONE:-0}" = "1" ]; then
+            do_update_vendor_from_upstream
+        fi
+        do_install ;;
     start) do_start ;;
     stop) do_stop ;;
     status) do_status ;;
     login) do_login ;;
     *)
-        echo "用法: bash scripts/wechat-bridge.sh <install|start|stop|status|login>"
+        echo "用法: bash scripts/wechat-bridge.sh <install [update]|start|stop|status|login>"
         exit 1 ;;
 esac
