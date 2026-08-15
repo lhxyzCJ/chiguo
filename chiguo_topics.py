@@ -311,7 +311,7 @@ class TopicPicker:
         # ── v4: 50% 概率用 Ebbinghaus 搜索（相关性），50% 随机 ──
         if random.random() < 0.5:
             # 用最近触发历史作为搜索上下文
-            recent = self.state.cooldown.trigger_history[-3:] if self.state.cooldown.trigger_history else []
+            recent = self.state.cooldown.get_trigger_history()[-3:] if self.state.cooldown.get_trigger_history() else []
             queries = [f"conversation", f"shared experience", f"preference"]
             if recent:
                 queries.insert(0, recent[-1])

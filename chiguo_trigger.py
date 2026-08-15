@@ -72,7 +72,7 @@ def backoff_level(state: ChiguoState, now: datetime) -> int:
     # #83: 类型防护——配置为 "3.5"/None 等非整数时回退默认，防 ValueError/TypeError 崩溃
     start = _clamp_int(cfg.get("backoff_start", 3), 3, max_value=100)
     silent = _clamp_int(cfg.get("backoff_silent", 5), 5, max_value=100)
-    n = state.cooldown.messages_without_reply
+    n = state.cooldown.get_messages_without_reply()
     if n >= silent:
         return 2
     if n >= start:
@@ -266,7 +266,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # ── v1.11 ①: 用户情绪感知（user_mood） ──
     # 新鲜窗口内（默认 6h）低落/崩溃 → comfort 安慰触发 + anxiety 权重加成。
     # 全部参数默认 0/关闭 → 行为恒等（灰度先例）。
-    mood = state.cooldown.user_mood
+    mood = state.cooldown.get_user_mood()
     mood_fresh_flag = bool(mood and mood_fresh(
         mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0)))
     if mood_fresh_flag:
@@ -344,8 +344,8 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
 
     # ── v4: longing 触发（概率累积溢出）──
     # held_count 高 + accumulated_lambda 高 → "累积的想念终于溢出"
-    held = getattr(state.cooldown, 'held_count', 0)
-    acc_lam = state.cooldown.accumulated_lambda or 0
+    held = state.cooldown.get_held_count()
+    acc_lam = state.cooldown.get_accumulated_lambda() or 0
     base_lambda = _to_float(state.config.get("poisson", {}).get("base_lambda", 0.25), 0.25)
     if state.is_longing_overflow() and base_lambda > 0:
         w_longing = min(0.5, (acc_lam / base_lambda - 1) * 0.3)
@@ -394,7 +394,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # B1: repeat_cap 走 _clamp_int 兜底（字符串"3"/None 等脏配置回退默认 3，负数钳 0），
     # 与 min(n, repeat_cap) 的整型语义一致（裸取遇字符串会 TypeError）
     repeat_cap = _clamp_int(trg_cfg.get("repeat_cap", 3), 3)
-    history = state.cooldown.trigger_history
+    history = state.cooldown.get_trigger_history()
     for c in weighted_candidates:
         n = sum(1 for t in history if t == c["trigger"].type)
         c["weight"] *= repeat_decay ** min(n, repeat_cap)
@@ -434,7 +434,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # 回复时 replied+1），样本数 < min_samples 不调整（防冷启动误伤）。
     # 放在抖动后、三段选择前 → 只影响类型间相对概率，不扰动 A4 三段归属阈值。
     if trg_cfg.get("reply_feedback_enabled", 0):
-        stats = getattr(state.cooldown, "reply_stats", None) or {}
+        stats = state.cooldown.get_reply_stats() or {}
         rfb_damp = _to_float(trg_cfg.get("reply_feedback_damp", 0.0), 0.0)
         rfb_boost = _to_float(trg_cfg.get("reply_feedback_boost", 0.0), 0.0)
         rfb_low = _to_float(trg_cfg.get("reply_feedback_low_rate", 0.3), 0.3)
@@ -546,7 +546,7 @@ def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
 
 
 def _should_morning(state: ChiguoState, now: datetime) -> bool:
-    if state.cooldown.morning_sent:
+    if state.cooldown.is_morning_sent():
         return False
     s = state.config.get("schedule", {})
     start, end = s.get("morning_start", 8), s.get("morning_end", 10)
@@ -557,7 +557,7 @@ def _should_morning(state: ChiguoState, now: datetime) -> bool:
 
 
 def _should_night(state: ChiguoState, now: datetime) -> bool:
-    if state.cooldown.night_sent:
+    if state.cooldown.is_night_sent():
         return False
     s = state.config.get("schedule", {})
     start, end = s.get("night_start", 20), s.get("night_end", 21)

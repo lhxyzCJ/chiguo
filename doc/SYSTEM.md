@@ -70,8 +70,8 @@ chiguo_daemon.py（薄 CLI facade，T10·Q2 拆分，Issue #268）
   │                 evaluate/tick/idle / context 上下文构建 _build_context)
   ├─ ops/        → 记账/审计(ops/engine_ops.py AccountingMixin: record_* / recv / 召回 / consolidate)
   │
-  ├─ chiguo_state.py     → 5-dimension emotion engine + 8-dim personality + Bayesian inference + schedule + holidays + memory
-  │                       （v1.12 B1 事件类型化情绪 delta + B2 情绪-记忆耦合）
+  ├─ chiguo_state.py     → 状态核心 4 单类（T11·Q1 拆分）：ChiguoState（核心决策/协调）+ ChiguoEmotion（情绪引擎数据）+ CooldownState（冷却子状态 + 公开 getter/mutator）+ StatePersistence（持久化/迁移：原子读写/锁/审计/校验和）
+  │                       （v1.12 B1 事件类型化情绪 delta + B2 情绪-记忆耦合；daemon 私有直访与 cooldown 字段直读写改走公开 API）
   │     ├─ chiguo_math.py      → 纯数学库：sigmoid / elastic_recover / Hawkes / longing / OU 噪声 / impact_inertia / interaction_matrix
   │     ├─ chiguo_personality.py → Big Five + 角色特质（8 维人格）+ 自适应 + 基线回归
   │     ├─ chiguo_bayesian.py  → Bayesian 用户状态推断（6 状态，在线学习；A1 转移矩阵+前向滤波 + A3 信息增益门控）
@@ -873,7 +873,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 |------|------|
 | `chiguo_daemon.py` | 决策引擎 CLI 薄入口 facade（T10·Q2 拆分）：参数解析+分发→cli/、决策引擎→decision/、loop/cron→runner/、记账审计→ops/；对外 CLI 契约不变 |
 | `decision/` `cli/` `runner/` `ops/` | 拆包：decision/base+core+context（DecisionEngine）、cli/parser+commands+dispatch、runner/loop（LoopSenderMixin+run_loop）、ops/engine_ops（AccountingMixin） |
-| `chiguo_state.py` | ChiguoState：5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线 + 状态持久化（原子写/SHA256/审计日志） |
+| `chiguo_state.py` | 状态核心（T11·Q1 拆分 13 集群为 4 单类）：ChiguoState（5 维情绪引擎 + 8 维人格 + Bayesian + schedule/holiday/memory 接线）、ChiguoEmotion（情绪数据）、CooldownState（冷却子状态 + 公开 getter/mutator）、StatePersistence（原子持久化/SHA256/审计日志/迁移） |
 | `chiguo_monitor.py` | 流式 JSONL 分析：统计/告警/健康 + D1 proactive_stats |
 | `chiguo_trigger.py` | 触发评估（14 类型）+ A3/A4/A5/A6/A2 + 逃生阀 |
 | `chiguo_composer.py` | Intent × Cue × Vibe 三层组合 + 独立直出 CLI（发送链不再调用） |
