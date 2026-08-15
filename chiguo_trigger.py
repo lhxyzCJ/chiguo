@@ -10,7 +10,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 
 from chiguo_state import CST, ChiguoState
-from chiguo_math import weighted_trigger_choice, in_quiet_window, mood_fresh
+from chiguo_math import cfg_float, weighted_trigger_choice, in_quiet_window, mood_fresh
 
 from trigger_types import TriggerType, EMOTION_TRIGGERS
 
@@ -29,20 +29,6 @@ def _clamp01(value, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return max(0.0, min(1.0, v))
-
-
-def _to_float(value, default: float) -> float:
-    """A2: 配置系数解析——非数值/NaN/inf 回退默认（不钳制，负值语义由使用处 max() 兜底）。
-
-    float("nan")/float("inf") 不抛异常，会毒化回复率反馈权重（weight *= nan）；isfinite 兜底。
-    """
-    try:
-        fv = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    if not math.isfinite(fv):
-        return default
-    return fv
 
 
 def _clamp_int(value, default: int, max_value: int | None = None) -> int:
@@ -105,7 +91,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     weighted_candidates: list[dict] = []
 
     # 仪式触发权重缩放（默认为1.0，调低可减少仪式触发对情绪触发的压制）
-    ritual_scale = _to_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0)
+    ritual_scale = cfg_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0)
 
     # ── 固定事件（权重固定，会概率性参与竞争） ──────────
 
@@ -346,7 +332,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # held_count 高 + accumulated_lambda 高 → "累积的想念终于溢出"
     held = state.cooldown.get_held_count()
     acc_lam = state.cooldown.get_accumulated_lambda() or 0
-    base_lambda = _to_float(state.config.get("poisson", {}).get("base_lambda", 0.25), 0.25)
+    base_lambda = cfg_float(state.config.get("poisson", {}).get("base_lambda", 0.25), 0.25)
     if state.is_longing_overflow() and base_lambda > 0:
         w_longing = min(0.5, (acc_lam / base_lambda - 1) * 0.3)
         if w_longing > 0.03:
@@ -382,7 +368,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # A3 日程乘数 + 抖动：只作用于情绪类候选，仪式类（morning/night/meal/special/memory/follow_up）豁免。
     # 上课中 ×0.3；空闲（节假日/周末/课间）× free_multiplier（默认 1.2）；半忙 ×0.6。
     # 再乘 uniform(0.8, 1.2) 随机抖动防机械感。逃生阀已在函数首 return → 天然豁免。
-    free_mult = _to_float(trg_cfg.get("free_multiplier", 1.2), 1.2)
+    free_mult = cfg_float(trg_cfg.get("free_multiplier", 1.2), 1.2)
     sched_mult = _schedule_multiplier(state, now, free_mult)
     for c in weighted_candidates:
         if c["trigger"].type in EMOTION_TRIGGERS:
@@ -435,10 +421,10 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     # 放在抖动后、三段选择前 → 只影响类型间相对概率，不扰动 A4 三段归属阈值。
     if trg_cfg.get("reply_feedback_enabled", 0):
         stats = state.cooldown.get_reply_stats() or {}
-        rfb_damp = _to_float(trg_cfg.get("reply_feedback_damp", 0.0), 0.0)
-        rfb_boost = _to_float(trg_cfg.get("reply_feedback_boost", 0.0), 0.0)
-        rfb_low = _to_float(trg_cfg.get("reply_feedback_low_rate", 0.3), 0.3)
-        rfb_high = _to_float(trg_cfg.get("reply_feedback_high_rate", 0.7), 0.7)
+        rfb_damp = cfg_float(trg_cfg.get("reply_feedback_damp", 0.0), 0.0)
+        rfb_boost = cfg_float(trg_cfg.get("reply_feedback_boost", 0.0), 0.0)
+        rfb_low = cfg_float(trg_cfg.get("reply_feedback_low_rate", 0.3), 0.3)
+        rfb_high = cfg_float(trg_cfg.get("reply_feedback_high_rate", 0.7), 0.7)
         rfb_min = _clamp_int(trg_cfg.get("reply_feedback_min_samples", 3), 3)
         for c in weighted_candidates:
             st = stats.get(c["trigger"].type) or {}
@@ -532,7 +518,7 @@ def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
     if not math.isfinite(peak) or not math.isfinite(sigma) or sigma <= 0:
         peak, sigma = 4.0, 3.0
     bell = math.exp(-((age - peak) / sigma) ** 2)
-    w = _to_float(trg_cfg.get("follow_up_weight", 0.35), 0.35) * bell
+    w = cfg_float(trg_cfg.get("follow_up_weight", 0.35), 0.35) * bell
     if w <= _clamp01(trg_cfg.get("follow_up_min_weight", 0.03), 0.03):
         return None
     return {

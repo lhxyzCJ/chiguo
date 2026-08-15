@@ -31,7 +31,8 @@ node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && \
 node tests/test_bridge_rotate.mjs && node tests/test_bridge_schedule.mjs && bash tests/test_install_agent.sh && \
 bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
 bash tests/test_tick_health.sh && bash tests/test_service.sh && \
-uv run python tests/test_chiguo_math.py && uv run python tests/test_emotion_dynamics.py && \
+uv run python tests/test_chiguo_math.py && uv run python tests/test_config_util.py && \
+uv run python tests/test_emotion_dynamics.py && \
 uv run python tests/test_emotion_noise.py && uv run python tests/test_emotion_baseline.py && uv run python tests/test_loop_send.py && uv run python tests/test_loop_concurrency.py && \
 uv run python tests/test_holiday_parser.py && \
 uv run python tests/test_schedule_parser.py && \
