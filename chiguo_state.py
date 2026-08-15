@@ -690,7 +690,13 @@ class ChiguoState:
 
     def _migrate_personality_baseline(self, data: dict):
         """v10 迁移：恢复持久化人格基线（回归目标）；旧状态无持久化基线 →
-        回退到 toml 构造函数初始基线（_personality_initial_baseline）。"""
+        回退到 toml 构造函数初始基线（_personality_initial_baseline）。
+
+        等价前提：原实现把该恢复放在 `if pers_data:` 分支内（仅当 state 有
+        personality 时）；此处无条件执行 —— 因为加载路径总是先经
+        _apply_loaded_data 构造 `self.personality`（有 pers_data 用
+        personality_from_dict，无则用 toml 初始值），且 _personality_initial_baseline
+        恒记录构造值，无人中途改写 _baseline，故与原行为严格等价。"""
         saved_base = data.get("personality_baseline")
         if isinstance(saved_base, dict) and saved_base:
             self.personality.reset_baseline(saved_base)

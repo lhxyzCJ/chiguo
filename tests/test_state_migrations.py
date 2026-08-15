@@ -114,6 +114,7 @@ def _full_snapshot() -> dict:
 # 各字段引入的版本号：构造历史样本时删除“晚于目标版本”的字段。
 # key 为点路径（顶层.嵌套），value 为引入该字段的 STATE_VERSION。
 _FIELD_INTRO_VERSION = {
+    "cooldown.trigger_history": 2,
     "cooldown.event_timestamps": 3,
     "cooldown.accumulated_lambda": 5,
     "cooldown.crash_timestamps": 6,
@@ -197,18 +198,45 @@ def test_all_versions_migrate_to_current_structure(cfg_path: Path):
             assert st.circadian.weekday_quiet_start == 2, version
             assert st.circadian.weekday_quiet_end == 7, version
 
-        # v10: personality 基线有效非空（v≤9 回退 toml 初始基线）
-        assert isinstance(st.personality._baseline, dict) and st.personality._baseline, \
-            (version, st.personality._baseline)
+        # v10: personality 基线（v≥10 恢复持久化基线 == _BASELINE；
+        # v≤9 无持久化基线 → 回退 toml 构造初始基线）
+        if version >= 10:
+            assert st.personality._baseline == _BASELINE, \
+                (version, st.personality._baseline)
+        else:
+            assert st.personality._baseline == st._personality_initial_baseline, \
+                (version, st.personality._baseline, st._personality_initial_baseline)
 
         print(f"  OK v{version} → v{_FULLV} migrated")
+
+
+def test_v8_bucket_backfill_and_weekday_inherit(cfg_path: Path):
+    """v8 迁移的补桶启发式分支：reply_days 无 bucket 条目 → 按日期补桶；
+    旧单桶窗口 confidence>0 且 weekday_*/weekend_* 默认 → 继承到 weekday_*。
+    （其余版本组合用例因样本已预置 bucket 只覆盖 weekday_* 继承分支。）"""
+    snap = _snapshot_for(7)                      # v7：无 weekday_*/bucket
+    for d in snap["circadian"]["reply_days"]:    # 显式去掉 bucket → 触发补桶分支
+        d.pop("bucket", None)
+    # 周六 2026-08-01 → weekend，周一 2026-07-27 → weekday
+    snap["circadian"]["reply_days"] = [
+        {"date": "2026-07-27", "hours": [10]},   # 周一 → weekday
+        {"date": "2026-08-01", "hours": [21]},   # 周六 → weekend
+    ]
+    st = _load_state(cfg_path, snap)
+    by_bucket = {d["bucket"]: d["date"] for d in st.circadian.reply_days}
+    assert by_bucket == {"weekday": "2026-07-27", "weekend": "2026-08-01"}, by_bucket
+    assert st.circadian.weekday_quiet_start == 2
+    assert st.circadian.weekday_quiet_end == 7
+    assert st.circadian.weekday_confidence == 0.8
+    print("  OK v8 bucket backfill + weekday inherit")
 
 
 if __name__ == "__main__":
     print("test_state_migrations.py\n")
     try:
         cfg = setup()
-        tests = [test_all_versions_migrate_to_current_structure]
+        tests = [test_all_versions_migrate_to_current_structure,
+                 test_v8_bucket_backfill_and_weekday_inherit]
         for t in tests:
             t(cfg)
         print("\n" + "=" * 40)
