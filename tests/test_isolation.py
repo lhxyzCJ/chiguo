@@ -9,10 +9,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENGINE_MODULES = ["chiguo_daemon.py", "chiguo_trigger.py", "chiguo_topics.py", "chiguo_composer.py",
                   "decision/base.py", "decision/core.py", "decision/context.py",
-                  "ops/engine_ops.py", "runner/loop.py"]
+                  "ops/engine_ops.py", "runner/loop.py",
+                  "cli/commands.py", "cli/dispatch.py"]
 # daemon 惰性 import 合法例外(批 5 起):分支函数体内 import schedule 纯函数;
-# main() 内 CLI 分支惰性 import(如 --anniversary/--break 的 ScheduleApi)同样只随 CLI 调用发生,不污染模块导入路径
-DAEMON_EXEMPT_FUNCS = {"_cmd_schedule_change", "_cmd_attention", "_cmd_schedule_recall", "main"}
+# main() 内 CLI 分支惰性 import(如 --anniversary/--break 的 ScheduleApi)同样只随 CLI 调用发生,不污染模块导入路径;
+# cli.dispatch.run() 承载拆包后的子命令分发(原 main() 的 CLI 分支),其中 --anniversary/--break 惰性 import
+# ScheduleApi 属同一合法模式,故同列豁免
+DAEMON_EXEMPT_FUNCS = {"_cmd_schedule_change", "_cmd_attention", "_cmd_schedule_recall", "main", "run"}
 
 
 def _top_level_schedule_imports(tree):
