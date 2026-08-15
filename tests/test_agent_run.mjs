@@ -5,7 +5,8 @@ import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { readToml, parseNdjson, extractAnalysis, runAgentBin, run, extractBlock, runSchedule, resolveRepo, askAgent } from '../scripts/agent-run.mjs'
+import { execFileSync } from 'node:child_process'
+import { readToml, parseNdjson, extractAnalysis, runAgentBin, run, extractBlock, runSchedule, resolveRepo, askAgent, DECISION_SEND_FIELDS } from '../scripts/agent-run.mjs'
 
 let passed = 0
 const tests = []
@@ -529,6 +530,26 @@ t('resolveRepo: 文件 URL → 两级目录推导（生产调用分支）', () =
   const repo = resolveRepo(new URL('../scripts/agent-run.mjs', import.meta.url).href, {})
   assert.ok(fs.existsSync(path.join(repo, 'chiguo_proactive.toml')), `推导失败: ${repo}`)
   assert.ok(fs.existsSync(path.join(repo, 'scripts/agent-run.mjs')))
+})
+
+// ── Q16 契约测试：mjs 消费字段清单与 Python 决策 schema（decision_schema.py）一致 ──
+// agent-run 无法 import Python schema，只能对齐字段名。本测试以子进程调用 Python 的
+// send_top_level_fields() 作为权威，断言 mjs 侧 DECISION_SEND_FIELDS 与其完全一致，
+// 防止跨语言字段名漂移（keep-in-sync: decision_schema.py::send_top_level_fields()）。
+t('Q16 agent-run 契约: DECISION_SEND_FIELDS 与 decision_schema.send_top_level_fields() 一致', () => {
+  const repo = resolveRepo(new URL('../scripts/agent-run.mjs', import.meta.url).href, {})
+  // 在仓库根跑 uv run python，保证 decision_schema.py 可被 import
+  const out = execFileSync('uv', ['run', 'python', '-c',
+    `import sys; sys.path.insert(0, '.');
+from decision_schema import send_top_level_fields, CONTRACT
+import json; print(json.dumps({"fields": send_top_level_fields(), "contract": CONTRACT}))`],
+    { encoding: 'utf8', cwd: repo })
+  const parsed = JSON.parse(out.trim().split(/\r?\n/).pop())  // 取最后一行 JSON
+  const pythonFields = parsed.fields
+  assert.ok(Array.isArray(pythonFields) && pythonFields.length > 0, `schema 字段清单为空: ${out}`)
+  assert.strictEqual(parsed.contract, 1, `Python schema contract 应为 1，实得 ${parsed.contract}`)
+  assert.deepStrictEqual([...DECISION_SEND_FIELDS].sort(), pythonFields,
+    `mjs DECISION_SEND_FIELDS 与 Python schema 不一致\nmjs:    ${DECISION_SEND_FIELDS}\nschema: ${pythonFields}`)
 })
 
 ;(async () => {
