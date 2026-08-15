@@ -63,8 +63,11 @@ class MockState:
         self.memory_bridge = bridge
         self.personality = personality
         self.emotion = SimpleNamespace(loneliness_rate=lon_rate, anxiety_rate=anx_rate)
-        self.cooldown = SimpleNamespace(trigger_history=[],
-                                        quiet_window=lambda: quiet_window)
+        self.cooldown = SimpleNamespace(
+            trigger_history=[],
+            quiet_window=lambda: quiet_window,
+            get_trigger_history=lambda: self.cooldown.trigger_history,
+        )
         self.anniversary_mgr = anniversary_mgr if anniversary_mgr is not None else _EmptyAnniversaryMgr()
         self._schedule_status = schedule_status or {
             "in_class": False, "class_load": "free", "remaining_classes": 0,
