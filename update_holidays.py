@@ -12,10 +12,16 @@ update_holidays.py — 节假日数据更新脚本
 """
 
 import json
-import os
 import sys
 from datetime import date
 from pathlib import Path
+
+# 独立脚本执行时仓库根不在 sys.path[0] → 显式加入以导入共享原子写助手。
+_SCRIPT_ROOT = str(Path(__file__).resolve().parent)
+if _SCRIPT_ROOT not in sys.path:
+    sys.path.insert(0, _SCRIPT_ROOT)
+
+from chiguo_atomic import atomic_write
 
 
 # 锚定到脚本所在目录，避免从其他 cwd 运行时写到别处
@@ -269,23 +275,20 @@ def generate(year: int, force: bool = False, with_solar: bool = False):
             if is_estimated:
                 merged["_note"] = holiday_data.get("_note")
                 merged["_generated_for"] = str(year)
-            tmp = Path(str(holidays_path) + ".tmp")
-            tmp.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
-            os.replace(tmp, holidays_path)
+            atomic_write(holidays_path,
+                         json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
             print(f"✅ {holidays_path} 已合并 {year} 年数据(保留旧年份)")
         elif force:
             # 文件不可解析 + --force:无旧数据可保留,直接覆盖
-            tmp = Path(str(holidays_path) + ".tmp")
-            tmp.write_text(json.dumps(holiday_data, indent=2, ensure_ascii=False) + "\n")
-            os.replace(tmp, holidays_path)
+            atomic_write(holidays_path,
+                         json.dumps(holiday_data, indent=2, ensure_ascii=False) + "\n")
             tag = "⚠ 估算" if is_estimated else "✅ 精确"
             print(f"{tag} {holidays_path} 已生成 ({year} 年, {len(holidays)} 个假期)")
         else:
             print(f"❌ {holidays_path} 已存在(不可解析)。用 --force 覆盖。")
     else:
-        tmp = Path(str(holidays_path) + ".tmp")
-        tmp.write_text(json.dumps(holiday_data, indent=2, ensure_ascii=False) + "\n")
-        os.replace(tmp, holidays_path)
+        atomic_write(holidays_path,
+                     json.dumps(holiday_data, indent=2, ensure_ascii=False) + "\n")
         tag = "⚠ 估算" if is_estimated else "✅ 精确"
         print(f"{tag} {holidays_path} 已生成 ({year} 年, {len(holidays)} 个假期)")
 
