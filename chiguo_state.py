@@ -450,6 +450,51 @@ class ChiguoState:
         else:
             self._apply_quiet_window()
 
+    def reload_config(self, new_config: dict):
+        """热重载：替换 config 引用并重应用 config 派生组件（--loop 模式用）。
+
+        补全热重载重建集合（Q19）：personality 初始基线 / holiday_parser 随新 config
+        重建；cooldown 静默窗口经 _sync_quiet_window 重建（置信度达标用学习窗口,否则
+        回退新 config [schedule] 默认）。runtime 演变/持久化状态不动——personality 的
+        运行时值由紧随其后的 _load() 以状态文件为准覆盖，只把 config 驱动部分切到新值。
+        """
+        self.config = new_config
+        # ① personality 初始基线（回归目标）随新 config 重算；运行时演变值保留到 _load()
+        self._reapply_personality_config()
+        # ② holiday_parser：读取 base_dir 下 holidays.json（可能有运行时更新）
+        self._reapply_holiday_parser()
+        # ③ cooldown 静默窗口（起始/结束）——conf 达标用学习窗口,否则回退 config 默认
+        self._sync_quiet_window()
+
+    def _reapply_personality_config(self):
+        """按新 config [personality] 重建人格初始值与初始基线（回归目标）。
+        随后 _load() 若状态文件有持久化人格/基线则以状态为准覆盖."""
+        pers_cfg = self.config.get("personality", {})
+        emo_cfg = self.config.get("emotion", {})
+        self.personality = PersonalityTraits(
+            openness=pers_cfg.get("openness", 55.0),
+            conscientiousness=pers_cfg.get("conscientiousness", 65.0),
+            extraversion=pers_cfg.get("extraversion", 60.0),
+            agreeableness=pers_cfg.get("agreeableness", 65.0),
+            neuroticism=pers_cfg.get("neuroticism", 60.0),
+            tsundere_intensity=pers_cfg.get("tsundere_intensity",
+                emo_cfg.get("tsundere_index", 75.0)),
+            playfulness=pers_cfg.get("playfulness", 55.0),
+            attachment_style=pers_cfg.get("attachment_style", 60.0),
+        )
+        self._personality_initial_baseline = dict(self.personality._baseline)
+
+    def _reapply_holiday_parser(self):
+        """按 base_dir 下的 holidays.json 重启 holiday_parser（可能运行时已更新）。"""
+        try:
+            self.holiday_parser = HolidayParser(
+                data_path=str(self._anchored("holidays.json"))
+            )
+        except Exception as exc:
+            # 构造崩溃兜底(#83):与 __init__ 同语义,降级为无假日判定
+            print(f"[warn] HolidayParser 构造失败，节假日判断降级: {exc}", file=sys.stderr)
+            self.holiday_parser = None
+
     @property
     def state_path(self) -> Path:
         return self._anchored("chiguo_state.json")

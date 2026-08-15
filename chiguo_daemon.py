@@ -112,10 +112,10 @@ class DecisionEngine:
             self.config = new_config
             self._inject_base_dir()
             self._config_mtime = mtime
-            self.state.config = self.config
-            # ── v7: 热重载后同步生物钟窗口(置信度达标用学习窗口,否则回退配置默认,
-            # 否则 cooldown 内注入的窗口保持旧值,silent_hours/逃生阀判定陈旧)──
-            self.state._sync_quiet_window()
+            # ── Q19: 热重载重建集合补全。ChiguoState.reload_config() 替换 config 引用并
+            # 重建 config 派生组件:personality 初始基线 + holiday_parser + cooldown 静默窗口
+            # (置信度达标用学习窗口,否则回退新 config 默认)。runtime 持久化状态不动。──
+            self.state.reload_config(self.config)
             # v9: 热重载时同步重建策略层(重试/配额参数可能被改)与 TopicPicker
             self.netease_service = NeteaseService(self.config, str(self._base_dir))
             self.topic_picker = TopicPicker(self.state, self.config.get("topic_picker", {}),
