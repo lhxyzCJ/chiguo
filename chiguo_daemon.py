@@ -433,7 +433,7 @@ class DecisionEngine:
         # ── v12: cron 模式情绪全量重放修复 —— 推进基准取「最后消息 / 上次 tick
         # 推进时刻」的较新者。cron 每 15 分钟起新进程跑单次 evaluate，新进程
         # _monotonic_at_save=0.0 使下方单调防护失效；若不引入持久化 last_tick
-        # （save 时落盘，chiguo_state._save），每轮都会按「自最后消息以来的全量
+        # （save 时落盘，chiguo_state save），每轮都会按「自最后消息以来的全量
         # elapsed」调用非幂等 state.tick(hours)（elastic_recover 半衰期增量公式）
         # → 情绪以设计速率 ~33 倍重复累积。last_tick 为 None 或解析失败 →
         # 回退现有逻辑（只用消息时间）。修复后 last_tick 由 evaluate 路径的
