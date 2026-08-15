@@ -60,6 +60,7 @@ uv run python tests/test_event_delta.py && \
 uv run python tests/test_emotion_tagging.py && \
 uv run python tests/test_consolidate_cli.py && \
 uv run python tests/test_chiguo_version.py && \
+uv run python tests/test_daemon_cli_snapshot.py && \
 uv run python tests/test_main_toml_binding.py && \
 uv run python tests/test_docs_sync.py
 ); then

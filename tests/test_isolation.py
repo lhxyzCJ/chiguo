@@ -7,7 +7,9 @@ import ast, os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENGINE_MODULES = ["chiguo_daemon.py", "chiguo_trigger.py", "chiguo_topics.py", "chiguo_composer.py"]
+ENGINE_MODULES = ["chiguo_daemon.py", "chiguo_trigger.py", "chiguo_topics.py", "chiguo_composer.py",
+                  "decision/base.py", "decision/core.py", "decision/context.py",
+                  "ops/engine_ops.py", "runner/loop.py"]
 # daemon 惰性 import 合法例外(批 5 起):分支函数体内 import schedule 纯函数;
 # main() 内 CLI 分支惰性 import(如 --anniversary/--break 的 ScheduleApi)同样只随 CLI 调用发生,不污染模块导入路径
 DAEMON_EXEMPT_FUNCS = {"_cmd_schedule_change", "_cmd_attention", "_cmd_schedule_recall", "main"}

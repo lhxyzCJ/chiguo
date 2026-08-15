@@ -29,7 +29,7 @@ os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CST = timezone(timedelta(hours=8))
 
-import chiguo_daemon as daemon_mod
+import decision.core  # noqa: E402  # T10·Q2: daemon 拆包后 evaluate/tick 时钟在 decision.core
 from chiguo_daemon import DecisionEngine
 from chiguo_math import decay, elastic_recover
 
@@ -74,7 +74,7 @@ def _fixed_now(now: datetime):
         def now(cls, tz=None):  # noqa: N805
             return now
 
-    return mock.patch.object(daemon_mod, "datetime", _FixedNow)
+    return mock.patch.object(decision.core, "datetime", _FixedNow)
 
 
 # ═══════════════════════════════════════════════════════
