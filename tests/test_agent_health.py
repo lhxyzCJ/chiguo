@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# test_agent_health.py — agent_health.py 状态机独立 runner 测试（TDD: 先红后绿）
-# 用法: uv run python test_agent_health.py（退出码 0=全过，1=有失败）
+# test_agent_health.py — agent_health.py 状态机 pytest 测试（TDD: 先红后绿）
+# 用法: uv run pytest tests/test_agent_health.py
 # 隔离: 全部用 temp dir 的 --state/--config，绝不碰真实 agent_health.json。
 
 import json
@@ -12,20 +12,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 AGENT_HEALTH = ROOT / "scripts" / "agent_health.py"
-
-passed = 0
-failed = 0
-
-
-def t(name, fn):
-    global passed, failed
-    try:
-        fn()
-        passed += 1
-        print(f"  ok - {name}")
-    except Exception as e:
-        failed += 1
-        print(f"  FAIL - {name}: {e}")
 
 
 def run(outcome, state, config, reason=None):
@@ -48,6 +34,7 @@ def no_tmp_leftover(state_path):
 # ── 状态机全矩阵 ────────────────────────────────────────────────
 
 def test_matrix():
+    """状态机全矩阵: 未达阈值→up/无transition; 越阈→down+告警; 去重; 恢复; up后无transition; 无.tmp残留"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         state = td / "agent_health.json"
@@ -91,6 +78,7 @@ def test_matrix():
 
 
 def test_reason_preserved_from_first_failure():
+    """告警保留本串首次失败原因（不被后续失败覆盖）"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         state = td / "agent_health.json"
@@ -106,6 +94,7 @@ def test_reason_preserved_from_first_failure():
 
 
 def test_threshold_from_toml():
+    """阈值从 toml [health].fail_threshold 读取（=2 时第 2 次失败即 down）"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         state = td / "agent_health.json"
@@ -120,6 +109,7 @@ def test_threshold_from_toml():
 
 
 def test_threshold_fallback_without_toml():
+    """toml 缺失 → 回退阈值 3"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         state = td / "agent_health.json"
@@ -133,6 +123,7 @@ def test_threshold_fallback_without_toml():
 
 
 def test_threshold_invalid_values_fallback():
+    """无效阈值（0/负数/小数/非数字）→ 回退 3"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         for bad in (0, -1, 1.5, "abc"):
@@ -147,6 +138,7 @@ def test_threshold_invalid_values_fallback():
 
 
 def test_reason_recaptured_after_recovery():
+    """恢复后新一轮失败重新捕获原因（不残留上一轮）"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         state = td / "agent_health.json"
@@ -166,6 +158,7 @@ def test_reason_recaptured_after_recovery():
 
 
 def test_state_file_integrity():
+    """状态文件完整性与恢复后 streak 清零"""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         state = td / "agent_health.json"
@@ -181,22 +174,10 @@ def test_state_file_integrity():
 
 
 def test_help_and_bad_args():
+    """--help 可用；非法 outcome 非零退出"""
     p = subprocess.run([sys.executable, str(AGENT_HEALTH), "--help"],
                        capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     p2 = subprocess.run([sys.executable, str(AGENT_HEALTH), "record", "--outcome", "bogus"],
                         capture_output=True, text=True)
     assert p2.returncode != 0, "非法 outcome 应失败"
-
-
-t("状态机全矩阵: 未达阈值→up/无transition; 越阈→down+告警; 去重; 恢复; up后无transition; 无.tmp残留", test_matrix)
-t("告警保留本串首次失败原因（不被后续失败覆盖）", test_reason_preserved_from_first_failure)
-t("阈值从 toml [health].fail_threshold 读取（=2 时第 2 次失败即 down）", test_threshold_from_toml)
-t("toml 缺失 → 回退阈值 3", test_threshold_fallback_without_toml)
-t("无效阈值（0/负数/小数/非数字）→ 回退 3", test_threshold_invalid_values_fallback)
-t("恢复后新一轮失败重新捕获原因（不残留上一轮）", test_reason_recaptured_after_recovery)
-t("状态文件完整性与恢复后 streak 清零", test_state_file_integrity)
-t("--help 可用；非法 outcome 非零退出", test_help_and_bad_args)
-
-print(f"\n{passed} passed, {failed} failed")
-sys.exit(1 if failed else 0)

@@ -16,6 +16,8 @@ import tomllib
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 
+import pytest
+
 CST = timezone(timedelta(hours=8))
 
 from chiguo_state import ChiguoState, ChiguoEmotion, CooldownState
@@ -54,6 +56,14 @@ def teardown():
     if TMP_DIR is not None:
         shutil.rmtree(TMP_DIR, ignore_errors=True)
         TMP_DIR = None
+
+
+@pytest.fixture(scope="module")
+def cfg():
+    """Q26 迁移：setup()/teardown() 逻辑改为 pytest 模块级 fixture（原 __main__ 注入）。"""
+    c = setup()
+    yield c
+    teardown()
 
 
 def make_state(cfg, **overrides):
@@ -438,51 +448,5 @@ def test_9_exam_weekend_overlap(cfg):
     assert avail == 0.5, f"考周×周末 → 0.5, got {avail}"
     print("  OK test_9_exam_weekend_overlap")
 
-
-# ═══════════════════════════════════════════════════════════
-# 入口
-# ═══════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    print("test_integration.py\n")
-    try:
-        cfg = setup()
-
-        basic_tests = [
-            test_1_initial_no_trigger,
-            test_2_high_loneliness_triggers,
-            test_3_quiet_hours,
-            test_4_daily_limit,
-            test_5_low_energy,
-            test_6_holiday_availability,
-            test_7_in_class_availability,
-            test_7b_schedule_disabled_availability,
-            test_7c_schedule_parser_disabled,
-            test_8_morning_window,
-            test_9_user_msg_reduces_loneliness,
-            test_10_semester_end,
-            test_11_break_range,
-            test_12_min_interval,
-        ]
-        v3_tests = [
-            test_13_rate_energy_override,
-            test_14_hawkes_intensity_integration,
-            test_15_next_evaluation_at,
-            test_16_anxiety_rate_tracking,
-            test_17_rate_affects_lambda,
-        ]
-        batch3a_tests = [
-            test_8_snapshot_keys_compatible,
-            test_9_exam_weekend_overlap,
-        ]
-        tests = basic_tests + v3_tests + batch3a_tests
-
-        for t in tests:
-            t(cfg)
-
-        print(f"\n{'='*40}")
-        print(f"ALL {len(tests)} integration tests passed.")
-    finally:
-        teardown()
 
 

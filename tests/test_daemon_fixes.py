@@ -24,6 +24,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -55,6 +57,14 @@ def teardown():
     if TMP_DIR is not None:
         shutil.rmtree(TMP_DIR, ignore_errors=True)
         TMP_DIR = None
+
+
+@pytest.fixture(scope="module")
+def cfg_path():
+    """Q26 迁移：setup()/teardown() 逻辑改为 pytest 模块级 fixture（原 __main__ 注入）。"""
+    path = setup()
+    yield path
+    teardown()
 
 
 def make_engine(cfg_path: Path) -> DecisionEngine:
@@ -725,37 +735,3 @@ def test_tick_no_cap_when_anchor_older_than_monotonic(cfg_path: Path):
         f"reboot (monotonic reset) must keep wall-clock elapsed: inc={inc:.4f} "
         f"full_6h={full_6h:.4f}")
     print(f"  OK test_tick_no_cap_when_anchor_older_than_monotonic: inc={inc:.4f} (wall 6h)")
-
-
-# ═══════════════════════════════════════════════════════
-# 入口
-# ═══════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    print("test_daemon_fixes.py\n")
-    try:
-        cfg_path = setup()
-        tests = [
-            test_bug1_trigger_history_appended_once,
-            test_bug2_tick_uses_persisted_last_tick,
-            test_bug2_tick_save_reload_roundtrip,
-            test_bug2_tick_future_last_tick_no_advance,
-            test_bug2_tick_corrupt_last_tick_falls_back,
-            test_bug2_tick_no_messages_still_noop,
-            test_bug3_no_recipient_no_fake_send,
-            test_bug4_concurrent_send_result_single_refund,
-            test_bug5_record_user_message_reloads_disk_state,
-            test_bug5_record_user_message_upgrade_reloads_disk_state,
-            test_memory_search_disabled_mem0_soft_degrade,
-            test_memory_search_bad_backend_config,
-            test_state_monotonic_anchor_persist_roundtrip,
-            test_state_monotonic_anchor_missing_defaults,
-            test_tick_caps_wall_jump_via_persisted_anchor,
-            test_tick_no_cap_when_anchor_older_than_monotonic,
-        ]
-        for t in tests:
-            t(cfg_path)
-        print(f"\n{'='*40}")
-        print(f"ALL {len(tests)} tests passed.")
-    finally:
-        teardown()

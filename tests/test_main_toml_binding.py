@@ -2,36 +2,37 @@
 """test_main_toml_binding.py — 主配置 chiguo_proactive.toml 绑定测试（Issue #238）
 
 M-8 改名（test_toml_binding → test_personality_toml_binding）暴露的缺口：
-主 toml 22 节此前无任何专门测试守护。本 runner 覆盖：
+主 toml 22 节此前无任何专门测试守护。本 pytest 测试覆盖：
 1. 22 个顶层节全部存在（架构契约，防节误删/误改名）
 2. 每节关键键存在（抽查核心配置键，防键误删）
 3. 关键键 ↔ 代码引用点交叉断言（toml 有键且代码有引用，防键改代码没跟上）
 """
-import pathlib, sys, tomllib
+import pathlib, tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FAIL = []
 
 
 def check(name, cond, detail=""):
-    if cond:
-        print(f"  ok - {name}")
-    else:
-        FAIL.append(name)
-        print(f"  FAIL - {name} {detail}")
+    """断言式 check：失败即抛 AssertionError（pytest 感知为失败）。"""
+    if not cond:
+        raise AssertionError(f"{name} {detail}")
 
-
-cfg = tomllib.loads((ROOT / "chiguo_proactive.toml").read_text(encoding="utf-8"))
 
 # 1) 22 节存在（架构契约）
 SECTIONS = ["wechat", "memory", "character", "emotion", "sigmoid", "trigger",
             "poisson", "topic_picker", "schedule", "circadian", "netease",
             "hawkes", "cooldown", "personality", "bayesian", "composer",
             "safety", "monitor", "logging", "host", "loop", "health"]
-check("主 toml 22 节全部存在", set(SECTIONS) <= set(cfg.keys()),
-      f"缺: {sorted(set(SECTIONS) - set(cfg.keys()))}")
-check("主 toml 无多余节", set(cfg.keys()) <= set(SECTIONS),
-      f"多余: {sorted(set(cfg.keys()) - set(SECTIONS))}")
+
+
+def test_section_inventory_complete():
+    """主 toml 22 节全部存在，且无多余节（架构契约，防节误删/误改名）"""
+    cfg = tomllib.loads((ROOT / "chiguo_proactive.toml").read_text(encoding="utf-8"))
+    check("主 toml 22 节全部存在", set(SECTIONS) <= set(cfg.keys()),
+          f"缺: {sorted(set(SECTIONS) - set(cfg.keys()))}")
+    check("主 toml 无多余节", set(cfg.keys()) <= set(SECTIONS),
+          f"多余: {sorted(set(cfg.keys()) - set(SECTIONS))}")
+
 
 # 2) 每节关键键存在（抽查核心配置，防误删）
 KEY_CHECKS = {
@@ -62,9 +63,15 @@ KEY_CHECKS = {
     "loop": ["retry_delay_seconds", "probe_interval_seconds"],
     "health": ["fail_threshold"],
 }
-for sec, keys in KEY_CHECKS.items():
-    missing = [k for k in keys if k not in cfg.get(sec, {})]
-    check(f"[{sec}] 关键键齐全", not missing, f"缺: {missing}")
+
+
+def test_section_key_checks_present():
+    """每节关键键存在（抽查核心配置键，防键误删）"""
+    cfg = tomllib.loads((ROOT / "chiguo_proactive.toml").read_text(encoding="utf-8"))
+    for sec, keys in KEY_CHECKS.items():
+        missing = [k for k in keys if k not in cfg.get(sec, {})]
+        check(f"[{sec}] 关键键齐全", not missing, f"缺: {missing}")
+
 
 # 3) 关键键 ↔ 代码引用交叉断言（防键改代码没跟上）
 REF_CHECKS = [
@@ -77,12 +84,11 @@ REF_CHECKS = [
     ("[trigger].reply_feedback_enabled", "chiguo_trigger.py", "reply_feedback_enabled"),
     ("[netease].play_cache_ttl_minutes", "netease/service.py", "play_cache_ttl_minutes"),
 ]
-for label, code_file, key in REF_CHECKS:
-    code = (ROOT / code_file).read_text(encoding="utf-8", errors="replace")
-    check(f"{label} 被 {code_file} 引用", key in code,
-          f"{code_file} 无 {key} 引用")
 
-if FAIL:
-    print(f"\n{len(FAIL)} 项失败", file=sys.stderr)
-    sys.exit(1)
-print("\n全部通过")
+
+def test_key_references_in_code():
+    """关键键 ↔ 代码引用点交叉断言（toml 有键且代码有引用，防键改代码没跟上）"""
+    for label, code_file, key in REF_CHECKS:
+        code = (ROOT / code_file).read_text(encoding="utf-8", errors="replace")
+        check(f"{label} 被 {code_file} 引用", key in code,
+              f"{code_file} 无 {key} 引用")

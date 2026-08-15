@@ -15,6 +15,8 @@ import tomllib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -50,6 +52,14 @@ def teardown():
     if TMP_DIR is not None:
         shutil.rmtree(TMP_DIR, ignore_errors=True)
         TMP_DIR = None
+
+
+@pytest.fixture(scope="module")
+def cfg():
+    """Q26 迁移：setup()/teardown() 逻辑改为 pytest 模块级 fixture（原 __main__ 注入）。"""
+    c = setup()
+    yield c
+    teardown()
 
 
 def make_state(cfg, **overrides) -> ChiguoState:
@@ -318,35 +328,3 @@ def test_a10_old_state_missing_field_defaults(cfg):
     s2 = ChiguoState(cfg)
     assert s2.cooldown.drop_events == [], f"missing field should default to [], got {s2.cooldown.drop_events}"
     print("  OK test_a10_old_state_missing_field_defaults")
-
-
-# ═══════════════════════════════════════════════════════════
-# 入口
-# ═══════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    print("test_emotion_dynamics.py\n")
-    try:
-        cfg = setup()
-        tests = [
-            test_a2_rule1_affection_anxiety,
-            test_a2_rule2_energy_loneliness,
-            test_a2_rule3_anxiety_energy,
-            test_a2_thresholds_gate_rules,
-            test_a2_default_off_identity,
-            test_a1_tick_elastic_boost,
-            test_a1_tick_elastic_energy_uses_elastic_baseline,
-            test_a1_tick_matrix_default_off,
-            test_a10_damp_decreasing_in_window,
-            test_a10_damp_window_outside_recovers,
-            test_a10_damp_configurable,
-            test_a10_damp_disabled_clears_events,
-            test_a10_drop_events_persist_roundtrip,
-            test_a10_old_state_missing_field_defaults,
-        ]
-        for t in tests:
-            t(cfg)
-        print(f"\n{'='*40}")
-        print(f"ALL {len(tests)} tests passed.")
-    finally:
-        teardown()
