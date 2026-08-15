@@ -696,7 +696,15 @@ class ChiguoState:
         personality 时）；此处无条件执行 —— 因为加载路径总是先经
         _apply_loaded_data 构造 `self.personality`（有 pers_data 用
         personality_from_dict，无则用 toml 初始值），且 _personality_initial_baseline
-        恒记录构造值，无人中途改写 _baseline，故与原行为严格等价。"""
+        恒记录构造值，无人中途改写 _baseline，故与原行为严格等价。
+
+        边界分支（save 不可达，防御语义）：若 data 含 `personality_baseline`
+        但完全无 `personality` 字段——原代码走 else 分支用 toml 构造
+        tsundere，不会触发 reset（此处却无条件执行 reset_baseline）。当前
+        _personality_initial_baseline 记录的就是 toml 构造值，因此即便该分支
+        触发也退化为恒等，不改变任何结果；仅当未来有人改动加载时
+        _personality_initial_baseline 的赋值源才产生语义差异，故显式注明。
+        """
         saved_base = data.get("personality_baseline")
         if isinstance(saved_base, dict) and saved_base:
             self.personality.reset_baseline(saved_base)
