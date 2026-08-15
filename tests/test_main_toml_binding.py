@@ -46,7 +46,12 @@ KEY_CHECKS = {
                 # Q25 收敛 cfg_float 读取键（空闲乘数 / follow_up / 回复率反馈）
                 "free_multiplier", "follow_up_weight",
                 "reply_feedback_damp", "reply_feedback_boost",
-                "reply_feedback_low_rate", "reply_feedback_high_rate"],
+                "reply_feedback_low_rate", "reply_feedback_high_rate",
+                "ritual_special_weight", "ritual_mem0_weight",
+                "morning_probability", "night_probability", "meal_probability",
+                "mem0_surface_min_silent_hours", "mem0_surface_probability",
+                "followup_memory_probability", "habit_probability",
+                "playful_base_weight", "reflect_base_weight", "reflect_probability"],
     "poisson": ["base_lambda"],
     "topic_picker": ["netease_weight", "netease_daily_quota",
                      "repeat_jaccard_threshold"],
@@ -88,6 +93,9 @@ REF_CHECKS = [
     ("[memory].mem0_qdrant_path", "memory/factory.py", "mem0_qdrant_path"),
     ("[cooldown].longing_break_enabled", "chiguo_state.py", "longing_break_enabled"),
     ("[trigger].reply_feedback_enabled", "chiguo_trigger.py", "reply_feedback_enabled"),
+    ("[trigger].ritual_special_weight", "chiguo_trigger.py", "ritual_special_weight"),
+    ("[trigger].mem0_surface_probability", "chiguo_trigger.py", "mem0_surface_probability"),
+    ("[trigger].morning_probability", "chiguo_trigger.py", "morning_probability"),
     ("[netease].play_cache_ttl_minutes", "netease/service.py", "play_cache_ttl_minutes"),
     # ── Q25 收敛 cfg_float 读取键 ↔ 代码引用交叉守护 ──
     ("[netease].retry_backoff_seconds", "netease/service.py", "retry_backoff_seconds"),

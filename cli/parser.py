@@ -1,4 +1,4 @@
-"""cli.parser — 迟菓 daemon CLI 参数定义（35 个参数，拆自 chiguo_daemon.py main()）。
+"""cli.parser — 迟菓 daemon CLI 参数定义（36 个参数，拆自 chiguo_daemon.py main()）。
 
 对外 CLI 契约（参数集合/默认值/帮助文本/exit code 语义）必须与拆分前逐字一致。
 参数快照测试据此断言 argparse 前后一致。
@@ -9,7 +9,7 @@ from chiguo_version import VERSION
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """构造 argparse 解析器（35 个参数）。"""
+    """构造 argparse 解析器（36 个参数）。"""
     parser = argparse.ArgumentParser(description="迟菓主动消息 决策引擎")
     # L2 (#234): --version 帮助不写死具体版本链，只写规则（防过期）；实际次版本见 chiguo_version.py
     parser.add_argument("--version", action="version", version=f"chiguo v{VERSION} (规则: 每次迭代次版本 MINOR+1，见 chiguo_version.py)")
@@ -93,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ack", type=str, default=None,
                         metavar="ALERT_ID",
                         help="确认告警 (配合 --alerts)")
+    parser.add_argument("--alerts-push", action="store_true",
+                        help="Q24: 把新告警经微信 bridge /send 推送（scripts/alert-cron.sh 入口）")
     # ── v5: 日志轮转 ──
     parser.add_argument("--rotate", action="store_true",
                         help="强制日志轮转")

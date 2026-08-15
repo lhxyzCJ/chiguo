@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# wechat-bridge.sh 桩测试：假 git/npm/pgrep + 临时仓库根，验证 install/start/status 行为与 .env 生成（9 用例）
+# wechat-bridge.sh 桩测试：假 git/npm/pgrep + 临时仓库根，验证 install/start/status 行为与 .env 生成
+# v2.2.0 起 install 改为 vendor 优先（vendor SDK 随仓库入库）——不再默认 clone。
 set -euo pipefail
 TMP="$(mktemp -d /tmp/chiguo-bridge-test.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
@@ -7,19 +8,24 @@ trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok - $*"; }
 
-# ── 假工具：git（记录 clone/pull）、npm（记录 install、造 node_modules）、pgrep/pkill（模拟进程）──
-mkdir -p "$TMP/bin" "$TMP/repo/.venv/bin" "$TMP/repo/wechat-bridge"
+# ── 假工具：git（记录 clone/pull）、npm（记录 install/build、造 node_modules/dist）、pgrep/pkill ──
+mkdir -p "$TMP/bin" "$TMP/repo/.venv/bin" "$TMP/repo/wechat-bridge/vendor/wechatbot/src"
 cat > "$TMP/repo/chiguo_proactive.toml" <<'TOML'
 [wechat]
 wechat_recipient = "owner_test@im.wechat"
 TOML
+# vendor SDK 源码随仓库入库 → 测试预置 src/index.ts（源码锚点）
+cat > "$TMP/repo/wechat-bridge/vendor/wechatbot/src/index.ts" <<'TS'
+export class WeChatBot {}
+TS
+cp "$TMP/repo/wechat-bridge/vendor/wechatbot/src/index.ts" "$TMP/repo/wechat-bridge/vendor/wechatbot/src/core.ts" 2>/dev/null || true
 # venv python 桩：write_env 现用仓库 venv python 解析 auth.json（H-1），须是真实可执行解释器
 ln -sf "$(command -v python3)" "$TMP/repo/.venv/bin/python"
 
 cat > "$TMP/bin/git" <<'STUB'
 #!/usr/bin/env bash
 echo "git $*" >> "$GIT_LOG"
-if [ "$1" = clone ]; then DEST="${@: -1}"; mkdir -p "$DEST/nodejs" "$DEST/.git"; echo "clone done" > "$DEST/.cloned"; fi
+if [ "$1" = clone ]; then DEST="${@: -1}"; mkdir -p "$DEST/nodejs/src" "$DEST/.git"; printf 'export class WeChatBot {}\n' > "$DEST/nodejs/src/index.ts"; cp "$TMP/fork_license" "$DEST/LICENSE" 2>/dev/null || true; fi
 STUB
 cat > "$TMP/bin/npm" <<'STUB'
 #!/usr/bin/env bash
@@ -41,7 +47,11 @@ exit 0
 STUB
 for t in git npm pgrep pkill bash sleep; do chmod +x "$TMP/bin/$t" 2>/dev/null || true; done
 
-export GIT_LOG="$TMP/git.log" NPM_LOG="$TMP/npm.log" PKILL_LOG="$TMP/pkill.log"
+# 假上游 LICENSE fixture：`install update` 从伪上游 clone 后须拷入 vendor
+mkdir -p "$TMP"
+printf 'MIT License\nCopyright (c) 2026 CoreSpeed and contributors\n' > "$TMP/fork_license"
+export TMP GIT_LOG="$TMP/git.log" NPM_LOG="$TMP/npm.log" PKILL_LOG="$TMP/pkill.log"
+: > "$GIT_LOG" 2>/dev/null || mkdir -p "$(dirname "$GIT_LOG")"
 export PATH="$TMP/bin:$PATH" HOME="$TMP/home"
 export CHIGUO_REPO_OVERRIDE="$TMP/repo" WECHATBOT_DIR="$TMP/wechatbot" WECHAT_BRIDGE_LOG="$TMP/bridge.log"
 
@@ -52,33 +62,45 @@ set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
 mkdir -p "$TMP/repo/.venv/bin" && # venv python 桩：write_env 现用仓库 venv python 解析 auth.json（H-1），须是真实可执行解释器
 ln -sf "$(command -v python3)" "$TMP/repo/.venv/bin/python"
 
-# ── 用例 2: 首次 install → clone wechatbot + npm install file: + .env 生成 ──
+# ── 用例 2: 首次 install → vendor SDK 构建（npm install + npm run build）+ 桥 npm install + .env，且默认不 clone ──
 set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "install 期望 0 实得 $RC"
-grep -q "git clone --depth 1 https://github.com/lhxyzCJ/wechatbot.git $TMP/wechatbot" "$GIT_LOG" || fail "未按预期 clone wechatbot"
-grep -q "npm install @wechatbot/wechatbot@file:$TMP/wechatbot/nodejs" "$NPM_LOG" || fail "npm install file: 参数不对"
-grep -q "npm run build" "$NPM_LOG" || fail "SDK 首次安装未构建（dist 缺失应 npm run build）"
+grep -q "git clone" "$GIT_LOG" && fail "vendor 优先 install 不应默认 clone 上游" || true
+# npm run build 必须发生在 vendor 目录（真实 SDK）而非外部 clone
+grep -q "npm run build" "$NPM_LOG" || fail "vendor SDK 首次安装未构建（dist 缺失应 npm run build）"
+grep -q "npm install" "$NPM_LOG" || fail "桥 npm install 未执行"
+# 桥依赖走文件：package.json 里 file:./vendor/wechatbot —— 由 npm install 解析，无显式 file: 参数
+grep -q "npm install @wechatbot/wechatbot@file" "$NPM_LOG" && fail "不应显式传 file: 参数（应走 package.json 依赖）" || true
+[ -f "$TMP/repo/wechat-bridge/vendor/wechatbot/dist/index.js" ] || fail "vendor SDK dist 未构建"
 [ -d "$TMP/repo/wechat-bridge/node_modules/@wechatbot" ] || fail "node_modules 未生成"
 grep -q "WECHAT_BRIDGE_OWNER=owner_test@im.wechat" "$TMP/repo/wechat-bridge/.env" || fail ".env 未从 toml 读 OWNER"
 grep -q "WECHAT_BRIDGE_STORAGE=$TMP/home/.chiguo/auth/wechat" "$TMP/repo/wechat-bridge/.env" || fail ".env STORAGE 路径不对（应指向集中认证目录）"
-pass "首次 install：clone + npm file: + .env 生成"
+pass "首次 install：vendor 构建 + npm install + .env 生成（不 clone）"
 
-# ── 用例 3: 重跑 install 幂等 → 不重复 clone（走 pull）+ dist 存在不重复构建 ──
+# ── 用例 3: 重跑 install 幂等 → dist 存在不重复构建、不 clone ──
 : > "$GIT_LOG"; : > "$NPM_LOG"
 set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "重跑 install 期望 0 实得 $RC"
-grep -q "git clone" "$GIT_LOG" && fail "重复 clone（应走 pull）" || true
-grep -q "git -C $TMP/wechatbot pull" "$GIT_LOG" || fail "已存在时应 pull 更新"
+grep -q "git clone" "$GIT_LOG" && fail "重跑不应再 clone" || true
 grep -q "npm run build" "$NPM_LOG" && fail "dist 已存在不应重复构建" || true
 pass "重跑 install：不重复 clone/build"
 
-# ── 用例 3b: dist 缺失（如 clone 后首次）→ 自动构建 ──
+# ── 用例 3b: vendor dist 缺失 → 自动构建 ──
 : > "$NPM_LOG"
-rm -f "$TMP/wechatbot/nodejs/dist/index.js"
+rm -f "$TMP/repo/wechat-bridge/vendor/wechatbot/dist/index.js"
 set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "dist 缺失重装期望 0 实得 $RC"
-grep -q "npm run build" "$NPM_LOG" || fail "dist 缺失应触发重新构建"
-pass "dist 缺失 → 自动重新构建"
+grep -q "npm run build" "$NPM_LOG" || fail "vendor dist 缺失应触发重新构建"
+pass "vendor dist 缺失 → 自动重新构建"
+
+# ── 用例 3c: install update → 从上游克隆覆盖 vendor（nodejs/ + LICENSE），随后普通 install 完成 ──
+: > "$GIT_LOG"; : > "$NPM_LOG"
+rm -f "$TMP/repo/wechat-bridge/vendor/wechatbot/LICENSE"
+set +e; bash scripts/wechat-bridge.sh install update >/dev/null 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] || fail "install update 期望 0 实得 $RC（$OUT）"
+grep -q "git clone --depth 1 https://github.com/lhxyzCJ/wechatbot.git $TMP/wechatbot" "$GIT_LOG" || fail "install update 未按预期 clone 上游"
+grep -q "MIT License" "$TMP/repo/wechat-bridge/vendor/wechatbot/LICENSE" || fail "update 未把 fork 根 LICENSE 拷入 vendor"
+pass "install update：上游克隆覆盖 vendor + LICENSE 随 vendor"
 
 # ── 用例 4: 无登录态 → status 退出 1 且提示扫码 ──
 set +e; OUT=$(bash scripts/wechat-bridge.sh status 2>&1); RC=$?; set -e

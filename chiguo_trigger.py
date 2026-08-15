@@ -90,8 +90,24 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
 
     weighted_candidates: list[dict] = []
 
+    # Q10 (#276): 触发离散概率/魔法权重配置化——统一在函数顶部读一次 [trigger] 节，
+    # 默认值 = 改动前的硬编码现值 → 缺省配置行为不变。trg_cfg 供本函数各候选块复用。
+    trg_cfg = state.config.get("trigger", {})
+
     # 仪式触发权重缩放（默认为1.0，调低可减少仪式触发对情绪触发的压制）
     ritual_scale = cfg_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0)
+
+    # Q10: 仪式类基础权重（默认 = 现值；乘 ritual_scale，可独立调参/灰度）
+    ritual_special = cfg_float(trg_cfg.get("ritual_special_weight", 3.0), 3.0)
+    ritual_morning = cfg_float(trg_cfg.get("ritual_morning_weight", 2.5), 2.5)
+    ritual_night = cfg_float(trg_cfg.get("ritual_night_weight", 2.0), 2.0)
+    ritual_meal = cfg_float(trg_cfg.get("ritual_meal_weight", 0.8), 0.8)
+    ritual_memory = cfg_float(trg_cfg.get("ritual_memory_weight", 2.0), 2.0)
+    ritual_mem0 = cfg_float(trg_cfg.get("ritual_mem0_weight", 1.5), 1.5)
+
+    # Q10: mem0 随机浮现条件（沉默阈值 + 概率门控，默认 = 现值）
+    mem0_min_silent = cfg_float(trg_cfg.get("mem0_surface_min_silent_hours", 6.0), 6.0)
+    mem0_prob = _clamp01(trg_cfg.get("mem0_surface_probability", 0.08), 0.08)
 
     # ── 固定事件（权重固定，会概率性参与竞争） ──────────
 
@@ -104,28 +120,28 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     if special_hit:
         weighted_candidates.append({
             "trigger": Trigger(type=TriggerType.SPECIAL, intensity="soft"),
-            "weight": 3.0 * ritual_scale,  # 高权重,但非绝对
+            "weight": ritual_special * ritual_scale,  # 高权重,但非绝对
         })
 
     # 早安
     if _should_morning(state, now):
         weighted_candidates.append({
             "trigger": Trigger(type=TriggerType.MORNING, intensity="soft"),
-            "weight": 2.5 * ritual_scale,
+            "weight": ritual_morning * ritual_scale,
         })
 
     # 晚安
     if _should_night(state, now):
         weighted_candidates.append({
             "trigger": Trigger(type=TriggerType.NIGHT, intensity="soft"),
-            "weight": 2.0 * ritual_scale,
+            "weight": ritual_night * ritual_scale,
         })
 
     # 用餐（上课时跳过）
     if _should_meal(now, state):
         weighted_candidates.append({
             "trigger": Trigger(type=TriggerType.MEAL, intensity="soft"),
-            "weight": 0.8 * ritual_scale,
+            "weight": ritual_meal * ritual_scale,
         })
 
     # ── 记忆触发 ──
@@ -133,30 +149,29 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     for mem in state.memories:
         if not isinstance(mem, dict):
             continue  # 数据防御：非 dict 条目跳过（state 加载已净化，这里再兜底防崩）
-        if _memory_should_trigger(mem, now):
+        if _memory_should_trigger(mem, now, trg_cfg):
             weighted_candidates.append({
                 "trigger": Trigger(type=TriggerType.MEMORY, intensity="soft",
                                    data={"memory": mem}),
-                "weight": 2.0 * ritual_scale,
+                "weight": ritual_memory * ritual_scale,
             })
 
     # mem0 随机浮现（低概率，仅在主人沉默时）
     # 如果 mem0 不可用，自动跳过
     silent_h = state.cooldown.silent_hours(now)
-    if silent_h > 6 and random.random() < 0.08 and state.memory_bridge.available:
+    if silent_h > mem0_min_silent and random.random() < mem0_prob and state.memory_bridge.available:
         mem0_mem = state.memory_bridge.random_memory(min_importance=0.4)
         if mem0_mem:
             weighted_candidates.append({
                 "trigger": Trigger(type=TriggerType.MEMORY, intensity="soft",
                                    data={"mem0_memory": mem0_mem}),
-                "weight": 1.5 * ritual_scale,
+                "weight": ritual_mem0 * ritual_scale,
             })
 
     # ── v7: 接话茬(follow_up)触发 ──
     # 待接续话题(analysis topic,2-48h 内)优先;无待接续话题 → 近期用户相关记忆兜底。
     # 权重 = follow_up_weight × 年龄钟形(峰值 follow_up_peak_hours)。
     # 触发后标记 attempted(单次尝试);过期话题顺带清理。
-    trg_cfg = state.config.get("trigger", {})
     fup_min = trg_cfg.get("follow_up_min_age_hours", 2.0)
     fup_max = trg_cfg.get("follow_up_max_age_hours", 48.0)
     state.prune_pending_topics(now, fup_max)
@@ -178,10 +193,10 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             if cand:
                 weighted_candidates.append(cand)
     elif (not state.pending_topics and state.memory_bridge.available
-          and random.random() < 0.5):
+          and random.random() < _clamp01(trg_cfg.get("followup_memory_probability", 0.5), 0.5)):
         # 记忆兜底:近 48h 内、用户相关的记忆,选中一条作为接话茬素材(不落盘)
         # #83: ① 概率门控(50%)——pending_topics 为空时不得每 tick 无条件多关键词搜索
-        # (热点 IO;与同文件 mem0 随机浮现块 silent_h>6 and random<0.08 同款降频风格);
+        # (热点 IO;与同文件 mem0 随机浮现块同款降频风格;概率经 [trigger].followup_memory_probability 可配);
         # ② timestamp 类型防护——ISO 字符串等非数值直接跳过,防 str > float TypeError。
         now_ts = now.timestamp()
         for mem in state.memory_bridge.user_relevant(limit=10, min_importance=0.4):
@@ -304,10 +319,11 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
 
     # boredom / playful 触发：高元气 + 沉默适中 + 非上课
     if emo.energy > 70 and 2 < silent_h < 48 and _is_free_time(state, now):
-        # 外向性调制 playful
+        # v4: 外向性调制 playful；基础权重经 [trigger].playful_base_weight 可配（默认 0.15）
         pers_extra = getattr(getattr(state, 'personality', None), 'extraversion', 60.0)
         pers_extra_factor = 0.5 + (pers_extra / 100) * 1.0  # 0.5~1.5
-        w_bored = 0.15 * (emo.energy / 100) * aff_factor * pers_extra_factor
+        w_bored = (cfg_float(trg_cfg.get("playful_base_weight", 0.15), 0.15)
+                   * (emo.energy / 100) * aff_factor * pers_extra_factor)
         if w_bored > 0.03:
             weighted_candidates.append({
                 "trigger": Trigger(type=TriggerType.PLAYFUL, intensity="soft"),
@@ -319,9 +335,11 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     pers = getattr(state, 'personality', None)
     if pers:
         neuroticism = getattr(pers, 'neuroticism', 60.0)
+        # Q10: 概率门控经 [trigger].reflect_probability 可配（默认 0.08）
         if (emo.affection > 70 and silent_h < 2 and emo.energy > 60
-                and neuroticism < 70 and random.random() < 0.08):
-            w_reflect = 0.08 * (emo.affection / 100) * (1 - neuroticism / 100) * (emo.energy / 100)
+                and neuroticism < 70 and random.random() < _clamp01(trg_cfg.get("reflect_probability", 0.08), 0.08)):
+            w_reflect = cfg_float(trg_cfg.get("reflect_base_weight", 0.08), 0.08) \
+                * (emo.affection / 100) * (1 - neuroticism / 100) * (emo.energy / 100)
             if w_reflect > 0.02:
                 weighted_candidates.append({
                     "trigger": Trigger(type=TriggerType.REFLECT, intensity="soft"),
@@ -363,7 +381,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
                                              trigger_scale.get("default", 1.0))
 
     # ── v10 (#73): 触发层三段优化 — A3 日程乘数 → A6 repeat 阻尼 → A4 三段激活 ──
-    # trg_cfg 已在 follow_up 段定义，此处复用。
+    # trg_cfg 已在函数顶部定义，此处复用。
 
     # A3 日程乘数 + 抖动：只作用于情绪类候选，仪式类（morning/night/meal/special/memory/follow_up）豁免。
     # 上课中 ×0.3；空闲（节假日/周末/课间）× free_multiplier（默认 1.2）；半忙 ×0.6。
@@ -538,8 +556,9 @@ def _should_morning(state: ChiguoState, now: datetime) -> bool:
     start, end = s.get("morning_start", 8), s.get("morning_end", 10)
     if not (start <= now.hour < end):
         return False
-    # Poisson 决定是否触发（窗口内每分钟概率）
-    return random.random() < 0.10
+    # Poisson 决定是否触发（窗口内每分钟概率；经 [trigger].morning_probability 可配，默认 0.10）
+    prob = _clamp01(state.config.get("trigger", {}).get("morning_probability", 0.10), 0.10)
+    return random.random() < prob
 
 
 def _should_night(state: ChiguoState, now: datetime) -> bool:
@@ -549,7 +568,9 @@ def _should_night(state: ChiguoState, now: datetime) -> bool:
     start, end = s.get("night_start", 20), s.get("night_end", 21)
     if not (start <= now.hour < end):
         return False
-    return random.random() < 0.12
+    # [trigger].night_probability 可配，默认 0.12
+    prob = _clamp01(state.config.get("trigger", {}).get("night_probability", 0.12), 0.12)
+    return random.random() < prob
 
 
 def _should_meal(now: datetime, state: ChiguoState) -> bool:
@@ -559,7 +580,9 @@ def _should_meal(now: datetime, state: ChiguoState) -> bool:
     # 上课时跳过（课间可以）
     if not _is_free_time(state, now):
         return False
-    return random.random() < 0.05
+    # [trigger].meal_probability 可配，默认 0.05
+    prob = _clamp01(state.config.get("trigger", {}).get("meal_probability", 0.05), 0.05)
+    return random.random() < prob
 
 
 def _is_free_time(state: ChiguoState, now: datetime) -> bool:
@@ -588,7 +611,8 @@ def _is_free_time(state: ChiguoState, now: datetime) -> bool:
     return True
 
 
-def _memory_should_trigger(mem: dict, now: datetime) -> bool:
+def _memory_should_trigger(mem: dict, now: datetime, trg_cfg: dict | None = None) -> bool:
+    trg_cfg = trg_cfg or {}
     mtype = mem.get("type", "")
     if mtype == "reminder":
         # #79 去重：daemon 发送后在该 mem 上标记 last_triggered_at → 同进程不再重复触发
@@ -609,5 +633,7 @@ def _memory_should_trigger(mem: dict, now: datetime) -> bool:
         window = mem.get("trigger_window", [])
         if not isinstance(window, list):
             return False  # B3: 非 list（int/str 等脏数据）视为未命中，防 in 判断 TypeError/错判
-        return now.hour in window and random.random() < 0.06
+        # Q10: habit 触发概率经 [trigger].habit_probability 可配（默认 0.06）
+        prob = _clamp01(trg_cfg.get("habit_probability", 0.06), 0.06)
+        return now.hour in window and random.random() < prob
     return False
