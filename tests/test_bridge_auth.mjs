@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * wechat-bridge/test-auth.mjs — /send 与 /agent/prompt 端点鉴权测试（独立 runner，Q14）。
+ * tests/test_bridge_auth.mjs — /send 与 /agent/prompt 端点鉴权测试（独立 runner，Q14）。
  *
  * 覆盖审计项（bridge.mjs）：
  *  - isLocalHost / isLocalOrigin（本地/非本地 origin 判断，纯函数，直接单元测试）
@@ -11,19 +11,19 @@
  * + 真实 HTTP 请求」集成测试，不改动鉴权实现：子进程用 CI 替身 WeChatBot（@wechatbot/wechatbot，
  * node_modules，gitignored）满足 main() 走到 startSendServer 并保持存活。
  *
- * 用法：从仓库根运行 `node wechat-bridge/test-auth.mjs`（退出码 0=全过，1=有失败）。
+ * 用法：从仓库根运行 `node tests/test_bridge_auth.mjs`（退出码 0=全过，1=有失败）。
  * 隔离：临时 storage/家目录；每个带 token 场景独立子进程 + 独立端口；结束即 kill。
  */
 import assert from 'node:assert'
 import { createServer, request as httpRequest } from 'node:http'
 import { spawn } from 'node:child_process'
-import { writeFileSync, mkdtempSync, rmSync, mkdirSync, existsSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const HERE = dirname(fileURLToPath(import.meta.url))            // <repo>/wechat-bridge
+const HERE = dirname(fileURLToPath(import.meta.url))            // <repo>/tests
 const REPO = join(HERE, '..')                                  // 仓库根
-const SDK_DIR = join(HERE, 'node_modules', '@wechatbot', 'wechatbot')
+const SDK_DIR = join(REPO, 'wechat-bridge', 'node_modules', '@wechatbot', 'wechatbot')
 const SDK_PKG = join(SDK_DIR, 'package.json')
 const SDK_ENTRY = join(SDK_DIR, 'index.mjs')
 const OWNER = 'owner@im.wechat'
@@ -31,8 +31,10 @@ const TEST_TOKEN = 'test-bridge-token-0123456789abcdef'
 
 // ── CI 替身 WeChatBot：满足 main() 走到 startSendServer（login/start/send/onMessage/on）。──
 // node_modules 为 gitignored，不随资源提交；与 scripts/ci-test.sh 的替身同思路但补齐实例方法。
+// 无条件覆盖写入完整 stub（而非检测文件存在即跳过）：ci-test.sh 顶部会用最小替身
+// （class WeChatBot { constructor() {} } 无任何实例方法）自举写盘，若此处因文件存在而短路，
+// 子进程 spawn 真实 bridge.mjs 时 bot.login()/bot.onMessage() 会抛 "not a function" 全挂。
 function ensureStub() {
-  if (existsSync(SDK_PKG) && existsSync(SDK_ENTRY)) return
   mkdirSync(SDK_DIR, { recursive: true })
   writeFileSync(SDK_PKG,
     '{"name":"@wechatbot/wechatbot","version":"0.0.0-ci-auth-stub","type":"module","exports":{".":"./index.mjs"}}\n')
@@ -74,7 +76,7 @@ async function runAll() {
     try { await fn(); passed++; console.log(`  ok - ${name}`) }
     catch (e) { console.error(`  FAIL - ${name}\n${e.stack ?? e}`) }
   }
-  console.log(`\ntest-auth: ${passed}/${tests.length} passed`)
+  console.log(`\ntest_bridge_auth: ${passed}/${tests.length} passed`)
   process.exit(passed === tests.length ? 0 : 1)
 }
 
@@ -323,9 +325,9 @@ t(':774 无 WECHAT_BRIDGE_TOKEN → 子进程 FATAL exit 1', async () => {
   assert.ok(stderr.includes('[FATAL] WECHAT_BRIDGE_TOKEN 未设置'), `stderr=${stderr}`)
 })
 
-// 引导 CI 替身 stub（node_modules 缺失时）→ 动态 import bridge.mjs（取 isLocalHost/isLocalOrigin）
+// 引导 CI 替身 stub（无条件覆盖为完整方法集）→ 动态 import bridge.mjs（取 isLocalHost/isLocalOrigin）
 ensureStub()
-const authFns = await import('./bridge.mjs')
+const authFns = await import('../wechat-bridge/bridge.mjs')
 isLocalHost = authFns.isLocalHost
 isLocalOrigin = authFns.isLocalOrigin
 
