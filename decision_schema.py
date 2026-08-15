@@ -226,10 +226,10 @@ def send_top_level_fields() -> list[str]:
 if __name__ == "__main__":
     # 独立自检（无 pytest）：svn 风格最小断言
     samples = [
-        {"action": "send", "version": "1.15", "msg_id": "m1",
+        {"action": "send", "version": "1.19", "msg_id": "m1",
          "trigger": "lonely_mid", "intensity": "soft",
          "context": {"layer": "shell"}, "state": {}},
-        {"action": "idle", "version": "1.15", "reason": "no_trigger", "state": {}},
+        {"action": "idle", "version": "1.19", "reason": "no_trigger", "state": {}},
         {"action": "recv", "msg_id": "m2", "message_text": "hi",
          "message_length": 2, "state": {}},
         {"action": "recv_upgrade", "msg_id": "m3", "message_text": "hi",
@@ -242,7 +242,7 @@ if __name__ == "__main__":
         if errs:
             raise SystemExit(f"自检失败: {s} -> {errs}")
     # 非法样例
-    bad = {"action": "send", "version": "1.15", "msg_id": "m1",
+    bad = {"action": "send", "version": "1.19", "msg_id": "m1",
            "context": {"layer": "shell"}, "state": {}}  # 缺 trigger/intensity
     if not validate(bad):
         raise SystemExit("自检失败: 缺 trigger/intensity 不应通过")
@@ -251,7 +251,7 @@ if __name__ == "__main__":
     if not validate(bad2):
         raise SystemExit("自检失败: send_result 非法 status 不应通过")
     # 历史兼容：无 contract → 缺省 1 合法
-    legacy = {"action": "idle", "version": "1.15", "reason": "x", "state": {}}
+    legacy = {"action": "idle", "version": "1.19", "reason": "x", "state": {}}
     if validate(legacy):
         raise SystemExit("自检失败: 无 contract 缺省应合法")
     print("decision_schema 自检通过")
