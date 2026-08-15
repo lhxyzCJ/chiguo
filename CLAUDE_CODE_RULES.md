@@ -41,8 +41,8 @@ python3 chiguo_rotation.py --force
 
 **No build step. No pip install.** Python 3.14-only（PEP 758 无括号 `except E1, E2:`、延迟注解——禁止加 `from __future__ import annotations`）。可选依赖：`openpyxl`（schedule）、`mem0ai` + `ollama`（记忆层）。`memory/mem0_backend.py`（`Mem0Backend`）在 `available` 探测内**惰性导入** `mem0`；缺失时 `available=False` 优雅降级，记忆查询软降级返回空，daemon 不会因缺 mem0 崩溃。
 
-### daemon CLI（34 个参数）
-`--ack --alerts --alerts-all --analysis --analysis-file --anniversary --attention --break --compact --consolidate --conversation --conversation-days --error --export --fallback --health --intensity --loop --memory-search --monitor --record-send --rotate --schedule-change --schedule-recall --send-result --send-status --stats --status --text --trigger --tune --user-msg --user-msg-file --version`
+### daemon CLI（35 个参数）
+`--ack --alerts --alerts-all --analysis --analysis-file --anniversary --attention --break --compact --consolidate --conversation --conversation-days --error --export --fallback --health --intensity --loop --memory-search --monitor --recv-id --record-send --rotate --schedule-change --schedule-recall --send-result --send-status --stats --status --text --trigger --tune --user-msg --user-msg-file --version`
 
 各参数语义见 doc/SYSTEM.md CLI 章节。
 
@@ -111,7 +111,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 | `anniversaries.json` | schedule/anniversary.py | Anniversary records (countdown deprecated, migrated to reminder) |
 | `break_state.json` | chiguo_daemon.py | Vacation override (written by --break CLI) |
 | `holidays.json` | update_holidays.py | Override holiday data for future years |
-| `solar_terms.json` | update_holidays.py | Override solar terms for future years |
+| `solar_terms.json` | update_holidays.py | 某年节气快照（`--solar` 生成物；运行期不被读取，节气单一事实源见 §5） |
 | `netease/netease_cache.json` | netease/bridge.py | Daily song recommendations cache |
 | `netease/netease_cookie.txt` | netease/bridge.py | Netease API auth cookie (chmod 600) |
 | `netease/recent_play_cache.json` | netease/bridge.py | Recent-play cache (v8, atomic write, 15-min TTL) |
@@ -125,7 +125,7 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 - **M5**: Ritual trigger weights (2.5-3.0) dominate emotion weights (0.01-0.9) → by design; tune `ritual_weight_scale` to adjust
 - **Hawkes dt==0 exclusion**: Events at `now` are the current event itself, not historical excitation — intentional
 - **Lunar holiday estimation in update_holidays.py**: ~11 day/year drift for non-2027 years. Requires manual update of `KNOWN_HOLIDAYS` when State Council notice published
-- **Solar terms estimation**: ~6h/year drift. Requires annual update of `SOLAR_TERMS_2027`
+- **Solar terms single source (#259, Q5/Q17)**: 节气日期唯一权威入口 = `update_holidays.get_solar_terms_for(year)`。2026/2027 为天文权威校准精确表（lunar_python 北京时间计算 + HKO 交叉复核）；其余年份按 `~6h/year`（≈0.25 天/年）线性估算，跨年不用再每年代码级维护 `SOLAR_TERMS_2027`。`solar_terms.py` 为按年动态消费者。
 
 ---
 

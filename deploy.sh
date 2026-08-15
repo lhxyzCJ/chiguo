@@ -54,7 +54,7 @@ else
     fail "mem0 未安装 → 记忆层缺失(唯一记忆后端,必需);请运行 uv sync --all-extras"
 fi
 
-# ── 3. 全量自检(ci-test.sh 单一入口: 59 py + 14 script + stub 自举) ──
+# ── 3. 全量自检(ci-test.sh 单一入口，测试计数由脚本动态扫描磁盘自述；stub 自举) ──
 say "运行全量自检(bash scripts/ci-test.sh,任一失败即中止) ..."
 bash "$PROJECT_DIR/scripts/ci-test.sh" || fail "全量测试失败,中止部署"
 say "全部测试通过 ✓"

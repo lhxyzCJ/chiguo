@@ -25,6 +25,9 @@ def test_crud_and_list():
         # 落盘校验
         raw = json.loads(Path(td, "anniversaries.json").read_text())
         assert raw["anniversaries"][0]["name"] == "认识N周年"
+        # Q13: 纪念日属隐私文件 → 0600（与 override/plan_store 同款）
+        mode = os.stat(Path(td, "anniversaries.json")).st_mode & 0o777
+        assert mode == 0o600, f"anniversaries.json 权限应为 0600, got {mode:o}"
     print("  OK test_crud_and_list")
 
 
