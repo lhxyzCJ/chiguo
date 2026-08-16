@@ -426,6 +426,10 @@ class StatePersistence:
     def __init__(self, config: dict, owner):
         self.config = config
         self.owner = owner
+        # F-A16-01 (#309): 本次 RMW 是否经降级（无锁）进入锁区。由 state_lock()
+        # 在超时降级进入时置位、退出时清除；save() 据此做写前重读校验防 lost
+        # update。正常持锁路径恒 False，save 行为与现状完全一致。
+        self._lock_degraded = False
 
     # ── v6: 路径锚定。运行时文件基于 _base_dir（config 所在目录）解析，
     # 不依赖 cwd —— 修复 cron 工作目录漂移导致的状态丢失/重建。
@@ -551,6 +555,24 @@ class StatePersistence:
                         disk_seq = _disk_seq
                 except Exception:
                     pass
+                # ── F-A16-01 (#309): 降级进入的 RMW 防 lost update ──
+                # 本次以 state_lock 超时降级（无锁）进入临界区，内存快照是并发进程
+                # 落盘前的陈旧读。save 此刻二次取到锁（他进程已释放）后，不得用陈旧
+                # 快照覆盖他人已落盘的更新：写前重读磁盘，若 disk tick_seq 比内存新
+                # （其他进程已写）→ 放弃本次写并明确告警。正常持锁路径 _lock_degraded
+                # 恒 False，此分支不触发，CAS 语义与现状完全一致。
+                if (self._lock_degraded
+                        and disk_seq is not None
+                        and disk_seq > self.owner.tick_seq):
+                    print(
+                        "[chiguo_state] save 放弃：state_lock 降级进入且磁盘已更新到 "
+                        f"tick_seq={disk_seq}(内存={self.owner.tick_seq})，本次写未落盘"
+                        "（防 lost update；下轮基于最新磁盘状态重试）",
+                        file=sys.stderr,
+                    )
+                    self._audit("save_degraded_abort",
+                                f"disk_seq={disk_seq} in_mem_seq={self.owner.tick_seq}")
+                    return False
                 if disk_seq is not None and disk_seq > self.owner.tick_seq:
                     self.owner.tick_seq = disk_seq + 1
                 self.owner.tick_seq += 1
@@ -818,14 +840,24 @@ class StatePersistence:
 
     @contextmanager
     def state_lock(self):
-        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock）。"""
+        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock）。
+
+        F-A16-01 (#309): yield 出本次是否真正获锁（bool）。5s 超时/非 POSIX
+        会降级无锁返回 False，调用方必须感知降级——否则无锁进入 RMW、save 二次
+        获取成功后用陈旧快照覆盖并发进程的写入（lost update，组2 复核 CONFIRMED）。
+        """
         lock_path = str(self.state_path) + ".lock"
         acquired = self._lock_acquire(lock_path)
+        degraded = not acquired and not locks.in_lock(lock_path)
+        if degraded:
+            self._lock_degraded = True  # 供 save() 降级进入时的重读校验（#309）
         try:
-            yield
+            yield acquired
         finally:
             if acquired:
                 self._lock_release(lock_path)
+            if degraded:
+                self._lock_degraded = False
 
     def in_lock(self) -> bool:
         """当前进程是否已持有 state 锁。"""
@@ -1143,9 +1175,13 @@ class ChiguoState:
 
     @contextmanager
     def state_lock(self):
-        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock），委托持久化单类。"""
-        with self._persistence.state_lock():
-            yield
+        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock），委托持久化单类。
+
+        F-A16-01 (#309): 透传持久化单类的 acquired（本次是否真正获锁）。超时
+        降级无锁时调用方可据此告警/预防 lost update。
+        """
+        with self._persistence.state_lock() as acquired:
+            yield acquired
 
     def _in_lock(self) -> bool:
         """当前进程是否已持有 state 锁（供 daemon 判断重入场景）。"""
