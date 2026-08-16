@@ -247,6 +247,14 @@ class LoopSenderMixin(DecisionEngineBase):
                 out["error"] = gen_err
                 # U2 (#227): 无 composer 兜底——记录 health fail（达 threshold → state down + transition 告警）
                 _send_transition_alert(self._record_health("fail", gen_err, loop_cfg))
+                # RF9 (F-RTS-001): 生成失败必须退款——evaluate 已对该 send 决策记账
+                # （energy/quota/messages_without_reply+1/Hawkes/逃生阀冷却），只 record_health
+                # fail 不退款会让未回复计数残留，连续失败 → silent 禁发链（backoff_level==2 →
+                # evaluate_triggers return None → 恢复后永久不发）。record_send_result failed
+                # 触发 refund_send 回滚未回复/额度/Hawkes；对齐收件人缺失分支（下方）的退款闭环。
+                # record_health 语义不变（生成失败仍推进 fail_streak，健康状态机不回归）。
+                if msg_id:
+                    self.record_send_result(msg_id, "failed", f"generate_failed: {gen_err}")
                 return out
             out["generated"] = True
             # F-A6-2: 不再生成即记 success——成功必须是生成+发送都 OK，success 移到发送
