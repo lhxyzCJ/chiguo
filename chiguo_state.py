@@ -713,6 +713,22 @@ class StatePersistence:
             mono if isinstance(mono, (int, float)) and not isinstance(mono, bool) else None)
         wall = data.get("wall_anchor")
         o.wall_anchor = wall if (isinstance(wall, str) and wall) else None
+        # ── F-A16-02 (#335): 锚点倒退检测 —— 系统重启后 time.monotonic() 归零 / 异机
+        # 迁移时钟域切换，持久化 mono_anchor > 当前单调钟（倒退）。若原样保留，当前进程
+        # _tick 的持久化单调锚点封顶基准失真（NTP 前跳防护在重启域失效）。这里检测到倒退
+        # → 告警审计 + 用当前 monotonic/CST 重建锚点基准，下次 save 落盘即自愈（CONTRACT-013
+        # 跨重启依旧有效）。wall_anchor 非法（非空 str）已由上方回退 None，下次 save 重建。
+        # 读路径保持防御式：检测失败/时间异常均不抛错，仅重建基准。──
+        if (o.mono_anchor is not None
+                and o.wall_anchor is not None
+                and time_module.monotonic() < o.mono_anchor):
+            self._audit(
+                "state_anchor_regression",
+                f"mono_anchor={o.mono_anchor:.2f} > current monotonic "
+                f"{time_module.monotonic():.2f} (reboot / clock-domain switch) "
+                f"— rebuilding anchor baseline")
+            o.mono_anchor = time_module.monotonic()
+            o.wall_anchor = datetime.now(CST).isoformat()
         # ── v5: tick_seq ──
         o.tick_seq = data.get("tick_seq", 0)
         # ── v4: 加载人格 ──

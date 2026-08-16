@@ -710,9 +710,10 @@ def test_tick_caps_wall_jump_via_persisted_anchor(cfg_path: Path):
     print(f"  OK test_tick_caps_wall_jump_via_persisted_anchor: inc={inc:.4f} (0.25h cap)")
 
 
-def test_tick_no_cap_when_anchor_older_than_monotonic(cfg_path: Path):
-    """系统重启模拟：time.monotonic() 归零（< mono_anchor）→ 不加封顶，
-    elapsed 保持壁钟口径（6h 全量推进，与无锚点行为一致）。"""
+def test_tick_caps_wall_jump_in_reboot_domain(cfg_path: Path):
+    """重启退化回归（F-A16-02）：系统重启后 time.monotonic() 归零 < 持久化旧 mono_anchor
+    → 时钟域切换。修复前此分支"不加封顶走壁钟"，NTP 前跳防护失效 → 壁钟差(6h)全量推进情绪；
+    修复后该域保守封顶到 REBOOT_ELAPSED_CAP_H（30min），不按假壁钟全量冲刺。"""
     eng = make_engine(cfg_path)
     now = dt(2026, 6, 15, 14, 0)
     s = eng.state
@@ -722,7 +723,7 @@ def test_tick_no_cap_when_anchor_older_than_monotonic(cfg_path: Path):
     s.last_tick = None
 
     MONO = 100000.0
-    # 重启后 monotonic 归零：mono_anchor（重启前读数）> 当前 monotonic → 条件不成立
+    # 重启后 monotonic 归零：mono_anchor（重启前/异机读数）> 当前 monotonic → 时钟域切换
     s.mono_anchor = MONO + 3600.0
     s.wall_anchor = (now - timedelta(hours=6)).isoformat()
 
@@ -730,11 +731,61 @@ def test_tick_no_cap_when_anchor_older_than_monotonic(cfg_path: Path):
         eng._tick(now)
 
     inc = s.emotion.loneliness - 10.0
+    # 与 decision.core.REBOOT_ELAPSED_CAP_H（0.5h = 30min）保持一致
+    cap_30m = elastic_recover(10.0, 100.0, 0.5, 40.0, 100.0) - 10.0
     full_6h = elastic_recover(10.0, 100.0, 6.0, 40.0, 100.0) - 10.0
-    assert abs(inc - full_6h) < 0.01, (
-        f"reboot (monotonic reset) must keep wall-clock elapsed: inc={inc:.4f} "
-        f"full_6h={full_6h:.4f}")
-    print(f"  OK test_tick_no_cap_when_anchor_older_than_monotonic: inc={inc:.4f} (wall 6h)")
+    assert abs(inc - cap_30m) < 0.01, (
+        f"reboot domain must cap elapsed to 30min: inc={inc:.4f} "
+        f"cap_30m={cap_30m:.4f} full_6h={full_6h:.4f}")
+    assert inc < full_6h / 4, (
+        f"reboot domain must NOT advance full wall-clock elapsed: "
+        f"inc={inc:.4f} full_6h={full_6h:.4f}")
+    print(f"  OK test_tick_caps_wall_jump_in_reboot_domain: inc={inc:.4f} (cap 30m)")
+
+
+# ═══════════════════════════════════════════════════════
+# F-A16-02: load 锚点倒退检测（重启域自愈）
+# ═══════════════════════════════════════════════════════
+
+def test_state_anchor_regression_detected_on_load(cfg_path: Path):
+    """重启/异机迁移：state.json 的 mono_anchor > 当前 time.monotonic()（倒退）
+    → load 检测到时钟域切换 → 告警审计 + 重置锚点自愈，读路径不崩溃。
+    修复前无倒退检测，倒退锚点原样恢复，重启后首个 evaluate 的 NTP 前跳封顶失效。"""
+    eng = make_engine(cfg_path)
+    s = eng.state
+    for p in (s.state_path, Path(str(s.state_path) + ".tmp")):
+        p.unlink(missing_ok=True)
+    s.save()  # 用真实 save 落盘合法锚点对，作为基线
+
+    now = dt(2026, 6, 15, 14, 0)
+    MONO = 100000.0
+    # 篡改锚点为倒退值：mono_anchor 远大于当前 monotonic；wall_anchor 保持合法
+    raw = json.loads(s.state_path.read_text())
+    raw["mono_anchor"] = MONO + 3600.0 * 10  # 10h 后的单调域读数
+    raw["wall_anchor"] = (now - timedelta(hours=6)).isoformat()
+    del raw["_checksum"]  # 避免 checksum 校验干扰，直接构造无 checksum 场景
+    s.state_path.write_text(json.dumps(raw))
+
+    # 当前 monotonic 固定为 MONO（小于倒退锚点）→ 触发倒退检测
+    with mock.patch.object(time, "monotonic", return_value=MONO):
+        eng2 = make_engine(cfg_path)
+
+    # 倒退检测自愈：锚点被重置为本进程当前基准，而非原样保留倒退值
+    mono, wall = eng2.state.monotonic_anchor()
+    assert mono is not None, "regression anchor should be reset, not left None"
+    assert mono <= MONO, (
+        f"regressed mono_anchor({mono}) should be rebuilt to current domain (<= {MONO})")
+
+    # 告警落审计（chiguo_state_audit.jsonl）——load 倒退检测必须写出 state_anchor_regression
+    audit_path = s.state_path.parent / "chiguo_state_audit.jsonl"
+    assert audit_path.exists(), "anchor regression must be recorded in state audit"
+    events = [json.loads(l)["event"]
+              for l in audit_path.read_text().splitlines() if l.strip()]
+    assert any(e == "state_anchor_regression" for e in events), (
+        f"expected state_anchor_regression in audit, got {events}")
+    print(f"  OK test_state_anchor_regression_detected_on_load: rebuilt {mono!r}")
+
+    audit_path.unlink(missing_ok=True)  # 清理本测试的审计条目，避免影响其它断言
 
 # ═══════════════════════════════════════════════════════
 # Issue #279 (Q29): recent_sent_texts 复用尾部倒序读
