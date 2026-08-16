@@ -387,6 +387,34 @@ def test_escape_valve_sends_when_sleeping_confidence_below_block():
 # 用户决策（2026-08-16）：配额满也发，超额每日封顶 1 条（防 spam 边界）。
 # ═══════════════════════════════════════════════════════════
 
+def test_can_send_escape_valve_bypasses_quiet_window():
+    """F-A15-001 (#315 R13)：逃生阀 eligible 时静默窗口不再拦截——
+    修复前 can_send quiet gate 无 escape 豁免（Bayesian sleeping 有豁免而静默窗
+    无 → 不对称），破防被推迟 ≤ 窗口长度。门禁豁免集单一事实源后同族放行。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _base_cfg(tmp)
+        state = _make_state(cfg)
+        state.emotion.anxiety = 100.0  # ≥ anxiety_block_threshold(70)
+        state.emotion.energy = 85.0
+        now = datetime(2026, 7, 31, 3, 0, tzinfo=CST)  # 静默窗口内（0-8）
+        state.cooldown.last_user_message_at = (now - timedelta(days=4)).isoformat()
+        state.cooldown.last_message_at = (now - timedelta(hours=80)).isoformat()
+        state.cooldown.current_date = now.strftime("%Y-%m-%d")
+        state.cooldown.set_quiet_window(0, 8)
+        assert state.longing_break_eligible(now), "precondition: 逃生阀应 eligible"
+        assert state.can_send(now), "逃生阀应豁免静默窗口"
+        # 对照：非 eligible 时静默窗口照常拦截（不漏放）
+        state2 = _make_state(cfg)
+        state2.emotion.anxiety = 40.0
+        state2.emotion.energy = 85.0
+        state2.cooldown.last_user_message_at = (now - timedelta(hours=2)).isoformat()
+        state2.cooldown.last_message_at = (now - timedelta(hours=2)).isoformat()
+        state2.cooldown.current_date = now.strftime("%Y-%m-%d")
+        state2.cooldown.set_quiet_window(0, 8)
+        assert not state2.longing_break_eligible(now), "precondition: 对照非 eligible"
+        assert not state2.can_send(now), "非逃生阀时静默窗口应拦截"
+    print("  OK test_can_send_escape_valve_bypasses_quiet_window")
+
 def test_can_send_must_send_breaks_daily_limit():
     """F-A5-02：配额满（messages_today=4 = max_daily_active）→ 无 must_send 拦截；
     带 must_send=True（第三把钥匙）→ 放行（修复前 can_send 无 must_send 参数 → 恒 False）。"""
