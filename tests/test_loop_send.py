@@ -147,6 +147,46 @@ def test_loop_send_rpc_ok():
         srv.shutdown()
 
 
+def test_loop_send_record_send_text_exception_still_success():
+    """RF8 (L6-3): record_send_text（本地 JSONL 归档）抛异常 → 消息已发送不能被记成
+    send_fail + 退款。异常单点分流：本地归档失败只告警，success 健康记账不受影响。
+    修复前红：record_send_text 抛异常进入外层 except → record_send_result(failed) 退款 +
+    record_health send_fail（fail_streak 推进）。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            _use_health_script()
+            engine = _make_engine(td)
+            engine.config["wechat"]["wechat_recipient"] = "real_openid@im.wechat"
+            loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                        "retry_delay_seconds": 0}
+            # 捕获 record_send_result 调用（退款发起观测点）
+            calls: list[tuple] = []
+            orig_sr = engine.record_send_result
+
+            def spy(*args, **kw):
+                calls.append(args)
+                return orig_sr(*args, **kw)
+            engine.record_send_result = spy
+            # record_send_text 抛异常（模拟磁盘满/归档写失败）
+            def boom(*a, **kw):
+                raise RuntimeError("disk full: 归档写失败")
+            engine.record_send_text = boom
+            out = engine._loop_send(_send_decision("m-rf8"), loop_cfg)
+            # 发送仍成功：sent=True、无 send_error、无退款调用
+            assert out["generated"] is True and out["sent"] is True, out
+            assert not out.get("send_error"), out
+            assert not calls, \
+                f"record_send_text 失败不应触发退款 record_send_result: {calls}"
+            # 健康记账为 success（fail_streak=0 / up），不是 send_fail
+            ah = json.loads(Path(td, "agent_health.json").read_text())
+            assert ah.get("fail_streak", 0) == 0, \
+                f"record_send_text 失败不应记 send_fail（fail_streak 应保持 0）: {ah}"
+            assert ah.get("state") == "up", ah
+    finally:
+        srv.shutdown()
+
+
 def test_loop_send_rpc_fail_fallback_spawn():
     """RPC 失败（503）→ 回退 spawn agent-run（fake AGENT_RUN_SCRIPT）→ 发送成功。"""
     srv = _start_bridge()
