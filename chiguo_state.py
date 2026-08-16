@@ -2374,11 +2374,15 @@ class ChiguoState:
             else:
                 self.cooldown.busy_suppress_until = until
         elif (now is not None and "suppress_hours" in analysis
-              and not analysis.get("suppress_hours")):
-            # F-A19-002：LLM 显式上报 suppress_hours=0（键存在且为假值）→ 主动清除
-            # 抑制期（提供清除入口，LLM 单次误判可即时解除，避免 ≤24h 停摆）。
-            # 仅当分析里显式带 suppress_hours=0 才清除；键缺失（默认 0）不触碰，
-            # 保持 >0 的「只延长」且普通消息不误清。
+              and analysis.get("suppress_hours") == 0):
+            # F-A19-002：LLM 显式上报 suppress_hours=0 → 主动清除抑制期
+            # （提供清除入口，LLM 单次误判可即时解除，避免 ≤24h 停摆）。
+            # RF3（M4-2）：假值集合收紧为显式 ==0（含 0/0.0）才清除——
+            # 旧实现 `not x` 对 ""/None/[] 也误清，而模型常照模板输出 0，
+            # 若清理 ""/None 会在「开会去」设的抑制期被普通消息误清。
+            # 与 _num 语义对齐：键存在但为 ""/None/[] 时不解除抑制（不清除）；
+            # 键缺失（默认 0）不触碰，保持 >0 的「只延长」且普通消息不误清。
+            # 文档明示：显式 0 才解除抑制。
             self.cooldown.busy_suppress_until = None
 
     def on_character_message(self, now: datetime, trigger_type: str = "",

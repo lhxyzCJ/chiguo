@@ -405,7 +405,11 @@ period?, to_period?, to_date?, course?, label?, match?}。
   // （extract 消息→item JSON、verify 原文+item→判定 JSON、recall 系统注入 facts→回答、
   // replan 计划生成），无任何工具调用场景。noSkills:false 是历史宽松配置：加载
   // read/bash/edit/write 工具 + 进程 root 运行 + 用户/检索自由文本无 untrusted 标记
-  // 直进会话 prompt → 注入成功 + LLM 工具决策失守 = 命令执行。降权后攻击面归零。
+  // 直进会话 prompt → 注入成功 + LLM 工具决策失守 = 命令执行。
+  // RF7（L5-1）：降权**消除的是「注入→工具执行」面**，不是「攻击面归零」——
+  // recall 的 `检索事实：${extra.facts}` 与 bridge 回复侧 attention 块仍把 schedule
+  // 自由文本无标记拼进 prompt，**内容污染面仍在**（见 bridge.mjs buildAttentionBlock
+  // 的 UNTRUSTED 标记）。降权语义=禁工具,不替代内容净化。
   // custom（用户自配 CLI agent）不受 noSkills 控制——其 args 由部署者负责（自定义后端）。
   const args = custom ? custom.args
     : ['-p', ...buildBaseAgentArgs({

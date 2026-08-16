@@ -62,7 +62,7 @@ process.env.FAKE_AGENT_LOG = AGENT_LOG
 process.env.FAKE_DAEMON_LOG = DAEMON_LOG
 // B2 确定性:本文件测 spawn 路径,确保 AGENT_RPC_ENABLED=false(宿主残留配置不干扰)
 delete process.env.WECHAT_BRIDGE_AGENT_RPC
-const { askAgent, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue, runWithRecall, runWithAttention, handleAgentPrompt, readClarify, clearClarify, scheduleClarifyPath, checkAgentRunScript } = await import('../wechat-bridge/bridge.mjs')
+const { askAgent, recordUserMsg, upgradeAnalysis, handleMessage, TurnQueue, runWithRecall, runWithAttention, buildAttentionBlock, handleAgentPrompt, readClarify, clearClarify, scheduleClarifyPath, checkAgentRunScript } = await import('../wechat-bridge/bridge.mjs')
 
 let passed = 0
 const tests = []
@@ -215,6 +215,24 @@ t('--attention 回复侧注入:取数失败跳过注入继续 askAgent(降级)',
     `runOverride 契约应含 memories: ${JSON.stringify(overrideArgs)}`)
   const memSearch = dLines().find((l) => JSON.parse(l)[0] === '--memory-search')
   assert.ok(memSearch, '回复侧先取 --memory-search')
+})
+t('RF7: buildAttentionBlock schedule 自由文本块带 UNTRUSTED 标记 + 闭合定界', async () => {
+  // L5-1:回复侧 attention 通道同属内容污染面——schedule 自由文本块必须带 untrusted 标记
+  const block = buildAttentionBlock({
+    ok: true,
+    attention: {
+      t1: [{ date: '2026-06-16', name: '哥哥生日', days_until: 1 }],
+      t2: ['下周有考试'],
+      t3: { this_week: { 周二: { '3-4': { course: '高数' } } } },
+      today_exceptions: [{ period: 5, action: '停课', course: '体育' }],
+    },
+  })
+  assert.ok(block.includes('[UNTRUSTED DATA]'),
+    `attention 块应带 UNTRUSTED 标记: ${JSON.stringify(block)}`)
+  assert.ok(block.includes('只读参考') || block.includes('只读'), '应声明只读参考')
+  assert.ok(block.includes('<schedule-attention>') && block.includes('</schedule-attention>'),
+    `应有闭合定界: ${JSON.stringify(block)}`)
+  assert.ok(block.includes('哥哥生日'), 'attention 数据仍在块内')
 })
 
 t('B7: runWithRecall 传入 existingAnalysis → 复用已有分析,不重复 firstAnalysis(单次 recall 调用)', async () => {
