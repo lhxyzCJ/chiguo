@@ -600,6 +600,55 @@ def test_loop_send_timeout_uncertain_no_refund_no_send_fail():
         srv.shutdown()
 
 
+def test_loop_send_generate_fail_refunds():
+    """F-RTS-001 (RF9): 生成失败分支（RPC 空回复 + spawn 失败，整链重试仍败）→
+    除 record_health fail 外，还必须 record_send_result(msg_id, "failed")
+    退款——否则 evaluate 已记账的 messages_without_reply/energy/Hawkes 残留，
+    cron/loop 连续失败 → silent 禁发链。修复前红：生成失败分支不退款 → calls 为空。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            fake_runner = Path(td) / "fake-agent-genfail.mjs"
+            fake_runner.write_text(
+                "process.stdout.write(JSON.stringify({ ok: false, error: '生成故障' }))")
+            old_r = os.environ.get("AGENT_RUN_SCRIPT")
+            ah = os.environ.get("AGENT_HEALTH_SCRIPT")
+            os.environ["AGENT_RUN_SCRIPT"] = str(fake_runner)
+            _use_health_script()
+            try:
+                engine = _make_engine(td)
+                engine.config["wechat"]["wechat_recipient"] = "r@w"
+                FakeBridge.prompt_mode = "empty"   # RPC 恒空 → 走 spawn 回退 → 整链失败
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "retry_delay_seconds": 0}
+                # 捕获 record_send_result 调用（退款发起观测点）
+                calls: list[tuple] = []
+                orig = engine.record_send_result
+
+                def spy(*args, **kw):
+                    calls.append(args)
+                    return orig(*args, **kw)
+                engine.record_send_result = spy
+                out = engine._loop_send(_send_decision("m-genfail"), loop_cfg)
+                assert out["generated"] is False, out
+                assert out.get("error"), out
+                # record_health fail 记账不回归（fail_streak 推进、state=up 未达阈值）
+                st = json.loads(Path(td, "agent_health.json").read_text())
+                assert st.get("fail_streak") == 1, st
+                assert st.get("state") == "up", st
+                # 退款必须发生：生成失败分支调用 record_send_result(msg_id, "failed", ...)
+                assert calls, \
+                    "生成失败分支应调用 record_send_result(msg_id, 'failed', ...) 退款"
+                msg_id, status, err = calls[0]
+                assert msg_id == "m-genfail", calls
+                assert status == "failed", calls
+                assert "generate_failed" in (err or ""), calls
+            finally:
+                _restore_env(old_r, ah)
+    finally:
+        srv.shutdown()
+
+
 def test_loop_send_clear_fail_still_refunds_send_fail():
     """F-A17-003 回归对照：明确失败（ok:false 非 timeout）→ 照旧退款 + send_fail。"""
     srv = _start_bridge()

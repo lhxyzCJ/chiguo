@@ -333,6 +333,40 @@ set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; 
 [ "$(state_field fail_streak)" = "$STREAK_BEFORE" ] && pass "timeout_uncertain → 不记 send_fail（fail_streak 不变）" || fail "timeout_uncertain 不应推进 fail_streak（$STREAK_BEFORE→$(state_field fail_streak)）"
 echo ok > "$SEND_MODE"
 
+# ── RF9 (F-RTS-001): 生成失败 → 必须回传 --send-result failed 退款 ──
+# evaluate 已对 send 决策记账（energy/messages_without_reply+1/Hawkes）。生成失败分支
+# （agent 整链返回失败，无文本产出）若只 record_health fail 不退款 → 未回复计数残留，
+# 连续 5 轮 → silent 禁发（恢复后永久不发）。修复前红：生成失败分支不回传 → log 为空。
+cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+send_session_id = "chiguo-send"
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+provider = "deepseek"
+model = "deepseek-chat"
+
+[wechat]
+wechat_recipient = "owner@im.wechat"
+
+[health]
+fail_threshold = 3
+TOML
+echo fail > "$FAKE_AGENT_MODE_FILE"    # spawn 失败；RPC 也是 fail → 整链生成失败
+export SEND_RESULT_LOG="$TMP/sendresult_genfail.log"
+rm -f "$SEND_RESULT_LOG"
+: > "$SEND_RESULT_LOG"
+set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
+[ "$RC" = 1 ] && pass "生成失败 → tick 退出 1（既有语义保留）" || fail "生成失败应 exit 1, 实得 $RC"
+# 退款回传必须发生：fake daemon --send-result 分支写入 SEND_RESULT_LOG（含 msg_id + failed）
+grep -q 'abc123' "$SEND_RESULT_LOG" \
+  && grep -q 'send-result' "$SEND_RESULT_LOG" \
+  && grep -q 'failed' "$SEND_RESULT_LOG" \
+  && pass "生成失败 → 回传 --send-result abc123 failed（退款发生，未回复计数回滚）" \
+  || fail "生成失败应回传 --send-result <msg_id> failed, 实得: $(cat "$SEND_RESULT_LOG")"
+# record_health fail 记账不回归（fail_streak 推进；fail_threshold=3 → 单次仍 up）
+[ "$(state_field fail_streak)" -ge 1 ] \
+  && pass "生成失败 → record_health fail 推进 fail_streak（健康状态机不回归）" \
+  || fail "生成失败应 record_health fail（fail_streak 未推进）"
+
 # ── 用例 7: bridge 不可达 → 回传 --send-result failed（refund 反馈闭环不断）+ 记 send_fail ──
 kill ${SRV_PID:-} 2>/dev/null || true
 export SEND_RESULT_LOG="$TMP/sendresult.log"
