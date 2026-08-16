@@ -878,6 +878,11 @@ def test_export_json():
 
 # ═══════════════════════════════════════════════════════════
 # v5: F3 Log Rotation tests
+#
+# 轮转事件写入（rotate/force_rotate → chiguo_events.jsonl）由 `tests/conftest.py`
+# 的 `_isolate_rotation_events` 函数级 autore fixture 统一注入临时隔离路径，杜绝
+# 真实污染项目根 chiguo_events.jsonl（CONTRACT-016，Issue #333）。各用例无需单独
+# 注入；会话级 `_guard_events_isolation` 再断言项目根行数无增长作为全局回归防线。
 # ═══════════════════════════════════════════════════════════
 
 def test_rotation_creates_archive():
@@ -1170,10 +1175,10 @@ def test_rotation_event_logged():
     """Q24: 轮转动作落 chiguo_events.jsonl（时序指标数据源）"""
     import chiguo_rotation as rot
     with tempfile.TemporaryDirectory() as td:
-        # 事件文件锚定项目根（模块目录），用临时目录无法改锚点 → monkeypatch 目标路径
-        orig_event = rot._events_log_path
+        # 事件文件写入经 `_EVENTS_LOG_PATH` 注入隔离到临时目录（CONTRACT-016，Issue #333）
+        prev_events = rot._EVENTS_LOG_PATH
         ev = Path(td) / "chiguo_events.jsonl"
-        rot._events_log_path = lambda: ev
+        rot._EVENTS_LOG_PATH = ev
         try:
             log = Path(td) / "old.jsonl"
             log.write_text('{"test": true}\n')
@@ -1189,7 +1194,7 @@ def test_rotation_event_logged():
             assert lines[0]["kind"] in ("monthly", "force")
             assert lines[0]["at"][0:10] == datetime.now(CST).strftime("%Y-%m-%d")
         finally:
-            rot._events_log_path = orig_event
+            rot._EVENTS_LOG_PATH = prev_events
     print("  OK test_rotation_event_logged")
 
 
