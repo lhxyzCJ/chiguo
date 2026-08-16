@@ -200,11 +200,19 @@ class LoopSenderMixin(DecisionEngineBase):
                     runner = os.environ.get("AGENT_RUN_SCRIPT") \
                         or str(self._base_dir / "scripts" / "agent-run.mjs")
                     node_bin = os.environ.get("NODE_BIN") or "node"  # 必须用 node，AGENT_BIN 是 pi/agent 二进制
+                    # R7 (F-A17-001): spawn 回退注入发送侧会话 env（对齐 tick.sh L127）——
+                    # AGENTRUN_SESSION 取 toml [host].send_session_id（缺省 chiguo-send），
+                    # AGENTRUN_ROTATE_SESSION=1 使 send 每轮全新。否则 agent-run.mjs:42
+                    # 默认回落回复侧 chiguo-main 且不轮换（孤儿上下文/会话增长）。
+                    spawn_env = {**os.environ,
+                                 "AGENTRUN_SESSION": (self.config.get("host", {}) or {}).get(
+                                     "send_session_id", "chiguo-send") or "chiguo-send",
+                                 "AGENTRUN_ROTATE_SESSION": "1"}
                     try:
                         p = subprocess.run(
                             [node_bin, runner, "--prompt",
                              json.dumps(decision, ensure_ascii=False), "--send-mode"],
-                            capture_output=True, text=True, timeout=timeout)
+                            capture_output=True, text=True, timeout=timeout, env=spawn_env)
                         parsed = json.loads(p.stdout)
                         if parsed.get("ok") and parsed.get("text"):
                             text = parsed["text"]
@@ -297,8 +305,16 @@ def run_loop(engine, max_interval: int, compact: bool):
                 if engine._health_should_probe(loop_cfg):
                     decision["_loop"] = engine._loop_send(decision, loop_cfg)
                 else:
+                    # R7 (F-RT-001): 抑制发送（health down/降频区间）不能只 print+return——
+                    # evaluate() 已对该 send 决策记账（energy/messages/Hawkes/逃生阀
+                    # last_longing_break_at）。走 failed 退款闭环回滚，复用收件人缺失
+                    # 分支（_loop_send L254-259）同款 record_send_result，避免幻影记账
+                    # 与逃生阀冷却被白扣。msg_id 从 decision 取。
                     decision["_loop"] = {"generated": False, "sent": False,
                                          "suppressed": True}
+                    _msg_id = decision.get("msg_id", "")
+                    if _msg_id:
+                        engine.record_send_result(_msg_id, "failed", "suppressed")
             except Exception as e:
                 decision["_loop_error"] = str(e)
             print(json.dumps(decision, ensure_ascii=False))
