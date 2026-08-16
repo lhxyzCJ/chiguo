@@ -10,7 +10,7 @@ import time
 import math
 import random
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 from decision.base import DecisionEngineBase
 from chiguo_trigger import evaluate_triggers
@@ -28,6 +28,23 @@ CST = timezone(timedelta(hours=8))
 # 情绪（Bug 机制）；故该域把 elapsed 封顶到本常量（30min），防单次 evaluate 前跳冲击，
 # 同时 save 时锚点对刷新、后继轮次自愈。CONTRACT-013 跨重启依旧有效。
 REBOOT_ELAPSED_CAP_H = 0.5
+
+
+def json_default(o):
+    """decision 兜底类型化转换器（F-A22-001 RF4，L1-1/L1-3）。
+
+    对已知非 JSON 原生类型做**类型保持**转换，别用 default=str/default=list 这类
+    会让字段语义变形或对不可迭代对象换抛新 TypeError 的粗兜底：
+      - set          → sorted list（确定性排序，读侧按 list 消费拿到正确形状）
+      - datetime/date→ isoformat 字符串（.isoformat() 保持可逆语义）
+    其余未知类型**保持抛 TypeError**——兜底不掩盖字段失真，失败依旧可见。
+    共用 decision/_log 落盘与 cli/dispatch --compact 输出两个序列化出口。
+    """
+    if isinstance(o, set):
+        return sorted(o)
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
 
 class DecisionCoreMixin(DecisionEngineBase):
@@ -58,7 +75,7 @@ class DecisionCoreMixin(DecisionEngineBase):
                     f.write(json.dumps(decision, ensure_ascii=False) + "\n")
             except (TypeError, ValueError) as e:
                 # F-A22-001 加固：决策含非 JSON 类型（如 set）时不再裸吞。
-                # 计数 + 明确 stderr，并尝试 default=str 兜底写出，避免决策数据丢失。
+                # 计数 + 明确 stderr，并尝试类型化兜底写出（RF4），避免决策数据丢失。
                 self._decision_write_failures = getattr(
                     self, "_decision_write_failures", 0) + 1
                 print(
@@ -68,7 +85,7 @@ class DecisionCoreMixin(DecisionEngineBase):
                 try:
                     with open(self.log_path, "a") as f:
                         f.write(json.dumps(decision, ensure_ascii=False,
-                                           default=str) + "\n")
+                                           default=json_default) + "\n")
                 except Exception as e2:
                     print(f"[warn] 写入 {self.log_path} 失败: {e2}", file=sys.stderr)
             except OSError as e:

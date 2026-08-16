@@ -198,9 +198,12 @@ def _run_passive(engine, compact: bool) -> None:
                           "time": datetime.now(CST).isoformat()},
                          ensure_ascii=False))
         return
-    # F-A22-001 加固：send 决策含非 JSON 类型（如 set）时 default=list 兜底序列化，
+    # F-A22-001 加固：send 决策含非 JSON 类型（set/datetime）时类型化兜底序列化，
     # 避免 --compact 模式下 print 抛未捕获 TypeError 使 cron 发送链崩溃。
-    print(json.dumps(decision, ensure_ascii=False, indent=2, default=list))
+    # RF4: 复用 decision.core 的类型化转换器（set→list、datetime→isoformat），
+    # 而非 default=list（对 datetime 不可迭代对象会换抛 TypeError）。
+    from decision.core import json_default
+    print(json.dumps(decision, ensure_ascii=False, indent=2, default=json_default))
 
 
 def run(args):
