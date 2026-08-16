@@ -198,7 +198,9 @@ def _run_passive(engine, compact: bool) -> None:
                           "time": datetime.now(CST).isoformat()},
                          ensure_ascii=False))
         return
-    print(json.dumps(decision, ensure_ascii=False, indent=2))
+    # F-A22-001 加固：send 决策含非 JSON 类型（如 set）时 default=list 兜底序列化，
+    # 避免 --compact 模式下 print 抛未捕获 TypeError 使 cron 发送链崩溃。
+    print(json.dumps(decision, ensure_ascii=False, indent=2, default=list))
 
 
 def run(args):
