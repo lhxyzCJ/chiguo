@@ -152,6 +152,41 @@ t('handleAgentPrompt: 并发经共享 TurnQueue 串行化（R20,同会话不并�
   } finally { globalThis.__agentRpc = null }
 })
 
+t('handleAgentPrompt: send 模式 queue 忙 → 快速失败 queue_busy（不排队等、不产生孤儿 send turn）', async () => {
+  // F-A17-004/R10: 发送侧 RPC 的总预算必须与 tick 125s 对齐。当前方有一慢 turn
+  // 占用共享 TurnQueue 时，send RPC 不能再无限排队等待（超过 curl 125s 会让
+  // tick 先超时 → 无条件回退 spawn → 双 LLM 并行 + RPC 结果丢弃）。
+  // 修复语义：派发时 queue 忙 → 在预算内快速失败 queue_busy，且被取消的 turn
+  // 绝不执行（不留孤儿 LLM 卡在队列里）。
+  const queue = new TurnQueue()
+  let sendPromptRuns = 0
+  const prevWait = process.env.WECHAT_BRIDGE_SEND_PROMPT_QUEUE_WAIT_MS
+  process.env.WECHAT_BRIDGE_SEND_PROMPT_QUEUE_WAIT_MS = '30'   // 测试缩小等待预算
+  globalThis.__agentRpc = {
+    restart: async () => {},
+    prompt: async ({ mode } = {}) => { if (mode === 'send') sendPromptRuns += 1; return { text: 'r', analysis: null } },
+  }
+  try {
+    // 先占用队列 150ms（前方慢 turn），期间 send 请求应快速 queue_busy 退出
+    const blocking = queue.run(() => new Promise((r) => setTimeout(r, 150)))
+    const res = resStub()
+    const t0 = Date.now()
+    await handleAgentPrompt({ text: '{"action":"send"}', mode: 'send' }, res, queue)
+    const elapsed = Date.now() - t0
+    assert(res.status === 503, `应 503, 实得 ${res.status} body=${JSON.stringify(res.body)}`)
+    assert(res.body.ok === false && String(res.body.error).includes('queue_busy'),
+      `错误应含 queue_busy: ${JSON.stringify(res.body)}`)
+    assert(elapsed < 150, `应快速失败（未等前方 turn 完成）: ${elapsed}ms`)
+    await blocking
+    await new Promise((r) => setTimeout(r, 20))
+    assert(sendPromptRuns === 0, `被取消的 send turn 不应执行（sendPromptRuns=${sendPromptRuns}）`)
+  } finally {
+    globalThis.__agentRpc = null
+    if (prevWait === undefined) delete process.env.WECHAT_BRIDGE_SEND_PROMPT_QUEUE_WAIT_MS
+    else process.env.WECHAT_BRIDGE_SEND_PROMPT_QUEUE_WAIT_MS = prevWait
+  }
+})
+
 t('HTTP 路由:POST /agent/prompt 经真实 server → 200 + 非回环 Host 拒绝', async () => {
   globalThis.__agentRpc = new AgentRpc({ bin: process.execPath, args: [FAKE_PI] })
   const server = createServer((req, res) => {
