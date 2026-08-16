@@ -241,8 +241,8 @@ class LoopSenderMixin(DecisionEngineBase):
                 _send_transition_alert(self._record_health("fail", gen_err, loop_cfg))
                 return out
             out["generated"] = True
-            # 生成成功 → record success；transition（down→up 恢复）经 /send 发恢复（对齐 tick.sh）
-            _send_transition_alert(self._record_health("success", "", loop_cfg))
+            # F-A6-2: 不再生成即记 success——成功必须是生成+发送都 OK，success 移到发送
+            # 成功分支（避免发送前清零导致发送失败 send_fail 永不累积、health 恒 up）。
             # ② 发送 + ③ 记账
             to = (self.config.get("wechat", {}) or {}).get("wechat_recipient", "")
             if not to:
@@ -269,10 +269,17 @@ class LoopSenderMixin(DecisionEngineBase):
                     raise RuntimeError(str(resp.get("error") or "bridge /send ok=false"))
                 out["sent"] = True
                 self.record_send_text(msg_id, text, trigger, intensity)
+                # F-A6-2: 发送成功 —— 生成+发送双成功才算健康；记 success 清零 +
+                # down→up 恢复 transition 经 /send 发恢复（对齐 tick.sh）
+                _send_transition_alert(self._record_health("success", "", loop_cfg))
             except Exception as e:  # noqa: BLE001
                 out["send_error"] = str(e)
                 if msg_id:
                     self.record_send_result(msg_id, "failed", str(e))
+                # F-A6-2: 发送失败也记 health——生成已 OK 但 bridge /send 失败的轮次视为一次
+                # 失败，记 send_fail 推进 fail_streak；连续 3 次发送失败 → down + transition 告警
+                # + 暂停（对齐 tick.sh 发送失败分支；transition 告警经 /send，失败静默）。
+                _send_transition_alert(self._record_health("send_fail", f"bridge send failed: {e}", loop_cfg))
             return out
 
 

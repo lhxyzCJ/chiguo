@@ -272,7 +272,7 @@ HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >"$TMP/tick6b.log" 2>&1 \
 [ "$(spawn_count)" -ge 1 ] && pass "RPC 失败 → 回退 spawn agent-run" || fail "期望 spawn ≥1 实得 $(spawn_count)"
 post_texts | grep -q "测试主动消息" && pass "回退 spawn 的文本已发送" || fail "应发送 spawn 文本"
 
-# ── 用例 7: bridge 不可达 → 回传 --send-result failed（refund 反馈闭环不断）──
+# ── 用例 7: bridge 不可达 → 回传 --send-result failed（refund 反馈闭环不断）+ 记 send_fail ──
 kill ${SRV_PID:-} 2>/dev/null || true
 export SEND_RESULT_LOG="$TMP/sendresult.log"
 : > "$SEND_RESULT_LOG"
@@ -280,7 +280,11 @@ set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; 
 [ "$RC" = 1 ] || fail "bridge 不可达 tick 应退出 1（发送失败，issue #85）"
 grep -q "send-result.*failed" "$SEND_RESULT_LOG" \
   || fail "bridge 不可达应回传 --send-result failed: $(cat "$SEND_RESULT_LOG")"
-pass "bridge 不可达 → 回传 failed（refund 闭环）"
+# F-A6-2: 发送失败也进 health（send_fail 推进 fail_streak，不再恒 up）
+[ "$(state_field state)" = up ] || fail "发送失败 state 期望 up 实得 $(state_field state)"
+[ "$(state_field fail_streak)" = 1 ] || fail "发送失败应记 send_fail（fail_streak=1）实得 $(state_field fail_streak)"
+grep -q "bridge send failed" "$STATE" || fail "send_fail 应带 bridge 发送失败原因: $(cat "$STATE")"
+pass "bridge 不可达 → 回传 failed（refund 闭环）+ 记 send_fail 进 health"
 
 # ── replan lockfile(5s 超时 + 陈旧锁 10min 接管,M15)──
 # 直接调产品 schedule/replan._lock(R5):测试的是真实现,非逻辑拷贝

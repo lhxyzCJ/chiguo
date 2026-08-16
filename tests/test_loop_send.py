@@ -24,6 +24,7 @@ class FakeBridge(BaseHTTPRequestHandler):
 
     requests = []  # (path, body)
     prompt_mode = "ok"   # ok | empty | error
+    send_mode = "ok"     # ok=成功 | fail=/send 返回 ok:false（F-A6-2 发送失败域）
 
     def do_POST(self):  # noqa: N802
         n = int(self.headers.get("Content-Length", 0))
@@ -47,7 +48,10 @@ class FakeBridge(BaseHTTPRequestHandler):
         if self.path == "/send":
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(json.dumps({"ok": True}).encode())
+            if FakeBridge.send_mode == "fail":
+                self.wfile.write(json.dumps({"ok": False, "error": "mock send 故障"}).encode())
+            else:
+                self.wfile.write(json.dumps({"ok": True}).encode())
             return
         self.send_response(405)
         self.end_headers()
@@ -60,6 +64,7 @@ class FakeBridge(BaseHTTPRequestHandler):
 def _start_bridge():
     FakeBridge.requests = []
     FakeBridge.prompt_mode = "ok"
+    FakeBridge.send_mode = "ok"
     srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeBridge)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
@@ -212,6 +217,43 @@ def test_loop_send_send_failure_refund():
                         "retry_delay_seconds": 0}
             out = engine._loop_send(_send_decision("m2"), loop_cfg)
             assert out["generated"] is True and out["sent"] is False, out
+    finally:
+        srv.shutdown()
+
+
+def test_loop_send_send_failure_health_send_fail():
+    """F-A6-2: /send 返回 ok:false → 发送失败走 refund 之外，还记 agent_health
+    send_fail（推进 fail_streak；连续 3 次 → down + transition 告警不再恒 up）。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            _use_health_script()
+            try:
+                engine = _make_engine(td)
+                engine.config["wechat"]["wechat_recipient"] = "owner@w"
+                FakeBridge.send_mode = "fail"   # /send 恒返回 ok:false
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "retry_delay_seconds": 0}
+                # 第 1 次发送失败：refund + send_fail 记账（未达阈值，up）
+                out1 = engine._loop_send(_send_decision("m-sf1"), loop_cfg)
+                assert out1["generated"] is True and out1["sent"] is False, out1
+                st1 = json.loads(Path(td, "agent_health.json").read_text())
+                assert st1["state"] == "up", st1
+                assert st1["fail_streak"] == 1, st1
+                # 第 2、3 次 → 达阈值 down
+                engine._loop_send(_send_decision("m-sf2"), loop_cfg)
+                engine._loop_send(_send_decision("m-sf3"), loop_cfg)
+                st3 = json.loads(Path(td, "agent_health.json").read_text())
+                assert st3["state"] == "down", st3
+                assert st3["fail_streak"] == 3, st3
+                assert "send failed" in st3.get("fail_reason", ""), st3
+                # 恰好 1 条 down transition 告警经 /send
+                send_texts = [json.loads(b).get("text", "")
+                              for p, b in FakeBridge.requests if p == "/send"]
+                alert_texts = [t for t in send_texts if "后端异常" in t]
+                assert len(alert_texts) == 1, send_texts
+            finally:
+                FakeBridge.send_mode = "ok"
     finally:
         srv.shutdown()
 
