@@ -717,7 +717,9 @@ schedule_overrides.json / break_state.json / holidays.json / schedule_plan.json�
      访问: memory/ 包（默认 Mem0Backend：LLM 事实提取写入 + 向量语义检索 + Ebbinghaus 加权；mem0 唯一后端）
      配置: [memory] 段 mem0_user_id/mem0_collection/mem0_qdrant_path/mem0_history_db/mem0_llm_*/mem0_embedder_*；LLM key 缺省读 ~/.pi/agent/auth.json 的 opencode-go 条目
      写入: daemon 对话后自动写入（_mem0_autowrite，短消息跳过）
+           - **F-A21-002 去重（#336）**：同文本 24h 窗口内二次写入跳过（进程内最近写入 hash FIFO，`_mem0_autowrite_hashes`）——防 bridge 补报/重发同条消息重复触发 LLM 事实提取 → messages 表无界增长；不同文本/超窗后正常写入
      降级: mem0 不可用 → available=False → 自动跳过
+      - **F-RT-017 写链可感知（#336）**：`available` 探测只覆盖读链（embedder+qdrant），LLM 事实提取写链（opencode/model 端点）故障在 available 上不直接暴露；写失败会翻转 `_available` + 记 `_last_error(op=add)`，并累计 `add_fail_count`（`stats()` 暴露，供 monitor 读取）
      - mem0 在 available 探测内**惰性导入**：未安装时 daemon 照常启动（import 失败也被 available=False 捕获）
      - 探测失败后按 60s 节流重试：`--loop` 长驻时故障恢复可自愈，不永久禁用
      - 结果行防御：importance 的 None/NaN 统一清洗为默认 0.5，行级异常整体降级为空列表；非字符串 created_at 转串解析、失败落 0.0（防 `_parse_iso_ts` 的 .replace AttributeError），单条脏行 try 隔离不拖垮整次检索（R14）
@@ -734,7 +736,7 @@ schedule_overrides.json / break_state.json / holidays.json / schedule_plan.json�
 
 **C1 空闲期确定性记忆巩固（v1.12，零 LLM）**：对标 Letta dreaming / CowAgent Deep Dream，吸收思想不换库、不调 LLM——`MemoryBackend.consolidate_plan` 纯函数生成巩固计划（不写库）：
 - **去重**：按 text 的 `jaccard_3gram` 相似度 ≥ `consolidate_sim_threshold`（默认 0.85）找近似重复对，保留 importance 高/时间新的一条（排序靠前者），另一条 importance 减半 + `_consolidated`/`consolidated_with` 标记（持久化到 metadata，读侧回读，防重复降权）
-- **过期**：importance < `consolidate_min_importance`（默认 0.3）且年龄 > `consolidate_max_age_hours`（默认 720h=30 天）→ 标记 `_expired`（候选删除）；timestamp 缺失/非法 → 年龄未知不过期（防误删脏数据）
+- **过期**：`(无 importance 信息 或 importance < consolidate_min_importance（默认 0.3）) 且年龄 > consolidate_max_age_hours（默认 720h=30 天）` → 标记 `_expired`（候选删除）；timestamp 缺失/非法 → 年龄未知不过期（防误删脏数据）。**F-A21-001（#336）**：`Mem0Backend._row` 对缺 importance metadata 的行回退 importance=0.5（读侧稳定），但用 `importance_known=False` 标记「无真实 importance 信息」——consolidate 据此放行这类超龄行过期（否则 0.5 ≥ 0.3 使过期条件永不满足 → 记忆库无界增长）；直接构造行（纯函数/第三方后端）缺省视为显式 importance，不影响既有语义
 - 返回报告 `{demoted, expired, kept}`
 
 `Mem0Backend.consolidate` 扫描全量记忆执行计划：降权经 mem0 `update_memory` 写 `metadata.importance` + `metadata.consolidated_with`、过期经 `delete` 删除（mem0 无对应 API → 静默跳过仅报告）；`dry_run=True` 只出计划不写库；不可用 → 空报告。触发路径二选一：daemon 空闲静默路径 `_maybe_consolidate`（门控：`consolidate_enabled` + 清醒沉默 ≥ `consolidate_idle_silent_hours` 默认 24h + 距上次巩固 ≥ `consolidate_min_interval_hours` 默认 168h，`cooldown.consolidate_last_at` 持久化），或手动 `chiguo_daemon.py --consolidate`（停机维护专用——daemon 运行期间会与常驻进程争用嵌入式 qdrant 单进程锁）。
@@ -743,7 +745,7 @@ schedule_overrides.json / break_state.json / holidays.json / schedule_plan.json�
 
 **C3 死 metadata 清理（v1.12）**：新版 mem0 不再产出的 `memory_category`/`l0_abstract` 死字段从读路径移除——`chiguo_topics.py`/`chiguo_trigger.py`（读侧）+ `memory/` CLI `fmt_search_row`（展示侧）全部改为 **text 优先**（`text` 空时才回退 `l0_abstract`，category 优先现成 `category` 字段）；`consolidate_plan` 排序键对 ISO/None/非数值 timestamp 归一化（防 float < str TypeError）。
 
-**C4 写全对话轮次（v1.12）**：`[memory].write_full_turns=true`（默认 False 恒等）时，`_mem0_autowrite` 把最近一条 assistant 回复（`recent_sent_texts(n=1)`）追加为 assistant 轮，组成 **user + assistant 两轮**写入——mem0 据此提取「迟菓回应了什么」的上下文事实；默认单条 user 写入恒等。
+**C4 写全对话轮次（v1.12）**：`[memory].write_full_turns=true`（默认 False 恒等）时，`_mem0_autowrite` 把最近一条 assistant 回复（`recent_sent_texts(n=1)`）追加为 assistant 轮，组成 **user + assistant 两轮**写入——mem0 据此提取「迟菓回应了什么」的上下文事实；默认单条 user 写入恒等。**F-A21-002（#336）**：`_mem0_autowrite` 按 user 文本做 24h 去重（进程内 hash FIFO），全轮次/单条均适用，防重复写入.
 
 ---
 

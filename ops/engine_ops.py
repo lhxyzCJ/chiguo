@@ -13,6 +13,64 @@ from chiguo_state import emotion_tag_snapshot
 
 CST = timezone(timedelta(hours=8))
 
+# F-A21-002 (#336): autowrite 同文本去重窗口（小时）。窗口内同文本二次写入跳过，
+# 防 bridge 补报/重发同条消息重复触发 LLM 事实提取 → messages 表无界增长。
+_MEM0_AUTOWRITE_DEDUP_HOURS = 24.0
+
+
+# ── F-A21-002: autowrite 24h 文本 hash 去重（进程内最近写入 FIFO）──
+# 存于 self._mem0_autowrite_hashes（{sha256(text): iso_ts}），惰性初始化。
+# 模块级函数取 self 作第一参数：既适用于真实 DecisionEngine 实例，也兼容
+# 测试里以 SimpleNamespace 注入的 engine（_mem0_autowrite_hashes 仅用 getattr/
+# setattr，SimpleNamespace 同样支持）。
+
+def _mem0_autowrite_hashes_dict(self) -> dict:
+    """进程内最近写入 hash 表 {sha256(text): iso_ts}。惰性初始化。"""
+    d = getattr(self, "_mem0_autowrite_hashes", None)
+    if d is None:
+        d = {}
+        self._mem0_autowrite_hashes = d
+    return d
+
+
+def _mem0_autowrite_deduped(self, text: str) -> bool:
+    """同文本 24h 内是否刚写过（去重窗口判定 + 过期清理）。
+
+    窗口内同 hash → True（跳过写入）；超窗 hash 顺带清理，窗口后同文本再次写入放行。
+    """
+    if not text.strip():
+        return False
+    h = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+    now = datetime.now(CST)
+    d = _mem0_autowrite_hashes_dict(self)
+    stale = []
+    for k, iso in list(d.items()):
+        try:
+            ts = datetime.fromisoformat(iso)
+        except (TypeError, ValueError):
+            stale.append(k)
+            continue
+        if (now - ts).total_seconds() > _MEM0_AUTOWRITE_DEDUP_HOURS * 3600:
+            stale.append(k)
+    for k in stale:
+        d.pop(k, None)
+    prev = d.get(h)
+    if prev:
+        try:
+            return (now - datetime.fromisoformat(prev)).total_seconds() \
+                <= _MEM0_AUTOWRITE_DEDUP_HOURS * 3600
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def _mem0_autowrite_record(self, text: str):
+    """记录一次成功写入的文本 hash（供 24h 内去重）。"""
+    if not text.strip():
+        return
+    h = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+    _mem0_autowrite_hashes_dict(self)[h] = datetime.now(CST).isoformat()
+
 # F-A5-07 / F-RT-013 (#309): 锁内 IO 收口——consolidate 在 evaluate state_lock 临界区
 # 内执行（决策流程锁内），qdrant get_all/update/delete 若无上限会无限阻塞锁 → 并发
 # 进程 5s 拿不到锁降级无锁 → lost update 前置。给该调用加线程超时预算，超时按失败
@@ -197,12 +255,16 @@ class AccountingMixin(DecisionEngineBase):
             B2: [memory].emotion_tagging=True（默认 False 恒等）时，把当前情绪快照
             （loneliness/affection/anxiety/energy 离散档 + user_mood）写进 metadata 的
             emotion_tag——供读侧按情绪相近加权（emotion_tag_weight）。
+            F-A21-002: 同文本 24h 内去重（进程内最近写入 hash FIFO）——bridge 补报/重发
+            同一条消息不会重复触发 add_messages → LLM 提取 + messages 表不无界增长。
             设 CHIGUO_MEM0_AUTOWRITE=0 可跳过自动写入（部署验证/测试用途，防止
             验证消息混入生产记忆库）。"""
             if os.environ.get("CHIGUO_MEM0_AUTOWRITE", "1") != "1":
                 return  # 部署验证/测试可设 0 防污染生产记忆库
             if len(text.strip()) < 8:
                 return  # 短消息（寒暄/无信息量）不写，也避免无谓的可用性探测
+            if _mem0_autowrite_deduped(self, text):
+                return  # 同文本 24h 内刚写过 → 跳过（不重复提取/不增长 messages 表）
             try:
                 mem = self.state.memory_bridge
                 if not getattr(mem, "available", False) or not getattr(mem, "add_messages", None):
@@ -222,7 +284,9 @@ class AccountingMixin(DecisionEngineBase):
                     recent = self.recent_sent_texts(n=1)
                     if recent:
                         messages.append({"role": "assistant", "content": recent[0]})
-                mem.add_messages(messages, metadata=metadata)
+                if mem.add_messages(messages, metadata=metadata):
+                    # F-A21-002: 写入成功才记 hash，供 24h 内同文本去重
+                    _mem0_autowrite_record(self, text)
             except Exception:
                 pass  # 记忆写入失败不影响主流程
 

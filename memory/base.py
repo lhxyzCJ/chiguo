@@ -146,7 +146,12 @@ class MemoryBackend:
                     other["importance"] = MemoryBackend.clean_importance(other) / 2.0
                     demoted.append(other)
                     demoted_ids.add(other.get("id"))
-        # 过期：未参与去重的行，低重要度且超龄
+        # 过期：未参与去重的行，低重要度 或 无 importance 信息 且超龄
+        # F-A21-001 (#336): Mem0Backend._row 对缺 importance metadata 的行回退 0.5，
+        # 但用 importance_known=False 标记"无真实 importance 信息"——consolidate 需
+        # 能识别这类超龄行（0.5 ≥ min_importance 使旧条件永不满足 → 记忆库无界增长）。
+        # importance_known 缺省 True：直接构造的行（纯函数测试/第三方后端）一律视为
+        # 显式 importance，保持既有语义（仅低重要度 + 超龄才过期），不误删。
         expired: list[dict] = []
         for r in ordered:
             if r.get("id") in demoted_ids:
@@ -154,7 +159,12 @@ class MemoryBackend:
             age = _age_hours(r)
             if age is None:
                 continue  # 年龄未知不过期
-            if MemoryBackend.clean_importance(r) < min_importance and age > max_age_hours:
+            known = bool(r.get("importance_known", True))  # 缺省 True=显式 importance
+            if known:
+                low = MemoryBackend.clean_importance(r) < min_importance
+            else:
+                low = True  # 无 importance 信息 → 超龄即可过期候选（已由超龄把关）
+            if low and age > max_age_hours:
                 r["_expired"] = True
                 expired.append(r)
         kept = [r for r in ordered if r.get("id") not in demoted_ids

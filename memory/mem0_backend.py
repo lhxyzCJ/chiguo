@@ -162,6 +162,10 @@ class Mem0Backend(MemoryBackend):
         self._available: bool | None = None
         self._last_probe: float = 0.0
         self._last_error: tuple | None = None  # (ts, op, error_str)，暴露到 stats()
+        # F-RT-017 (#336): 写链故障可感知。available 探测只覆盖读链（embedder+qdrant），
+        # 不触发 LLM 事实提取写链；_add_fail_count 累计 add_messages 失败次数，暴露进
+        # stats() 供 monitor 感知写链故障（写失败本身已会翻转 _available + 记 _last_error）。
+        self._add_fail_count = 0
         self._capability_warned = False  # D2: 能力缺失告警只打一次，不重复刷屏
 
     # ── mem0 初始化 ───────────────────────────────────────
@@ -238,6 +242,16 @@ class Mem0Backend(MemoryBackend):
         self._last_probe = _time_module.time()
         return self._available
 
+    @property
+    def add_fail_count(self) -> int:
+        """F-RT-017: LLM 写链（add_messages 事实提取）累计失败次数。
+
+        available 探测只覆盖读链（embedder+qdrant），LLM 提取端点（opencode/model）
+        故障写失败不会在 available 上直接暴露；此处提供写链故障计数，供 monitor/health
+        读取。写成功清零调用方自行比对（累计语义，不自动复位）。
+        """
+        return self._add_fail_count
+
     # ── mem0 result → chiguo 行契约 ───────────────────────
 
     def _row(self, r: dict) -> dict:
@@ -253,7 +267,17 @@ class Mem0Backend(MemoryBackend):
             ts = _parse_iso_ts(created)
         except (TypeError, ValueError, AttributeError):
             ts = 0.0
-        importance = self.clean_importance(meta) or 0.5
+        # F-A21-001 (#336): 区分"显式 importance"与"无 importance 信息"。
+        # mem0 无 importance 概念，读路径缺省回退 0.5 保持读侧稳定（search/随机加权
+        # 不受影响）；但 consolidate 过期需能识别"无 importance metadata"的行——
+        # 否则 _row 固定回退 0.5 ≥ min_importance(0.3) 使超龄行永不过期，记忆库无界
+        # 增长。importance_known=False 即"元数据无有效 importance"的信号，consolidate_plan
+        # 据此对超龄行单独放行过期。仅显式 >0 的数值 importance 才视为"有真实 importance
+        # 信息"（known=True）；缺 metadata / 显式 0 / NaN 一律 known=False —— 缺省 0.5 是
+        # 读路径回退、不代表真实重要性，超龄同样应可过期（避免这类行永不过期）。
+        raw_imp = self.clean_importance(meta)
+        importance_known = raw_imp > 0  # 显式 >0 才视为有真实 importance 信息
+        importance = raw_imp or 0.5
         if importance <= 0:
             importance = 0.5  # mem0 无 importance 概念；缺省中位权重，避免全零
         rc = meta.get("recall_count")
@@ -267,6 +291,9 @@ class Mem0Backend(MemoryBackend):
             "category": str(meta.get("category") or ""),
             "scope": str(meta.get("scope") or "global"),
             "importance": importance,
+            # F-A21-001: 有无真实 importance 信息（False = metadata 无有效 importance，
+            # _row 回退 0.5；供 consolidate_plan 对超龄无标记行放行过期）
+            "importance_known": importance_known,
             "timestamp": ts,
             "datetime": created,
             "memory_category": str(meta.get("memory_category") or "?"),
@@ -359,6 +386,7 @@ class Mem0Backend(MemoryBackend):
                 "db_path": self.qdrant_path,
                 "backend": "mem0",
                 "capabilities": {"update": False, "delete": False, "get": False},
+                "add_fail_count": self._add_fail_count,  # F-RT-017: 写链失败计数
                 "last_error": self._last_error,
             }
         total = self._count_rows()
@@ -369,6 +397,7 @@ class Mem0Backend(MemoryBackend):
             "db_path": self.qdrant_path,
             "backend": "mem0",
             "capabilities": _caps(),
+            "add_fail_count": self._add_fail_count,  # F-RT-017: 写链失败计数
             "last_error": self._last_error,
         }
 
@@ -390,6 +419,7 @@ class Mem0Backend(MemoryBackend):
             import logging
             logging.warning("mem0 %s failed: %r", "add", e)
             self._last_error = (_time_module.time(), "add", str(e))
+            self._add_fail_count += 1  # F-RT-017: 写链失败计数（stats() 暴露供 monitor）
             # 故障驱动自愈：置不可用并刷新探测节流，60s 后重探
             self._available = False
             self._last_probe = _time_module.time()
