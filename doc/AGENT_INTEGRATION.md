@@ -228,8 +228,9 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
 - 入口 `scripts/chiguo-tick.sh`（+x）；注册/管理由 install_agent.sh 阶段 6 负责
 - 流程见 §一；关键点：
   - `source scripts/agent-auth.sh` 解析 auth.json key → `OPENCODE_API_KEY`（opencode-go 优先 → [host].provider 回退）
+  - OWNER（收件人）缺失 / node 缺失检查**前置到 `--compact`（决策记账）之前**（R7/F-RT-003）：异常登出/环境缺 node 时 evaluate 不执行，避免幻影记账；owner 来自 credentials/toml、node 来自 PATH，不依赖 evaluate 输出
   - idle 静默退出；send 走 `AGENTRUN_SESSION=<toml send_session_id>`（与会话分离）
-  - 发送侧 RPC 优先（v1.11 B1）：`POST <bridge>/agent/prompt {text, mode:send}`，失败回退 spawn
+  - 发送侧 RPC 优先（v1.11 B1）：`POST <bridge>/agent/prompt {text, mode:send}`，失败回退 spawn（`AGENTRUN_SESSION=<send_session_id>` + `AGENTRUN_ROTATE_SESSION=1`，每轮全新；loop 的 spawn 回退同样注入，见 §「RPC 常驻形态」）
   - agent 失败 → 5s 整链重试（U2）；仍失败中止发送（无 composer 兜底）+ agent_health 告警 / 手动恢复
   - 发送成败经 `scripts/agent_health.py record` 记账（transition 时告警/恢复）
   - curl 带 `--noproxy '*'`；发送失败仅记 stderr 并 `exit 0`（下个 tick 重试）；

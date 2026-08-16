@@ -252,3 +252,57 @@ def test_send_fail_down_success_recovers():
         data = json.loads(state.read_text())
         assert data["fail_streak"] == 0, data
         no_tmp_leftover(state)
+
+
+# ── R7 (F-A17-002): fail_streak 有界 —— down 态不再无条件 +1 ──
+
+def test_fail_streak_capped_after_down():
+    """F-A17-002: 状态已 down 后，连续 fail 不再推进 fail_streak（封顶在阈值）——
+    修复前红：down 后 fail_streak 无条件 +1（无界）。down→up 仍由 success 触发。"""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        state = td / "agent_health.json"
+        cfg = td / "health.toml"
+        cfg.write_text("[health]\nfail_threshold = 3\n")
+
+        for _ in range(3):
+            rst = run("fail", state, cfg, "反复故障")
+        assert rst["state"] == "down", rst
+        assert rst["fail_streak"] == 3, rst
+
+        # down 后继续 fail：fail_streak 不增长（保持 3=阈值）
+        for i in range(1, 6):
+            r = run("fail", state, cfg, f"down 后再失败 {i}")
+            assert r["state"] == "down", r
+            assert r["transition"] == "none", r
+            assert r["fail_streak"] == 3, f"down 后应封顶在阈值, 第 {i} 次 {r}"
+            assert json.loads(state.read_text())["fail_streak"] == 3
+
+        # down→up 仍由 success 触发 + streak 清零
+        rup = run("success", state, cfg)
+        assert rup["state"] == "up", rup
+        assert rup["transition"] == "up", rup
+        assert rup["fail_streak"] == 0, rup
+
+        no_tmp_leftover(state)
+
+
+def test_send_fail_streak_capped_after_down():
+    """F-A17-002: send_fail 同样有界——down 后 send_fail 不再推进 fail_streak。"""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        state = td / "agent_health.json"
+        cfg = td / "health.toml"
+        cfg.write_text("[health]\nfail_threshold = 3\n")
+
+        for _ in range(3):
+            rst = run("send_fail", state, cfg)
+        assert rst["state"] == "down", rst
+        assert rst["fail_streak"] == 3, rst
+
+        for i in range(1, 4):
+            r = run("send_fail", state, cfg)
+            assert r["state"] == "down", r
+            assert r["fail_streak"] == 3, f"down 后 send_fail 应封顶在阈值, 第 {i} 次 {r}"
+
+        no_tmp_leftover(state)

@@ -870,7 +870,13 @@ agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准（表�
 
 Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 层（Intent × Cue × Vibe）30%。
 
-**发送侧可靠性（U2/#227，替代 v1.10 A8 兜底）**：`chiguo_composer.py` 保留独立 `CLI`（传入 decision JSON 或 `--trigger`，从模板池直出可发送文本；cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败用 `_FALLBACK_LINES`）——但**发送链不再调用它兜底**。`scripts/chiguo-tick.sh` 与 `chiguo_daemon.py --loop` 的 `_loop_send` 统一：agent 生成失败 → sleep `[loop].retry_delay_seconds`(5) 整链重试一次（抖动缓冲，重试成功不计故障）→ 仍失败即**中止发送**并经 `agent_health.py record --outcome fail` 记账（fail_streak+1）；连续失败达 `[health].fail_threshold`(3) → 状态 down + transition 经微信发「后端异常」告警（仅翻转一次）→ 暂停探测（loop 跳过尝试；cron 读 down 态 exit 0 不发）。修复后重启 loop（重启后首次 probe 放行）或下个 cron probe 成功 → record success → state up + transition 发「已恢复」。两路径对 bridge `/send` 超时**统一 35s**（`_loop_send` 的 `_post("/send", …) 35.0` 与 tick.sh 主发送 `curl --max-time 35` 互引一致，见 #261/CR-2，改值须两端同步）。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
+**发送侧可靠性（U2/#227，替代 v1.10 A8 兜底）**：`chiguo_composer.py` 保留独立 `CLI`（传入 decision JSON 或 `--trigger`，从模板池直出可发送文本；cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败用 `_FALLBACK_LINES`）——但**发送链不再调用它兜底**。`scripts/chiguo-tick.sh` 与 `chiguo_daemon.py --loop` 的 `_loop_send` 统一：agent 生成失败 → sleep `[loop].retry_delay_seconds`(5) 整链重试一次（抖动缓冲，重试成功不计故障）→ 仍失败即**中止发送**并经 `agent_health.py record --outcome fail` 记账（fail_streak+1）；连续失败达 `[health].fail_threshold`(3) → 状态 down + transition 经微信发「后端异常」告警（仅翻转一次）→ 暂停探测（loop 跳过尝试；cron 读 down 态 exit 0 不发）。修复后重启 loop（重启后首次 probe 放行）或下个 cron probe 成功 → record success → state up + transition 发「已恢复」。两路径对 bridge `/send` 超时**统一 35s**（`_loop_send` 的 `_post("/send", …) 35.0` 与 tick.sh 主发送 `curl --max-time 35` 互引一致，见 #261/CR-2，改值须两端同步）。
+
+**R7 发送链统一（F-RT-001/F-RT-003/F-A17-001/F-A17-002）**：
+- 抑制退款：loop `run_loop` 的 suppressed 分支（health down/降频区间判定 `_health_should_probe=False`）不再只跳过发送——对 evaluate 已记账的 send 决策调用 `record_send_result(msg_id, "failed", "suppressed")` 走退款闭环，回滚 energy/messages/Hawkes/**逃生阀 `last_longing_break_at`（3 天冷却不被白扣）**，对齐 cron 发送失败分支的 refund。
+- fail_streak 有界：`agent_health.py` 在状态已 down 后不再无条件 `+1`，fail_streak 封顶在 `[health].fail_threshold`；down→up 仍仅由 success 触发回到 0。
+- spawn 会话注入：loop `_try_generate` 的 spawn 回退注入 `AGENTRUN_SESSION=<toml [host].send_session_id（缺省 chiguo-send）>` + `AGENTRUN_ROTATE_SESSION=1`，对齐 tick.sh L127 —— 消除 send 会话落回复侧 chiguo-main 且不轮换的双路径分叉。
+- 前置检查：`chiguo-tick.sh` 的 OWNER（收件人）缺失与 node 缺失检查**前移到 `--compact`（决策记账）之前**——OWNER/node 异常时 evaluate 根本不执行，不再产生幻影记账（发送早退与 loop 收件人缺失分支的退款语义对齐）。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
 
 ---
 

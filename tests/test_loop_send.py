@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from chiguo_daemon import DecisionEngine
+from runner.loop import run_loop
+import runner.loop as _loop_mod
 
 
 class FakeBridge(BaseHTTPRequestHandler):
@@ -426,5 +428,125 @@ def test_alerts_push_wechat_chain():
             # 第二次运行：no_state 已活跃 → 不重推、不再发 /send
             again = collect_new_alerts_to_push(mon, am)
             assert again == [], f"重复运行不应重推: {again}"
+    finally:
+        srv.shutdown()
+
+
+# ═══════════════════════════════════════════════════════════
+# R7 (F-RT-001): suppressed 分支退款 —— run_loop.run() 在 health=down（或降频区间）
+# 抑制发送后，必须对 evaluate 已记账的 send 决策调用 record_send_result(failed)，
+# 回滚逃生阀冷却/额度，避免幻影记账；否则逃生阀 last_longing_break_at 被白扣。
+# ═══════════════════════════════════════════════════════════
+
+def _escape_valve_engine(temp_dir: str) -> DecisionEngine:
+    """构造会出 escape_valve send 决策的引擎（复刻 test_escape_valve 端到端死锁态）。"""
+    cfg_path = Path(temp_dir) / "chiguo_proactive.toml"
+    cfg_path.write_text(Path("chiguo_proactive.toml").read_text())
+    _escape_valve_isolate_toml(cfg_path, Path(temp_dir))
+    engine = DecisionEngine(str(cfg_path), str(Path(temp_dir) / "decisions.jsonl"))
+    engine.config["schedule"]["quiet_start"] = 0
+    engine.config["schedule"]["quiet_end"] = 0
+    engine.state._sync_quiet_window()
+    st = engine.state
+    st.emotion.anxiety = 100.0  # 阻塞态
+    # 4 天前交互 → 沉默 >72h 死锁态（v7: 从未交互不触发逃生阀，故不用 None）
+    st.cooldown.last_user_message_at = (datetime.now(timezone(timedelta(hours=8))) - timedelta(days=4)).isoformat()
+    st.cooldown.messages_today = 5  # 超日限额 → 逃生阀放行
+    st.cooldown.last_message_at = (datetime.now(timezone(timedelta(hours=8))) - timedelta(hours=2)).isoformat()
+    st.cooldown.current_date = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+    st.cooldown.event_timestamps = []
+    # 消除时段敏感：伪造非 sleeping 用户态（真实 infer 在 00-08 点会报 sleeping 高置信 → sleeping_guard）
+    st.infer_user_state = lambda now=None, msg_length=None: {
+        "posterior": {"sleeping": 0.1, "browsing": 0.8, "busy": 0.1},
+        "most_likely": "browsing", "confidence": 0.3, "utility": 0.1,
+        "should_send_bayesian": True, "state_description": "browsing",
+    }
+    return engine
+
+
+def _escape_valve_isolate_toml(cfg_path: Path, tmp: Path) -> None:
+    """隔离真实 toml 的记忆库路径，防止测试连到生产记忆库。"""
+    txt = cfg_path.read_text()
+    txt = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                 f'mem0_qdrant_path = "{tmp / "no_qdrant"}"', txt)
+    txt = re.sub(r"(?m)^mem0_history_db\s*=.*$",
+                 f'mem0_history_db = "{tmp / "no_history.db"}"', txt)
+    cfg_path.write_text(txt)
+
+
+def test_loop_suppressed_refund_rolls_back_escape_valve():
+    """F-RT-001: health=down 抑制发送时，evaluate 已记账的逃生阀决策必须被 refund
+    （record_send_result failed + last_longing_break_at 回滚）。跑 run_loop.run() 驱动。"""
+    from unittest.mock import patch
+    import json as _json
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            engine = _escape_valve_engine(td)
+            # health=down 状态文件（suppressed 判定的数据源，独立于 state 文件）
+            health = Path(td) / "agent_health.json"
+            health.write_text(_json.dumps({"state": "down", "fail_streak": 3,
+                                           "last_fail_at": datetime.now().astimezone().isoformat()}))
+            loop_cfg = {"health_state": str(health),
+                        "bridge_url": f"http://127.0.0.1:{srv.server_port}"}
+            engine.config["loop"] = loop_cfg
+            # 消耗"进程内首次探针恒放行"的一次机会 → 第二次 _health_should_probe 读 down → 抑制
+            assert engine._health_should_probe(loop_cfg) is True
+            # 捕获 record_send_result 调用（退款发生的观测点）
+            calls: list[tuple] = []
+            orig = engine.record_send_result
+
+            def spy(*args, **kw):
+                calls.append(args)
+                return orig(*args, **kw)
+            engine.record_send_result = spy
+            # run_loop 首个 run() 完成 suppressed 分支后进入休眠；以 KeyboardInterrupt 终止循环
+            with patch.object(_loop_mod.time, "sleep", side_effect=KeyboardInterrupt):
+                run_loop(engine, max_interval=900, compact=True)
+            # 修复前红：suppressed 分支不调 refund → calls 为空 → 断言失败
+            assert calls, "suppressed 分支应调用 record_send_result(msg_id, 'failed', 'suppressed'）退款"
+            msg_id, status, err = calls[0]
+            assert status == "failed", calls
+            assert "suppressed" in (err or ""), calls
+            # 逃生阀冷却被回滚（on-disk state 不再记录破防时刻）
+            st = _json.loads(Path(td, "chiguo_state.json").read_text())
+            assert st["cooldown"].get("last_longing_break_at") is None, \
+                "suppressed 后逃生阀冷却应被退款回滚"
+    finally:
+        srv.shutdown()
+
+
+def test_loop_spawn_injects_send_session_env():
+    """F-A17-001: loop spawn 回退 agent-run 必须注入 AGENTRUN_SESSION（send_session_id）
+    + AGENTRUN_ROTATE_SESSION=1，对齐 tick.sh —— 否则 send 会话落回复侧 chiguo-main 不轮换。
+    修复前红：spawn env 缺注入 → fake script 读到空/默认 → 断言失败。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            env_log = Path(td) / "spawn_env.log"
+            fake_runner = Path(td) / "fake-agent-env.mjs"
+            fake_runner.write_text(
+                "import { appendFileSync } from 'node:fs'\n"
+                "const log=" + repr(str(env_log)) + "\n"
+                "appendFileSync(log,'SESSION='+(process.env.AGENTRUN_SESSION||'')+"
+                "'|ROTATE='+(process.env.AGENTRUN_ROTATE_SESSION||'')+'\\n')\n"
+                "process.stdout.write(JSON.stringify({ ok: true, text: 'spawn 环境消息' }))\n"
+            )
+            old = os.environ.get("AGENT_RUN_SCRIPT")
+            ah = os.environ.get("AGENT_HEALTH_SCRIPT")
+            os.environ["AGENT_RUN_SCRIPT"] = str(fake_runner)
+            try:
+                engine = _make_engine(td)
+                engine.config["wechat"]["wechat_recipient"] = "r@w"
+                FakeBridge.prompt_mode = "error"   # RPC 失败 → 走 spawn 回退
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "retry_delay_seconds": 0}
+                out = engine._loop_send(_send_decision("m-env"), loop_cfg)
+                assert out["generated"] is True and out["sent"] is True, out
+                envs = env_log.read_text()
+                assert "SESSION=chiguo-send" in envs, f"应注入 AGENTRUN_SESSION: {envs}"
+                assert "ROTATE=1" in envs, f"应注入 AGENTRUN_ROTATE_SESSION=1: {envs}"
+            finally:
+                _restore_env(old, ah)
     finally:
         srv.shutdown()
