@@ -458,7 +458,21 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             elif rate >= rfb_high:
                 c["weight"] *= max(0.0, 1.0 + rfb_boost)
 
-    if activation >= must_send_activation and emo_cands:
+    # ── F-A5-01 (#314 R9): reminder 高段豁免 ──
+    # 用户决策「提醒准时优先」：reminder 是用户显式托付的一次性记忆，必须准点发出。
+    # 此前高段必发分支「只从情绪候选选」会把 MEMORY 及 ritual 候选整体压制
+    # （审计 E1：空闲×1.2 孤独≥42 时 reminder 0/300），常态高段下确定性丢失。
+    # 处理顺序：窗口内的 reminder 候选先于情绪高段分支处理（仿 :81-82 escape_valve
+    # 豁免模式——用户托付优先于 A4 情绪必发）；仅 reminder 类型豁免，mem0 随机浮现
+    # 等 generic MEMORY 候选不豁免（保持"情绪类高段必发"原语义不回归）。
+    reminder_cands = [
+        c for c in weighted_candidates
+        if c["trigger"].type == TriggerType.MEMORY
+        and c["trigger"].data.get("memory", {}).get("type") == "reminder"
+    ]
+    if reminder_cands:
+        chosen = weighted_trigger_choice(reminder_cands)
+    elif activation >= must_send_activation and emo_cands:
         chosen = weighted_trigger_choice(emo_cands)
         must_send = True
     elif activation < min_activation:
@@ -624,9 +638,16 @@ def _memory_should_trigger(mem: dict, now: datetime, trg_cfg: dict | None = None
                 t = datetime.fromisoformat(trigger_at)
                 if t.tzinfo is None:
                     t = t.replace(tzinfo=CST)
-                # #79: 窗口收紧为触发时刻之后 10 分钟内（不允许提前触发）
+                # #79: 不允许提前触发（now < trigger_at 直接排除）。
+                # F-A5-01（#314 R9）: 窗口由「触发后 10min」放宽到 30min（1800s）。
+                # 动机：发送侧 crontab 每 15 分钟 tick 一次（scripts/chiguo-tick.sh
+                # / chiguo_daemon --loop 同一节拍）——原 10min 窗口 < 15min 节拍，
+                # 存在整个窗口落在两次 tick 之间的空窗（审计：窗口可能被整个跳过）。
+                # 窗口 ≥ 2×cron 间隔（30min ≥ 2×15min）→ 任意 15min tick 节拍下
+                # 窗口内至少命中一次。仍由 last_triggered_at 在首次命中触发后去重，
+                # 不引入每 tick 重复触发。
                 delta = (now - t).total_seconds()
-                return 0 <= delta < 600
+                return 0 <= delta < 1800
             except (ValueError, TypeError):
                 return False
     elif mtype == "habit":

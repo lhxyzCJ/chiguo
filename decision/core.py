@@ -204,15 +204,10 @@ class DecisionCoreMixin(DecisionEngineBase):
                 if len(self.state.cooldown.trigger_history) > history_max:
                     self.state.cooldown.trigger_history = \
                         self.state.cooldown.trigger_history[-history_max:]
-                # #79: reminder 一次性提醒去重——发送确认后经 state 公开 API 标记
-                # (last_triggered_at)。Q7(#260, T2 移植): 标记并入 state JSON 持久化
-                # (memory_dedup)，cron 每 15 分钟新进程 load 时读回 →
-                # 窗口内多评估路径不再重复触发。
-                if trigger.type == TriggerType.MEMORY:
-                    mem_ref = trigger.data.get("memory")
-                    if isinstance(mem_ref, dict) and mem_ref.get("type") == "reminder":
-                        self.state.mark_memory_triggered(mem_ref, now)
-    
+                # F-A5-01（#314 R9）：reminder 一次性的标记/回滚见下方——需在 msg_id
+                # 生成与 on_character_message（写入在途 Hawkes 事件）之后，才能把记忆键
+                # 记到对应事件上（供发送失败 refund_send 回滚定位）。
+
                 # 4. 构建上下文（给 pi-agent 生成消息用）
                 context = self._build_context(trigger, now, user_state)
                 # v10 (#73 A4): trigger 层高段激活的 must_send 标记写入 context（情绪类必发）
@@ -229,6 +224,16 @@ class DecisionCoreMixin(DecisionEngineBase):
     
                 # 5. 更新状态（标记已触发）
                 self.state.on_character_message(now, trigger.type, msg_id=msg_id)
+                # ── F-A5-01（#314 R9）：reminder 一次性提醒 ──
+                # 决策时即标记 last_triggered_at（窗口内去重，防多评估路径重复触发；
+                # Q7 #260 跨进程持久化 memory_dedup），并把记忆键记到该 msg_id 的
+                # 在途 Hawkes 事件上——发送失败经 refund_send 回滚时可按此定位并清除
+                # 标记（否则失败后 reminder 永久不再触发，F-A5-01 机制③）。
+                if trigger.type == TriggerType.MEMORY:
+                    mem_ref = trigger.data.get("memory")
+                    if isinstance(mem_ref, dict) and mem_ref.get("type") == "reminder":
+                        self.state.mark_memory_triggered(mem_ref, now)
+                        self.state.attach_memory_marker_to_event(msg_id, mem_ref)
                 # ── v6: 逃生阀破防 → 记录冷却时间 ──
                 if trigger.data.get("escape_valve"):
                     self.state.on_longing_break(now)

@@ -1135,6 +1135,32 @@ class ChiguoState:
             now = datetime.now(CST)
         mem["last_triggered_at"] = now.isoformat()
 
+    def attach_memory_marker_to_event(self, msg_id: str, mem: dict):
+        """F-A5-01（#314 R9）：把一条 reminder 记忆的内容键记到对应在途 Hawkes
+        事件上（若该 msg_id 在事件列表内）。供发送失败 refund_send 回滚定位——
+        否则跨进程（cron：evaluate 在 A 进程标记、--send-result 在 B 进程退款）
+        无法知道该 msg_id 对应哪条 reminder，失败后 last_triggered_at 无从回滚、
+        reminder 永久不再触发。事件随 cooldown 落盘，契约键名 memory_marker。"""
+        if not isinstance(mem, dict) or not msg_id:
+            return
+        key = _memory_dedup_key(mem)
+        for ev in self.cooldown.event_timestamps:
+            if isinstance(ev, dict) and ev.get("msg_id") == msg_id:
+                ev["memory_marker"] = key
+                break
+
+    def _unmark_memory_by_key(self, key: str):
+        """F-A5-01：按记忆内容键清除 reminder 触发标记（last_triggered_at +
+        去重缓存），供 refund_send 发送失败回滚。key 由 Hawkes 事件 memory_marker
+        携带。无该键 → no-op（非 reminder 事件/旧事件）。"""
+        if not key:
+            return
+        self._memory_dedup.pop(key, None)
+        for mem in self.memories:
+            if isinstance(mem, dict) and _memory_dedup_key(mem) == key:
+                mem.pop("last_triggered_at", None)
+                break
+
 
 
     def _migrate_personality_baseline(self, data: dict):
@@ -2484,6 +2510,9 @@ class ChiguoState:
             return False
         # 单处判定：msg_id 非空时只需 匹配到该 msg_id or 全部事件为 legacy → 才执行退款。
         # 事件为空 → 视为"未知 msg_id"，与历史 daemon 门控语义一致（不退款）。
+        # memory_marker（F-A5-01）：被移除事件携带的 reminder 记忆键，先在删除前捕获，
+        # 退款副作用里据此回滚 last_triggered_at（发送失败 → reminder 可再次触发）。
+        memory_marker = None
         if msg_id is not None:
             events = self.cooldown.event_timestamps
             if not events:
@@ -2493,6 +2522,7 @@ class ChiguoState:
             matched = False
             for i, ev in enumerate(events):
                 if ev.get("msg_id") == msg_id:
+                    memory_marker = ev.get("memory_marker") if isinstance(ev, dict) else None
                     del self.cooldown.event_timestamps[i]
                     matched = True
                     break
@@ -2501,8 +2531,12 @@ class ChiguoState:
                 print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
                 return False
             if not matched:
+                memory_marker = self.cooldown.event_timestamps[-1].get("memory_marker") \
+                    if isinstance(self.cooldown.event_timestamps[-1], dict) else None
                 self.cooldown.event_timestamps.pop()  # legacy 事件：旧行为回退删除
         elif self.cooldown.event_timestamps:
+            memory_marker = self.cooldown.event_timestamps[-1].get("memory_marker") \
+                if isinstance(self.cooldown.event_timestamps[-1], dict) else None
             self.cooldown.event_timestamps.pop()
         # ── 退款副作用：成本回滚 + 逃生阀冷却重置 ──
         cfg = self.config.get("emotion", {})
@@ -2518,6 +2552,11 @@ class ChiguoState:
             self.cooldown.refunded_msg_ids.append(msg_id)
             if len(self.cooldown.refunded_msg_ids) > REFUND_FIFO_MAX:
                 self.cooldown.refunded_msg_ids = self.cooldown.refunded_msg_ids[-REFUND_FIFO_MAX:]
+        # F-A5-01（#314 R9）：发送失败 → 回滚被移除事件关联的 reminder 触发标记
+        # （last_triggered_at 清除 + 去重缓存清除），下次 tick 可再次触发。
+        # 无 memory_marker（非 reminder 触发/旧事件）→ no-op，不影响既有退款语义。
+        if memory_marker:
+            self._unmark_memory_by_key(memory_marker)
         self._finalize(now)
         return True
 
