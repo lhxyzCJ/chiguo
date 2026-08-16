@@ -342,7 +342,10 @@ test_activity_marker() {
   [ $(( NOW_TS - ACT_TS )) -lt 300 ] || fail "活动时间戳应新鲜（差 $(( NOW_TS - ACT_TS ))s）"
   # idle 路径：ACTION != send → 不改写活动文件（exit 0）
   echo 1111111111 > "$CHIGUO_ACTIVITY_FILE"
-  FAKE_DAEMON_ACTION=idle CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1 || fail "idle tick 应退出 0"
+  # R7 (F-RT-003): OWNER 前置检查要求登录态/或 toml 非占位收件人——用隔离 HOME（真实
+  # credentials）跑 idle，否则占位/缺失收件人会在 --compact 之前 exit 1（与 send 路径同策略）
+  FAKE_DAEMON_ACTION=idle HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1 \
+    || fail "idle tick 应退出 0"
   [ "$(cat "$CHIGUO_ACTIVITY_FILE")" = 1111111111 ] || fail "idle 判定不应改写活动文件"
   # 源码层面：spawn 回退带 AGENTRUN_ROTATE_SESSION=1（send 每轮全新）
   grep -q 'AGENTRUN_ROTATE_SESSION=1' "$REAL_TICK" || fail "tick spawn 回退缺 AGENTRUN_ROTATE_SESSION=1"
@@ -358,6 +361,7 @@ test_owner_missing_no_phantom() {
   export COMPACT_LOG="$TMP/compact.log"
   : > "$COMPACT_LOG"
   # 清空收件人：无 credentials + 空 toml wechat_recipient → OWNER 缺失
+  rm -f "$TMP/home/.chiguo/auth/wechat/credentials.json"
   cat > "$REPO/chiguo_proactive.toml" <<TOML
 [host]
 wechat_bridge_url = "http://127.0.0.1:$PORT/send"
@@ -375,7 +379,7 @@ TOML
   # 静态源码断言：OWNER 检查行号 < --compact 调用行号（前置）
   local owner_line compact_line
   owner_line="$(grep -n '未检测到收件人' "$REAL_TICK" | head -1 | cut -d: -f1)"
-  compact_line="$(grep -n -- '--compact' "$REAL_TICK" | head -1 | cut -d: -f1)"
+  compact_line="$(grep -n 'chiguo_daemon.py.*--compact' "$REAL_TICK" | head -1 | cut -d: -f1)"
   [ -n "$owner_line" ] && [ -n "$compact_line" ] \
     || fail "tick.sh 应含 OWNER 检查与 --compact (owner=$owner_line compact=$compact_line)"
   [ "$owner_line" -lt "$compact_line" ] \
@@ -383,7 +387,7 @@ TOML
     || fail "OWNER 检查应早于 --compact 调用 (owner=$owner_line, compact=$compact_line)"
   # node 缺失检查同样须在 --compact 之前（node 缺失早退也避免幻影记账）
   local node_line
-  node_line="$(grep -n 'node 缺失' "$REAL_TICK" | head -1 | cut -d: -f1)"
+  node_line="$(grep -n 'command -v node' "$REAL_TICK" | head -1 | cut -d: -f1)"
   [ -n "$node_line" ] || fail "tick.sh 应含 node 缺失检查"
   [ "$node_line" -lt "$compact_line" ] \
     && pass "tick.sh node 缺失检查(L$node_line)已前置到 --compact(L$compact_line) 之前" \

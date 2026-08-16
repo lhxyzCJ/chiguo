@@ -18,26 +18,11 @@ REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
 PY="$REPO/.venv/bin/python"
 # pi 生成需要 LLM key（cron 环境无该变量）;来源单一 = scripts/agent-auth.sh
 source "$(dirname "$(readlink -f "$0")")/agent-auth.sh"
-# Issue #135: daemon --compact 失败不能被静默吞掉——保留退出码，非零时告警到 stderr（idle 静默 exit 0 语义不变）
-# 一次执行同时捕获 stdout/stderr/退出码（stderr 走临时文件，避免与 OUT 混流）
-DAEMON_ERR_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-tick-daemon-XXXXXX.err")"
-OUT="$("$PY" "$REPO/chiguo_daemon.py" --compact 2>"$DAEMON_ERR_FILE")" || {
-  rc=$?
-  echo "[chiguo-tick] daemon --compact 失败（exit $rc）：$(head -c 300 "$DAEMON_ERR_FILE")" >&2
-  rm -f "$DAEMON_ERR_FILE"
-  exit 1
-}
-rm -f "$DAEMON_ERR_FILE"
-ACTION="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
-try: print(json.load(sys.stdin).get("action",""))
-except: print("")' 2>/dev/null || true)"
-[ "$ACTION" = "send" ] || exit 0
-# 活动标记（#223 轮换空闲保护）：cron 判定要发消息 = 会话活动 → 主会话每日轮换顺延。
-# 与 bridge onMessage 的用户消息活动共用 ~/.chiguo/session-activity-last（epoch 秒）。
-ACTIVITY_FILE="${CHIGUO_ACTIVITY_FILE:-$HOME/.chiguo/session-activity-last}"
-mkdir -p "$(dirname "$ACTIVITY_FILE")" 2>/dev/null || true
-date +%s > "$ACTIVITY_FILE" 2>/dev/null || true
-# 发送目标/端点（提前解析：失败分支记账告警也要用）
+# R7 (F-RT-003): OWNER（收件人）缺失 / node 缺失等前置检查必须发生在 --compact（决策
+# 记账）之前——否则 evaluate 已对 send 决策记账（energy/messages/Hawkes/逃生阀冷却），
+# 随后早退却无 --send-result 回传 → 幻影记账。OWNER 来自登录态/toml、node 来自 PATH，
+# 均不依赖 evaluate 输出，故前置到 --compact 之前是正解（evaluate 根本不执行 → 零记账）。
+# ── 发送目标/端点（提前解析：失败分支记账告警也要用）──
 # 收件人解析链：登录后的 ~/.chiguo/auth/wechat/credentials.json userId（真实）→ toml wechat_recipient（用户手配）→ 失败提示 login
 OWNER="$(sed -n 's/.*"userId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$HOME/.chiguo/auth/wechat/credentials.json" 2>/dev/null | head -1 || true)"
 if [ -z "$OWNER" ] || [ "$OWNER" = "owner@im.wechat" ]; then
@@ -83,6 +68,26 @@ if ! command -v node >/dev/null 2>&1; then
   record_health fail "tick node 缺失"
   exit 1
 fi
+# ── 以下进入 evaluate（决策记账）阶段：前置检查已通过，才执行 --compact。──
+# Issue #135: daemon --compact 失败不能被静默吞掉——保留退出码，非零时告警到 stderr（idle 静默 exit 0 语义不变）
+# 一次执行同时捕获 stdout/stderr/退出码（stderr 走临时文件，避免与 OUT 混流）
+DAEMON_ERR_FILE="$(mktemp "${TMPDIR:-/tmp}/chiguo-tick-daemon-XXXXXX.err")"
+OUT="$("$PY" "$REPO/chiguo_daemon.py" --compact 2>"$DAEMON_ERR_FILE")" || {
+  rc=$?
+  echo "[chiguo-tick] daemon --compact 失败（exit $rc）：$(head -c 300 "$DAEMON_ERR_FILE")" >&2
+  rm -f "$DAEMON_ERR_FILE"
+  exit 1
+}
+rm -f "$DAEMON_ERR_FILE"
+ACTION="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
+try: print(json.load(sys.stdin).get("action",""))
+except: print("")' 2>/dev/null || true)"
+[ "$ACTION" = "send" ] || exit 0
+# 活动标记（#223 轮换空闲保护）：cron 判定要发消息 = 会话活动 → 主会话每日轮换顺延。
+# 与 bridge onMessage 的用户消息活动共用 ~/.chiguo/session-activity-last（epoch 秒）。
+ACTIVITY_FILE="${CHIGUO_ACTIVITY_FILE:-$HOME/.chiguo/session-activity-last}"
+mkdir -p "$(dirname "$ACTIVITY_FILE")" 2>/dev/null || true
+date +%s > "$ACTIVITY_FILE" 2>/dev/null || true
 # ── v1.11 B1: 发送侧 RPC 优先（经 bridge /agent/prompt 转发常驻 AgentRpc），失败回退 spawn ──
 # 决策 JSON 自足（chiguo-send 会话）→ RPC 生成消息；RPC 不可用/超时/空回复 → 回退
 # node agent-run.mjs --send-mode。U2 (#227): 无 composer 兜底——生成失败 sleep
