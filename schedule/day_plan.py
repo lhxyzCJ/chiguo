@@ -17,9 +17,27 @@ def week_number(d: date, semester_start: date) -> int:
     return max(1, offset // 7 + 1)
 
 
+def _json_safe_course(course: dict) -> dict:
+    """把 course 内存规范形（weeks/set、alternates[].weeks/set）归一化为 JSON-safe
+    （weeks → sorted list）。消费方（_base_entries、resolve_classes、_move_source_course、
+    t3_window → snapshot）只读标量字段（course/teacher/location），不依赖 weeks 类型；
+    T3 双周窗口经 snapshot() 无条件进决策 JSON → set 此前会致 json.dumps 抛
+    TypeError（F-A22-001 课程周时间炸弹）。"""
+    c = dict(course)
+    weeks = c.get("weeks")
+    if weeks is not None:
+        c["weeks"] = sorted(weeks) if isinstance(weeks, set) else weeks
+    alts = c.get("alternates")
+    if alts:
+        c["alternates"] = [_json_safe_course(a) for a in alts]
+    return c
+
+
 def week_courses(schedule: dict, semester_start: date, week_num: int) -> dict:
     """{weekday: {period: course}} active 过滤:weeks 含该周 + alternates 周次互斥。
-    与 schedule/query.py:53-63 共用同一逻辑(三处委托:day_plan/T3/schedule_query)。"""
+    与 schedule/query.py:53-63 共用同一逻辑(三处委托:day_plan/T3/schedule_query)。
+    返回的 course 为 JSON-safe 归一化副本（weeks set → sorted list），
+    防 snapshot 把 set 透传进决策 JSON（F-A22-001）。"""
     out = {}
     for weekday, periods in schedule.items():
         act = {}
@@ -27,7 +45,7 @@ def week_courses(schedule: dict, semester_start: date, week_num: int) -> dict:
             for course in [entry] + entry.get("alternates", []):
                 weeks = course.get("weeks", set())
                 if weeks and week_num in weeks:
-                    act[period] = course
+                    act[period] = _json_safe_course(course)
                     break
         out[weekday] = act  # 空日也保留键(测试契约:[0] 索引空日;调用方一律 .get(day, {}))
     return out

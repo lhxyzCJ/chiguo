@@ -49,8 +49,24 @@ class DecisionCoreMixin(DecisionEngineBase):
                     except OSError:
                         pass
                     f.write(json.dumps(decision, ensure_ascii=False) + "\n")
-            except Exception as e:
-                print(f"[warn] 写入 {self.log_path} 失败: {e}", file=sys.stderr)  # 日志失败不影响主流程
+            except (TypeError, ValueError) as e:
+                # F-A22-001 加固：决策含非 JSON 类型（如 set）时不再裸吞。
+                # 计数 + 明确 stderr，并尝试 default=str 兜底写出，避免决策数据丢失。
+                self._decision_write_failures = getattr(
+                    self, "_decision_write_failures", 0) + 1
+                print(
+                    f"[error] 决策 JSON 序列化失败（累计 {self._decision_write_failures} 次）"
+                    f" {self.log_path} msg_id={decision.get('msg_id')}: {e}",
+                    file=sys.stderr)
+                try:
+                    with open(self.log_path, "a") as f:
+                        f.write(json.dumps(decision, ensure_ascii=False,
+                                           default=str) + "\n")
+                except Exception as e2:
+                    print(f"[warn] 写入 {self.log_path} 失败: {e2}", file=sys.stderr)
+            except OSError as e:
+                # 磁盘级 I/O 失败（非序列化问题）：仅告警，不吞，不影响主流程。
+                print(f"[warn] 写入 {self.log_path} 失败: {e}", file=sys.stderr)
 
         def _check_data_freshness(self) -> str | None:
             """
