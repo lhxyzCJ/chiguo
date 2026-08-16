@@ -513,10 +513,20 @@ class Mem0Backend(MemoryBackend):
         if not self.available:
             return []
         try:
-            results = self._m.get_all(
-                filters={"user_id": self.user_id},
-                top_k=self.max_rows if top_k is None else top_k,
-            ).get("results", [])
+            # F-A5-07 (#309): get_all 用 _call_with_timeout 包裹（对齐 search 的
+            # _MEM0_TIMEOUT=10.0）。否则 qdrant 挂起会在 daemon evaluate 锁内
+            # 无上限阻塞 → 并发进程 5s 拿不到锁降级无锁 → lost update 前置成立。
+            # 超时按失败降级（置不可用 + 60s 节流重探自愈），与 search 语义一致。
+            r = _call_with_timeout(
+                lambda: self._m.get_all(
+                    filters={"user_id": self.user_id},
+                    top_k=self.max_rows if top_k is None else top_k,
+                ),
+                _MEM0_TIMEOUT,
+            )
+            if r is None:
+                raise TimeoutError("mem0 get_all 超时")
+            results = r.get("results", [])
         except Exception as e:
             import logging
             logging.warning("mem0 %s failed: %r", "get_all", e)
