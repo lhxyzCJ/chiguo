@@ -63,9 +63,12 @@ http.createServer((req, res) => {
   req.on('end', () => {
     fs.appendFileSync(process.argv[2], JSON.stringify({ url: req.url, body: b }) + '\n')
     if (req.url === '/agent/prompt') {
-      let rpc = false
-      try { rpc = fs.readFileSync(rpcModeFile, 'utf8').trim() === 'success' } catch {}
-      res.end(rpc ? JSON.stringify({ ok: true, text: 'RPC 主动消息' }) : JSON.stringify({ ok: false, error: 'mock RPC 故障' }))
+      let rpc = ''
+      try { rpc = fs.readFileSync(rpcModeFile, 'utf8').trim() } catch {}
+      const text = rpc === 'success' ? JSON.stringify({ ok: true, text: 'RPC 主动消息' })
+        : rpc === 'queue_busy' ? JSON.stringify({ ok: false, error: 'queue_busy: RPC send 排队超时' })
+        : JSON.stringify({ ok: false, error: 'mock RPC 故障' })
+      res.end(text)
     } else {
       let sendMode = 'ok'
       try { sendMode = fs.readFileSync(sendModeFile, 'utf8').trim() } catch {}
@@ -284,6 +287,22 @@ HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >"$TMP/tick6b.log" 2>&1 \
   cat "$TMP/tick6b.log" >&2 || true
 [ "$(spawn_count)" -ge 1 ] && pass "RPC 失败 → 回退 spawn agent-run" || fail "期望 spawn ≥1 实得 $(spawn_count)"
 post_texts | grep -q "测试主动消息" && pass "回退 spawn 的文本已发送" || fail "应发送 spawn 文本"
+
+# ── R10 (F-A17-004): RPC queue_busy（明确失败）与超时同归回退 spawn — 分流语义 ──
+# tick 对 `/agent/prompt` 的**明确失败**（含 queue_busy：bridge 侧排队超预算快速判败）
+# 与超时都走同一回退：spawn 立即接管，不并行等待、不放双 LLM 窗口。
+# queue_busy 是 bridge 在预算内（≤ tick 125s）返回的确定失败，tick 收到即 spawn。
+: > "$FAKE_AGENT_CALLS"
+echo queue_busy > "$RPC_MODE"        # recorder /agent/prompt 返回 {ok:false,error:'queue_busy:...'}
+echo success > "$FAKE_AGENT_MODE_FILE"
+: > "$POST_LOG"                       # 隔离：只验本用例的发送记录
+HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >"$TMP/tickR10.log" 2>&1 \
+  || { cat "$TMP/tickR10.log" >&2 || true; fail "queue_busy 明确失败用例 tick 应退出 0"; }
+[ "$(spawn_count)" -ge 1 ] && pass "queue_busy（明确失败）→ 立即回退 spawn" || fail "queue_busy 期望 spawn ≥1 实得 $(spawn_count)"
+post_texts | grep -q "测试主动消息" && pass "queue_busy 回退 spawn 的文本已发送" || fail "应发送 spawn 文本: $(post_texts)"
+post_texts | grep -q "RPC 主动消息" && fail "queue_busy 不应发送 RPC 文本（RPC 未产出）" || true
+grep -q "RPC 未产出" "$TMP/tickR10.log" && pass "tick 日志记录 RPC 未产出（回退原因）" || fail "tick 应日志记录 RPC 回退: $(cat "$TMP/tickR10.log")"
+echo fail > "$RPC_MODE"              # 复位 recorder
 
 # ── R8 (F-A17-003): /send 超时返回 timeout_uncertain → 不退款、不记 send_fail、不重发 ──
 # 修复前红：当作明确失败 → 回传 --send-result failed（退款）+ record_health send_fail。

@@ -115,6 +115,9 @@ bash scripts/install_agent.sh --yes
 WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs   # spawn 回退路径（未设置时默认仓库内 scripts/agent-run.mjs；启动时校验存在，缺失/被误删 → 明确报错退出）
 WECHAT_BRIDGE_AGENT_RPC=1                                     # 1=回复链 RPC 优先（仅 RUNNER=agent 可用，失败自动回退 spawn）
 WECHAT_BRIDGE_TOKEN=<随机 hex>                                # /send 与 /agent/prompt 共享 token（wechat-bridge.sh 生成，幂等保留）
+# R10 (F-A17-004) 发送侧 /agent/prompt 超时预算（可选调整；仅 mode=send 生效，回复侧排队语义不变）：
+WECHAT_BRIDGE_SEND_PROMPT_TOTAL_MS=110000                     # 发送侧总预算(排队+restart+处理)，默认 110s < tick 125s
+WECHAT_BRIDGE_SEND_PROMPT_QUEUE_WAIT_MS=30000                 # 前方 turn 占用队列时 30s 内未开始处理 → queue_busy 快速判败
 # loop 形态下 daemon _loop_send 的 /send 鉴权（R17）：install_agent.sh 生成 chiguo-daemon.service
 # 时注入 EnvironmentFile=-wechat-bridge/.env，systemd 常驻进程直接读同一份 WECHAT_BRIDGE_TOKEN
 ```
@@ -124,7 +127,7 @@ daemon `[loop]` 段（--loop 发送侧内聚用）：
 [loop]
 bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 地址（含 /send 与 /agent/prompt）
 bridge_token = ""                       # 回退 token（env WECHAT_BRIDGE_TOKEN 优先，不进 git）
-agent_timeout_ms = 125000               # /agent/prompt 超时
+agent_timeout_ms = 125000               # /agent/prompt 外层超时（daemon _loop_send 的 POST 超时；须 ≥ bridge 110s 总预算，改此值两端同步）
 ```
 
 HTTP 契约（bridge，仅本地回环 + 共享 token）：
@@ -132,6 +135,7 @@ HTTP 契约（bridge，仅本地回环 + 共享 token）：
 POST /send           {"to","text"}                        → {"ok":true}（bot.send）
 POST /agent/prompt   {"text","mode":"analysis|send"}      → {"ok":true,"text","analysis"?}
                      失败 → 503 {"ok":false,"error"}（调用方回退 spawn）
+                     send 侧排队超预算 → 503 {"ok":false,"error":"queue_busy: ..."}（快速判败，tick 立即 spawn）
 # 鉴权：#84 仅本地回环来源（Host/Origin）+ 可选 X-Bridge-Token；
 #       WECHAT_BRIDGE_TOKEN 未配置时启动即 exit 1（强制鉴权；wechat-bridge.sh 自动生成随机 token）
 ```

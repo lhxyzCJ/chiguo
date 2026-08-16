@@ -884,6 +884,14 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 - **退款幂等（F-A15-002）**：`refund_send` 在 `chiguo_state.json` 持久化**有界 FIFO**（`cooldown.refunded_msg_ids`，上限 200 条）——同一 msg_id 第二次退款直接被拒。原有的 `--send-result` 日志尾 500 行去重窗口之外的重放双退由此被封闭。
 - 文档与实现：改 bridge 超时值 / tick 与 loop 的 `/send` 超时必须两端同步（见 #261/CR-2）。
 
+**R10 /agent/prompt 超时链对齐（F-A17-004）——RPC 侧"要么 125s 内给结果、要么快速失败"**：
+- 问题链：发送侧 RPC 生成原本三层超时未对齐——tick `curl --max-time 125`（cron）| loop `_post(...) timeout=agent_timeout_ms(125000)` | bridge `/agent/prompt` `withTimeout(prompt, 180s)`（**排队不计入**）| `agent-rpc.mjs` prompt `AGENT_TIMEOUT(120s)`。前方慢回复 turn 占用共享 `TurnQueue` 时，排队 w + restart(≤3s) + ensureStarted + prompt 实际 > 125s → tick 的 curl 先超时 → **无条件回退 spawn → 与仍在执行的 RPC 并行（双 LLM）+ RPC 结果丢弃**（活跃时段 + 慢 LLM 回复时窗口真实）。
+- 修复（仅 `/agent/prompt` send 侧；回复侧 askAgent 排队语义不变）：
+  - **总预算对齐**：bridge send 侧把「排队 + restart + 处理」全部计入一个总预算 `WECHAT_BRIDGE_SEND_PROMPT_TOTAL_MS`（默认 **110s < 125s**，给 curl 留网络余量）。处理步（`restart`/`ensureStarted`/`prompt`）用剩余预算包 `withTimeout`，超过 → 503 明确失败并杀 send 进程防孤儿。
+  - **排队快速判败**：`TurnQueue.run(task, {deadline, waitMaxMs})` 新增可选预算版。前方 turn 占用队列时，`WECHAT_BRIDGE_SEND_PROMPT_QUEUE_WAIT_MS`（默认 30s）内未开始处理 → **快速判败 `queue_busy`**，且被取消的 turn 绝不执行（不留孤儿 LLM 卡队列）。无 opts 的回复侧调用逐字节不变。
+  - **回退封顶**：`chiguo-tick.sh` 生成链由「恰两次」改写为显式有界 `while MAX_GEN_ATTEMPTS=2`（RPC+spawn 生成尝试 ≤ 2 轮），对齐 R7 的 fail_streak 有界语义，杜绝重试失控拖长单 tick。loop.py 无需改：其外层 `agent_timeout_ms(125s)` 已 ≥ bridge 110s 预算，重试本就 ≤2 次。
+  - 不变式：**bridge 侧 110s 总预算 ≤ tick curl 125s / loop agent_timeout_ms**；改任一侧须同步。queue_busy 作为"确定失败"与超时同归 spawn 回退，不留双 LLM 并行窗口。
+
 ---
 
 ## 六、文件清单
@@ -1597,7 +1605,7 @@ runner = "agent"                   # v1.8 agent runner 抽象：agent（默认�
 [loop]       # v1.11: daemon --loop 常驻（发送侧内聚）
 bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 服务地址（含 /agent/prompt 与 /send 端点；本地回环绕系统代理直连）
 bridge_token = ""                       # 与 bridge WECHAT_BRIDGE_TOKEN 同源；空=不带头
-agent_timeout_ms = 125000               # /agent/prompt 超时
+agent_timeout_ms = 125000               # /agent/prompt 外层超时（daemon _loop_send 的 POST 超时；须 ≥ bridge 110s 总预算，R10 对齐，改值两端同步）
 
 [health]
 fail_threshold = 3   # agent 假死判定：连续失败次数 ≥ 此值 → 告警（<1 视为无效回退 3）
