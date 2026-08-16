@@ -1630,6 +1630,7 @@ thinking_level = "high"
 reply_thinking_level = "high"      # 回复侧独立档位（交互及时性）
 session_id = "chiguo-main"         # 回复侧会话（bridge askAgent）
 send_session_id = "chiguo-send"    # 主动发送会话（chiguo-tick.sh）——与回复会话分离
+whitelist_contacts = []            # F-SEC-03 回复侧白名单模式：仅白名单联系人可与迟菓对话；缺省空 = 仅 owner（安全默认）
 wechat_bridge_url = "http://127.0.0.1:18790/send"  # 主动发送端点（tick curl 目标，--noproxy '*'）
 runner = "agent"                   # v1.8 agent runner 抽象：agent（默认）/ command（任意 CLI agent）
 # agent_command = ["node", "/path/to/agent.mjs"]  # runner=command 必填；agent 模式忽略
@@ -2016,6 +2017,20 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 - **主会话每日轮换**（`wechat-bridge/session-rotate.mjs`）：每小时整点检查一次（每天首个检查点 = 00:00 CST，正常情况轮换落在凌晨）；距最近活动（用户消息 / cron 判定要发消息，写于 `~/.chiguo/session-activity-last`）超过 `[host].session_rotate_idle_minutes`（默认 60）才轮换 chiguo-main——备份到 `~/.chiguo/session-backups/` + RPC 先杀进程（#192）再开新会话，**绝不切断进行中的对话**（深夜连续对话可顺延到清晨）；幂等标记 `~/.chiguo/session-rotate-last`（同日只轮换一次），bridge 重启错过 → 下一检查点补轮换。开关/间隔/阈值：`[host].session_rotate_enabled/check_minutes/idle_minutes`（见 toml）
 - **send 会话每轮全新**（#223）：`chiguo-send` 上下文恒 ≤1 轮——RPC 路径由 bridge `/agent/prompt`（mode=send）prompt 前 `restart({mode:'send'})` + 备份；spawn 回退由 chiguo-tick.sh 注入 `AGENTRUN_ROTATE_SESSION=1`（agent-run.mjs 启动时备份显式会话）。send 决策 JSON 自足（课表/提醒/纪念日全在 `context.schedule_hint`/`state.schedule`/`state.attention`，每次 tick 现算），不丢事实注入
   （已知 P2：chiguo-send spawn 与轮换 rename 的窗口竞态——send 决策自足无需连续性，影响可忽略）
+
+### 11.3 回复侧白名单（F-SEC-03）
+
+微信回复侧受**白名单模式**保护（`wechat-bridge/bridge.mjs` 的 `handleMessage` 白名单门）：
+
+| 消息来源 | 行为 |
+|---------|------|
+| owner（`WECHAT_BRIDGE_OWNER`） | 恒放行，完整链路（`recordUserMsg`/状态/记忆/命令/askAgent） |
+| 白名单内非 owner | 仅 `askAgent` 对话（**不进**状态/记忆/命令，C1 门保持） |
+| 白名单外非 owner（含缺省） | **固定拒答文案 + 零 LLM 调用**（返回 `rejected`） |
+
+- 配置源：toml `[host].whitelist_contacts = ["wxid", ...]`，或 env `WECHAT_BRIDGE_WHITELIST`（逗号分隔，经 `.env` 注入）；**缺省空 = 仅 owner 可对话（安全默认）**。
+- 目的：封死非 owner 消息的成本攻击无门槛（每条仅 4s inboundDebounce 合并，其余无速率/配额）+ 消除白名单外文本污染 owner 的 `chiguo-main` 会话。
+- 拒答固定文案可经 `WECHAT_BRIDGE_WHITELIST_REJECT` 覆盖；测试见 `tests/test_bridge_askagent.mjs`（F-SEC-03 用例）。
 
 agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
 

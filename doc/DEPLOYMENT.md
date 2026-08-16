@@ -123,6 +123,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 2. 网易云扫码（可选）：`uv run python -m netease.bridge --login`
 3. agent key：install_agent.sh 阶段 6 已写 `~/.pi/agent/auth.json`；换 key 重跑 `bash scripts/install_agent.sh --yes`
 4. 检查 toml `[host]` 的 provider/model（`chiguo_proactive.toml`）；`[wechat].wechat_recipient` 为占位符，登录后自动注入真实 openid，无需手改
+5. **回复侧白名单（可选，安全默认已生效）**：F-SEC-03 默认**仅 owner（`WECHAT_BRIDGE_OWNER`）可对话**，非 owner 一律拒答固定文案、零 LLM 调用。如需放行其他微信联系人，在 toml `[host]` 设置 `whitelist_contacts = ["联系人wxid", ...]`（白名单联系人仍不进状态/记忆/命令，仅对话）；亦可经 `.env` 的 `WECHAT_BRIDGE_WHITELIST`（逗号分隔）覆盖。
 
 ## 十、验证清单
 
