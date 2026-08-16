@@ -34,6 +34,7 @@ PY_COUNT=$(printf '%s' "$PY_COL_COUNT" | grep -oE '^[0-9]+')
 if ! (
 node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_sdk_vendor.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_auth.mjs && node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && \
 node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && \
+node tests/test_bridge_send_timeout.mjs && \
 node tests/test_bridge_rotate.mjs && node tests/test_bridge_schedule.mjs && bash tests/test_install_agent.sh && \
 bash tests/test_wechat_bridge.sh && bash tests/test_netease_api.sh && \
 bash tests/test_tick_health.sh && bash tests/test_service.sh

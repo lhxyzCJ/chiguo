@@ -26,7 +26,7 @@ class FakeBridge(BaseHTTPRequestHandler):
 
     requests = []  # (path, body)
     prompt_mode = "ok"   # ok | empty | error
-    send_mode = "ok"     # ok=成功 | fail=/send 返回 ok:false（F-A6-2 发送失败域）
+    send_mode = "ok"     # ok=成功 | fail=/send 返回 ok:false（F-A6-2 发送失败域）| timeout_uncertain（F-A17-003）
 
     def do_POST(self):  # noqa: N802
         n = int(self.headers.get("Content-Length", 0))
@@ -52,6 +52,9 @@ class FakeBridge(BaseHTTPRequestHandler):
             self.end_headers()
             if FakeBridge.send_mode == "fail":
                 self.wfile.write(json.dumps({"ok": False, "error": "mock send 故障"}).encode())
+            elif FakeBridge.send_mode == "timeout_uncertain":
+                self.wfile.write(json.dumps(
+                    {"ok": False, "error": "timeout 30000ms", "timeout_uncertain": True}).encode())
             else:
                 self.wfile.write(json.dumps({"ok": True}).encode())
             return
@@ -548,5 +551,75 @@ def test_loop_spawn_injects_send_session_env():
                 assert "ROTATE=1" in envs, f"应注入 AGENTRUN_ROTATE_SESSION=1: {envs}"
             finally:
                 _restore_env(old, ah)
+    finally:
+        srv.shutdown()
+
+
+# ═══════════════════════════════════════════════════════════
+# R8 (F-A17-003): /send 超时不确定（timeout_uncertain）——不退款、不记 send_fail、
+# 不重发（下轮自然再试）。对照：明确失败（ok:false 非 timeout）照旧退款 + send_fail。
+# ═══════════════════════════════════════════════════════════
+
+def test_loop_send_timeout_uncertain_no_refund_no_send_fail():
+    """F-A17-003: /send 返回 timeout_uncertain → sent=false + 不记 send_fail +
+    不调 record_send_result（不退款、不重发）。修复前红：当作明确失败退款+send_fail。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            _use_health_script()
+            try:
+                engine = _make_engine(td)
+                engine.config["wechat"]["wechat_recipient"] = "owner@w"
+                FakeBridge.send_mode = "timeout_uncertain"
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "retry_delay_seconds": 0}
+                # 捕获 record_send_result 调用（退款发起观测点）
+                calls: list[tuple] = []
+                orig = engine.record_send_result
+
+                def spy(*args, **kw):
+                    calls.append(args)
+                    return orig(*args, **kw)
+                engine.record_send_result = spy
+                out = engine._loop_send(_send_decision("m-uncertain"), loop_cfg)
+                assert out["generated"] is True, out
+                assert out.get("send_timeout_uncertain") is True, \
+                    f"应标记 send_timeout_uncertain: {out}"
+                assert out.get("sent") is False, out
+                # 不退款：不得调用 record_send_result(failed)
+                assert not calls, \
+                    f"timeout_uncertain 不应触发退款 record_send_result: {calls}"
+                # 不记 send_fail：agent_health 无 fail_streak 推进
+                if Path(td, "agent_health.json").exists():
+                    ah = json.loads(Path(td, "agent_health.json").read_text())
+                    assert ah.get("fail_streak", 0) == 0, \
+                        f"timeout_uncertain 不应推进 fail_streak: {ah}"
+            finally:
+                FakeBridge.send_mode = "ok"
+    finally:
+        srv.shutdown()
+
+
+def test_loop_send_clear_fail_still_refunds_send_fail():
+    """F-A17-003 回归对照：明确失败（ok:false 非 timeout）→ 照旧退款 + send_fail。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            _use_health_script()
+            try:
+                engine = _make_engine(td)
+                engine.config["wechat"]["wechat_recipient"] = "owner@w"
+                FakeBridge.send_mode = "fail"
+                loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                            "retry_delay_seconds": 0}
+                out = engine._loop_send(_send_decision("m-clearfail"), loop_cfg)
+                assert out["generated"] is True and out["sent"] is False, out
+                assert not out.get("send_timeout_uncertain"), out
+                ah = json.loads(Path(td, "agent_health.json").read_text())
+                assert ah.get("fail_streak") == 1, \
+                    f"明确失败应记 send_fail（fail_streak=1）: {ah}"
+                assert "send failed" in ah.get("fail_reason", ""), ah
+            finally:
+                FakeBridge.send_mode = "ok"
     finally:
         srv.shutdown()
