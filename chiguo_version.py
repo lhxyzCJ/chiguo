@@ -8,4 +8,4 @@
 #   - MAJOR 保持 1；仅在重大架构变更或维护者明确决定时 +1（届时 1.xx → 2.0）
 #
 # 版本号只在本文件修改，其他模块 import 引用（daemon --version / envcheck / monitor / decision JSON）。
-VERSION = "1.21"
+VERSION = "1.22"
