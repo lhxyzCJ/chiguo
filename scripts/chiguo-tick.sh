@@ -178,6 +178,19 @@ if [ -z "$TEXT" ]; then
 try: print((json.load(sys.stdin).get("error") or "")[:100])
 except: print("")' 2>/dev/null || true)"
   [ -n "$FAIL_REASON" ] || FAIL_REASON="tick agent-run 未生成消息"
+  # RF9 (F-RTS-001): 生成失败必须退款——evaluate 已对该 send 决策记账（energy/quota/
+  # messages_without_reply+1/Hawkes/逃生阀冷却），生成失败只 record_health fail 而不退款
+  # 会让未回复计数残留，连续失败 → backoff_level==2(silent) → evaluate_triggers 直接
+  # return None → 恢复后永久不发普通消息。故除 record_health fail 外，还要从决策 JSON
+  # 取 msg_id 回传 --send-result failed 走退款闭环（refund_send 回滚未回复/额度/Hawkes）。
+  # 对齐发送失败分支（下方 MSG_ID 解析 + --send-result failed 回传）的调用形态。
+  GEN_MSG_ID="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
+try: print(json.load(sys.stdin).get("msg_id",""))
+except: print("")' 2>/dev/null || true)"
+  if [ -n "$GEN_MSG_ID" ]; then
+    "$PY" "$REPO/chiguo_daemon.py" --send-result "$GEN_MSG_ID" --send-status failed --error "generate_failed: $FAIL_REASON" >/dev/null 2>&1 \
+      || echo "[chiguo-tick] send-result(failed) 回传失败 msg_id=$GEN_MSG_ID" >&2
+  fi
   record_health fail "$FAIL_REASON"
   # 本 tick 开始时已 down（暂停态）→ exit 0 静默跳过（cron 15min 天然节奏，
   # 恢复靠 probe 成功：agent 修好后下个 cron 生成成功 → REC_STATE=up + 恢复消息）；

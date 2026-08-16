@@ -347,6 +347,34 @@ grep -q "send-result.*failed" "$SEND_RESULT_LOG" \
 grep -q "bridge send failed" "$STATE" || fail "send_fail 应带 bridge 发送失败原因: $(cat "$STATE")"
 pass "bridge 不可达 → 回传 failed（refund 闭环）+ 记 send_fail 进 health"
 
+# ── RF9 (F-RTS-001): 生成失败 → 必须回传 --send-result failed 退款 ──
+# evaluate 已对 send 决策记账（energy/messages_without_reply+1/Hawkes）。生成失败分支
+# （agent 整链返回失败，无文本产出）若只 record_health fail 不退款 → 未回复计数残留，
+# 连续 5 轮 → silent 禁发（恢复后永久不发）。修复前红：生成失败分支不回传 → log 为空。
+# 放在 case 7 之后：case 7 测 /send 发送失败（agent=success），此用例独立测生成失败（agent=fail）。
+echo fail > "$FAKE_AGENT_MODE_FILE"    # spawn 失败；RPC 也是 fail → 整链生成失败
+export SEND_RESULT_LOG="$TMP/sendresult_genfail.log"
+rm -f "$SEND_RESULT_LOG"
+: > "$SEND_RESULT_LOG"
+# record_health fail 记账不回归（fail_streak 推进；fail_threshold=3 → 单次仍 up）
+GFAIL_STREAK_BEFORE="$(state_field fail_streak)"
+set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
+[ "$RC" = 1 ] && pass "生成失败 → tick 退出 1（既有语义保留）" || fail "生成失败应 exit 1, 实得 $RC"
+# 退款回传必须发生：fake daemon --send-result 分支写入 SEND_RESULT_LOG（含 msg_id + failed）
+grep -q 'abc123' "$SEND_RESULT_LOG" \
+  && grep -q 'send-result' "$SEND_RESULT_LOG" \
+  && grep -q 'failed' "$SEND_RESULT_LOG" \
+  && pass "生成失败 → 回传 --send-result abc123 failed（退款发生，未回复计数回滚）" \
+  || fail "生成失败应回传 --send-result <msg_id> failed, 实得: $(cat "$SEND_RESULT_LOG")"
+# 生成失败退款必须区别于发送失败（error 带 generate_failed 标记）
+grep -q 'generate_failed' "$SEND_RESULT_LOG" \
+  && pass "生成失败 → --error generate_failed（区分生成段 vs 发送段）" \
+  || fail "生成失败退款应带 generate_failed 标记: $(cat "$SEND_RESULT_LOG")"
+[ "$(state_field fail_streak)" -gt "$GFAIL_STREAK_BEFORE" ] \
+  && pass "生成失败 → record_health fail 推进 fail_streak（健康状态机不回归）" \
+  || fail "生成失败应 record_health fail（fail_streak 未推进）"
+echo success > "$FAKE_AGENT_MODE_FILE"   # 复位生成成功，供后续用例
+
 # ── replan lockfile(5s 超时 + 陈旧锁 10min 接管,M15)──
 # 直接调产品 schedule/replan._lock(R5):测试的是真实现,非逻辑拷贝
 test_replan_lock() {
