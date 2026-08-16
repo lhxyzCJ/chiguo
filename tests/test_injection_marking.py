@@ -128,10 +128,14 @@ def test_memory_hint_channel_is_marked():
         # 记忆 hint 注入端：把恶意记忆文本放进 hint（对应 _memory_topic/_preference_followup_topic）
         malicious_hint = f"想起相关记忆：{PAYLOAD}，从记忆中自然地找话头"
         topic_data = {"type": "memory", "hint": malicious_hint, "tone": "casual"}
+        from unittest import mock
         for ttype in (TriggerType.LONELY_LOW, TriggerType.LONELY_MID):
             trigger = Trigger(type=ttype, intensity="soft",
                               data={"topic": topic_data, "source": "memory"})
-            ctx = engine._build_context(trigger, now, None)
+            # LONELY_LOW/MID 走 context.py:135-148 会经 topic_picker.pick 重选 topic_data，
+            # 这里 patch 使其确定返回我们的记忆 topic_data（模拟 pick 选中该记忆 hint）。
+            with mock.patch.object(engine.topic_picker, "pick", return_value=topic_data):
+                ctx = engine._build_context(trigger, now, None)
             _assert_marked(ctx["instruction"], PAYLOAD, f"记忆 hint 通道 ({ttype})")
             # 载荷不得作为全文前缀指令前置——标记在前
             assert ctx["instruction"].find("UNTRUSTED") < ctx["instruction"].find(PAYLOAD)
@@ -179,4 +183,9 @@ def test_busy_suppress_clear_on_zero_hours():
         s._apply_analysis_impact({"suppress_hours": 0}, now + timedelta(hours=1))
         assert s.cooldown.busy_suppress_until is None, \
             "suppress_hours=0 应清除 busy_suppress_until"
+        # 反例：analysis 不带 suppress_hours 键（默认 0）→ 不得误清已在位的抑制期
+        s._apply_analysis_impact({"suppress_hours": 3}, now + timedelta(hours=2))
+        assert s.cooldown.busy_suppress_until, "应先重新设置抑制期"
+        s._apply_analysis_impact({"topic": "普通话题"}, now + timedelta(hours=3))
+        assert s.cooldown.busy_suppress_until, "键缺失(默认0)不得误清已在位的抑制期"
     print("  OK test_busy_suppress_clear_on_zero_hours")

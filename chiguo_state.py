@@ -1737,6 +1737,10 @@ class ChiguoState:
             "source": source,
             "created_at": now.isoformat(),
             "attempted": False,
+            # F-A19-001 族：LLM 派生话题标记为不可信数据（只读参考、纯文本）——
+            # 读取方（decision/context 注入点）据此以数据形态呈现而非指令。结构向后兼容，
+            # 读取方一律 t.get('untrusted') 防御；旧条目缺字段不影响消费。
+            "untrusted": True,
         })
         self._cap_pending_topics()
 
@@ -2226,9 +2230,9 @@ class ChiguoState:
 
         # ── 忙碌抑制（LLM 检测到用户想结束话题）──
         suppress_hours = _num("suppress_hours", 0, 0, 24)
-        if suppress_hours > 0 and now is not None:
+        if now is not None and suppress_hours > 0:
+            # 取两者中较晚的（已设抑制期 → 新值更晚时覆盖延长），只延长不缩短
             until = (now + timedelta(hours=suppress_hours)).isoformat()
-            # 取两者中较晚的（已设抑制期 → 新值更晚时覆盖延长）
             if self.cooldown.busy_suppress_until:
                 try:
                     existing = datetime.fromisoformat(self.cooldown.busy_suppress_until)
@@ -2238,6 +2242,13 @@ class ChiguoState:
                     self.cooldown.busy_suppress_until = until
             else:
                 self.cooldown.busy_suppress_until = until
+        elif (now is not None and "suppress_hours" in analysis
+              and not analysis.get("suppress_hours")):
+            # F-A19-002：LLM 显式上报 suppress_hours=0（键存在且为假值）→ 主动清除
+            # 抑制期（提供清除入口，LLM 单次误判可即时解除，避免 ≤24h 停摆）。
+            # 仅当分析里显式带 suppress_hours=0 才清除；键缺失（默认 0）不触碰，
+            # 保持 >0 的「只延长」且普通消息不误清。
+            self.cooldown.busy_suppress_until = None
 
     def on_character_message(self, now: datetime, trigger_type: str = "",
                              msg_id: str | None = None):
