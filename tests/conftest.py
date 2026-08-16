@@ -65,3 +65,21 @@ def _guard_events_isolation():
         f"CONTRACT-016 违规：进度轮转测试污染了项目根 chiguo_events.jsonl。"
         f"基线 {baseline} 行 → 会话结束 {now} 行（+{now - baseline}）。轮转事件写入须注入隔离路径。"
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_rotation_events(tmp_path):
+    """函数级（CONTRACT-016，Issue #333）：把轮转事件写入隔离到每用例临时目录。
+
+    `chiguo_rotation.log_rotation_event()` 通过 `_EVENTS_LOG_PATH` 锚定事件文件；
+    默认 None = 项目根 `chiguo_events.jsonl`。此处为每个测试注入独立临时路径，
+    使所有轮转测试（rotate/force_rotate/archive）都写入隔离文件而非真实项目文件。
+    测试后恢复 None 防止跨用例泄漏；配合会话级 `_guard_events_isolation` 作为
+    全局回归防线（任何漏隔离的直接写项目根行为都会被收尾断言拦截）。
+    """
+    import chiguo_rotation as rot
+
+    prev = rot._EVENTS_LOG_PATH
+    rot._EVENTS_LOG_PATH = tmp_path / "chiguo_events.jsonl"
+    yield
+    rot._EVENTS_LOG_PATH = prev
