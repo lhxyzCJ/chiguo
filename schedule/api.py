@@ -505,7 +505,8 @@ class ScheduleApi:
             data = _load()
             today = date.today()
             from schedule.day_plan import _on_break
-            on_break = _on_break(data, self._semester_dates()[1], today)
+            ss, se = self._semester_dates()
+            on_break = _on_break(data, ss, se, today)
             source = "none"
             if on_break:
                 if data.get("manual_override") or data.get("on_break"):
@@ -513,14 +514,16 @@ class ScheduleApi:
                 elif any(date.fromisoformat(b["start"]) <= today <= date.fromisoformat(b["end"])
                          for b in data.get("breaks", []) if b.get("start") and b.get("end")):
                     source = "break_range"
+                elif ss and today < ss:
+                    source = "semester_start"
                 else:
                     source = "semester_end"
             return {"action": "break_status", "on_break": on_break, "source": source,
                     "manual_override": data.get("manual_override") or data.get("on_break", False),
                     "breaks": data.get("breaks", []),
-                    "semester_end": (self._semester_dates()[1] or None).isoformat()
-                    if self._semester_dates()[1] else None,
-                    "semester_ended": self._semester_dates()[1] is not None
-                    and today > self._semester_dates()[1]}
+                    "semester_end": (se or None).isoformat()
+                    if se else None,
+                    "semester_ended": se is not None
+                    and today > se}
         return {"action": "break_error", "ok": False, "error": f"未知命令: {cmd_line}",
                 "usage": "on|off|status|add YYYY-MM-DD YYYY-MM-DD [备注]|remove <序号>|list|clear"}

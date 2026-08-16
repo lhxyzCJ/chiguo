@@ -51,7 +51,7 @@ def t2_block(sources, today: date, horizon: int = 14) -> list[str]:
             lines.append(f"今天是{label}第{(today - s).days + 1}天")
         elif s > today and (s - today).days <= horizon:
             lines.append(f"还有{(s - today).days}天{label}")
-    if _on_break(sources.break_state, sources.semester_end, today):
+    if _on_break(sources.break_state, sources.semester_start, sources.semester_end, today):
         bs = sources.break_state or {}
         if bs.get("manual_override") or bs.get("on_break"):
             lines.append("寒暑假模式中")

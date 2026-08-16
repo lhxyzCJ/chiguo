@@ -622,11 +622,14 @@ evaluate(now)
 on_break:
   ① break_state.json 中 manual_override=true → True  (手动无限期)
   ② 今天在 breaks[] 任一区间内              → True  (日期区间，如寒假)
-  ③ datetime.now() > semester_end           → True  (学期自动结束)
-  ④ 以上皆否                                  → False
+  ③ today < semester_start                  → True  (学期未开始，与学期后对称，F-A20-01)
+  ④ today > semester_end                    → True  (学期自动结束)
+  ⑤ 以上皆否                                  → False
 ```
 
-- `semester_end` 在 `chiguo_proactive.toml` `[schedule]` 段配置
+- `semester_start` / `semester_end` 在 `chiguo_proactive.toml` `[schedule]` 段配置；
+  学期未开始（如寒假工作日）与学期结束对称走 break，availability 不再按第 1 周
+  课表误判为上课（week_number 的 `max(1,..)` 钳制仅存续为周次显示语义）
 - 日期区间通过 CLI 管理：`--break add YYYY-MM-DD YYYY-MM-DD [备注]`
 - 手动覆盖：`--break on`（无限期）/ `--break off`（清空）
 - bridge 检测到"放假了/放暑假了"→ `--break on`；检测到"开学了"→ `--break off`（bridge 规则化接管，见 §11.1）
@@ -636,7 +639,7 @@ on_break:
 
 ```
 availability(now):
-  ├─ on_break? ── yes → 0.85（寒暑假，跳过一切）
+  ├─ on_break? ── yes → 0.85（学期前/学期后/日期区间/手动，跳过一切）
   ├─ is_holiday? ── yes → 0.85（跳过课表）
   ├─ 课表可选来源（enabled=false 或缺 xlsx）→ 无课表信息 → availability=1.0（按空闲）
   ├─ is_school_day? ── no → 0.85（普通周末）
@@ -680,7 +683,15 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
 
 缓存带 `cache_version=2`：旧版本缓存（含合并单元格吞课的脏数据）启动时强制重解析（`_parsed_at=0`）；`_parse_cell` 按 2+ 连续空白拆分课程段，合并课存 `alternates`，`_parse_weeks` 支持后缀单双周。
 
-周数计算：`(now.date() - semester_start).days // 7 + 1`
+周数计算：`(now.date() - semester_start).days // 7 + 1`（周界对齐周一；学期前钳到第 1 周，
+仅周次显示语义——availability 判定不依赖周次，学期前/后直接走 on_break）
+
+日键缓存失效（F-A20-07）：`_rc_cache`（resolved_classes/attention）、`_scale_cache`
+（trigger_scale_now）共用**读路径源文件 mtime 指纹**（schedule_cache.json /
+schedule_overrides.json / break_state.json / holidays.json / schedule_plan.json），
+失效键 = 日期 + 指纹：任一源文件变更 → 当日缓存整体重建，不再"同日仍旧数据"；
+配置热重载（--loop `_maybe_reload_config`）替换 config 不落盘 → `reload_config`
+显式清空两缓存并同步 `semester_start/end`（清理钩子兜底）。
 
 节次映射：中国大学标准 11 节（08:00-21:25）
 

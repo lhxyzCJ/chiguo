@@ -12,7 +12,8 @@ _PERIOD_START = {p: time.fromisoformat(start) for p, (start, _) in PERIOD_TIMES.
 
 def week_number(d: date, semester_start: date) -> int:
     """周一归一化的学期周次(§4.1):周界对齐周一;semester_start 恰为周一时与原式逐值一致;
-    学期结束后不钳制(无课匹配自然为空)。"""
+    学期结束后不钳制(无课匹配自然为空);学期前钳到第 1 周(**仅周次显示语义**,
+    availability 判定经 _on_break 的 semester_start 分支走 break,不依赖此钳制)。"""
     offset = (d - semester_start).days + semester_start.weekday()
     return max(1, offset // 7 + 1)
 
@@ -102,7 +103,8 @@ def resolve_classes(d: date, sources) -> dict:
     return entries
 
 
-def _on_break(break_state: dict | None, semester_end: date | None, today: date) -> bool:
+def _on_break(break_state: dict | None, semester_start: date | None,
+              semester_end: date | None, today: date) -> bool:
     if break_state:
         if break_state.get("manual_override") or break_state.get("on_break"):
             return True
@@ -113,6 +115,8 @@ def _on_break(break_state: dict | None, semester_end: date | None, today: date) 
                 continue
             if s <= today <= e:
                 return True
+    if semester_start and today < semester_start:
+        return True   # 学期前(寒假):与学期后对称
     if semester_end and today > semester_end:
         return True
     return False
@@ -149,7 +153,7 @@ def availability_base(now, sources) -> dict:
     (exam 检查嵌套在 elif not is_holiday 内);考周×周末/调休 → exam 0.5(in_exam 先于周末判据)。"""
     today = now.date() if hasattr(now, "date") else now
     hp = sources.holiday
-    if _on_break(sources.break_state, sources.semester_end, today):
+    if _on_break(sources.break_state, sources.semester_start, sources.semester_end, today):
         return {"base": 0.85, "tier": "break"}
     if not hp.is_holiday(today):
         if _in_exam(today, sources.overrides.intervals()):
