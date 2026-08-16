@@ -177,6 +177,15 @@ except: print("")' 2>/dev/null || true)"
 SEND_RESP="$(curl -s --max-time 35 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
   -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$BODY" 2>&1 || true)"
 if ! printf '%s' "$SEND_RESP" | grep -q '"ok": *true'; then
+  # R8 (F-A17-003): bridge 超时不确定（timeout_uncertain）——bot.send 不可取消，
+  # 超时不代表未送达。若按失败退款会恢复额度清冷却，制造下次 tick 重发窗口 →
+  # 用户可能收到两条重复消息。故：不 refund、不记 send_fail、不重发——
+  # 本 tick 直接结束（exit 0），下轮自然再试。这条校验必须在 prepare failed /
+  # 普通失败分流之前，避免把"不确定"当"确定失败"。
+  if printf '%s' "$SEND_RESP" | grep -q 'timeout_uncertain'; then
+    echo "[chiguo-tick] bridge /send 超时且结果不确定（timeout_uncertain）——不退款、不记 send_fail、本 tick 结束下轮再试" >&2
+    exit 0
+  fi
   case "$SEND_RESP" in
     *"prepare failed"*)
       echo "[chiguo-tick] bridge 发送失败: context_token 过期（prepare failed）——从微信给机器人发一条消息即刷新恢复，无需重新扫码（详见 README「认证迁移」）" >&2
