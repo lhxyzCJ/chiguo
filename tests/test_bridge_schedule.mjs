@@ -263,9 +263,10 @@ t('鉴权:非 OWNER_ID 不进命令/回忆/追问路径,仅 askAgent 回复,不 
   const calls = []
   const deps = depsWith({ extract: { ok: true, item: { kind: 'reminder', when: { date: '2026-08-20' }, label: 'x' } }, verify: { ok: true } }, repo)
   const bot = { reply: async (m, t) => replies.push(t), sendTyping: async () => {} }
+  // F-SEC-03 白名单模式：stranger 须命中白名单才放行进聊天链（C1 门保证不进命令/回忆/追问/状态写）
   const r = await handleMessage('停课', { userId: 'stranger@im.wechat' }, bot, queue,
-    { ...deps, recordUserMsg: async () => calls.push('record') })
-  assert.strictEqual(r, 'agent', '非本人走聊天链')
+    { ...deps, whitelist: ['stranger@im.wechat'], recordUserMsg: async () => calls.push('record') })
+  assert.strictEqual(r, 'agent', '白名单内非本人走聊天链')
   assert.ok(!calls.includes('record'), '不 recordUserMsg/状态零写入')
   assert.ok(!existsSync(scheduleClarifyPath(repo)), '不写澄清记录')
   assert.ok(replies.includes('聊'), '仅 askAgent 回复(聊天链)')

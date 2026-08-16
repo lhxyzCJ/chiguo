@@ -67,6 +67,26 @@ const SEND_PROMPT_QUEUE_WAIT_MS = Number(process.env.WECHAT_BRIDGE_SEND_PROMPT_Q
 // #84 /send 共享 token:未设置时跳过 token 校验(向后兼容 tick.sh 等既有调用);设置后必须匹配
 const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
+// ── F-SEC-03 (#316): 白名单模式 —— 仅白名单联系人可与迟菓对话，其余拒答固定文案且零 LLM 调用 ──
+// 配置源（与 OWNER_ID 同风格，取"最简且与现有配置读取一致"的方式）：
+//   1) 环境变量 WECHAT_BRIDGE_WHITELIST（逗号分隔；wechat-bridge.sh 生成的 .env 可注入，同 WECHAT_BRIDGE_OWNER）；
+//   2) 回退 toml [host].whitelist_contacts（数组，见 chiguo_proactive.toml）；
+//   缺省（两者皆空）= 仅 owner 可对话（安全默认）。
+const REJECT_TEXT = process.env.WECHAT_BRIDGE_WHITELIST_REJECT
+  ?? '这是迟菓的私人助手，暂不对陌生人开放哦'   // 拒答固定文案；可用同名 env 覆盖
+function resolveWhitelist() {
+  const env = process.env.WECHAT_BRIDGE_WHITELIST
+  if (env) {
+    return env.split(',').map((s) => s.trim()).filter(Boolean)
+  }
+  const wl = HOST.whitelist_contacts
+  return Array.isArray(wl) ? wl : []
+}
+const WHITELIST = resolveWhitelist()
+function isAllowedContact(userId, whitelist = WHITELIST, ownerId = OWNER_ID) {
+  if (userId === ownerId) return true
+  return whitelist.includes(userId)
+}
 // ── 主会话每日轮换配置（toml [host].session_rotate_*；env WECHAT_BRIDGE_ACTIVITY_FILE 可覆盖活动文件路径）──
 // 非法/非正配置值回退默认（不取 Math.max 下限——负数不应导致 5 分钟高频检查）
 const rotNum = (v, d) => { const n = Number(v); return Number.isFinite(n) && n >= 5 ? n : d }
@@ -685,13 +705,18 @@ async function askChat(text, msg, bot, queue, askAgentFn) {
 }
 
 /** 单条微信消息处理链路（onMessage 委托；导出供测试）：
- * 路由顺序:OWNER_ID 门(最顶部,C1) → recordUserMsg(仅本人) → 澄清检查 → detectSpecialCommand
- * → detectScheduleIntent → askAgent;命令消息经 --user-msg 无分析(recordUserMsg 已先行,dedup 450s 继承);
- * 非本人 = 仅 askAgent 回复 + 失败回通用文案(不回内部诊断,安全补钉)。
+ * 路由顺序:白名单门(F-SEC-03,最顶部) → OWNER_ID 门(C1) → recordUserMsg(仅本人) → 澄清检查
+ * → detectSpecialCommand → detectScheduleIntent → askAgent;命令消息经 --user-msg 无分析(recordUserMsg
+ * 已先行,dedup 450s 继承);
+ * 非 owner(仅白名单内) = 仅 askAgent 回复 + 失败回通用文案(不回内部诊断,安全补钉);
+ * 非白名单(含缺省仅 owner) = 固定拒答文案 + 零 LLM 调用(返回 'rejected')。
  * bot 需提供 reply(msg, text)/sendTyping(userId)；queue 提供 run(task)。 */
 export async function handleMessage(text, msg, bot, queue, deps = {}) {
   if (!text?.trim()) return null
   const isOwner = msg.userId === OWNER_ID
+  // F-SEC-03 (#316): 白名单门置顶于 C1 之前 —— 非 owner 必须命中白名单才放行，
+  // 否则直接拒答固定文案且零 LLM 调用（成本攻击无门槛封闭）。owner 恒放行。
+  const isAllowed = isAllowedContact(msg.userId, deps.whitelist)
   const repoRoot = deps.repoRoot ?? REPO_ROOT
   const askAgentFn = deps.askAgent ?? askAgent
   const extractAgent = deps.extractAgent ?? defaultExtractAgent
@@ -699,7 +724,13 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
   const runDaemon = deps.runDaemon ?? defaultRunDaemon
   const now = deps.now ?? (() => new Date())
 
-  // ── C1 门:非本人不进写/回忆/追问/特殊命令路径,不取 --attention;仅 askAgent 回复 ──
+  // ── 白名单门:非白名单(含缺省=仅 owner)→ 固定拒答文案,不调 askChat/askAgent(零 LLM 成本) ──
+  if (!isAllowed) {
+    await bot.reply(msg, REJECT_TEXT).catch(() => console.warn('[whitelist reject] 拒答回复发送失败'))
+    return 'rejected'
+  }
+
+  // ── C1 门:非 owner(仅白名单内)不进写/回忆/追问/特殊命令路径,不取 --attention;仅 askAgent 回复 ──
   if (!isOwner) {
     await askChat(text, msg, bot, queue, askAgentFn)
     return 'agent'

@@ -459,7 +459,7 @@ archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
 # ────────────────────────────────────────────────────────────
 # [host] 主机/用户（哥哥）运维约束 + agent 调用配置（Phase 4 起由 scripts/agent-run.mjs 读取）
 # 运维约束沿用历史 USER.md 迁移内容（Task 3）；Task 14 对齐为正式配置段。
-# 配置键：provider/model/thinking_level/reply_thinking_level/session_id/send_session_id/wechat_bridge_url/runner/agent_command
+# 配置键：provider/model/thinking_level/reply_thinking_level/session_id/send_session_id/whitelist_contacts/wechat_bridge_url/runner/agent_command
 # （AGENTRUN_* 环境变量可覆盖：AGENTRUN_PROVIDER/AGENTRUN_MODEL/AGENTRUN_THINKING/AGENTRUN_SESSION；AGENTRUN_PERSONALITY/AGENTRUN_GUIDE 仅测试/开发用，生产人格固定仓库内 personality/）
 # ────────────────────────────────────────────────────────────
 [host]
@@ -479,6 +479,11 @@ thinking_level = "off"            # 思考模式：off 关闭（pi --thinking �
 reply_thinking_level = "off"      # 回复侧独立档位（交互及时性:微信消息→回复的 LLM 调用用此档位;主动发送/重分析仍用 thinking_level。可设 medium/high 保响应速度,max 保质量,缺省回退 thinking_level；off=关闭思考）
 session_id = "chiguo-main"      # 回复侧会话（bridge askAgent；进程内 TurnQueue 串行）
 send_session_id = "chiguo-send" # 主动发送会话（chiguo-tick.sh 经 AGENTRUN_SESSION 注入；与回复会话分离 → 消除跨进程并发 turn）
+# ── F-SEC-03 (#316): 回复侧白名单模式（仅白名单联系人可与迟菓对话）──
+# 非 owner 且不在白名单 → bridge 直接拒答固定文案、零 LLM 调用（成本攻击无门槛封闭，见 audit verify/group3 §6）。
+# 缺省（本项留空/注释）= 仅 owner 可对话（安全默认）；白名单非 owner 仍不进状态/记忆/命令（C1 门保持，仅走 askChat）。
+# 亦可经 env WECHAT_BRIDGE_WHITELIST 覆盖（逗号分隔），与 WECHAT_BRIDGE_OWNER 同源经 wechat-bridge/.env 注入。
+# whitelist_contacts = ["wxid_guest1", "wxid_guest2"]
 # ── 每日会话轮换（bridge 内定时器；防上下文堆积，详见 doc/SYSTEM.md §11.2）──
 # 语义：每小时整点检查（每天首个检查点 = 00:00 CST）；距最近活动（用户消息 / cron
 # 判定要发消息，记于 ~/.chiguo/session-activity-last）超过 idle_minutes 才轮换主会话
