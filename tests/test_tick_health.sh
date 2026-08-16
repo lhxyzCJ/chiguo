@@ -332,7 +332,13 @@ echo timeout_uncertain > "$SEND_MODE"
 STREAK_BEFORE="$(state_field fail_streak)"
 set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] && pass "timeout_uncertain → tick 退出 0（本 tick 结束，下轮自然再试）" || fail "timeout_uncertain 应 exit 0, 实得 $RC"
-[ ! -s "$SEND_RESULT_LOG" ] && pass "timeout_uncertain → 不回传 --send-result failed（不退款）" || fail "不应回传 --send-result failed: $(cat "$SEND_RESULT_LOG")"
+# RF11: timeout_uncertain 不再完全无回传——做轻量清算（--send-status uncertain，只清未回复
+# 计数），但**不得**是 refund（failed）。区分二者：log 含 uncertain 且不含 failed。
+if grep -q 'uncertain' "$SEND_RESULT_LOG" && ! grep -q 'failed' "$SEND_RESULT_LOG"; then
+  pass "timeout_uncertain → 回传 --send-result uncertain（轻量清算未回复，不 refund）"
+else
+  fail "timeout_uncertain 应回传 --send-result uncertain（非 failed）: $(cat "$SEND_RESULT_LOG")"
+fi
 [ "$(state_field fail_streak)" = "$STREAK_BEFORE" ] && pass "timeout_uncertain → 不记 send_fail（fail_streak 不变）" || fail "timeout_uncertain 不应推进 fail_streak（$STREAK_BEFORE→$(state_field fail_streak)）"
 echo ok > "$SEND_MODE"
 
@@ -349,9 +355,12 @@ set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; 
 [ "$(state_field fail_streak)" = "$STREAK_BEFORE" ] \
   && pass "RF1: 非 JSON 响应体 → 不记 send_fail（fail_streak 不变）" \
   || fail "RF1 非 JSON 体不应推进 fail_streak（$STREAK_BEFORE→$(state_field fail_streak)）"
-[ ! -s "$SEND_RESULT_LOG" ] \
-  && pass "RF1: 非 JSON 响应体 → 不回传 --send-result failed（不退款）" \
-  || fail "RF1 非 JSON 体不应回传 --send-result failed: $(cat "$SEND_RESULT_LOG")"
+# RF1 非 JSON 体 = 结果不确定 → 亦做轻量清算（--send-status uncertain，非 failed 退款）
+if grep -q 'uncertain' "$SEND_RESULT_LOG" && ! grep -q 'failed' "$SEND_RESULT_LOG"; then
+  pass "RF1: 非 JSON 响应体 → 回传 --send-result uncertain（不清 refund）"
+else
+  fail "RF1 非 JSON 体应回传 --send-result uncertain（非 failed）: $(cat "$SEND_RESULT_LOG")"
+fi
 echo ok > "$SEND_MODE"
 
 

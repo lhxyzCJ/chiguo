@@ -212,6 +212,50 @@ def test_refund_same_msg_id_dedup_fifo():
             "同一 msg_id 第二次退款应被 FIFO 拒收（防越窗口双退）"
 
 
+def test_uncertain_clears_unreplied_only_dedup():
+    """RF11 (M2): timeout_uncertain 的**轻量清算**——只回滚 messages_without_reply，
+    不清 energy/quota/逃生阀冷却/Hawkes（防已送达时制造重发窗口）；经 record_send_result
+    ('uncertain') 落盘且同 msg_id 幂等（_has_send_result 去重，二次不重复清）。
+    修复前红：timeout_uncertain 无清算通道 → 未回复计数无限累积致 silent。"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        st = engine.state
+        now = _seed(st, events=[{"msg_id": "unc1", "time": "t1"}, {"type": "lonely_mid", "time": "t2"}])
+        mwr_before = st.cooldown.messages_without_reply  # _seed 置 2
+        energy_before = st.emotion.energy                 # 50
+        anxious_before = st.emotion.anxiety               # 30
+        escape_before = st.cooldown.last_longing_break_at  # now.isoformat() 非 None
+        events_before = list(st.cooldown.event_timestamps)  # 2 条，不应被删
+
+        # ① 直接方法层：只清未回复计数，其余副作用不动
+        st.clear_unreplied(now)
+        assert st.cooldown.messages_without_reply == mwr_before - 1, \
+            f"clear_unreplied 应只 -1 未回复计数: {st.cooldown.messages_without_reply}"
+        assert st.emotion.energy == energy_before, "clear_unreplied 不应回滚 energy"
+        assert st.emotion.anxiety == anxious_before, "clear_unreplied 不应回滚 anxiety"
+        assert st.cooldown.last_longing_break_at == escape_before, \
+            "clear_unreplied 不应重置逃生阀冷却"
+        assert st.cooldown.event_timestamps == events_before, \
+            "clear_unreplied 不应删除 Hawkes 事件"
+        # ② 下限夹紧：不降到负
+        st.cooldown.messages_without_reply = 0
+        st.clear_unreplied(now)
+        assert st.cooldown.messages_without_reply == 0, "clear_unreplied 应 clamp 到 0"
+        # ③ 经 daemon record_send_result('uncertain') 落盘 + 幂等
+        st.cooldown.messages_without_reply = 3
+        r1 = engine.record_send_result("unc1", "uncertain", "timeout_uncertain")
+        assert r1["status"] == "uncertain" and r1["refunded"] is True, r1
+        # 落盘后 on-disk 未回复计数 = 2（3→2）
+        on_disk = json.loads(Path(td, "chiguo_state.json").read_text())
+        assert on_disk["cooldown"]["messages_without_reply"] == 2, \
+            f"uncertain 清算应落盘: {on_disk['cooldown']}"
+        # 同 msg_id 二次 uncertain → _has_send_result 去重，不再重复清（refunded False）
+        r2 = engine.record_send_result("unc1", "uncertain", "timeout_uncertain")
+        assert r2["duplicate"] is True, f"同 msg_id 二次 uncertain 应被去重: {r2}"
+        assert engine.state.cooldown.messages_without_reply == 2, \
+            "二次 uncertain 不应重复清未回复计数"
+
+
 # ═══════════════════════════════════════════════════════════
 # F-A5-01（#314 R9）: 三机制③「决策即标记、refund 不回滚」→ 发送失败后
 # reminder 永久不再触发。修复：refund_send 按 msg_id 定位到在途事件携带的

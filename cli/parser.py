@@ -82,9 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="消息强度 (配合 --record-send)")
     # ── v6: 反馈闭环 ──
     parser.add_argument("--send-result", type=str, default=None, metavar="MSG_ID",
-                        help="回传发送结果 (配合 --send-status success|failed, 可选 --error)")
+                        help="回传发送结果 (配合 --send-status success|failed|uncertain, 可选 --error)")
     parser.add_argument("--send-status", type=str, default=None,
-                        choices=["success", "failed"],
+                        choices=["success", "failed", "uncertain"],
                         help="发送状态 (配合 --send-result)")
     parser.add_argument("--error", type=str, default=None, help="失败原因 (配合 --send-result)")
     # ── v5: 告警持久化 ──

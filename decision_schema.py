@@ -19,7 +19,9 @@ CONTRACT = 1
 ACTIONS = ("send", "idle", "recv", "recv_upgrade", "send_result")
 
 # send_result.status 枚举
-SEND_RESULT_STATUS = ("success", "failed")
+# RF11: 新增 "uncertain" —— /send 结果不确定（timeout_uncertain / 非 JSON 体）时的轻量
+# 清算状态：只清未回复计数，不改动额度/冷却（区别于 failed 的完整退款）。
+SEND_RESULT_STATUS = ("success", "failed", "uncertain")
 
 # send_result 幂等去重标志要求 bool
 # 各 action 的稳定顶端字段约束：{字段: 类型别名}。

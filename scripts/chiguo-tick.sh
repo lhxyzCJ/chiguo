@@ -246,6 +246,13 @@ else
   # 普通失败分流之前，避免把"不确定"当"确定失败"。
   if printf '%s' "$SEND_RESP" | grep -q 'timeout_uncertain'; then
     echo "[chiguo-tick] bridge /send 超时且结果不确定（timeout_uncertain）——不退款、不记 send_fail、本 tick 结束下轮再试" >&2
+    # RF11 (M2): 轻量清算——持续超时（实际未送达）会累积未回复计数致 silent 禁发。
+    # 不 refund（防已送达制造重复消息窗口），但回传 uncertain 从**未回复计数**移除 1 条
+    # （record_send_result 的 uncertain 分支：只清 messages_without_reply，不清额度/冷却）。
+    [ -z "$MSG_ID" ] || {
+      "$PY" "$REPO/chiguo_daemon.py" --send-result "$MSG_ID" --send-status uncertain --error "timeout_uncertain" >/dev/null 2>&1 \
+        || echo "[chiguo-tick] send-result(uncertain) 回传失败 msg_id=$MSG_ID" >&2
+    }
     exit 0
   fi
   # RF1: 拿到 HTTP 响应（CURL_RC=0）且响应体**非空非 JSON**（HTML 错误页/代理包装）→ 送达
@@ -254,6 +261,11 @@ else
   # 故障，落下方 send_fail（F-A6-2：bridge 挂 → 记 send_fail 推进 fail_streak → 达阈值 down）。
   if [ "$SEND_JSON_OK" = "bad_json" ] && [ "$CURL_RC" = 0 ] && [ -n "$SEND_RESP" ]; then
     echo "[chiguo-tick] bridge /send 响应非空但非法 JSON（可能被网关/代理包装），发送结果不确定——不退款、不记 send_fail、本 tick 结束下轮再试: $(printf '%s' "$SEND_RESP" | head -c 120)" >&2
+    # RF11: 同样轻量清算未回复计数（结果不确定，防未回复累积致 silent）。
+    [ -z "$MSG_ID" ] || {
+      "$PY" "$REPO/chiguo_daemon.py" --send-result "$MSG_ID" --send-status uncertain --error "non_json_body" >/dev/null 2>&1 \
+        || echo "[chiguo-tick] send-result(uncertain) 回传失败 msg_id=$MSG_ID" >&2
+    }
     exit 0
   fi
   case "$SEND_RESP" in

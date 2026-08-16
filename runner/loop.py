@@ -288,8 +288,14 @@ class LoopSenderMixin(DecisionEngineBase):
                 if resp.get("timeout_uncertain"):
                     out["sent"] = False
                     out["send_timeout_uncertain"] = True
+                    # RF11 (M2): 不退款不重发（防已送达重复消息），但做**轻量清算**——把本
+                    # 消息 +1 的未回复计数回滚（record_send_result uncertain 分支只清
+                    # messages_without_reply，不清额度/冷却/不重发）。否则持续超时（实际
+                    # 未送达）未回复计数无限累积 → backoff_level==2 silent 永久禁发。
+                    if msg_id:
+                        self.record_send_result(msg_id, "uncertain", "timeout_uncertain")
                     print(f"[chiguo_daemon] /send timeout_uncertain (msg_id={msg_id}): "
-                          f"不退款不重发，下轮自然再试", file=sys.stderr)
+                          f"不退款不重发，仅清算未回复计数，下轮自然再试", file=sys.stderr)
                     return out
                 if not resp.get("ok"):
                     raise RuntimeError(str(resp.get("error") or "bridge /send ok=false"))
