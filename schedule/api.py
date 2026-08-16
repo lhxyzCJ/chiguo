@@ -213,7 +213,11 @@ class ScheduleApi:
                 if set(when) == {"date", "end_date"}:
                     start, _ = resolve_when({"date": when["date"]}, today, semester_start)
                     end, _ = resolve_when({"date": when["end_date"]}, today, semester_start)
-                    entry["end_date"] = when["end_date"]   # 批 2b 旧协议区间(显式 end_date 保持)
+                    if (end - start).days > 60:
+                        # A20-05 (R11): {date,end_date} 批 2b 路径并入统一跨度检查(与 {start,end} 一致),
+                        # 修复前 78 天区间绕过落盘。
+                        raise ApiRejection("invalid_value", "跨度 > 60 天")
+                    entry["end_date"] = end.isoformat()   # 归一(MM-DD → ISO),修 A20-05 格式不一致拒绝
                     is_interval = True
                 else:
                     start, end = resolve_when(when, today, semester_start)
@@ -251,6 +255,9 @@ class ScheduleApi:
                     raise ApiRejection(e.category, str(e))
                 if _d1 < start:
                     raise ApiRejection("invalid_value", "区间 end_date 早于 date,死区间拒绝")
+                if (_d1 - start).days > 60:
+                    raise ApiRejection("invalid_value", "跨度 > 60 天")   # A20-05:顶层 end_date 路径统一跨度检查
+                entry["end_date"] = _d1.isoformat()   # A20-05:归一顶层 end_date(MM-DD → ISO),不再格式不一致拒绝
             # ── 过去日期分端点校验(L2/C3/F1):课程例外与区间事实查 end;单日查 date ──
             # 迁移写(_from_migration)豁免:一次性迁移含历史条目(如已结束学期的考试周),
             # 校验/清理在迁移后的常规写调用点照常执行
@@ -296,14 +303,17 @@ class ScheduleApi:
             if (entry.get("to_date") == entry.get("date")
                     and item.get("to_period") == item.get("period")):
                 raise ApiRejection("shape_mismatch", "to_date==date 且 to_period==period(无变化)")
-            if entry.get("period") is not None:
-                src_course = self._move_source_course(entry)   # 参照系 = 基底课表 + 已应用 add 例外
-                if src_course is None:
-                    raise ApiRejection("no_source_class", "move 源槽无课")
-                if not entry.get("course"):
-                    entry["course"] = {k: v for k, v in src_course.items()
-                                       if k in ("course", "teacher", "weeks", "weeks_raw",
-                                                "location", "alternates")}
+            if entry.get("period") is None:
+                # A20-06 (R11): Task 6 注释承诺的 api 层补全——源 period 必填(validate 同款兜底)。
+                # 修复前:无 period move 跳过源槽检查落盘 → 源槽不清 + 目标槽空课条目。
+                raise ApiRejection("invalid_value", "move 必有源 period")
+            src_course = self._move_source_course(entry)   # 参照系 = 基底课表 + 已应用 add 例外
+            if src_course is None:
+                raise ApiRejection("no_source_class", "move 源槽无课")
+            if not entry.get("course"):
+                entry["course"] = {k: v for k, v in src_course.items()
+                                   if k in ("course", "teacher", "weeks", "weeks_raw",
+                                            "location", "alternates")}
         # ── move/add 课程快照 weeks 派生(M7):weeks=[当日周次]/weeks_raw/alternates=[] ──
         if kind in ("move", "add") and entry.get("course"):
             c = dict(entry["course"])

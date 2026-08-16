@@ -11,7 +11,7 @@ CST = timezone(timedelta(hours=8))
 NOW = datetime(2026, 8, 3, 14, 30, 0, tzinfo=CST)
 TODAY = NOW.date()
 
-from schedule.override_store import OverrideStore
+from schedule.override_store import OverrideStore, OverrideError
 from schedule.plan_store import PlanStore
 from schedule.api import ScheduleApi, ApiRejection
 from schedule.confirm import build_confirmation, build_question
@@ -47,6 +47,7 @@ def test_validation_matrix():
             {"kind": "cancel", "when": {"date": "2026-08-20"}, "period": 12},          # period 越界
             {"kind": "cancel", "when": {"date": "2026-08-20"}, "course": {"course": "高数"}},  # cancel 无 course
             {"kind": "move", "when": {"date": "2026-08-20"}},                          # move 必有 to_period
+            {"kind": "move", "when": {"date": "2026-08-20"}, "to_period": 5},          # move 无源 period (F-A20-06)
             {"kind": "add", "when": {"date": "2026-08-20"}},                           # add 必有 course
             {"kind": "exam_week", "when": {"date": "2026-08-20"}, "period": 3},        # exam_week 无 period
             {"kind": "reminder", "when": {"date": "2026-08-20"}, "course": {"course": "x"}},  # reminder 无 course
@@ -98,6 +99,133 @@ def test_interval_end_date_ordering():
                                 "when": {"date": "2026-08-20", "end_date": "2026-08-24"}})
         assert r["ok"] is True
     print("  OK test_interval_end_date_ordering")
+
+
+def test_interval_span_cap_60d():
+    """R11(F-A20-05):区间跨度上限 60 天(与 resolve_when {start,end} 语义一致,恰 60 允许)。
+    双路径覆盖:when={date,end_date} 内联与顶层 end_date;61/78 天拒绝,修复前 {date,end_date} 绕过。"""
+    with tempfile.TemporaryDirectory() as td:
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=date(2026, 8, 3))
+        overlong = [
+            {"kind": "cancel", "period": 5, "when": {"date": "2026-08-03", "end_date": "2026-10-20"}},   # 78d
+            {"kind": "cancel", "period": 5, "when": {"date": "2026-08-03", "end_date": "2026-10-03"}},   # 61d
+            {"kind": "exam_week", "when": {"date": "2026-08-03", "end_date": "2026-10-20"}, "label": "考"},   # 78d
+            {"kind": "cancel", "period": 5, "when": {"date": "2026-08-03"}, "end_date": "2026-10-20"},   # 顶层 end_date 78d
+            {"kind": "cancel", "period": 5, "when": {"start": "2026-08-03", "end": "2026-10-20"}},       # {start,end} 对照
+        ]
+        for item in overlong:
+            try:
+                api.apply_override(item)
+                raise AssertionError(f"超长区间应拒绝: {item}")
+            except ApiRejection as e:
+                assert e.category == "invalid_value", f"跨度类别, got {e.category}: {item}"
+        # 恰 60 天允许(与 resolve_when `跨度 > 60 天` 语义一致)
+        r = api.apply_override({"kind": "cancel", "period": 5,
+                                "when": {"date": "2026-08-03", "end_date": "2026-10-02"}})
+        assert r["ok"] is True
+        # 拒绝后不得落盘超长条目
+        assert all((date.fromisoformat(i["end_date"]) - date.fromisoformat(i["date"])).days <= 60
+                   for i in api.overrides.items() if i.get("end_date")), "落盘条目必须满足跨度上限"
+    print("  OK test_interval_span_cap_60d")
+
+
+def test_end_date_normalization():
+    """R11(F-A20-05):end_date 归一——MM-DD end_date 经 resolve_when 兼容解析后以 ISO 落盘
+    (修复前:when 内联/顶层 MM-DD end_date 被"格式不一致拒绝")。"""
+    with tempfile.TemporaryDirectory() as td:
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=date(2026, 8, 3))
+        # when 内联:MM-DD end_date → 归一 ISO
+        r = api.apply_override({"kind": "cancel", "period": 5,
+                                "when": {"date": "2026-08-20", "end_date": "08-26"}})
+        assert r["ok"] is True and r["item"]["end_date"] == "2026-08-26", f"got {r['item']}"
+        # 顶层:MM-DD end_date → 归一 ISO
+        r = api.apply_override({"kind": "exam_week", "when": {"date": "2026-08-20"},
+                                "end_date": "09-03", "label": "考"})
+        assert r["ok"] is True and r["item"]["end_date"] == "2026-09-03", f"got {r['item']}"
+    print("  OK test_end_date_normalization")
+
+
+def test_move_requires_source_period():
+    """R11(F-A20-06):move 必有源 period(无源槽的移动语义不存在)。
+    修复前:无 period move 落盘 → 源槽不清(复制语义)+目标槽空课条目;修复后确定性拒绝。"""
+    with tempfile.TemporaryDirectory() as td:
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=date(2026, 8, 3))
+        for item in (
+            {"kind": "move", "when": {"date": "2026-08-04"}, "to_period": 5},          # 纯漏 period
+            {"kind": "move", "when": {"date": "2026-08-04"},                           # 带 to_date 仍漏 period
+             "to_date": {"date": "2026-08-21"}, "to_period": 5},
+        ):
+            try:
+                api.apply_override(item)
+                raise AssertionError(f"move 无源 period 应拒绝: {item}")
+            except ApiRejection as e:
+                assert e.category == "invalid_value", f"got {e.category}: {item}"
+        # 空课表:带源 period 但源槽无课 → no_source_class(拒绝分支)
+        try:
+            api.apply_override({"kind": "move", "when": {"date": "2026-08-04"},
+                                "period": 3, "to_period": 5})
+            raise AssertionError("源槽无课应 no_source_class 拒绝")
+        except ApiRejection as e:
+            assert e.category == "no_source_class"
+        assert api.overrides.items() == [], "拒绝后不得落盘"
+    print("  OK test_move_requires_source_period")
+
+
+def test_override_store_required_keys():
+    """R11(F-A20-03):必填键校验——_load 缺 date 条目剔除并置 corrupt(防读路径 KeyError);
+    add 缺 date → OverrideError(防 _next_id KeyError)。"""
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "schedule_overrides.json").write_text(json.dumps({
+            "override_version": 1,
+            "items": [
+                {"id": "bad", "kind": "cancel", "period": 3},                      # 缺 date 必填键
+                {"id": "good", "date": "2026-08-20", "kind": "cancel", "period": 2,
+                 "created_at": "2026-07-01T10:00:00+08:00"}]}, ensure_ascii=False))
+        store = OverrideStore(td)
+        assert store.corrupt, "缺 date 必填键 → corrupt 必须置位(防 corrupt=False 永驻)"
+        assert [i["id"] for i in store.items()] == ["good"], "缺 date 条目必须剔除"
+        assert store.for_date(date(2026, 8, 20)) != [], "读路径不再 KeyError"
+    with tempfile.TemporaryDirectory() as td2:
+        store2 = OverrideStore(td2)
+        try:
+            store2.add({"kind": "cancel", "period": 3},
+                       datetime(2026, 8, 3, 14, 30, 0, tzinfo=timezone(timedelta(hours=8))))
+            raise AssertionError("缺 date 应 OverrideError")
+        except OverrideError:
+            pass
+        except KeyError as e:   # 修复前:_next_id(entry["date"]) KeyError
+            raise AssertionError(f"缺 date 必填键不得抛 KeyError: {e}")
+    print("  OK test_override_store_required_keys")
+
+
+def test_apply_override_rejection_branches():
+    """R11 拒绝分支覆盖补全(盲区 0 覆盖):past_date/before_semester/after_semester 直测。"""
+    with tempfile.TemporaryDirectory() as td:
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=date(2026, 8, 3))
+        try:
+            api.apply_override({"kind": "cancel", "when": {"date": "2026-08-01"}, "period": 3})
+            raise AssertionError("过去日期应拒绝")
+        except ApiRejection as e:
+            assert e.category == "past_date"
+    with tempfile.TemporaryDirectory() as td:
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=date(2026, 1, 5))
+        try:
+            api.apply_override({"kind": "add", "when": {"week_offset": 1}, "period": 3,
+                                "course": {"course": "晚自习"}})
+            raise AssertionError("学期前 week_offset 应拒绝")
+        except ApiRejection as e:
+            assert e.category == "before_semester"
+    with tempfile.TemporaryDirectory() as td:
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23",
+                                            "semester_end": "2026-07-04"}},
+                          today=date(2026, 6, 29))
+        try:
+            api.apply_override({"kind": "add", "when": {"week_offset": 1}, "period": 3,
+                                "course": {"course": "晚自习"}})
+            raise AssertionError("目标周超出学期应拒绝")
+        except ApiRejection as e:
+            assert e.category == "after_semester"
+    print("  OK test_apply_override_rejection_branches")
 
 
 def test_idempotent_write():
@@ -156,9 +284,10 @@ def test_cleanup_endpoints():
         api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
         api.apply_override({"kind": "cancel", "when": {"date": "2027-08-20"},
                             "end_date": "2027-08-24", "period": 2})   # 区间 end 未到 → 留
+        api.apply_override({"kind": "add", "when": {"date": "2027-08-03"}, "period": 8,
+                            "course": {"course": "高数"}})          # 先造源槽(add 例外,F-A20-06 后 move 必带源 period)
         api.apply_override({"kind": "move", "when": {"date": "2027-08-03"},
-                            "to_date": {"date": "2027-08-14"}, "to_period": 7,
-                            "course": {"course": "高数"}})
+                            "period": 8, "to_date": {"date": "2027-08-14"}, "to_period": 7})
         api.apply_override({"kind": "reminder", "when": {"date": "2027-08-20"}, "label": "未来提醒"})
         api.apply_override({"kind": "add", "when": {"date": "2027-08-20"}, "period": 9,
                             "course": {"course": "晚自习"}})
