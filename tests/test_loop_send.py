@@ -147,6 +147,46 @@ def test_loop_send_rpc_ok():
         srv.shutdown()
 
 
+def test_loop_send_record_send_text_exception_still_success():
+    """RF8 (L6-3): record_send_text（本地 JSONL 归档）抛异常 → 消息已发送不能被记成
+    send_fail + 退款。异常单点分流：本地归档失败只告警，success 健康记账不受影响。
+    修复前红：record_send_text 抛异常进入外层 except → record_send_result(failed) 退款 +
+    record_health send_fail（fail_streak 推进）。"""
+    srv = _start_bridge()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            _use_health_script()
+            engine = _make_engine(td)
+            engine.config["wechat"]["wechat_recipient"] = "real_openid@im.wechat"
+            loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
+                        "retry_delay_seconds": 0}
+            # 捕获 record_send_result 调用（退款发起观测点）
+            calls: list[tuple] = []
+            orig_sr = engine.record_send_result
+
+            def spy(*args, **kw):
+                calls.append(args)
+                return orig_sr(*args, **kw)
+            engine.record_send_result = spy
+            # record_send_text 抛异常（模拟磁盘满/归档写失败）
+            def boom(*a, **kw):
+                raise RuntimeError("disk full: 归档写失败")
+            engine.record_send_text = boom
+            out = engine._loop_send(_send_decision("m-rf8"), loop_cfg)
+            # 发送仍成功：sent=True、无 send_error、无退款调用
+            assert out["generated"] is True and out["sent"] is True, out
+            assert not out.get("send_error"), out
+            assert not calls, \
+                f"record_send_text 失败不应触发退款 record_send_result: {calls}"
+            # 健康记账为 success（fail_streak=0 / up），不是 send_fail
+            ah = json.loads(Path(td, "agent_health.json").read_text())
+            assert ah.get("fail_streak", 0) == 0, \
+                f"record_send_text 失败不应记 send_fail（fail_streak 应保持 0）: {ah}"
+            assert ah.get("state") == "up", ah
+    finally:
+        srv.shutdown()
+
+
 def test_loop_send_rpc_fail_fallback_spawn():
     """RPC 失败（503）→ 回退 spawn agent-run（fake AGENT_RUN_SCRIPT）→ 发送成功。"""
     srv = _start_bridge()
@@ -560,9 +600,11 @@ def test_loop_spawn_injects_send_session_env():
 # 不重发（下轮自然再试）。对照：明确失败（ok:false 非 timeout）照旧退款 + send_fail。
 # ═══════════════════════════════════════════════════════════
 
-def test_loop_send_timeout_uncertain_no_refund_no_send_fail():
-    """F-A17-003: /send 返回 timeout_uncertain → sent=false + 不记 send_fail +
-    不调 record_send_result（不退款、不重发）。修复前红：当作明确失败退款+send_fail。"""
+def test_loop_send_timeout_uncertain_clears_unreplied_no_send_fail():
+    """F-A17-003 (R8) + RF11 (M2): /send 返回 timeout_uncertain → sent=false、不记 send_fail、
+    不重发；但做**轻量清算**——record_send_result(msg_id,'uncertain',...) 只清未回复计数
+    （不回滚 energy/quota/逃生阀冷却），防持续超时未回复无限累积致 silent。
+    修复前红（R8 时代）：timeout_uncertain 不调 record_send_result → 未回复计数保留。"""
     srv = _start_bridge()
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -573,7 +615,9 @@ def test_loop_send_timeout_uncertain_no_refund_no_send_fail():
                 FakeBridge.send_mode = "timeout_uncertain"
                 loop_cfg = {"bridge_url": f"http://127.0.0.1:{srv.server_port}",
                             "retry_delay_seconds": 0}
-                # 捕获 record_send_result 调用（退款发起观测点）
+                # 模拟 evaluate 对该 send 已记账：未回复计数 +1（on_character_message 语义）
+                engine.state.cooldown.messages_without_reply = 1
+                # 捕获 record_send_result 调用（清算发起观测点）
                 calls: list[tuple] = []
                 orig = engine.record_send_result
 
@@ -586,10 +630,17 @@ def test_loop_send_timeout_uncertain_no_refund_no_send_fail():
                 assert out.get("send_timeout_uncertain") is True, \
                     f"应标记 send_timeout_uncertain: {out}"
                 assert out.get("sent") is False, out
-                # 不退款：不得调用 record_send_result(failed)
-                assert not calls, \
-                    f"timeout_uncertain 不应触发退款 record_send_result: {calls}"
-                # 不记 send_fail：agent_health 无 fail_streak 推进
+                # RF11: 清算发生——record_send_result(msg_id, "uncertain", ...) 而非 failed
+                assert calls, \
+                    f"timeout_uncertain 应做轻量清算（record_send_result uncertain）: {calls}"
+                msg_id, status, err = calls[0]
+                assert msg_id == "m-uncertain", calls
+                assert status == "uncertain", f"不应 refund（failed）: {calls}"
+                assert "timeout_uncertain" in (err or ""), calls
+                # 未回复计数被清算回滚（1→0），未致 silent 累积
+                assert engine.state.cooldown.messages_without_reply == 0, \
+                    engine.state.cooldown.messages_without_reply
+                # 不记 send_fail：agent_health 无 fail_streak 推进（timeout_uncertain 不记账）
                 if Path(td, "agent_health.json").exists():
                     ah = json.loads(Path(td, "agent_health.json").read_text())
                     assert ah.get("fail_streak", 0) == 0, \

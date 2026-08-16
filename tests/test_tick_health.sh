@@ -76,6 +76,9 @@ http.createServer((req, res) => {
         res.end(JSON.stringify({ ok: false, error: 'timeout 30000ms', timeout_uncertain: true }))
       } else if (sendMode === 'doconnect_explicit_fail') {
         res.end(JSON.stringify({ ok: false, error: 'mock bridge 明确失败' }))
+      } else if (sendMode === 'non_json') {
+        // RF1 (M6-2): 网关/代理 200 + 非预期响应体（HTML 错误页/包装）——不是 JSON。
+        res.end('<html><body>502 Bad Gateway</body></html>')
       } else {
         res.end('{"ok":true}')
       }
@@ -329,11 +332,38 @@ echo timeout_uncertain > "$SEND_MODE"
 STREAK_BEFORE="$(state_field fail_streak)"
 set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] && pass "timeout_uncertain → tick 退出 0（本 tick 结束，下轮自然再试）" || fail "timeout_uncertain 应 exit 0, 实得 $RC"
-[ ! -s "$SEND_RESULT_LOG" ] && pass "timeout_uncertain → 不回传 --send-result failed（不退款）" || fail "不应回传 --send-result failed: $(cat "$SEND_RESULT_LOG")"
+# RF11: timeout_uncertain 不再完全无回传——做轻量清算（--send-status uncertain，只清未回复
+# 计数），但**不得**是 refund（failed）。区分二者：log 含 uncertain 且不含 failed。
+if grep -q 'uncertain' "$SEND_RESULT_LOG" && ! grep -q 'failed' "$SEND_RESULT_LOG"; then
+  pass "timeout_uncertain → 回传 --send-result uncertain（轻量清算未回复，不 refund）"
+else
+  fail "timeout_uncertain 应回传 --send-result uncertain（非 failed）: $(cat "$SEND_RESULT_LOG")"
+fi
 [ "$(state_field fail_streak)" = "$STREAK_BEFORE" ] && pass "timeout_uncertain → 不记 send_fail（fail_streak 不变）" || fail "timeout_uncertain 不应推进 fail_streak（$STREAK_BEFORE→$(state_field fail_streak)）"
 echo ok > "$SEND_MODE"
 
-# ── 用例 7: bridge 不可达 → 回传 --send-result failed（refund 反馈闭环不断）+ 记 send_fail ──
+# ── RF1 (M6-2): 发送成功判定升级 JSON 解析——网关 200 + 非 JSON 响应体（HTML 错误页/
+# 代理包装）时消息可能已送达，若记 send_fail 会误 down。故非 JSON 体 → 不确定：不退款、
+# 不记 send_fail（fail_streak 不变）、不回传 --send-result failed、exit 0。──
+export SEND_RESULT_LOG="$TMP/sendresult_rf1.log"
+rm -f "$SEND_RESULT_LOG"
+: > "$SEND_RESULT_LOG"
+echo non_json > "$SEND_MODE"
+STREAK_BEFORE="$(state_field fail_streak)"
+set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] && pass "RF1: 非 JSON 响应体 → tick 退出 0（不确定，本 tick 结束）" || fail "RF1 非 JSON 体应 exit 0, 实得 $RC"
+[ "$(state_field fail_streak)" = "$STREAK_BEFORE" ] \
+  && pass "RF1: 非 JSON 响应体 → 不记 send_fail（fail_streak 不变）" \
+  || fail "RF1 非 JSON 体不应推进 fail_streak（$STREAK_BEFORE→$(state_field fail_streak)）"
+# RF1 非 JSON 体 = 结果不确定 → 亦做轻量清算（--send-status uncertain，非 failed 退款）
+if grep -q 'uncertain' "$SEND_RESULT_LOG" && ! grep -q 'failed' "$SEND_RESULT_LOG"; then
+  pass "RF1: 非 JSON 响应体 → 回传 --send-result uncertain（不清 refund）"
+else
+  fail "RF1 非 JSON 体应回传 --send-result uncertain（非 failed）: $(cat "$SEND_RESULT_LOG")"
+fi
+echo ok > "$SEND_MODE"
+
+
 kill ${SRV_PID:-} 2>/dev/null || true
 export SEND_RESULT_LOG="$TMP/sendresult.log"
 : > "$SEND_RESULT_LOG"
@@ -498,6 +528,68 @@ TOML
     > "$TMP/home/.chiguo/auth/wechat/credentials.json"
 }
 test_owner_missing_no_phantom
+
+# ── RF12 (M3): node 缺失 = 环境故障，告警 reason 与 agent 故障区分，不误诊 ──
+# node 缺失（cron PATH 不完整/未安装）时 agent-run 无法执行 → 记 health fail（需 down/暂停），
+# 但 reason 必须显式标注「环境问题，非 agent 故障」，告警文案据此区分，避免误诊为后端故障。
+test_node_missing_env_fault() {
+  # 重置 agent_health（避免沿用前面用例的 fail_reason 遮蔽 RF12 文案断言）
+  rm -f "$REPO/agent_health.json"
+  # 建一个不含 node 的迷你 PATH（其余工具软链系统路径），使 `command -v node` 失配。
+  local MINIBIN="$TMP/minibin"
+  mkdir -p "$MINIBIN"
+  local t real_p
+  for t in bash cat curl sed grep date dirname readlink mktemp mkdir sleep flock head wc printf cut tr realpath stat; do
+    real_p="$(command -v "$t" 2>/dev/null || true)"
+    [ -n "$real_p" ] && ln -sf "$real_p" "$MINIBIN/$t" 2>/dev/null || true
+  done
+  rm -f "$MINIBIN/node"   # 保证 node 缺席（PATH 查询不命中）
+  [ -x "$MINIBIN/bash" ] || fail "RF12: 迷你 PATH 缺 bash"
+  local H2="$TMP/home_rf12"
+  mkdir -p "$H2/.chiguo/auth/wechat"
+  printf '{"token":"t","userId":"real_openid@im.wechat","accountId":"a"}' \
+    > "$H2/.chiguo/auth/wechat/credentials.json"
+  cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+
+[wechat]
+wechat_recipient = "owner@im.wechat"
+
+[health]
+fail_threshold = 3
+TOML
+  set +e
+  HOME="$H2" CHIGUO_REPO="$REPO" CHIGUO_LOCK_DIR="$TMP/rf12_lock" \
+    PATH="$MINIBIN" bash "$REAL_TICK" >/dev/null 2>&1
+  local RC=$?
+  set -e
+  [ "$RC" = 1 ] && pass "RF12: node 缺失 → tick exit 1" || fail "node 缺失应 exit 1, 实得 $RC"
+  grep -q '环境问题，非 agent 故障' "$REPO/agent_health.json" \
+    && pass "RF12: node 缺失 fail_reason 标注环境问题（区分 agent 故障）" \
+    || fail "node 缺失 fail_reason 应含「环境问题，非 agent 故障」: $(cat "$REPO/agent_health.json")"
+  grep -q '环境问题，非 agent 故障' "$REAL_TICK" \
+    && pass "RF12: 静态——tick.sh node 缺失 reason 含环境标注" \
+    || fail "tick.sh node 缺失 reason 应含「环境问题，非 agent 故障」"
+  grep -q '连续.*次失败（原因' "$REPO/scripts/agent_health.py" \
+    && pass "RF12: agent_health 告警文案不再硬说 pi-agent，中性化（原因区分归属）" \
+    || fail "agent_health 告警文案应中性化（连续 N 次失败 + reason）"
+  # 恢复 send 路径 toml 供后续用例
+  cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+send_session_id = "chiguo-send"
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+provider = "deepseek"
+model = "deepseek-chat"
+
+[wechat]
+wechat_recipient = "owner@im.wechat"
+
+[health]
+fail_threshold = 3
+TOML
+}
+test_node_missing_env_fault
 
 # ── 用例 8（Issue #135）: daemon --compact 崩溃 → 非零退出 + stderr 告警（不得静默吞掉）──
 # 放在最末尾：替换 fake daemon 为崩溃版，不影响前面各用例依赖的 send 输出

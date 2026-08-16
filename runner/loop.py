@@ -288,13 +288,27 @@ class LoopSenderMixin(DecisionEngineBase):
                 if resp.get("timeout_uncertain"):
                     out["sent"] = False
                     out["send_timeout_uncertain"] = True
+                    # RF11 (M2): 不退款不重发（防已送达重复消息），但做**轻量清算**——把本
+                    # 消息 +1 的未回复计数回滚（record_send_result uncertain 分支只清
+                    # messages_without_reply，不清额度/冷却/不重发）。否则持续超时（实际
+                    # 未送达）未回复计数无限累积 → backoff_level==2 silent 永久禁发。
+                    if msg_id:
+                        self.record_send_result(msg_id, "uncertain", "timeout_uncertain")
                     print(f"[chiguo_daemon] /send timeout_uncertain (msg_id={msg_id}): "
-                          f"不退款不重发，下轮自然再试", file=sys.stderr)
+                          f"不退款不重发，仅清算未回复计数，下轮自然再试", file=sys.stderr)
                     return out
                 if not resp.get("ok"):
                     raise RuntimeError(str(resp.get("error") or "bridge /send ok=false"))
                 out["sent"] = True
-                self.record_send_text(msg_id, text, trigger, intensity)
+                # RF8 (L6-3): 本地 JSONL 记账（record_send_text，写 chiguo_messages.jsonl）
+                # 失败（磁盘满等）**不能**把已发送的消息记成 send_fail + 退款——消息已送达，
+                # 记 send_fail 会让健康状态机误降。故 record_send_text 单点异常分流：本地
+                # 记账失败只告警 stderr，不影响 success 记账（下方 record_health success）。
+                try:
+                    self.record_send_text(msg_id, text, trigger, intensity)
+                except Exception:  # noqa: BLE001 - 本地归档失败不影响主链路成功语义
+                    print(f"[chiguo_daemon] record_send_text 失败 msg_id={msg_id}: "
+                          f"消息已发送但本地 JSONL 归档未写（不影响健康记账）", file=sys.stderr)
                 # F-A6-2: 发送成功 —— 生成+发送双成功才算健康；记 success 清零 +
                 # down→up 恢复 transition 经 /send 发恢复（对齐 tick.sh）
                 _send_transition_alert(self._record_health("success", "", loop_cfg))

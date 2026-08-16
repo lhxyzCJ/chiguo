@@ -901,6 +901,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 - fail_streak 有界：`agent_health.py` 在状态已 down 后不再无条件 `+1`，fail_streak 封顶在 `[health].fail_threshold`；down→up 仍仅由 success 触发回到 0。
 - spawn 会话注入：loop `_try_generate` 的 spawn 回退注入 `AGENTRUN_SESSION=<toml [host].send_session_id（缺省 chiguo-send）>` + `AGENTRUN_ROTATE_SESSION=1`，对齐 tick.sh L127 —— 消除 send 会话落回复侧 chiguo-main 且不轮换的双路径分叉。
 - 前置检查：`chiguo-tick.sh` 的 OWNER（收件人）缺失与 node 缺失检查**前移到 `--compact`（决策记账）之前**——OWNER/node 异常时 evaluate 根本不执行，不再产生幻影记账（发送早退与 loop 收件人缺失分支的退款语义对齐）。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
+- **RF13（M4）OWNER 缺失时的预期行为（安全语义，保留）**：登出 / `wechat-bridge/credentials.json` 失效 / toml 未配 `wechat_recipient` 期间，cron 每 15min 触发 tick 都会在 `--compact` 之前 `exit 1`（replot/日志/邮件噪音），即便本 tick 决策本会是 idle。这是 F-RT-003「前置检查避免幻影记账」的必然副作用：无法在 evaluate 前区分 idle/send，故一律早退 `exit 1` 并告警。**预期行为**：登录（`bash scripts/wechat-bridge.sh login`）或补配 toml `wechat_recipient` 后自动恢复，无需人工干预；运维无需为登出期的 `exit 1` 报警。- **RF12（M3）node 缺失告警语义**：node 缺失（cron PATH 不完整）前置检查同样在 `--compact` 之前 `record_health fail`（含 idle 路径也记录）——node 缺失是**环境故障**（agent-run 无法执行），reason 记为 `tick node 缺失（环境问题，非 agent 故障）`，仍推进 fail_streak（需 down/暂停），但告警文案以 reason 区分环境 vs agent，避免误诊为后端异常。
 
 **R8 发送确认语义（F-A17-003/F-A15-002）——发送确认 ≠ 送达确认**：
 - **超时不确定（timeout_uncertain）**：`wechat-bridge/bridge.mjs` 对 `bot.send` 包 30s 超时（`withTimeout`），但 `bot.send` 底层**不可取消**——超时不代表未送达（超时后实际送达真实可能）。因此 bridge 超时 catch 返回 `{"ok":false, ..., "timeout_uncertain":true}`（继续保持 `ok:false` 兼容既有调用方），由上游区别处理。

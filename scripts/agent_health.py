@@ -74,7 +74,11 @@ def _release(lock_path):
 def _build_message(state, streak, reason):
     if state == "down":
         r = reason or "未知"
-        return (f"⚠️ 后端异常：pi-agent 连续 {streak} 次调用失败（原因：{r}）。"
+        # RF12 (M3): 文案不再硬说「pi-agent 连续调用失败」——否则环境故障（node 缺失/
+        # PATH 不完整）会被误诊为 agent 故障。改为中性的「连续 N 次失败」，具体归属
+        # （agent / 环境）由 reason 区分：调用方对 node 缺失记 reason「tick node 缺失
+        # （环境问题，非 agent 故障）」。保留「后端异常」前缀（既有调方/测试按此抓取）。
+        return (f"⚠️ 后端异常：连续 {streak} 次失败（原因：{r}）。"
                 "回复和主动消息都会受影响，我还在线但脑子不转了～恢复后告诉你")
     return "✅ 后端已恢复，我活过来了！"
 

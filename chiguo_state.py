@@ -2623,6 +2623,21 @@ class ChiguoState:
         self._finalize(now)
         return True
 
+    def clear_unreplied(self, now: datetime) -> None:
+        """RF11 (M2): timeout_uncertain 的**轻量清算**——只把本消息在 on_character_message
+        里 +1 的未回复计数回滚（messages_without_reply -1，有界到 0），**不**做完整退款。
+
+        区分 refund_send：
+          - refund_send（发送**确定失败**）回滚 energy/anxiety/messages_today/逃生阀冷却/
+            Hawkes 事件 → 恢复可重发额度，制造下次 tick 重发窗口（已送达时=重复消息）。
+          - clear_unreplied（发送结果**不确定**，如 /send 超时/非 JSON 体）只清未回复计数，
+            不清额度/冷却/不删 Hawkes 事件、不恢复可重发窗口 —— 防「持续不确定 → 未回复
+            计数无限累积 → backoff_level==2 silent 永久禁发」。计数可任意 -1 因每条 send
+            决策恰好 +1；事件保留（送达状态未知，Hawkes 自激不强删）。
+        """
+        self.cooldown.messages_without_reply = max(0, self.cooldown.messages_without_reply - 1)
+        self._finalize(now)
+
     def daily_max(self, now: datetime) -> int:
         """当日配额上限：沉默 <8h 按活跃配额（max_daily_active），否则按静默配额
         （max_daily_silent）。R13 (#315) 抽为公开方法 → can_send 与 decision 二次门禁

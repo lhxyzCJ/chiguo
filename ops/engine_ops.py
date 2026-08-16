@@ -428,6 +428,25 @@ class AccountingMixin(DecisionEngineBase):
                             f"not found in {len(self.state.cooldown.event_timestamps)} in-flight events",
                             file=sys.stderr,
                         )
+                elif status == "uncertain" and not already_reported:
+                    # RF11 (M2): /send 结果不确定（timeout_uncertain / 非 JSON 体）——
+                    # 轻量清算：只回滚本消息 +1 的未回复计数，**不**完整退款（不清额度/冷却/
+                    # 不恢复重发窗口，防已送达时制造重复消息；未回复计数不无限累积致 silent）。
+                    # _has_send_result 对同 msg_id 去重 → 每消息只清一次；save 幂等落盘。
+                    self.state.clear_unreplied(now)
+                    if not self.state.save():
+                        print("[chiguo_daemon] state_save_failed: 未回复清算未落盘，下轮重试",
+                              file=sys.stderr)
+                        return {
+                            "action": "send_result",
+                            "msg_id": msg_id,
+                            "status": status,
+                            "error": error,
+                            "time": now.strftime("%Y-%m-%d %H:%M"),
+                            "refunded": False,
+                            "duplicate": False,
+                        }
+                    refunded = True
                 result = {
                     "action": "send_result",
                     "msg_id": msg_id,
