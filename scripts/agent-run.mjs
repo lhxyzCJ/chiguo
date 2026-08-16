@@ -400,9 +400,16 @@ period?, to_period?, to_date?, course?, label?, match?}。
   }
   const custom = runnerCommand(mode, sysPrompt)
   const bin = custom ? custom.bin : AGENT_BIN
+  // noSkills: true（显式降权，R5 F-A19-004×F-SEC-04，#311）——schedule 四会话
+  // （extract/verify/recall/replan）为知识边界纯文本契约（C7），输入输出全为文本
+  // （extract 消息→item JSON、verify 原文+item→判定 JSON、recall 系统注入 facts→回答、
+  // replan 计划生成），无任何工具调用场景。noSkills:false 是历史宽松配置：加载
+  // read/bash/edit/write 工具 + 进程 root 运行 + 用户/检索自由文本无 untrusted 标记
+  // 直进会话 prompt → 注入成功 + LLM 工具决策失守 = 命令执行。降权后攻击面归零。
+  // custom（用户自配 CLI agent）不受 noSkills 控制——其 args 由部署者负责（自定义后端）。
   const args = custom ? custom.args
     : ['-p', ...buildBaseAgentArgs({
-        sessionId: SESSIONS[mode] || SESSION_ID, noSkills: false }),
+        sessionId: SESSIONS[mode] || SESSION_ID, noSkills: true }),
       '--mode', 'json', sysPrompt]
   try {
     const { stdout } = await exec(bin, args, { timeout: AGENT_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })

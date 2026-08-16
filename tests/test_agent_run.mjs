@@ -281,6 +281,23 @@ t('runSchedule: verify 独立会话 chiguo-verify + item 注入', async () => {
   assert.ok(last.includes('安排校验员'), 'verify 指令模板')
   assert.ok(last.includes('item：{"kind":"x"}'), 'item 注入')
 })
+// ── R5 安全降权（F-A19-004×F-SEC-04，#311）：schedule 四会话统一 --no-skills ──
+// schedule 四会话（extract/verify/recall/replan）为知识边界纯文本契约（C7），输入输出
+// 全为文本（extract 消息→item JSON、verify 原文+item→判定、recall 注入 facts→回答、
+// replan 计划生成），无任何工具调用场景。带工具（noSkills:false）会让用户/检索自由
+// 文本无 untrusted 标记直接进工具会话 prompt → 注入成功 + LLM 工具决策失守 = 命令执行。
+// 故四会话必须统一降权（--no-skills），与聊天/analysis 会话一致。
+t('runSchedule: 四会话（extract/verify/recall/replan）统一 --no-skills 降权', async () => {
+  const modes = ['extract', 'verify', 'recall', 'replan']
+  for (const mode of modes) {
+    let captured = null
+    const spyExec = async (_bin, args) => { captured = args; return { stdout: '' } }
+    await runSchedule(spyExec, { mode, prompt: 'P', extra: { today: '2026-08-20', week_num: 3, item: '{}', facts: '[]' } })
+    assert.ok(captured.includes('--no-skills'),
+      `${mode} 会话应含 --no-skills（降权防注入→工具调用），实得: ${captured.join(' ')}`)
+    assert.ok(captured.includes('--session-id'), `${mode} 应走独立会话参数`)
+  }
+})
 
 // ── readToml 极简解析（临时 toml 文件）──
 import { writeFileSync, mkdtempSync } from 'node:fs'
