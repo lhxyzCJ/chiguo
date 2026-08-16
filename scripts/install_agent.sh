@@ -365,6 +365,44 @@ if cron_check_commented replan-tick; then
   fi
 fi
 
+# ── 阶段 6d: crontab 注册 alert-cron（幂等,与 tick/replan 条目同款逻辑）──
+# 告警推送 cron（F-A6-3/F-A10-02/#312）：alert-cron.sh 此前存在但从未随安装脚本注册
+# → crontab 无条目，`--alerts-push` 从不运行，告警只落盘不推送。现随 install_agent.sh
+# 自动注册。典型频率 0 */2 * * *（见 alert-cron.sh 头注释；日志 cron-alert.log，与脚本一致）。
+# 与 chiguo-tick/replan-tick 解耦、不受 CHIGUO_DAEMON_LOOP 形态影响（告警推送两种形态都需要）。
+# CURRENT_CRON 必须重读:replan 条目刚在阶段 6b 写入,旧快照会致 append 时覆盖整表。
+CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
+ALERT_CRON="0 */2 * * * ${CHIGUO_REPO//%/\\%}/scripts/alert-cron.sh >> ${CHIGUO_REPO//%/\\%}/logs/cron-alert.log 2>&1"
+if cron_check_commented alert-cron; then
+  if printf '%s\n' "$CURRENT_CRON" | grep -Fqx "$ALERT_CRON"; then
+    say "crontab 已注册 alert-cron"
+  elif cron_has_active alert-cron; then
+    if [ "$DRY" = 1 ]; then
+      PENDING=1
+      echo "  [dry-run] crontab 有旧 alert-cron 条目（路径已变）→ 将替换为: $ALERT_CRON"
+    elif confirm "替换旧 alert-cron 条目为: $ALERT_CRON"; then
+      mkdir -p "$CHIGUO_REPO/logs"
+      if ( printf '%s\n' "$CURRENT_CRON" | cron_filter_active alert-cron || true; echo "$ALERT_CRON" ) | crontab -; then
+        say "crontab 旧 alert-cron 条目已替换（被注释禁用条目保持原样）"
+      else
+        PENDING=1; warn "crontab alert-cron 替换失败（请手工执行: (crontab -l | awk '!/alert-cron/ || /^[[:space:]]*#/'; echo '$ALERT_CRON') | crontab -）"
+      fi
+    fi
+  else
+    if [ "$DRY" = 1 ]; then
+      PENDING=1
+      echo "  [dry-run] 将注册 crontab: $ALERT_CRON"
+    elif confirm "注册 alert-cron crontab: $ALERT_CRON"; then
+      mkdir -p "$CHIGUO_REPO/logs"
+      if ( printf '%s\n' "$CURRENT_CRON"; echo "$ALERT_CRON" ) | crontab -; then
+        say "crontab 已注册 alert-cron"
+      else
+        PENDING=1; warn "crontab alert-cron 注册失败（请手工执行: (crontab -l; echo '$ALERT_CRON') | crontab -）"
+      fi
+    fi
+  fi
+fi
+
 # ── 阶段 6c: systemd chiguo-daemon.service（CHIGUO_DAEMON_LOOP=1 时安装）──
 if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
   SYSTEMD_DIR="${CHIGUO_SYSTEMD_DIR:-/etc/systemd/system}"
