@@ -211,7 +211,8 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
   `runner`（agent/command，默认 agent）、`agent_command`（数组；runner=command 必填，AGENTRUN_AGENT_COMMAND 覆盖）、
   `wechat_bridge_url`（`http://127.0.0.1:18790/send`）
 - **agent 参数**（仅 runner=agent）：`-p` 非交互 + `--provider/--model/--session-id` + `--no-context-files`
-  （隔离仓库开发上下文）+ `--no-skills`（基础 analysis/send 路径禁用技能；安排链路会话不传，保留技能）
+  （隔离仓库开发上下文）+ `--no-skills`（基础 analysis/send 路径与安排链路 extract/verify/recall/replan
+  四会话统一禁用技能 —— R5 降权 #311：安排链路为知识边界纯文本契约，无工具调用场景，降权防注入→工具调用 F-A19-004×F-SEC-04）
   + `--mode json`（NDJSON 事件流）+ `--append-system-prompt` ×3（§二 三段）+ `--thinking`（analysis 用 reply_thinking_level）；
   runner=command 时忽略这些参数，改走 §九 统一契约
 - **输出解析**：NDJSON 取最后一条 `message_end` 的 text 拼接；analysis-mode 提取 `<<ANALYSIS>>{...}<<END>>` 块
