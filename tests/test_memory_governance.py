@@ -198,20 +198,16 @@ def test_autowrite_different_text_written():
 
 def test_autowrite_dedup_window_expiry():
     """[R17] 超过 24h 去重窗口后同文本再次写入应放行（窗口语义）。"""
-    import ops.engine_ops as eo
     bridge = WritingBridge()
     eng = _engine(bridge)
 
     _autowrite(eng, "好久不见的问候复用文本")
     assert len(bridge.add_calls) == 1
+    entries = getattr(eng, "_mem0_autowrite_hashes", {})
+    assert entries, "写入后应记录 hash"
     # 让已记录 hash 的写入时间退到 25h 前 → 应放行再写
-    for k in list(getattr(eo, "_mem0_autowrite_hashes", {})):
-        if k in getattr(eng, "_mem0_autowrite_hashes", {}):
-            h = eng._mem0_autowrite_hashes[k]
-            # 覆盖时间戳为超过窗口
-            eng._mem0_autowrite_hashes[k] = (
-                datetime.now(CST) - timedelta(hours=25)
-            ).isoformat()
+    for h in list(entries):
+        entries[h] = (datetime.now(CST) - timedelta(hours=25)).isoformat()
     _autowrite(eng, "好久不见的问候复用文本")
     assert len(bridge.add_calls) == 2, \
         f"超 24h 窗口后同文本应再写入, got add_calls={len(bridge.add_calls)}"
