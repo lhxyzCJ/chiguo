@@ -607,7 +607,12 @@ class StatePersistence:
 
             try:
                 atomic_write(p, data, mode=0o600, fsync=True, verify=_verify_tmp)
-            except (json.JSONDecodeError, ValueError):
+            except (json.JSONDecodeError, ValueError) as e:
+                # R15 (#334, F-A18-04 M5): tmp 校验失败此前完全静默（连 warn 都无）
+                # ——补明确告警，与下方 OSError 路径（`save failed` warn）对齐可观测性；
+                # 返回值语义不变：跳过本次 save，不替换好状态。
+                print(f"[chiguo_state] save skipped: tmp 校验失败，不替换好状态: {e}",
+                      file=sys.stderr)
                 return False  # 跳过本次 save，不替换好状态
 
         except OSError as e:

@@ -295,8 +295,23 @@ class DecisionCoreMixin(DecisionEngineBase):
                     pass
     
                 # v11 (#75): save 返回 bool，失败输出 state_save_failed 告警
+                # ── R15 (#334, F-A18-04): save 失败 → 阻断 send 输出 ──
+                # 状态变更（msg_id/on_character_message/trigger_history/reminder
+                # 去重/逃生阀冷却）此刻全部未落盘；若仍输出 send，tick.sh 会照常
+                # 发送（[ "$ACTION" = "send" ] || exit 0），而下一 cron tick 基于
+                # 旧状态重新触发 → 重复消息/重复触发。因此 save 失败时转
+                # idle(state_save_failed)：对 tick.sh 而言非 send 输出 → exit 0，
+                # 发送链被阻断、cron 健康检查语义不变；stderr 明确告警保证可观测。
                 if not self.state.save():
-                    print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
+                    print("[chiguo_daemon] state_save_failed: 状态写盘失败——"
+                          "本次记账（msg_id/触发标记/去重标记）未落盘，"
+                          "已阻断 send 输出，下 tick 基于旧状态重试",
+                          file=sys.stderr)
+                    self.state.audit("state_save_failed",
+                                     f"trigger={trigger.type} msg_id={msg_id}")
+                    self._monotonic_at_save = time.monotonic()  # v5
+                    return self._emit_idle("state_save_failed", now, user_state,
+                                           data_warning, save_failed=True)
                 self._monotonic_at_save = time.monotonic()  # v5
     
             decision = {
@@ -490,10 +505,18 @@ class DecisionCoreMixin(DecisionEngineBase):
             plays = self._fetch_play_proof(now)
             return self._apply_play_proof(now, plays)
 
-        def _emit_idle(self, reason: str, now, user_state, data_warning: bool) -> dict:
-            """idle 决策统一出口：概率累积（no_trigger/user_busy）+ 落盘。"""
+        def _emit_idle(self, reason: str, now, user_state, data_warning: bool,
+                       save_failed: bool = False) -> dict:
+            """idle 决策统一出口：概率累积（no_trigger/user_busy）+ 落盘。
+
+            save_failed=True：调用方已确认本次 save 失败（R15 #334 send 阻断
+            路径），跳过 _maybe_consolidate 与出口内 save——避免在「应 send 但
+            save 失败」路径追加更多未落盘变更，也避免重复告警；仅保留
+            _monotonic_at_save 更新。
+            """
             # C1: 空闲静默路径确定性记忆巩固（config 门控默认关闭；失败不阻断主链路）
-            self._maybe_consolidate(now)
+            if not save_failed:
+                self._maybe_consolidate(now)
             if reason in ("no_trigger", "user_busy"):
                 self.state.cooldown.held_count += 1
                 cfg_cooldown = self.config.get("cooldown", {})
@@ -509,8 +532,10 @@ class DecisionCoreMixin(DecisionEngineBase):
                 )
                 self.state.cooldown.accumulated_lambda = new_lam
     
-            # v11 (#75): save 返回 bool，失败输出 state_save_failed 告警
-            if not self.state.save():
+            # v11 (#75): save 返回 bool，失败输出 state_save_failed 告警。
+            # R15 (#334): send 阻断路径已在 evaluate 确认 save 失败（save_failed
+            # =True）→ 不再重复 save/告警；其余 idle 路径行为与现状一致。
+            if not save_failed and not self.state.save():
                 print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
             self._monotonic_at_save = time.monotonic()
     
