@@ -10,6 +10,8 @@
  * 鉴权执行路径（startSendServer 包装器，私有，未导出）经「真实子进程启动 bridge.mjs
  * + 真实 HTTP 请求」集成测试，不改动鉴权实现：子进程用 CI 替身 WeChatBot（@wechatbot/wechatbot，
  * node_modules，gitignored）满足 main() 走到 startSendServer 并保持存活。
+ * B1（#313）：替身写入只落在 node_modules 内的真实副本（先物化 vendor 副本，杜绝软链写穿
+ * vendor 源），末尾对 vendor 完整性做回归断言。
  *
  * 用法：从仓库根运行 `node tests/test_bridge_auth.mjs`（退出码 0=全过，1=有失败）。
  * 隔离：临时 storage/家目录；每个带 token 场景独立子进程 + 独立端口；结束即 kill。
@@ -17,8 +19,8 @@
 import assert from 'node:assert'
 import { createServer, request as httpRequest } from 'node:http'
 import { spawn } from 'node:child_process'
-import { writeFileSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { writeFileSync, mkdtempSync, rmSync, mkdirSync, realpathSync, cpSync, readFileSync, existsSync } from 'node:fs'
+import { dirname, join, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))            // <repo>/tests
@@ -26,6 +28,7 @@ const REPO = join(HERE, '..')                                  // 仓库根
 const SDK_DIR = join(REPO, 'wechat-bridge', 'node_modules', '@wechatbot', 'wechatbot')
 const SDK_PKG = join(SDK_DIR, 'package.json')
 const SDK_ENTRY = join(SDK_DIR, 'index.mjs')
+const VENDOR_DIR = join(REPO, 'wechat-bridge', 'vendor', 'wechatbot')  // git 跟踪的 SDK 源
 const OWNER = 'owner@im.wechat'
 const TEST_TOKEN = 'test-bridge-token-0123456789abcdef'
 
@@ -34,7 +37,25 @@ const TEST_TOKEN = 'test-bridge-token-0123456789abcdef'
 // 无条件覆盖写入完整 stub（而非检测文件存在即跳过）：ci-test.sh 顶部会用最小替身
 // （class WeChatBot { constructor() {} } 无任何实例方法）自举写盘，若此处因文件存在而短路，
 // 子进程 spawn 真实 bridge.mjs 时 bot.login()/bot.onMessage() 会抛 "not a function" 全挂。
+// B1（#313）：node_modules/@wechatbot/wechatbot 若被 `npm install file:` 装成指向 vendor 的软链，
+// 直接写会穿到 git 跟踪的 vendor 源（覆写 package.json + 新增 index.mjs）。先物化为真实副本
+// （不含 vendor 自身 node_modules），保证后续写入只落在 gitignored 的 node_modules；vendor 保持原样。
+// 幂等：已是独立真实目录（非软链解析到 vendor）则原样复用。
+function ensureRealSdkDir() {
+  let real = null
+  try { real = realpathSync(SDK_DIR) } catch { /* 尚不存在（干净 checkout）→ 由下方物化创建 */ }
+  const vendorReal = realpathSync(VENDOR_DIR)
+  if (real !== null && real !== vendorReal) return // 已是 node_modules 内真实副本
+  // SDK_DIR 不存在、或为指向 vendor 的软链（realpath 解析到 vendorReal）→ 重建成 vendor 副本
+  rmSync(SDK_DIR, { recursive: true, force: true })
+  cpSync(VENDOR_DIR, SDK_DIR, {
+    recursive: true,
+    filter: (p) => basename(p) !== 'node_modules',
+  })
+}
+
 function ensureStub() {
+  ensureRealSdkDir()
   mkdirSync(SDK_DIR, { recursive: true })
   writeFileSync(SDK_PKG,
     '{"name":"@wechatbot/wechatbot","version":"0.0.0-ci-auth-stub","type":"module","exports":{".":"./index.mjs"}}\n')
@@ -327,6 +348,21 @@ t(':774 无 WECHAT_BRIDGE_TOKEN → 子进程 FATAL exit 1', async () => {
 
 // 引导 CI 替身 stub（无条件覆盖为完整方法集）→ 动态 import bridge.mjs（取 isLocalHost/isLocalOrigin）
 ensureStub()
+// B1（#313）回归断言：ensureStub 写入必须只落在 node_modules（gitignored），不得穿透到
+// git 跟踪的 vendor 源——vendor package.json 保持真实版本（非 stub 版本），vendor 无 index.mjs。
+{
+  const vendorPkg = existsSync(join(VENDOR_DIR, 'package.json'))
+    ? JSON.parse(readFileSync(join(VENDOR_DIR, 'package.json'), 'utf8'))
+    : null
+  assert.ok(
+    vendorPkg !== null && vendorPkg.version !== '0.0.0-ci-auth-stub',
+    `[B1] vendor 被穿透污染：${join(VENDOR_DIR, 'package.json')} version=${vendorPkg?.version}`,
+  )
+  assert.ok(
+    !existsSync(join(VENDOR_DIR, 'index.mjs')),
+    `[B1] vendor 被穿透污染：${join(VENDOR_DIR, 'index.mjs')} 不应存在`,
+  )
+}
 const authFns = await import('../wechat-bridge/bridge.mjs')
 isLocalHost = authFns.isLocalHost
 isLocalOrigin = authFns.isLocalOrigin
