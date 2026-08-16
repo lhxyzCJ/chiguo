@@ -638,9 +638,16 @@ def _memory_should_trigger(mem: dict, now: datetime, trg_cfg: dict | None = None
                 t = datetime.fromisoformat(trigger_at)
                 if t.tzinfo is None:
                     t = t.replace(tzinfo=CST)
-                # #79: 窗口收紧为触发时刻之后 10 分钟内（不允许提前触发）
+                # #79: 不允许提前触发（now < trigger_at 直接排除）。
+                # F-A5-01（#314 R9）: 窗口由「触发后 10min」放宽到 30min（1800s）。
+                # 动机：发送侧 crontab 每 15 分钟 tick 一次（scripts/chiguo-tick.sh
+                # / chiguo_daemon --loop 同一节拍）——原 10min 窗口 < 15min 节拍，
+                # 存在整个窗口落在两次 tick 之间的空窗（审计：窗口可能被整个跳过）。
+                # 窗口 ≥ 2×cron 间隔（30min ≥ 2×15min）→ 任意 15min tick 节拍下
+                # 窗口内至少命中一次。仍由 last_triggered_at 在首次命中触发后去重，
+                # 不引入每 tick 重复触发。
                 delta = (now - t).total_seconds()
-                return 0 <= delta < 600
+                return 0 <= delta < 1800
             except (ValueError, TypeError):
                 return False
     elif mtype == "habit":
