@@ -313,3 +313,54 @@ def test_dispatch_datetime_serialization_fallback():
         assert parsed["action"] == "send"
         assert parsed["context"]["at"] == "2026-06-16T10:00:00+08:00", \
             "datetime → json_default 类型化序列化为 isoformat 字符串"
+
+
+# ═══════════════════════════════════════════════════════
+# RF5（L1-2）：序列化失败计数/事件进 audit 持久化
+# ═══════════════════════════════════════════════════════
+
+def test_log_serialization_failure_audits():
+    """RF5（L1-2）: 决策序列化失败时写 chiguo_state_audit.jsonl 事件
+    decision_write_serialization_failed（含 msg_id/错误摘要）——进程重启不归零、
+    cron 形态可检索（而非仅进程内属性 + stderr）。"""
+    import tomllib
+    from chiguo_state import ChiguoState
+    from decision.core import DecisionCoreMixin
+
+    base = setup_base_dir("chiguo_test_log_dt_")
+    try:
+        with open(base / "chiguo_proactive.toml", "rb") as f:
+            cfg = tomllib.load(f)
+        cfg["_base_dir"] = str(base)
+        state = ChiguoState(cfg)
+        log_path = base / "chiguo_decisions.jsonl"
+        audit_path = base / "chiguo_state_audit.jsonl"
+
+        class _Loggable:
+            def __init__(self, st, lp):
+                self.state = st
+                self.log_path = str(lp)
+            @staticmethod
+            def _make_msg_id():
+                return "test-msg"
+
+        fake = _Loggable(state, log_path)
+        decision = {
+            "action": "send", "version": "1.21", "msg_id": "test-msg",
+            "trigger": "morning", "intensity": "mid",
+            # 含非 JSON 时间值 → 触发序列化失败兜底
+            "context": {"when": datetime(2026, 6, 16, 10, 0, tzinfo=CST)},
+            "state": {},
+        }
+        DecisionCoreMixin._log(fake, decision)
+
+        assert audit_path.exists(), "audit jsonl 应被创建"
+        lines = [json.loads(l) for l in audit_path.read_text().splitlines()]
+        events = [l["event"] for l in lines]
+        assert "decision_write_serialization_failed" in events, events
+        detail = next(
+            l["detail"] for l in lines
+            if l["event"] == "decision_write_serialization_failed")
+        assert "msg_id=test-msg" in detail, detail
+    finally:
+        shutil.rmtree(base, ignore_errors=True)

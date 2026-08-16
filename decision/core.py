@@ -75,13 +75,17 @@ class DecisionCoreMixin(DecisionEngineBase):
                     f.write(json.dumps(decision, ensure_ascii=False) + "\n")
             except (TypeError, ValueError) as e:
                 # F-A22-001 加固：决策含非 JSON 类型（如 set）时不再裸吞。
-                # 计数 + 明确 stderr，并尝试类型化兜底写出（RF4），避免决策数据丢失。
+                # 计数 + 明确 stderr + audit 事件（RF5 持久化，防进程重启归零/
+                # cron stderr 难检索），并尝试类型化兜底写出（RF4），避免决策数据丢失。
                 self._decision_write_failures = getattr(
                     self, "_decision_write_failures", 0) + 1
                 print(
                     f"[error] 决策 JSON 序列化失败（累计 {self._decision_write_failures} 次）"
                     f" {self.log_path} msg_id={decision.get('msg_id')}: {e}",
                     file=sys.stderr)
+                self.state.audit(
+                    "decision_write_serialization_failed",
+                    f"msg_id={decision.get('msg_id')}: {e}")
                 try:
                     with open(self.log_path, "a") as f:
                         f.write(json.dumps(decision, ensure_ascii=False,
