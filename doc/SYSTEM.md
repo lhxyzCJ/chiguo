@@ -1831,7 +1831,7 @@ retention_months = 12        # 归档保留月数（0 = 永不删除）
 archive_dir = "archive"      # 归档目录（相对路径锚定项目根，绝对路径原样保留）
 ```
 
-**路径锚定**：相对 `archive_dir`（如 `"archive"`）一律锚定 `chiguo_rotation.py` 所在目录（项目根），绝对路径原样保留——从任意 cwd 运行 `force_rotate`/`rotate_if_needed`/`--rotate` 都不会把日志移出项目。
+**路径锚定**：相对 `archive_dir`（如 `"archive"`）一律锚定 `chiguo_rotation.py` 所在目录（项目根），绝对路径原样保留——从任意 cwd 运行 `force_rotate`/`rotate_if_needed`/`--rotate` 都不会把日志移出项目。轮转事件审计文件 `chiguo_events.jsonl` 同样锚定模块目录（生产 = 项目根 = CLI `base_dir`，单一写锚点）；`conftest.py` 的 `_isolate_rotation_events` fixture 通过 `chiguo_rotation._EVENTS_LOG_PATH` 注入临时隔离路径，保证测试永不污染真实事件文件（CONTRACT-016，Issue #333）。
 
 轮转在每次 daemon 进程启动时自动触发（`DecisionEngine.__init__` 调 `chiguo_rotation.rotate_if_needed`），每次启动检查一次月份变化即轮转；`--rotate` 可手动强制。
 
