@@ -1070,6 +1070,24 @@ class ChiguoState:
         self._reapply_holiday_parser()
         # ③ cooldown 静默窗口（起始/结束）——conf 达标用学习窗口,否则回退 config 默认
         self._sync_quiet_window()
+        # ④ 学期日期同步:config 的 semester_start/end 可能变化 → 更新 state 复制品
+        #    (availability/on_break 判定以 load_sources 的新值为主,此处供 state 层属性一致)
+        sched = new_config.get("schedule", {})
+        try:
+            self.semester_start = date_type.fromisoformat(sched.get("semester_start", ""))
+        except (ValueError, TypeError):
+            pass
+        self.semester_end = None
+        se_str = sched.get("semester_end", "")
+        if se_str:
+            try:
+                self.semester_end = date_type.fromisoformat(se_str)
+            except (ValueError, TypeError):
+                pass
+        # ⑤ 日键缓存失效:_rc_cache/_scale_cache 与 config 派生数据同根,显式清空
+        #    (config 替换不体现于源文件 mtime → 指纹机制覆盖不到,清理钩子兜底,F-A20-07)
+        self._rc_cache = {}
+        self._scale_cache = {}
 
     def _reapply_personality_config(self):
         """按新 config [personality] 重建人格初始值与初始基线（回归目标）。
@@ -1456,14 +1474,32 @@ class ChiguoState:
 
     # ── 课表查询 ──────────────────────────────────────────
 
+    def _cache_fingerprint(self) -> str:
+        """日键缓存失效指纹(§3.3):读路径源文件 mtime 摘要。
+        _rc_cache/_scale_cache **同根共用**——任一源文件变更(schedule_overrides /
+        schedule_cache / break_state / holidays / schedule_plan)→ 指纹变 →
+        当日缓存整体重建,不再"同日仍旧数据"(F-A20-07)。
+        config(toml) 变更不在此列:替换 config 不落盘,由 reload_config 显式清缓存兜底。"""
+        parts = []
+        for name in ("schedule_cache.json", "schedule_overrides.json", "break_state.json",
+                     "holidays.json", "schedule_plan.json"):
+            p = self._anchored(name)
+            try:
+                m = p.stat().st_mtime_ns if p.exists() else 0
+            except OSError:
+                m = 0
+            parts.append(f"{name}:{m}")
+        return "|".join(parts)
+
     def _resolved_for(self, now):
-        """当日 resolved_classes 共享缓存(消灭 availability/schedule_status 双查询路径,§5.1)"""
+        """当日 resolved_classes 共享缓存(消灭 availability/schedule_status 双查询路径,§5.1)
+        失效键 = 日期 + 源文件 mtime 指纹:同日改 overrides/课表缓存/寒暑假/节假日 → 自动重建。"""
         from schedule.sources import load_sources
         from schedule.day_plan import resolve_classes
-        key = now.date().isoformat()
-        if self._rc_cache.get("date") != key:
+        key = f"{now.date().isoformat()}|{self._cache_fingerprint()}"
+        if self._rc_cache.get("key") != key:
             src = load_sources(str(self._anchored(".")), self.config)
-            self._rc_cache = {"date": key, "sources": src,
+            self._rc_cache = {"key": key, "sources": src,
                               "classes": resolve_classes(now.date(), src)}
         return self._rc_cache["sources"], self._rc_cache["classes"]
 
@@ -1580,10 +1616,12 @@ class ChiguoState:
 
     def trigger_scale_now(self, now) -> dict:
         """计划文件修饰参数(§5.2):ref → 日期解析,当日命中取 trigger_scale 映射。
-        每 tick 按日期缓存;plan 缺失/损坏 → {} 恒等;悬挂 ref → 跳过 + stderr 一次性告警。
+        失效键 = 日期 + 源文件 mtime 指纹(与 _rc_cache 同根,§3.3):同日改 plan/override
+        → 自动重建;plan 缺失/损坏 → {} 恒等;悬挂 ref → 跳过 + stderr 一次性告警。
         ref 资格(裁决 A/N5):fact:<id> ⟺ kind == "exam_week";holiday:<name> → range_of。"""
         today = now.date() if isinstance(now, datetime) else now
-        if getattr(self, "_scale_cache", None) and self._scale_cache.get("date") == today.isoformat():
+        key = f"{today.isoformat()}|{self._cache_fingerprint()}"
+        if getattr(self, "_scale_cache", None) and self._scale_cache.get("key") == key:
             return self._scale_cache["scale"]
         scale: dict = {}
         plan = self.plan_store.load()
@@ -1622,7 +1660,7 @@ class ChiguoState:
                     print(f"[schedule_plan] dangling ref: {ref}", file=sys.stderr)
                     continue
                 scale.update(ts)   # 同日多 modifier:文件序后写覆盖(计划决策)
-        self._scale_cache = {"date": today.isoformat(), "scale": scale}
+        self._scale_cache = {"key": key, "scale": scale}
         return scale
 
     # ── 时间推进（半衰期驱动） ──────────────────────────
