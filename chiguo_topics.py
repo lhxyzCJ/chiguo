@@ -9,11 +9,38 @@
 # ============================================================
 
 import random
+import threading
 from datetime import datetime
 
 from chiguo_math import weighted_trigger_choice, in_quiet_window, jaccard_3gram
 from chiguo_state import emotion_tag_snapshot
 from solar_terms import SolarTerms
+
+# F-RT-005 (#309): netease 话题拉取在 evaluate state_lock 锁内执行，缓存未命中
+# 首触发走 HTTP（每请求 10s×2 源 + refresh_health 探针，最坏 ~30s），会无限阻塞锁
+# → 并发进程 5s 拿不到锁降级无锁 → lost update 前置。给 netease 源加线程总预算，
+# 超时返回 None 跳过音乐话题（不阻塞锁 / 不影响其他 7 源候选生成）。
+_NETEASE_TOPIC_TIMEOUT_S = 3.0
+
+
+def _call_with_timeout(fn, timeout):
+    """在守护线程执行 fn；超时返回 None；异常重抛；正常返回 fn() 结果。"""
+    box = {}
+
+    def runner():
+        try:
+            box["v"] = fn()
+        except Exception as e:  # noqa: BLE001 — 跨线程重抛，保持调用方异常语义
+            box["e"] = e
+
+    t = threading.Thread(target=runner, daemon=True, name="netease-topic-timeout")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return None
+    if "e" in box:
+        raise box["e"]
+    return box.get("v")
 
 
 # ── 话题源注册表（Q4）──────────────────────────────────────
@@ -496,7 +523,11 @@ class TopicPicker:
         except Exception:
             return None
         try:
-            return self.netease_service.peek_music_topic(now, in_class=in_class,
-                                                         in_quiet_window=in_quiet)
+            # F-RT-005 (#309): peek_music_topic 含网络拉取，加线程总预算
+            # _NETEASE_TOPIC_TIMEOUT_S，超时返回 None 跳过音乐话题（不阻塞锁）。
+            return _call_with_timeout(
+                lambda: self.netease_service.peek_music_topic(
+                    now, in_class=in_class, in_quiet_window=in_quiet),
+                _NETEASE_TOPIC_TIMEOUT_S)
         except Exception:
             return None  # 策略层异常 → 静默跳过(不阻塞话题选择)
