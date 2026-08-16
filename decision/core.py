@@ -22,6 +22,13 @@ from decision_schema import with_contract, validate as validate_decision  # Q16 
 
 CST = timezone(timedelta(hours=8))
 
+# ── F-A16-02 (#335): 重启域情绪推进保守封顶上限（小时）──
+# 系统重启后 time.monotonic() 归零 < 持久化旧 mono_anchor（或异机迁移时钟域切换）
+# 时，持久化单调锚点的真实流逝不可得。若不封顶走壁钟，NTP 前跳会把壁钟差全量推进
+# 情绪（Bug 机制）；故该域把 elapsed 封顶到本常量（30min），防单次 evaluate 前跳冲击，
+# 同时 save 时锚点对刷新、后继轮次自愈。CONTRACT-013 跨重启依旧有效。
+REBOOT_ELAPSED_CAP_H = 0.5
+
 
 class DecisionCoreMixin(DecisionEngineBase):
         @staticmethod
@@ -397,8 +404,12 @@ class DecisionCoreMixin(DecisionEngineBase):
             # ── v13 (#206): 持久化单调锚点封顶 NTP 前跳（cron 新进程无 _monotonic_at_save）──
             # save() 每次写盘锚点对（chiguo_state.monotonic_anchor）。monotonic 显示只过了
             # elapsed_real、而壁钟前跳很多 → 用真实流逝封顶。wall_anchor 非法 ISO → 视为
-            # 无锚点不加封顶；time.monotonic() < mono_anchor（系统重启单调钟归零）→ 不加
-            # 封顶走壁钟。min() 只在 elapsed_real 更小时收敛，正常时无感。
+            # 无锚点不加封顶。min() 只在 elapsed_real 更小时收敛，正常时无感。
+            # ── F-A16-02 (#335): time.monotonic() < mono_anchor（系统重启单调钟归零 /
+            # 异机迁移时钟域切换）→ 不再"不加封顶走壁钟"（那样 NTP 前跳防护失效、壁钟差
+            # 全量推进情绪），改为保守封顶到 REBOOT_ELAPSED_CAP_H（30min）防前跳冲击；
+            # 同时锚点倒退由 load 倒退检测（chiguo_state, "state_anchor_regression"）
+            # 重建基准自愈。正常路径（monotonic >= 锚点）行为零变化。──
             mono_anchor, wall_anchor = self.state.monotonic_anchor()
             if mono_anchor is not None and wall_anchor is not None:
                 try:
@@ -409,6 +420,17 @@ class DecisionCoreMixin(DecisionEngineBase):
                     if time.monotonic() >= mono_anchor:
                         elapsed_real = (time.monotonic() - mono_anchor) / 3600
                         elapsed = min(elapsed, elapsed_real)
+                    elif elapsed > REBOOT_ELAPSED_CAP_H:
+                        # 时钟域切换（重启/异机）：真实单调流逝已不可归约，保守封顶。
+                        msg = (f"monotonic reset / clock-domain switch: "
+                               f"mono_anchor={mono_anchor:.1f} > current={time.monotonic():.1f}, "
+                               f"capping elapsed to {REBOOT_ELAPSED_CAP_H}h")
+                        print(f"[chiguo_daemon] {msg}", file=sys.stderr)
+                        try:
+                            self.state._audit("monotonic_reset_cap", msg)
+                        except Exception:
+                            pass
+                        elapsed = min(elapsed, REBOOT_ELAPSED_CAP_H)
     
             if self._monotonic_at_save > 0:
                 elapsed_mono = (time.monotonic() - self._monotonic_at_save) / 3600
