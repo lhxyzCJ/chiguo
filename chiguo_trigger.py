@@ -49,7 +49,8 @@ def backoff_level(state: ChiguoState, now: datetime) -> int:
     A5 未回复退场状态机（三态，不新增持久化字段——用现有 messages_without_reply 推导）：
       0 = normal      （< backoff_start 条未回复：正常竞争）
       1 = backing_off （backoff_start ≤ n < backoff_silent：情绪类禁发、仪式类照发）
-      2 = silent      （n ≥ backoff_silent：全禁发；escape_valve longing 破防豁免——防死锁语义）
+      2 = silent      （n ≥ backoff_silent：全禁发；escape_valve longing 破防豁免——防死锁语义；
+                        D4 #349：reminder 一次性记忆豁免——用户显式托付准时优先，类比 escape 豁免族）
     参数：[cooldown].backoff_start=3 / backoff_silent=5。
     与 current_lambda() 的 0.7^n 退避（λ 降频）是两层独立机制：λ 降频 + 硬性禁发层，不冲突。
     now 保留作签名（未来可用 last_user_message_at 加时间窗扩展），当前只用计数推导。
@@ -64,6 +65,35 @@ def backoff_level(state: ChiguoState, now: datetime) -> int:
     if n >= start:
         return 1
     return 0
+
+
+def _due_reminder_trigger(state: ChiguoState, now: datetime, trg_cfg: dict) -> dict | None:
+    """D4 (#349)：收集并随机选一个「窗口内到触发」的 reminder 一次性记忆候选。
+
+    「提醒准时优先」用户决策（R9 F-A5-01）：reminder 是显式托付的一次性记忆，
+    必须准点发出。窗口/去重判定与主记忆循环共用 `_memory_should_trigger`（单一事实源）——
+    不重复造判定，reminder 分支不设 must_send 标记（见 R9），门禁层经本函数在
+    silent 态提前发现 reminder 并豁免（类似 escape_valve 在退场首部豁免）。
+    多个 reminder 同时到点时按相等权重随机选一（weight 仅参与排序，实际都=1）。
+    返回候选 dict（含 trigger），无到点 reminder 时返回 None。
+    """
+    cands = []
+    for mem in state.memories:
+        if not isinstance(mem, dict):
+            continue
+        if mem.get("type") == "reminder" \
+                and _memory_should_trigger(mem, now, trg_cfg):
+            cands.append({
+                "trigger": Trigger(type=TriggerType.MEMORY, intensity="soft",
+                                   data={"memory": mem}),
+                "weight": 1.0,
+            })
+    if not cands:
+        return None
+    chosen = weighted_trigger_choice(cands)
+    return chosen if chosen is not None else None
+
+
 def evaluate_triggers(state: ChiguoState, now: datetime,
                       trigger_scale: dict | None = None) -> Trigger | None:
     """
@@ -81,18 +111,24 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     if state.longing_break_eligible(now):
         return Trigger(TriggerType.LONGING, "high", data={"escape_valve": True})
 
-    # ── A5: 未回复退场状态机（硬性禁发层，escape_valve 已在上面 return → 天然豁免）──
-    # 0=normal 正常竞争；1=backing_off 情绪类禁发、仪式类照发；2=silent 全禁发。
-    # 与 current_lambda 的 0.7^n 退避（λ 降频）是两层独立机制，不冲突。
-    backoff = backoff_level(state, now)
-    if backoff >= 2:
-        return None
-
-    weighted_candidates: list[dict] = []
-
     # Q10 (#276): 触发离散概率/魔法权重配置化——统一在函数顶部读一次 [trigger] 节，
     # 默认值 = 改动前的硬编码现值 → 缺省配置行为不变。trg_cfg 供本函数各候选块复用。
     trg_cfg = state.config.get("trigger", {})
+
+    # ── A5: 未回复退场状态机（硬性禁发层，escape_valve 已在上面 return → 天然豁免）──
+    # 0=normal 正常竞争；1=backing_off 情绪类禁发、仪式类照发；2=silent 全禁发。
+    # D4 (#349)：silent 态豁免 reminder——「提醒准时优先」用户决策（R9 F-A5-01）承诺
+    # 门禁层也成立（review-batchB M1 影响面 b）。只豁免 reminder（显式托付的一次性记忆，
+    # 类比 escape_valve 豁免族），silent 对情绪/仪式等其他类型的禁发语义保持不变。
+    # 与 current_lambda 的 0.7^n 退避（λ 降频）是两层独立机制，不冲突。
+    backoff = backoff_level(state, now)
+    if backoff >= 2:
+        reminder = _due_reminder_trigger(state, now, trg_cfg)
+        if reminder is not None:
+            return reminder["trigger"]
+        return None
+
+    weighted_candidates: list[dict] = []
 
     # 仪式触发权重缩放（默认为1.0，调低可减少仪式触发对情绪触发的压制）
     ritual_scale = cfg_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0)
