@@ -140,3 +140,22 @@ def test_special_source_switch():
         assert c.get("special", 0) > 0, f"anniversary 当天应触发 special, got {c}"
         assert c.get("special", 0) < 100, f"×0.5 后不得全中, got {c}"
     print("  OK test_special_source_switch")
+
+
+def test_scale_zero_total_never_fires():
+    """F-A5-06 (#315 R13)：trigger_scale 全 0（意图全禁，default 兜底）→ 候选总权重
+    total<=0 → 不发出任何触发。修复前 weighted_trigger_choice 对 total<=0 走 rng.choice
+    均匀随机兜底 → 已禁用的 reminder 仍 200/200 发出（'0 权重=禁用'意图静默失效）。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = make_state(td, {"schedule": {}}, now)
+        # 中低情绪（孤独 30/焦虑 40/energy 40）→ 情绪类候选被截断；唯一候选 = reminder memory
+        s.memories = [{"type": "reminder", "trigger_at": "2026-06-15T13:55", "content": "喝水"}]
+        random.seed(42)
+        fired = 0
+        for _ in range(200):
+            t = evaluate_triggers(s, now, trigger_scale={"default": 0.0})
+            if t is not None:
+                fired += 1
+        assert fired == 0, f"scale 全 0（total<=0）不得发出任何触发, got {fired}/200"
+    print("  OK test_scale_zero_total_never_fires")
