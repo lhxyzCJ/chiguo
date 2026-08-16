@@ -93,7 +93,22 @@ date +%s > "$ACTIVITY_FILE" 2>/dev/null || true
 # node agent-run.mjs --send-mode。U2 (#227): 无 composer 兜底——生成失败 sleep
 # retry_delay_seconds(默认5) 整链重试一次，仍失败 → record_health fail + exit 1；
 # 状态为 down（暂停）时失败路径 exit 0 静默跳过不发。
+#
+# R10 (F-A17-004) 三层超时对齐原则：
+#   - 本 curl 对 /agent/prompt 的 `--max-time 125` 是本链**外层时钟**；
+#   - bridge 侧（bridge.mjs handleAgentPrompt）对 send 侧已对齐总预算
+#     SEND_PROMPT_TOTAL_MS(默认 110s) —— 排队(queue) + restart(≤3s) + ensureStarted
+#     + prompt(agent-rpc 120s) 全部计入 budget，且排队超 SEND_PROMPT_QUEUE_WAIT_MS
+#     (默认 30s) → 快速判败 `queue_busy`（被取消的 turn 不执行，不留孤儿 LLM）。
+#   - 因此 RPC 侧**要么在 110s ≤ 125s 内给确定结果，要么快速判败**——本 curl 不会先超时
+#     触发 `--max-time 125`，从而不出现"RPC 仍在执行却已回退 spawn"的双 LLM 并行窗口。
+#   - 改 bridge 侧预算/本 curl 超时时须保持  bridgeTotal ≤ 125s（留 curl 网络余量）。
+#   - 回退封顶：单 tick 内 RPC + spawn 的**生成尝试**合计 ≤ MAX_GEN_ATTEMPTS（下方有界循环），
+#     对齐 R7 的 fail_streak 有界语义，防止极端故障下整链无限重试拖长单 tick。
 KEEP_TICK_RETRY_S="$(grep -oP '(?<=retry_delay_seconds = )\d+' "$REPO/chiguo_proactive.toml" | head -1 || echo 5)"
+# 生成尝试封顶（RPC 一次 + spawn 一次 视为一轮「整链一次」）。当前=重试一次，共 2 轮。
+# 每轮内 RPC 失败 1 次 + spawn 失败 1 次；合计生成尝试 ≤ 2×2=4，后续全部由 record_health 走 fail。
+MAX_GEN_ATTEMPTS=2
 KEEP_TICK_HEALTH="$REPO/agent_health.json"
 # 读 agent_health 当前态：down → 本次失败路径 exit 0（暂停；cron 15min 天然节奏，恢复靠 probe 成功）
 DOWN_BEFORE=0
@@ -128,7 +143,15 @@ except: print("")' 2>/dev/null || true)"
     fi
   fi
   if [ -z "$RES" ]; then
-    echo "[chiguo-tick] RPC 未产出,回退 spawn agent-run: $(printf '%s' "${RPC_RES:-}" | head -c 200)" >&2
+    # R10 分流：queue_busy = bridge 在预算内快速判败（排队超预算），是确定失败 → spawn 立即接管；
+    # 其他 RPC 失败/超时/空回复同样回退 spawn。两者都不留双 LLM：bridge 已保证不返回后才继续跑。
+    RPC_ERR="$(printf '%s' "${RPC_RES:-}" | "$PY" -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    print(str(d.get("error") or "")[:160])
+except: print("")' 2>/dev/null || true)"
+    [ -n "$RPC_ERR" ] || RPC_ERR="${RPC_RES:-（无 RPC 响应）}"
+    echo "[chiguo-tick] RPC 未产出,回退 spawn agent-run: $RPC_ERR" >&2
     RES="$(CHIGUO_REPO="$REPO" AGENTRUN_SESSION="$SEND_SESSION" AGENTRUN_ROTATE_SESSION=1 node "$REPO/scripts/agent-run.mjs" --prompt "$OUT" --send-mode 2>/dev/null || true)"
   fi
   TEXT="$(printf '%s' "$RES" | "$PY" -c 'import json,sys
@@ -136,14 +159,19 @@ try: print(json.load(sys.stdin).get("text",""))
 except: print("")' 2>/dev/null || true)"
 }
 
-try_generate
-if [ -z "$TEXT" ]; then
-  # 抖动缓冲：sleep retry_delay_seconds(默认5) 后整链重试一次（重试成功不计 fail）
-  if [ -n "$KEEP_TICK_RETRY_S" ] && [ "$KEEP_TICK_RETRY_S" -gt 0 ] 2>/dev/null; then
+# ── 生成链有界重试（R10 封顶）：最多 MAX_GEN_ATTEMPTS 轮整链（每轮 RPC→spawn 回退）。
+# 核心语义与原先一致：首轮直接跑；空则 sleep 抖动缓冲后重试一次；仍空 → 上报 fail 退出。
+# 差别是把"恰两次"写成显式有界循环 + 尝试计数，杜绝未来加码导致的重试失控/单 tick 拖长。
+GEN_ATTEMPT=0
+while [ "$GEN_ATTEMPT" -lt "$MAX_GEN_ATTEMPTS" ]; do
+  GEN_ATTEMPT=$((GEN_ATTEMPT + 1))
+  # 抖动缓冲：非首轮才 sleep retry_delay_seconds(默认5)（重试成功不计 fail_streak）
+  if [ "$GEN_ATTEMPT" -gt 1 ] && [ -n "$KEEP_TICK_RETRY_S" ] && [ "$KEEP_TICK_RETRY_S" -gt 0 ] 2>/dev/null; then
     sleep "$KEEP_TICK_RETRY_S"
   fi
   try_generate
-fi
+  [ -n "$TEXT" ] && break
+done
 if [ -z "$TEXT" ]; then
   echo "[chiguo-tick] agent-run 未生成消息: $(printf '%s' "$RES" | head -c 300)" >&2
   FAIL_REASON="$(printf '%s' "$RES" | "$PY" -c 'import json,sys
