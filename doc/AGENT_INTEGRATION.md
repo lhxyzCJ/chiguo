@@ -218,7 +218,11 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
   （隔离仓库开发上下文）+ `--no-skills`（基础 analysis/send 路径与安排链路 extract/verify/recall/replan
   四会话统一禁用技能 —— R5 降权 #311：安排链路为知识边界纯文本契约，无工具调用场景，降权防注入→工具调用 F-A19-004×F-SEC-04）
   + `--mode json`（NDJSON 事件流）+ `--append-system-prompt` ×3（§二 三段）+ `--thinking`（analysis 用 reply_thinking_level）；
-  runner=command 时忽略这些参数，改走 §九 统一契约
+  runner=command 时忽略 `--no-skills` 等 agent 参数，改走 §九 统一契约
+- **降权边界（RF7/L5-1）**：`--no-skills` 只消除「注入→工具执行」面（禁 read/bash/edit/write 工具），
+  **不等于攻击面归零**——recall 检索事实与 bridge 回复侧 attention 块的 schedule 自由文本仍作为
+  untrusted 参考数据注入 agent prompt（回见 §六与 §九），内容污染面仍在（UNTRUSTED 标记 + 闭合定界，
+  纵深缓解而非安全边界）
 - **输出解析**：NDJSON 取最后一条 `message_end` 的 text 拼接；analysis-mode 提取 `<<ANALYSIS>>{...}<<END>>` 块
   （平衡括号解析，嵌套 JSON 不被首 `}` 截断）
 - **失败语义**：`{"ok":false,"error":"..."}`；非零退出但 stdout 含完整回复 → salvage 不丢回复
@@ -411,6 +415,13 @@ agent_command = ["node", "/path/to/agent.mjs"]  # 必填：可执行命令 + 固
 
 **限制与运维**
 
+- **降权边界（RF7/L5-2，部署者责任）**：custom 分支（`runner=command`）**.mjs 层不再注入
+  `--no-skills` 等 agent 参数**（§四），由 agent_run 直接按 §九 统一契约把完整 prompt 传给
+  `<agent_command>`。若该 CLI agent 自带工具（read/bash/edit 等），R5 的 `--no-skills` 降权
+  **完全不生效**——此时 schedule/检索/attention 的 untrusted 提示无法阻止命令执行。
+  **部署者责任**：自配 CLI agent 时必须自行禁用/规避其工具调用，或确保输入侧对
+  `[UNTRUSTED DATA]` 块做同样净化；UNTRUSTED 标记视为提示级
+  缓解（内容污染面仍在），不构成安全边界。降权语义 = 禁工具，不替代内容净化。
 - bridge 的 **RPC 常驻模式仅 `runner=agent` 可用**（`WECHAT_BRIDGE_AGENT_RPC=1`）；command 模式下
   bridge askAgent 走进程内 `TurnQueue` 串行调用 agent-run.mjs（与 agent 路径一致）
 - `chiguo_envcheck.py` 的 `check_agent` 支持 `runner`/`agent_command` 参数：runner=command 时检查
