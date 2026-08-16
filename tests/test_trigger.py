@@ -411,8 +411,9 @@ def test_a3_schedule_multiplier_tiers():
 
 
 def test_a3_in_class_suppresses_emotion_only():
-    """A3 黑盒：上课时情绪类权重 ×0.3 压缩 → 仪式类 memory 反超（仪式类豁免）；
-    空闲同配置 → activation ≥ must_send → 情绪类必发压制 memory"""
+    """A3 黑盒：上课时情绪类权重 ×0.3 压缩 → 仪式类 memory 反超（仪式类豁免）。
+    F-A5-01（#314 R9）：reminder 视为用户显式托付、准时优先——空闲高段（must_send）
+    不再压制 reminder（高段豁免）；无 reminder 时仍情绪类必发。"""
     with tempfile.TemporaryDirectory() as td:
         _inject_xlsx(td)
         # 上课 08:30（周一第 1 节）+ reminder 记忆（±10min 窗口）
@@ -424,14 +425,19 @@ def test_a3_in_class_suppresses_emotion_only():
         lonely_in = sum(v for k, v in counts_in.items() if k.startswith("lonely_"))
         assert counts_in.get("memory", 0) > lonely_in, \
             f"上课时仪式类应反超情绪类, got {counts_in}"
-        # 空闲 14:00 同配置（无课表）→ activation≥0.5 → must_send 情绪类必发
+        # 空闲 14:00 同配置（无课表）→ 上空高段必发：
+        # ① reminder 在窗口内 → 高段豁免，必须发出（F-A5-01）
         now2 = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
         s2 = _make_state(td, now2, loneliness=75, energy=40)
         s2.memories = [{"type": "reminder", "trigger_at": "2026-06-15T13:55", "content": "喝水"}]
         counts_free = _run_seeds(s2, now2, n=200)
-        assert counts_free.get("memory", 0) == 0, f"空闲 must_send 应压制 memory, got {counts_free}"
-        lonely_free = sum(v for k, v in counts_free.items() if k.startswith("lonely_"))
-        assert lonely_free == 200, f"空闲应全发情绪类, got {counts_free}"
+        assert counts_free.get("memory", 0) > 0, \
+            f"空闲高段 reminder 应豁免必发, got {counts_free}"
+        # ② 无 reminder 时 → 情绪类必发（A4 must_send 不回归）
+        s3 = _make_state(td, now2, loneliness=75, energy=40)
+        counts_free2 = _run_seeds(s3, now2, n=200)
+        lonely_free2 = sum(v for k, v in counts_free2.items() if k.startswith("lonely_"))
+        assert lonely_free2 == 200, f"空闲无 reminder 应全发情绪类, got {counts_free2}"
     print("  OK test_a3_in_class_suppresses_emotion_only")
 
 
@@ -500,6 +506,51 @@ def test_a4_mid_band_no_must_send():
             ms = _count_must_send(s, now)
             assert ms == 0, f"anxiety={anx}: 中段不得触发 must_send, got {ms}/200"
     print("  OK test_a4_mid_band_no_must_send")
+
+
+# ═══════════════════════════════════════════════════════════
+# F-A5-01（#314 R9）: 高段必发只从情绪候选选 → reminder 一次性记忆确定性丢失
+# 三机制中的①（高段压制）：只能从情绪候选选，ritual/memory 候选退让。
+# 修复：reminder/MEMORY 候选在窗口内先于情绪高段分支处理（用户决策：提醒准时优先）。
+#═══════════════════════════════════════════════════════════════
+
+def _count_reminder_high_band(seed0=42):
+    """高段（空闲×1.2，孤独45 → activation≥0.75）300 种子 reminder 触发统计。
+    同审计 E1 复现构造：孤独45 + 空闲（非上课非静默）→ 情绪类必发压制。"""
+    with tempfile.TemporaryDirectory() as td:
+        # 14:00 非静默窗(0-8)外、无课表 → 空闲 ×1.2 → 孤独 45 踏过高段必发阈值
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, loneliness=45, energy=40)
+        s.memories = [{"type": "reminder", "trigger_at": "2026-06-15T13:55", "content": "喝水"}]
+        counts = _run_seeds(s, now, n=300, seed0=seed0)
+        return counts
+
+
+def test_fa5_reminder_triggered_in_high_band():
+    """F-A5-01 ①：reminder 窗口内（触发时刻 ±30min）在常态高段（空闲×1.2 孤独45）
+    必须被选中触发——修复前红：0/300（高段只从情绪候选选压制 memory）。
+
+    用户决策「提醒准时优先」：reminder 视为显式托付，高段必须发出（豁免
+    '只从情绪候选选'压制）。此断言为回归线：任何种子序列下 reminder 命中 >0。"""
+    counts = _count_reminder_high_band()
+    # 回归断言：reminder 以 MEMORY 类型候选触发（evaluate_triggers 返回
+    # Trigger(type=MEMORY)，counts 键为 "memory"）
+    memory = counts.get("memory", 0)
+    assert memory > 0, f"F-A5-01: 高段窗口内 reminder 必须被触发, got {counts}"
+
+
+def test_fa5_reminder_still_fires_low_band_baseline():
+    """F-A5-01 低段对照：孤独 15（低段）reminder 仍可发（审计基线 285-300/300）。
+    本回归线守卫「修复不破坏低段正常触发」——断言宽松上界保持可发（≥ 270/300）。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        # 默认 energy=85 → playful 参与竞争（与审计 285/300 同构；此处 280/300）
+        s = _make_state(td, now, loneliness=15)
+        s.memories = [{"type": "reminder", "trigger_at": "2026-06-15T13:55", "content": "喝水"}]
+        counts = _run_seeds(s, now, n=300, seed0=42)
+        memory = counts.get("memory", 0)
+        assert memory >= 270, \
+            f"低段 reminder 不得回归（基线 285/300）, got {counts}"
 
 
 def test_a4_must_send_preserved_across_safety_downgrade():

@@ -212,6 +212,104 @@ def test_refund_same_msg_id_dedup_fifo():
             "同一 msg_id 第二次退款应被 FIFO 拒收（防越窗口双退）"
 
 
+# ═══════════════════════════════════════════════════════════
+# F-A5-01（#314 R9）: 三机制③「决策即标记、refund 不回滚」→ 发送失败后
+# reminder 永久不再触发。修复：refund_send 按 msg_id 定位到在途事件携带的
+# memory_marker（决策核心提交时写入），回滚 last_triggered_at → 失败可重发。
+#═══════════════════════════════════════════════════════════════
+
+def test_refund_rolls_back_reminder_marker():
+    """F-A5-01 ③：send 决策标记 reminder → refund → last_triggered_at 被回滚，
+    reminder 可再次触发（_memory_should_trigger 恢复 True）。
+
+    决策核心（decision/core.py）在标记 reminder 的同时，把该记忆的内容键写入
+    在途 Hawkes 事件的 memory_marker 字段（跨进程随 cooldown 落盘）。refund_send
+    删除命中事件后据此清掉 last_triggered_at——否则失败即永久丢提醒。"""
+    from chiguo_state import _memory_dedup_key
+    from chiguo_trigger import _memory_should_trigger
+    now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)  # 固定时钟：触发时刻 5min 前 → 30min 窗内
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        st = engine.state
+        # 临时目录写一条 reminder 记忆（触发时刻 5 分钟前 → 窗口内）
+        (Path(td) / "data").mkdir(exist_ok=True)
+        (Path(td) / "data" / "chiguo_memories.json").write_text(json.dumps([
+            {"type": "reminder", "trigger_at": "2026-06-15T13:55", "content": "喝水"}
+        ]))
+        # 新实例加载记忆（决策核心同款：self.memories 持有该 dict）
+        st2 = _make_engine(td).state
+        rem = next(m for m in st2.memories if m.get("type") == "reminder")
+        # 决策核心标记 + 记忆键写入在途事件（Commit 4 写入契约）
+        st2.mark_memory_triggered(rem, now)
+        mid = "reminder_send_1"
+        st2.cooldown.event_timestamps = [
+            {"msg_id": mid, "type": "memory", "time": now.isoformat(),
+             "memory_marker": _memory_dedup_key(rem)},
+        ]
+        st2.cooldown.current_date = now.strftime("%Y-%m-%d")
+        assert rem.get("last_triggered_at") == now.isoformat(), \
+            f"决策标记应生效, got {rem}"
+        assert _memory_should_trigger(rem, now) is False, \
+            "标记后窗口内不得重复触发"
+
+        # 发送失败 → refund 回滚标记
+        assert st2.refund_send(now, msg_id=mid) is True, "命中事件应退款成功"
+        # 回滚断言：last_triggered_at 被清除 + 去重缓存清除 + 可再次触发
+        assert "last_triggered_at" not in rem, \
+            f"refund 应清除 last_triggered_at, got {rem}"
+        assert _memory_dedup_key(rem) not in st2._memory_dedup, \
+            f"refund 应清除去重缓存, got {st2._memory_dedup}"
+        assert _memory_should_trigger(rem, now) is True, \
+            "refund 后 reminder 窗口内应可再次触发"
+    print("  OK test_refund_rolls_back_reminder_marker")
+
+
+def test_refund_rollback_survives_state_roundtrip():
+    """F-A5-01 ③（跨进程）：refund 回滚后经 state roundtrip，last_triggered_at
+    不回弹、memory_dedup 不含该条目 → cron 下一进程可再次触发。"""
+    from chiguo_state import _memory_dedup_key
+    from chiguo_trigger import _memory_should_trigger
+    now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)  # 固定时钟：窗口内（触发前 5min）
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "data").mkdir(exist_ok=True)
+        (Path(td) / "data" / "chiguo_memories.json").write_text(json.dumps([
+            {"type": "reminder", "trigger_at": "2026-06-15T13:55", "content": "喝水"}
+        ]))
+        eng = _make_engine(td)
+        st = eng.state
+        rem = next(m for m in st.memories if m.get("type") == "reminder")
+        st.mark_memory_triggered(rem, now)
+        mid = "reminder_cross1"
+        st.cooldown.event_timestamps = [
+            {"msg_id": mid, "type": "memory", "time": now.isoformat(),
+             "memory_marker": _memory_dedup_key(rem)},
+        ]
+        st.cooldown.current_date = now.strftime("%Y-%m-%d")
+        assert st.save(), "前置 save"
+        disk_before = json.loads(st.state_path.read_text())
+        assert disk_before["memory_dedup"], "标记应落盘 memory_dedup"
+
+        # 退款并落盘
+        assert st.refund_send(now, msg_id=mid) is True
+        assert st.save(), "退款后 save"
+
+        # 新实例（等价新进程）加载：标记不回弹，可再次触发
+        st2 = _make_engine(td).state
+        rem2 = next(m for m in st2.memories if m.get("type") == "reminder")
+        disk_after = json.loads(st2.state_path.read_text())
+        assert "memory_dedup" not in disk_after or \
+            disk_after["memory_dedup"].get(_memory_dedup_key(rem2)) is None, \
+            f"回滚后 memory_dedup 不得含该条目, got {disk_after.get('memory_dedup')}"
+        assert "last_triggered_at" not in rem2, \
+            f"回滚跨进程不应回弹 last_triggered_at, got {rem2}"
+        assert _memory_should_trigger(rem2, now) is True, \
+            "refund 落盘后新进程应可再次触发"
+    print("  OK test_refund_rollback_survives_state_roundtrip")
+
+
+
+
+
 def test_refund_fifo_is_bounded():
     """refunded_msg_ids FIFO 有界：超过上限后只保留最近 N 条（不无限增长）。"""
     from chiguo_state import REFUND_FIFO_MAX
