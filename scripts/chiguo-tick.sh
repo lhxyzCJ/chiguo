@@ -215,9 +215,30 @@ except: print("")' 2>/dev/null || true)"
 # 而不是笼统的"发送失败"——从微信给机器人发一条消息即刷新，无需重新扫码）
 # 主消息发送超时取 35s，与 chiguo_daemon.py _loop_send 的 /send 超时（35s）保持一致
 # （#261/CR-2: 对齐双路径超时，避免 cron 11-35s 窗口行为分叉；改此值须同步改 daemon）
+CURL_RC=0
 SEND_RESP="$(curl -s --max-time 35 --connect-timeout 5 --noproxy '*' -X POST "$BRIDGE_URL" \
-  -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$BODY" 2>&1 || true)"
-if ! printf '%s' "$SEND_RESP" | grep -q '"ok": *true'; then
+  -H 'Content-Type: application/json' "${TOKEN_HDR[@]}" -d "$BODY" 2>&1 || CURL_RC=$?)"
+# RF1 (M6-2): 发送成功判定升级为 JSON 解析（对齐 loop.py 的 API 解析语义），不再用
+# 子串 grep '"ok": *true'。语义分档：
+#   ok       —— 合法 JSON 且 ok===true → 确定成功；
+#   not_ok   —— 合法 JSON 但明确非成功（ok:false / timeout_uncertain / 错误对象）→ 走
+#               既有确诊/不确定分流；
+#   bad_json —— CURL_RC=0（拿到 HTTP 响应，如网关 200）但响应体**不是合法 JSON**
+#               （HTML 错误页/代理包装等）→ 消息可能已送达，**不能**记 send_fail（会造成
+#               误 down），按「不确定」处理：不退款、不记 send_fail、本 tick 结束（exit 0）
+#               下轮自然再试。解析失败体本身不可判断送达与否，保守取「不确定」。
+#   transport_fail —— CURL_RC≠0（bridge 不可达/连接失败/超时，无 HTTP 响应）→ 是**确定
+#               的发送链故障**，照旧走 send_fail 失败分支（F-A6-2：bridge 挂 → 记 send_fail
+#               推进 fail_streak → 达阈值 down 暂停，与「200+非预期体」的 uncertain 区分）。
+SEND_JSON_OK="$(printf '%s' "$SEND_RESP" | "$PY" -c 'import json,sys
+try:
+    ok = json.load(sys.stdin).get("ok")
+    print("ok" if ok is True else "not_ok")
+except Exception:
+    print("bad_json")' 2>/dev/null || echo bad_json)"
+if [ "$SEND_JSON_OK" = "ok" ]; then
+  : # 发送成功 → 落到下方成功记账分支
+else
   # R8 (F-A17-003): bridge 超时不确定（timeout_uncertain）——bot.send 不可取消，
   # 超时不代表未送达。若按失败退款会恢复额度清冷却，制造下次 tick 重发窗口 →
   # 用户可能收到两条重复消息。故：不 refund、不记 send_fail、不重发——
@@ -225,6 +246,14 @@ if ! printf '%s' "$SEND_RESP" | grep -q '"ok": *true'; then
   # 普通失败分流之前，避免把"不确定"当"确定失败"。
   if printf '%s' "$SEND_RESP" | grep -q 'timeout_uncertain'; then
     echo "[chiguo-tick] bridge /send 超时且结果不确定（timeout_uncertain）——不退款、不记 send_fail、本 tick 结束下轮再试" >&2
+    exit 0
+  fi
+  # RF1: 拿到 HTTP 响应（CURL_RC=0）且响应体**非空非 JSON**（HTML 错误页/代理包装）→ 送达
+  # 结果不定，按「不确定」退出，与 timeout_uncertain 同策略（不退款不 send_fail，不误 down）。
+  # 空响应体 / CURL_RC≠0（bridge 不可达，无 HTTP 响应 / 连不上）不是本分支——那是确定发送链
+  # 故障，落下方 send_fail（F-A6-2：bridge 挂 → 记 send_fail 推进 fail_streak → 达阈值 down）。
+  if [ "$SEND_JSON_OK" = "bad_json" ] && [ "$CURL_RC" = 0 ] && [ -n "$SEND_RESP" ]; then
+    echo "[chiguo-tick] bridge /send 响应非空但非法 JSON（可能被网关/代理包装），发送结果不确定——不退款、不记 send_fail、本 tick 结束下轮再试: $(printf '%s' "$SEND_RESP" | head -c 120)" >&2
     exit 0
   fi
   case "$SEND_RESP" in

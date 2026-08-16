@@ -76,6 +76,9 @@ http.createServer((req, res) => {
         res.end(JSON.stringify({ ok: false, error: 'timeout 30000ms', timeout_uncertain: true }))
       } else if (sendMode === 'doconnect_explicit_fail') {
         res.end(JSON.stringify({ ok: false, error: 'mock bridge 明确失败' }))
+      } else if (sendMode === 'non_json') {
+        // RF1 (M6-2): 网关/代理 200 + 非预期响应体（HTML 错误页/包装）——不是 JSON。
+        res.end('<html><body>502 Bad Gateway</body></html>')
       } else {
         res.end('{"ok":true}')
       }
@@ -333,7 +336,25 @@ set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; 
 [ "$(state_field fail_streak)" = "$STREAK_BEFORE" ] && pass "timeout_uncertain → 不记 send_fail（fail_streak 不变）" || fail "timeout_uncertain 不应推进 fail_streak（$STREAK_BEFORE→$(state_field fail_streak)）"
 echo ok > "$SEND_MODE"
 
-# ── 用例 7: bridge 不可达 → 回传 --send-result failed（refund 反馈闭环不断）+ 记 send_fail ──
+# ── RF1 (M6-2): 发送成功判定升级 JSON 解析——网关 200 + 非 JSON 响应体（HTML 错误页/
+# 代理包装）时消息可能已送达，若记 send_fail 会误 down。故非 JSON 体 → 不确定：不退款、
+# 不记 send_fail（fail_streak 不变）、不回传 --send-result failed、exit 0。──
+export SEND_RESULT_LOG="$TMP/sendresult_rf1.log"
+rm -f "$SEND_RESULT_LOG"
+: > "$SEND_RESULT_LOG"
+echo non_json > "$SEND_MODE"
+STREAK_BEFORE="$(state_field fail_streak)"
+set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] && pass "RF1: 非 JSON 响应体 → tick 退出 0（不确定，本 tick 结束）" || fail "RF1 非 JSON 体应 exit 0, 实得 $RC"
+[ "$(state_field fail_streak)" = "$STREAK_BEFORE" ] \
+  && pass "RF1: 非 JSON 响应体 → 不记 send_fail（fail_streak 不变）" \
+  || fail "RF1 非 JSON 体不应推进 fail_streak（$STREAK_BEFORE→$(state_field fail_streak)）"
+[ ! -s "$SEND_RESULT_LOG" ] \
+  && pass "RF1: 非 JSON 响应体 → 不回传 --send-result failed（不退款）" \
+  || fail "RF1 非 JSON 体不应回传 --send-result failed: $(cat "$SEND_RESULT_LOG")"
+echo ok > "$SEND_MODE"
+
+
 kill ${SRV_PID:-} 2>/dev/null || true
 export SEND_RESULT_LOG="$TMP/sendresult.log"
 : > "$SEND_RESULT_LOG"
