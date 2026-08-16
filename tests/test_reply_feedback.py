@@ -6,6 +6,7 @@
 经 daemon record_send_text 与 record_user_message 的端到端归因。
 """
 
+import io
 import json
 import os
 import random
@@ -15,6 +16,7 @@ import tempfile
 import tomllib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -254,6 +256,35 @@ def test_daemon_record_send_disabled_no_stats():
         assert eng.state.cooldown.reply_pending == [], "关闭时不应产生 reply_pending"
         assert eng.state.tick_seq == tick_before, "关闭时不应额外写盘（tick_seq 不变）"
     print("  OK test_daemon_record_send_disabled_no_stats")
+
+
+def test_record_send_save_false_warns():
+    """RF6（L3-1）: record_sent 的 save 返回 False（降级/写盘失败）→ stderr 告警，
+    sent 计数本次不落盘，但**不抛异常**（best-effort 统计语义保持）。"""
+    from chiguo_daemon import DecisionEngine
+    with tempfile.TemporaryDirectory() as td:
+        src = Path("chiguo_proactive.toml").read_text()
+        src = re.sub(r"(?m)^mem0_qdrant_path\s*=.*$",
+                     f'mem0_qdrant_path = "{Path(td) / "no_qdrant"}"', src)
+        src = re.sub(r"(?m)^mem0_history_db\s*=.*$",
+                     f'mem0_history_db = "{Path(td) / "no_history.db"}"', src)
+        cfg_path = Path(td) / "chiguo_proactive.toml"
+        cfg_path.write_text(src)
+        dec_path = Path(td) / "decisions.jsonl"
+        eng = DecisionEngine(str(cfg_path), str(dec_path))
+        eng.config["trigger"]["reply_feedback_enabled"] = 1  # A2 记账门控
+        eng.state.cooldown.reply_stats = {}
+        cap = io.StringIO()
+        with mock.patch.object(eng.state, "save", return_value=False), \
+             mock.patch.object(sys, "stderr", cap):
+            # save False → 应告警；best-effort 语义不得抛异常
+            eng.record_send_text("msg-1", "哥哥今天好吗", trigger="lonely_low")
+        err = cap.getvalue()
+        assert "state_save_failed" in err, f"save False 应告警, got: {err!r}"
+        assert "record_sent" in err, f"告警应指明 record_sent, got: {err!r}"
+        # 进程内 sent 计数仍在内存（save=False 仅放弃落盘）
+        assert eng.state.cooldown.reply_stats["lonely_low"]["sent"] == 1
+    print("  OK test_record_send_save_false_warns")
 
 
 def test_reply_attribution_fifo():

@@ -355,7 +355,12 @@ class AccountingMixin(DecisionEngineBase):
                             self.state.audit("state_lock_degraded", "record_sent")
                         self.state._load()
                         self.state.record_trigger_sent(trigger)
-                        self.state.save()
+                        # RF6（L3-1）: save 返回 False（降级/写盘失败）→ sent 计数静默
+                        # 丢失。感知并告警（对齐 record_message/record_send_result 模式），
+                        # 保持 best-effort 语义不抛。
+                        if not self.state.save():
+                            print("[chiguo_daemon] state_save_failed: record_sent 未落盘"
+                                  "（sent 计数丢失，下轮重试）", file=sys.stderr)
                 except Exception:
                     pass  # 统计失败不影响发送记录主链路
             self._log_message(

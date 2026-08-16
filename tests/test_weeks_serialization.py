@@ -22,7 +22,7 @@ import re
 import shutil
 import sys
 import tempfile
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -185,14 +185,14 @@ def test_course_week_decision_jsonl_written():
 
 
 # ═══════════════════════════════════════════════════════
-# 护栏 3：--compact send 决策输出兜底（default=list）不崩溃
+# 护栏 3：--compact send 决策输出兜底（json_default）不崩溃
 # ═══════════════════════════════════════════════════════
 
 def test_dispatch_send_decision_serialization_fallback():
-    """--compact 下 send 决策若仍含 set → print(json.dumps(..., default=list)) 不崩溃。
+    """--compact 下 send 决策若仍含 set → print(json.dumps(..., default=json_default)) 不崩溃。
 
-    兜底路径：cli/dispatch.py _run_passive 的 send 决策经 default=list 序列化，
-    而非抛未捕获 TypeError 导致 cron 发送链整链失败（F-A22-001）。
+    兜底路径：cli/dispatch.py _run_passive 的 send 决策经类型化兜底（json_default）
+    序列化，而非抛未捕获 TypeError 导致 cron 发送链整链失败（F-A22-001）。
     """
     from cli import dispatch as dmod
 
@@ -208,10 +208,159 @@ def test_dispatch_send_decision_serialization_fallback():
     with mock.patch.object(dmod, "startup_conflict", return_value=0), \
          mock.patch("sys.stdout", new_callable=lambda: io.StringIO()) as out, \
          mock.patch.dict(os.environ, {}, clear=False):
-        # idle compact 分支单独走 heartbeat；这里是 send → 走 default=list 兜底
+        # idle compact 分支单独走 heartbeat；这里是 send → 走 json_default 兜底
         dmod._run_passive(engine, compact=True)
         printed = out.getvalue()
         parsed = json.loads(printed)
         assert parsed["action"] == "send"
         assert parsed["context"]["t3"][str(1)][str(3)]["weeks"] == [2, 3], \
-            "set → default=list 序列化成功"
+            "set → json_default 类型化序列化成功（sorted list）"
+
+
+# ═══════════════════════════════════════════════════════
+# RF4（L1-1/L1-3）：type 化转换器 + datetime 兜底（_log 与 dispatch）
+# ═══════════════════════════════════════════════════════
+
+def test_json_default_typed_converter():
+    """RF4: json_default 对已知类型做类型保持转换（set/sorted、datetime/date/isoformat），
+    未知类型仍抛 TypeError（兜底不掩盖字段失真）。"""
+    from decision.core import json_default
+
+    # set → sorted list（确定性排序）
+    assert json_default({3, 1, 2}) == [1, 2, 3]
+    assert json_default({"b", "a"}) == ["a", "b"]
+    # datetime / date → isoformat 字符串
+    assert json_default(datetime(2026, 6, 16, 10, 0, tzinfo=CST)) == \
+        "2026-06-16T10:00:00+08:00"
+    assert json_default(date(2026, 6, 16)) == "2026-06-16"
+    assert isinstance(json_default(datetime(2026, 6, 16, tzinfo=CST)), str)
+    # 未知类型保持抛 TypeError
+    with pytest.raises(TypeError):
+        json_default(object())
+
+
+def test_log_datetime_fallback():
+    """RF4（L1-1/L1-3）: decision 含 datetime（+set）时 _log 经类型化兜底写出——
+    不崩、datetime→isoformat 字符串（类型正确）、set→sorted list。"""
+    import tomllib
+    from chiguo_state import ChiguoState
+    from decision.core import DecisionCoreMixin
+
+    base = setup_base_dir("chiguo_test_log_dt_")
+    try:
+        with open(base / "chiguo_proactive.toml", "rb") as f:
+            cfg = tomllib.load(f)
+        cfg["_base_dir"] = str(base)
+        state = ChiguoState(cfg)
+        log_path = base / "chiguo_decisions.jsonl"
+
+        # 轻量假引擎：仅承载 _log 所需最小骨架（log_path + state.audit + _make_msg_id）
+        class _Loggable:
+            def __init__(self, st, lp):
+                self.state = st
+                self.log_path = str(lp)
+            @staticmethod
+            def _make_msg_id():
+                return "test-msg"
+
+        fake = _Loggable(state, log_path)
+        decision = {
+            "action": "send", "version": "1.21", "msg_id": "test-msg",
+            "trigger": "morning", "intensity": "mid",
+            "context": {
+                "when": datetime(2026, 6, 16, 10, 0, tzinfo=CST),
+                "weeks": {3, 1, 2},
+            },
+            "state": {},
+        }
+        DecisionCoreMixin._log(fake, decision)
+
+        lines = log_path.read_text().splitlines()
+        assert len(lines) == 1, "含 datetime 的决策应经兜底写出 1 行"
+        written = json.loads(lines[0])
+        # datetime → isoformat 字符串（类型正确，非裸 str 失真）
+        assert written["context"]["when"] == "2026-06-16T10:00:00+08:00", written
+        assert isinstance(written["context"]["when"], str)
+        # set → sorted list
+        assert written["context"]["weeks"] == [1, 2, 3], written
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def test_dispatch_datetime_serialization_fallback():
+    """RF4（L1-3）: --compact 下 send 决策含 datetime → 类型化兜底打印不崩、
+    输出 datetime 为 isoformat 字符串（default=list 对 datetime 会换抛 TypeError，
+    故必须经 json_default）。"""
+    from cli import dispatch as dmod
+
+    class _FakeEngine:
+        _base_dir = Path("/tmp/__no_such_chiguo_rf4__")
+
+        def evaluate(self):
+            return {
+                "action": "send", "version": "1.21", "msg_id": "m1",
+                "trigger": "morning",
+                "context": {"at": datetime(2026, 6, 16, 10, 0, tzinfo=CST)},
+            }
+
+    engine = _FakeEngine()
+    with mock.patch.object(dmod, "startup_conflict", return_value=0), \
+         mock.patch("sys.stdout", new_callable=lambda: io.StringIO()) as out, \
+         mock.patch.dict(os.environ, {}, clear=False):
+        dmod._run_passive(engine, compact=True)
+        printed = out.getvalue()
+        parsed = json.loads(printed)
+        assert parsed["action"] == "send"
+        assert parsed["context"]["at"] == "2026-06-16T10:00:00+08:00", \
+            "datetime → json_default 类型化序列化为 isoformat 字符串"
+
+
+# ═══════════════════════════════════════════════════════
+# RF5（L1-2）：序列化失败计数/事件进 audit 持久化
+# ═══════════════════════════════════════════════════════
+
+def test_log_serialization_failure_audits():
+    """RF5（L1-2）: 决策序列化失败时写 chiguo_state_audit.jsonl 事件
+    decision_write_serialization_failed（含 msg_id/错误摘要）——进程重启不归零、
+    cron 形态可检索（而非仅进程内属性 + stderr）。"""
+    import tomllib
+    from chiguo_state import ChiguoState
+    from decision.core import DecisionCoreMixin
+
+    base = setup_base_dir("chiguo_test_log_dt_")
+    try:
+        with open(base / "chiguo_proactive.toml", "rb") as f:
+            cfg = tomllib.load(f)
+        cfg["_base_dir"] = str(base)
+        state = ChiguoState(cfg)
+        log_path = base / "chiguo_decisions.jsonl"
+        audit_path = base / "chiguo_state_audit.jsonl"
+
+        class _Loggable:
+            def __init__(self, st, lp):
+                self.state = st
+                self.log_path = str(lp)
+            @staticmethod
+            def _make_msg_id():
+                return "test-msg"
+
+        fake = _Loggable(state, log_path)
+        decision = {
+            "action": "send", "version": "1.21", "msg_id": "test-msg",
+            "trigger": "morning", "intensity": "mid",
+            # 含非 JSON 时间值 → 触发序列化失败兜底
+            "context": {"when": datetime(2026, 6, 16, 10, 0, tzinfo=CST)},
+            "state": {},
+        }
+        DecisionCoreMixin._log(fake, decision)
+
+        assert audit_path.exists(), "audit jsonl 应被创建"
+        lines = [json.loads(l) for l in audit_path.read_text().splitlines()]
+        events = [l["event"] for l in lines]
+        assert "decision_write_serialization_failed" in events, events
+        detail = next(
+            l["detail"] for l in lines
+            if l["event"] == "decision_write_serialization_failed")
+        assert "msg_id=test-msg" in detail, detail
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
