@@ -59,6 +59,11 @@ class OverrideStore:
             if it.get("kind") not in KINDS:
                 bad += 1
                 continue
+            # A20-03 (R11): 必填键 date 缺失 → 剔除并置 corrupt。
+            # 修复前:corrupt=False 永驻 → for_date/cleanup/reminders_in/_in_exam/recall/t2 读路径 KeyError。
+            if it.get("date") is None:
+                bad += 1
+                continue
             ok = True
             for key in ("date", "end_date", "to_date"):
                 v = it.get(key)
@@ -135,12 +140,24 @@ class OverrideStore:
         kind = item.get("kind")
         if kind not in KINDS:
             raise OverrideError(f"未知 kind: {kind!r}")
+        if item.get("date") is None:
+            # A20-03 (R11): 必填键。修复前:add 在 _next_id(entry["date"]) 抛 KeyError(写路径 KeyError 家族)。
+            raise OverrideError("date 必填")
         for key in ("date", "end_date", "to_date"):
             if item.get(key) is not None:
                 try:
                     date.fromisoformat(item[key])
                 except (ValueError, TypeError):
                     raise OverrideError(f"{key} 非法 ISO 日期: {item[key]!r}")
+        if item.get("end_date") is not None:
+            # A20-05 (R11): 区间不变量——倒序拒绝 + 跨度上限 60 天(与 resolve_when {start,end} 语义一致)。
+            # 修复前:{date,end_date} 批 2b 路径绕过跨度检查,78 天区间落盘。
+            d = date.fromisoformat(item["date"])
+            ed = date.fromisoformat(item["end_date"])
+            if ed < d:
+                raise OverrideError("区间 end_date 早于 date,死区间拒绝")
+            if (ed - d).days > 60:
+                raise OverrideError("区间跨度 > 60 天")
         if "period" in item and item.get("period") is not None:
             if not isinstance(item["period"], int) or not 1 <= item["period"] <= 11:
                 raise OverrideError(f"period 越界: {item.get('period')!r}(须 1-11)")
@@ -166,9 +183,12 @@ class OverrideStore:
             if has_course or has_to or has_label:
                 raise OverrideError("cancel 仅可带 date/end_date/period/note")
         elif kind == "move":
-            # 源 period 形态要求与源槽无课检查 → Task 6(api 层持 kind 补全)
+            # 源 period 形态要求与源槽无课检查 → Task 6(api 层持 kind 补全);此处必填兜底(A20-06/R11)
             if item.get("to_period") is None or has_end or has_label:
                 raise OverrideError("move 必有 to_period,可带 to_date,无 end_date/label")
+            if item.get("period") is None:
+                # A20-06 (R11): 修复前无 period move 放行 → 源槽不清(复制语义)+目标槽空课条目。
+                raise OverrideError("move 必有源 period")
         elif kind == "add":
             if item.get("period") is None:
                 raise OverrideError("add 必有 period")
