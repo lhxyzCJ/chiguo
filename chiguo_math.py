@@ -324,12 +324,15 @@ def weighted_trigger_choice(candidates: list[dict], rng=random) -> dict | None:
     candidates: [{"type": str, "weight": float}, ...]
     按 weight 加权随机选一个。weights 不需要归一化。
     rng: 随机源(默认全局 random 模块),可注入 random.Random 实例防全局序列污染。
+    F-A5-06 (#315 R13)：total<=0（全 0/全负权重，含 trigger_scale 全 0 禁发意图）
+    → 返回 None 不选；修复前 rng.choice 均匀随机兜底 → "0 权重=禁用"意图静默失效。
+    调用方（chiguo_trigger/chiguo_topics）均已处理 None（无候选 → 跳过该分支）。
     """
     if not candidates:
         return None
     total = sum(c["weight"] for c in candidates)
     if total <= 0:
-        return rng.choice(candidates)
+        return None
     return rng.choices(candidates, weights=[c["weight"] for c in candidates], k=1)[0]
 
 

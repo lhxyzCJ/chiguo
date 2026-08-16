@@ -269,7 +269,7 @@ v2 采用 Poisson 过程（λ 恒定），但这忽略了"孤独→想联系→�
 
 **v4 概率累积（longing）**：不发消息时 `accumulated_lambda` 递增（每次 +growth_factor × held_count）。焦虑 > `anxiety_block_threshold`（默认 70）时阻塞累积（"生气了不会主动找你"）。
 
-**v6 溢出逃生阀**：当 anxiety 达到阻塞阈值且墙钟沉默超过 72 小时（冷却期外）时，概率累积系统被死锁——越想联系越焦虑、越焦虑越不累积。逃生阀检测到此死锁态后，绕过加权随机选择，直接触发 `longing` 破防发送（带【破防】语气标记），重置累积状态并进入 3 天冷却期。日限额对此类发送放行。
+**v6 溢出逃生阀**：当 anxiety 达到阻塞阈值且墙钟沉默超过 72 小时（冷却期外）时，概率累积系统被死锁——越想联系越焦虑、越焦虑越不累积。逃生阀检测到此死锁态后，绕过加权随机选择，直接触发 `longing` 破防发送（带【破防】语气标记），重置累积状态并进入 3 天冷却期。日限额与静默窗口对此类发送均放行（F-A15-001 #315 R13：门禁豁免集单一事实源——逃生阀与日限额破防同属豁免族，修复前静默窗无豁免 → 破防被推迟 ≤ 窗口长度）。
 
 **v7 逃生阀约束（2026-07-31）**：① 从未交互用户（`last_user_message_at is None`）不触发逃生阀——新装 36h 即对陌生人发"破防"不合理；② 逃生阀豁免睡觉门控时，若 Bayesian 睡觉置信度 ≥ `escape_valve_sleep_block`（`[bayesian]` 段，默认 0.9）→ 降级 `sleeping_guard`（不累积、不发送）；③ busy_suppress 抑制期不累积 longing（`busy_suppressed` 独立 reason）。
 
@@ -352,7 +352,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 |----|------|------|
 | 低段 | activation < `min_activation`（0.08） | 情绪类退出竞争（等效低能量沉默，仪式类照发） |
 | 中段 | 其余 | 现状加权随机（全部候选） |
-| 高段 | activation ≥ `must_send_activation`（0.75） | 情绪类加权随机**必选**（仪式类本轮退让），选中标记 `must_send: true` 进 decision JSON（context.must_send）。**reminder 例外（F-A5-01 #314 R9）**：窗口内（trigger_at 后 30min）的 reminder 候选先于高段分支处理——高段/上课都必发，不受「只从情绪候选选」压制（上次提醒丢失根因①）；mem0 随机浮现等 generic MEMORY 不豁免 |
+| 高段 | activation ≥ `must_send_activation`（0.75） | 情绪类加权随机**必选**（仪式类本轮退让），选中标记 `must_send: true` 进 decision JSON（context.must_send）。**门禁第三把钥匙（F-A5-02 #315 R13，用户决策 2026-08-16）**：配额满也发——`must_send` 突破日限额（每日超额封顶 1 条）；不突破睡觉门控/最小间隔等其他 gate。**reminder 例外（F-A5-01 #314 R9）**：窗口内（trigger_at 后 30min）的 reminder 候选先于高段分支处理——高段/上课都必发，不受「只从情绪候选选」压制（上次提醒丢失根因①）；mem0 随机浮现等 generic MEMORY 不豁免 |
 
 escape_valve 豁免（v6 逃生阀不走本层）。
 
@@ -381,15 +381,18 @@ escape_valve 豁免（v6 逃生阀不走本层）。
 
 ```python
 can_send(now):
-  ├─ 00:00-08:00        → False（静默时段/睡眠窗口）
-  ├─ 今日 ≥ max_daily   → False（活跃时4条/沉默时2条，longing 可破例多发一条）
-  │                         （v6: 逃生阀触发额外破例，不受日限额限制）
+  ├─ 静默时段/睡眠窗口 → False；逃生阀（longing_break_eligible）破例放行（F-A15-001）
+  │                     （v6: 静默窗与日限额同属豁免族；quiet_ok=播放反证成立也放行）
+  ├─ 今日 ≥ max_daily   → False（活跃时4条/沉默时2条）
+  │                      三把突破钥匙（门禁豁免集单一事实源，R13 #315）：
+  │                      ① longing 概率累积溢出 ② 72h 逃生阀 ③ must_send 高段必发
+  │                      （配额满也发；超额每日封顶 1 条——仅“恰好配额满”放行一次）
   ├─ 距上次 < 30分钟    → False（最小间隔）
   ├─ energy < 12        → 检查 rate_energy_override
   │   └─ loneliness_rate > rate_energy_threshold（默认 5.0）AND energy >= rate_energy_min（默认 5）
   │                     → True（孤独变化率紧急覆写）
   │                     → False（不满足紧急条件）
-  └─ Bayesian 阻塞      → 用户很可能在睡觉 → False
+  └─ Bayesian 阻塞      → 用户很可能在睡觉 → False（must_send 突破不豁免睡觉门控）
 ```
 
 **紧急覆写**: 当 `loneliness_rate > rate_energy_threshold`（默认 5.0）时，即使 energy < 12 也可发送。避免"越没力气越需要联系"时被门控阻挡。`rate_energy_override` 控制此功能开关（默认启用）。`rate_energy_min` 设最低能量下限（默认 5），低于此值即使符合紧急条件也不发送。

@@ -204,24 +204,23 @@ def test_weighted_choice_empty():
     print("  OK test_weighted_choice_empty")
 
 def test_weighted_choice_all_zero():
-    """所有权重为 0 → 随机选一个（不崩溃）"""
+    """所有权重为 0 → None（F-A5-06 #315 R13：total<=0 禁用而非均匀随机兜底）
+    修复前：rng.choice 均匀随机仍会选出 0 权重项（'0 权重=禁用'意图静默失效）。"""
     candidates = [{"type": "a", "weight": 0}, {"type": "b", "weight": 0}]
     result = weighted_trigger_choice(candidates)
-    assert result is not None
-    assert result["type"] in ("a", "b")
+    assert result is None, f"total<=0 应返回 None（不选），got {result}"
     print("  OK test_weighted_choice_all_zero")
 
 def test_weighted_choice_negative_weights():
-    """负权重：负项永不被选中（cumulative 偏移等效 max(0,w)）；全非正 → 随机回退不崩"""
+    """负权重：负项永不被选中（cumulative 偏移等效 max(0,w)）；全非正 → None（不随机回退）
+    F-A5-06 (#315 R13)：total<=0 一律视为"无可用候选"→ None。"""
     candidates = [{"type": "a", "weight": -5}, {"type": "b", "weight": 10}]
     results = [weighted_trigger_choice(candidates)["type"] for _ in range(200)]
     assert all(r == "b" for r in results), f"negative-weight item selected: {results}"
     all_neg = [{"type": "a", "weight": -5}, {"type": "b", "weight": -3}]
-    results2 = [weighted_trigger_choice(all_neg)["type"] for _ in range(50)]
-    assert all(r in ("a", "b") for r in results2), "all-negative must fall back to random choice"
+    assert weighted_trigger_choice(all_neg) is None, "all-negative total<=0 → None"
     neg_zero = [{"type": "a", "weight": -5}, {"type": "b", "weight": 0}]
-    results3 = [weighted_trigger_choice(neg_zero)["type"] for _ in range(50)]
-    assert all(r in ("a", "b") for r in results3), "negative+zero must not crash"
+    assert weighted_trigger_choice(neg_zero) is None, "negative+zero total<=0 → None"
     print("  OK test_weighted_choice_negative_weights")
 
 

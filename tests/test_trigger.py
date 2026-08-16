@@ -508,6 +508,38 @@ def test_a4_mid_band_no_must_send():
     print("  OK test_a4_mid_band_no_must_send")
 
 
+def test_a4_must_send_free_band_boundary_anchor():
+    """F-A5-03 (#315 R13)：A4 高段标定锚定测试——修复测试空洞：原
+    test_a4_mid_band_no_must_send 只在 ×0.6 半忙环境（03:00 静默窗）断言，未覆盖
+    空闲（×1.2）环境的标定边界。审计 E1 实测：空闲孤独≥42 / 焦虑≥60 → 100%
+    must_send（高段=0.75 按单源标定），孤独≤40 / 焦虑≤55 仍 0。
+    现状行为即正确（锚定不红），加上半忙对照确保空洞补全不回归。"""
+    with tempfile.TemporaryDirectory() as td:
+        now_free = datetime(2026, 6, 15, 14, 0, tzinfo=CST)  # 空闲 ×1.2（非静默非上课）
+        # 边界外：空闲孤独 40 不得 must_send
+        s40 = _make_state(td, now_free, loneliness=40, anxiety=40, energy=40)
+        assert _count_must_send(s40, now_free) == 0, \
+            f"空闲孤独=40 不得 must_send, got {_count_must_send(s40, now_free)}/200"
+        # 高段锚定：空闲孤独 42/44/45 → 100% must_send（审计 E1 边界精确一致）
+        for lo in (42, 44, 45):
+            s = _make_state(td, now_free, loneliness=lo, anxiety=40, energy=40)
+            ms = _count_must_send(s, now_free)
+            assert ms == 200, f"空闲孤独={lo} 应 100% must_send, got {ms}/200"
+        # 焦虑单源标定：55 边界外 0；60 高段 100%
+        s55 = _make_state(td, now_free, anxiety=55, loneliness=15, energy=40)
+        assert _count_must_send(s55, now_free) == 0, \
+            f"空闲焦虑=55 不得 must_send, got {_count_must_send(s55, now_free)}/200"
+        s60 = _make_state(td, now_free, anxiety=60, loneliness=15, energy=40)
+        ms60 = _count_must_send(s60, now_free)
+        assert ms60 == 200, f"空闲焦虑=60 应 100% must_send, got {ms60}/200"
+        # 空洞补全对照：半忙 ×0.6（03:00 静默窗）孤独 45 → 0（不回归现有 test_a4_mid_band）
+        now_half = datetime(2026, 6, 15, 3, 0, tzinfo=CST)
+        sh = _make_state(td, now_half, loneliness=45, anxiety=40, energy=40)
+        msh = _count_must_send(sh, now_half)
+        assert msh == 0, f"半忙孤独=45 不得 must_send, got {msh}/200"
+    print("  OK test_a4_must_send_free_band_boundary_anchor")
+
+
 # ═══════════════════════════════════════════════════════════
 # F-A5-01（#314 R9）: 高段必发只从情绪候选选 → reminder 一次性记忆确定性丢失
 # 三机制中的①（高段压制）：只能从情绪候选选，ritual/memory 候选退让。
