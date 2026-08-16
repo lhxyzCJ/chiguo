@@ -56,6 +56,7 @@ cat > "$TMP/recorder.js" <<'JS'
 const http = require('http')
 const fs = require('fs')
 const rpcModeFile = process.argv[4]
+const sendModeFile = process.argv[5]
 http.createServer((req, res) => {
   let b = ''
   req.on('data', (c) => { b += c })
@@ -66,15 +67,25 @@ http.createServer((req, res) => {
       try { rpc = fs.readFileSync(rpcModeFile, 'utf8').trim() === 'success' } catch {}
       res.end(rpc ? JSON.stringify({ ok: true, text: 'RPC 主动消息' }) : JSON.stringify({ ok: false, error: 'mock RPC 故障' }))
     } else {
-      res.end('{"ok":true}')
+      let sendMode = 'ok'
+      try { sendMode = fs.readFileSync(sendModeFile, 'utf8').trim() } catch {}
+      if (sendMode === 'timeout_uncertain') {
+        res.end(JSON.stringify({ ok: false, error: 'timeout 30000ms', timeout_uncertain: true }))
+      } else if (sendMode === 'doconnect_explicit_fail') {
+        res.end(JSON.stringify({ ok: false, error: 'mock bridge 明确失败' }))
+      } else {
+        res.end('{"ok":true}')
+      }
     }
   })
 }).listen(Number(process.argv[3]), '127.0.0.1')
 JS
-node "$TMP/recorder.js" "$POST_LOG" "$PORT" "$TMP/rpc_mode" &
+node "$TMP/recorder.js" "$POST_LOG" "$PORT" "$TMP/rpc_mode" "$TMP/send_mode" &
 SRV_PID=$!
 RPC_MODE="$TMP/rpc_mode"
 echo fail > "$RPC_MODE"
+SEND_MODE="$TMP/send_mode"
+echo ok > "$SEND_MODE"
 
 cat > "$REPO/chiguo_proactive.toml" <<TOML
 [host]
@@ -273,6 +284,35 @@ HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >"$TMP/tick6b.log" 2>&1 \
   cat "$TMP/tick6b.log" >&2 || true
 [ "$(spawn_count)" -ge 1 ] && pass "RPC 失败 → 回退 spawn agent-run" || fail "期望 spawn ≥1 实得 $(spawn_count)"
 post_texts | grep -q "测试主动消息" && pass "回退 spawn 的文本已发送" || fail "应发送 spawn 文本"
+
+# ── R8 (F-A17-003): /send 超时返回 timeout_uncertain → 不退款、不记 send_fail、不重发 ──
+# 修复前红：当作明确失败 → 回传 --send-result failed（退款）+ record_health send_fail。
+# 超时不确定语义：消息可能已送达，退款恢复额度会制造重发窗口（重复消息）——
+# 故 timeout_uncertain 不 refund、不 send_fail、本 tick 结束下轮自然再试（exit 0）。
+cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+send_session_id = "chiguo-send"
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+provider = "deepseek"
+model = "deepseek-chat"
+
+[wechat]
+wechat_recipient = "owner@im.wechat"
+
+[health]
+fail_threshold = 3
+TOML
+echo success > "$FAKE_AGENT_MODE_FILE"
+export SEND_RESULT_LOG="$TMP/sendresult.log"
+rm -f "$SEND_RESULT_LOG"
+: > "$SEND_RESULT_LOG"
+echo timeout_uncertain > "$SEND_MODE"
+STREAK_BEFORE="$(state_field fail_streak)"
+set +e; HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] && pass "timeout_uncertain → tick 退出 0（本 tick 结束，下轮自然再试）" || fail "timeout_uncertain 应 exit 0, 实得 $RC"
+[ ! -s "$SEND_RESULT_LOG" ] && pass "timeout_uncertain → 不回传 --send-result failed（不退款）" || fail "不应回传 --send-result failed: $(cat "$SEND_RESULT_LOG")"
+[ "$(state_field fail_streak)" = "$STREAK_BEFORE" ] && pass "timeout_uncertain → 不记 send_fail（fail_streak 不变）" || fail "timeout_uncertain 不应推进 fail_streak（$STREAK_BEFORE→$(state_field fail_streak)）"
+echo ok > "$SEND_MODE"
 
 # ── 用例 7: bridge 不可达 → 回传 --send-result failed（refund 反馈闭环不断）+ 记 send_fail ──
 kill ${SRV_PID:-} 2>/dev/null || true

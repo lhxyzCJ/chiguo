@@ -187,3 +187,41 @@ def test_all_legacy():
     with tempfile.TemporaryDirectory() as td:
         _refund_matrix_run(td, events=events, msg_id="m9",
                            expect_save=True, removed_events=removed)
+
+
+# ═══════════════════════════════════════════════════════
+# F-A15-002: refunded msg_id 有界 FIFO —— 同 msg_id 越窗口重放的双退拒收。
+# ═══════════════════════════════════════════════════════
+
+def test_refund_same_msg_id_dedup_fifo():
+    """msg_id 首次退款成功 → 记入 refunded FIFO；第二次同 msg_id 退款被拒（不透支退款副作用）。
+
+    修复前红：refund_send 无 refunded_msg_ids 记账 → 帧内重新构造同 msg_id 的
+    in-flight 事件重放退款，第二次仍全额退款（重放双退）；修复后第二次返回 False。"""
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        st = engine.state
+        now = _seed(st, events=[{"msg_id": "dup1", "time": "t1"}, {"type": "lonely_mid", "time": "t2"}])
+        # 首次退款：匹配 dup1 → True，且 refunded_msg_ids 记录 dup1
+        assert st.refund_send(now, msg_id="dup1") is True, "首次匹配退款应成功"
+        assert "dup1" in st.cooldown.refunded_msg_ids, \
+            f"首次退款后应把 msg_id 记录进 refunded FIFO: {st.cooldown.refunded_msg_ids}"
+        # 同 msg_id 第二次退款（即便 again 有匹配 in-flight 事件）→ 必须被 FIFO 拒收
+        again_seed = _seed(st, events=[{"msg_id": "dup1", "time": "t1b"}, {"type": "lonely_mid", "time": "t3"}])
+        assert st.refund_send(again_seed, msg_id="dup1") is False, \
+            "同一 msg_id 第二次退款应被 FIFO 拒收（防越窗口双退）"
+
+
+def test_refund_fifo_is_bounded():
+    """refunded_msg_ids FIFO 有界：超过上限后只保留最近 N 条（不无限增长）。"""
+    from chiguo_state import REFUND_FIFO_MAX
+    with tempfile.TemporaryDirectory() as td:
+        engine = _make_engine(td)
+        st = engine.state
+        # 无上限直接爆量会导致超大 state.json；有界即让 FIFO 被裁到 ≤ REFUND_FIFO_MAX
+        for i in range(REFUND_FIFO_MAX + 50):
+            _seed(st, events=[{"msg_id": f"m{i}", "time": "t"}])
+            assert st.refund_send(datetime.now(CST), msg_id=f"m{i}") is True
+        assert len(st.cooldown.refunded_msg_ids) <= REFUND_FIFO_MAX, \
+            f"refunded FIFO 应被限制在 ≤{REFUND_FIFO_MAX}: {len(st.cooldown.refunded_msg_ids)}"
+        assert "m0" not in st.cooldown.refunded_msg_ids, "最旧条目应被挤出"

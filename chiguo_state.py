@@ -191,6 +191,11 @@ def emotion_tag_snapshot(emotion) -> dict:
     }
 
 
+# F-A15-002: refunded msg_id 有界 FIFO 上限——记录最近已退款的 msg_id，防越窗口
+# （chiguo_decisions.jsonl 尾 500 行之外的）同 msg_id 重放双退。有界存储防 state 膨胀。
+REFUND_FIFO_MAX = 200
+
+
 @dataclass
 class CooldownState:
     last_message_at: str | None = None
@@ -217,6 +222,7 @@ class CooldownState:
     reply_stats: dict = field(default_factory=dict)  # A2: 分类型回复率统计 {trigger_type: {"sent": n, "replied": m}}（触发权重反馈闭环，daemon 发送时 sent+1、--user-msg 回复时 replied+1）
     reply_pending: list[str] = field(default_factory=list)  # A2: FIFO 归因队列（未回复发送的 trigger 类型，回复时 pop 最旧一条，防多未回复时全记给最新）
     consolidate_last_at: str | None = None  # C1: 上次记忆巩固时间 ISO（空闲静默路径防每 tick 重复）
+    refunded_msg_ids: list[str] = field(default_factory=list)  # F-A15-002: 最近退款 msg_id（有界 FIFO，防越窗口重放双退）
 
     # ── 公开只读访问器（T11·Q1 字段收口：外部只读应走 getter，不直取字段）──
     def get_last_message_at(self) -> str | None:
@@ -2466,9 +2472,16 @@ class ChiguoState:
           （防凭空刷新逃生阀冷却/误删其他事件，#83）。
         - legacy 事件（全部无 msg_id 键）→ 沿用旧回退 pop()（单一判定，见下）。
         - last_message_at 不还原（设计取舍，保持现状）。
+        - F-A15-002: 有界 FIFO（refunded_msg_ids）记录已退款 msg_id——同 msg_id 越窗口
+          重放（chiguo_decisions.jsonl 尾 500 行之外的 replay）双退被直接拒收。
         - 返回 True=已执行退款副作用（成本回滚+事件移除+逃生阀冷却重置）；
           False=msg_id 未在任何在途事件中定位且存在带 msg_id 的事件（或事件为空），
           调用方据此决定是否 save。msg_id 与 legacy 判定收敛于此单处。"""
+        # F-A15-002: 同 msg_id 已退款过（FIFO 命中考勤）→ 直接拒绝，防越窗口双退。
+        # 每个 send 决策自带新 msg_id，正常失败退款只发生一次；命中 FIFO = 重放。
+        if msg_id is not None and msg_id in self.cooldown.refunded_msg_ids:
+            print(f"[refund_send] msg_id {msg_id!r} 已退款过（FIFO），拒绝重复退款", file=sys.stderr)
+            return False
         # 单处判定：msg_id 非空时只需 匹配到该 msg_id or 全部事件为 legacy → 才执行退款。
         # 事件为空 → 视为"未知 msg_id"，与历史 daemon 门控语义一致（不退款）。
         if msg_id is not None:
@@ -2500,6 +2513,11 @@ class ChiguoState:
         self.cooldown.messages_today = max(0, self.cooldown.messages_today - 1)
         self.cooldown.messages_without_reply = max(0, self.cooldown.messages_without_reply - 1)
         self.cooldown.last_longing_break_at = None
+        # F-A15-002: 有界 FIFO 记录已退款 msg_id（防越窗口重放双退；有界防 state 膨胀）
+        if msg_id is not None:
+            self.cooldown.refunded_msg_ids.append(msg_id)
+            if len(self.cooldown.refunded_msg_ids) > REFUND_FIFO_MAX:
+                self.cooldown.refunded_msg_ids = self.cooldown.refunded_msg_ids[-REFUND_FIFO_MAX:]
         self._finalize(now)
         return True
 

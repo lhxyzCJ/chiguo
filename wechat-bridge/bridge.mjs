@@ -50,6 +50,10 @@ const AGENT_RUN_SCRIPT = process.env.WECHAT_BRIDGE_AGENT_RUN
 // RPC 是 agent 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
 const AGENT_RPC_ENABLED = RUNNER === 'agent' && process.env.WECHAT_BRIDGE_AGENT_RPC === '1'
 const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
+// F-A17-003: bot.send 底层不可取消——withTimeout 超时只代表「未在时限内确认送达」，
+// 不代表未送达（超时后实际送达真实可能）。调用方（tick/loop）必须区别处理，
+// 不能把超时当明确失败触发 refund。超时值默认 30s，测试可经 env 缩短。
+const SEND_TIMEOUT_MS = Number(process.env.WECHAT_BRIDGE_SEND_TIMEOUT_MS ?? 30_000)
 // #84 /send 共享 token:未设置时跳过 token 校验(向后兼容 tick.sh 等既有调用);设置后必须匹配
 const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
 const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
@@ -467,30 +471,11 @@ function startSendServer(bot, queue) {
         await handleAgentPrompt(payload, res, queue)
         return
       }
-      const { to, text } = payload
-      if (typeof to !== 'string' || !to.trim()) { deny(400, 'to 必填'); return }
-      if (typeof text !== 'string' || !text.trim()) { deny(400, 'text 必填'); return }
-      if (to !== OWNER_ID) { deny(403, 'forbidden recipient'); return }
-      try {
-        await withTimeout(bot.send(to, text), 30_000)   // #84 send 超时兜底,不挂死请求
-        console.log(`[send] ${to}: ${text.length} chars`)  // 脱敏：不落正文（仅长度）
-        if (!res.writableEnded && !res.destroyed) {
-          res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ ok: true }))
-        }
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
-        // #224: 服务端拒发 "prepare failed" = context_token 过期（微信侧无公开 TTL，
-        // 实测最后一次收到用户消息后约 35h 失效；每次收到用户消息自动刷新）。
-        // 显式提示恢复路径，避免误判为网络/登录问题而盲目重扫码。
-        const isStaleToken = reason.includes('prepare failed')
-        console.error(isStaleToken
-          ? `[send error] ${reason}（context_token 过期：从微信给机器人发一条消息即刷新恢复，无需重新扫码）`
-          : `[send error] ${reason}`)
-        if (!res.writableEnded && !res.destroyed) {
-          res.writeHead(500, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: reason }))
-        }
+      const resp = await sendMessage(payload, bot)
+      if (!res.writableEnded && !res.destroyed) {
+        res.writeHead(resp.status, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: resp.ok, ...(resp.error !== undefined && { error: resp.error }),
+                                 ...(resp.timeout_uncertain && { timeout_uncertain: true }) }))
       }
     })
   })
@@ -502,6 +487,41 @@ function startSendServer(bot, queue) {
   server.listen(SEND_PORT, '127.0.0.1', () => {
     console.log(`send server: http://127.0.0.1:${SEND_PORT}/send`)
   })
+}
+
+/** /send 发送处理器（从 startSendServer 提取，可独立单元测试）。
+ * 校验 → bot.send 超时兜底 → 返回响应对象 {status, ok, error?, timeout_uncertain?}。
+ * F-A17-003：bot.send 经 withTimeout 超时不代表未送达 → 超时路径返回
+ * `timeout_uncertain: true`，调用方（tick/loop）必须区别处理（不退款不重发），
+ * 不能当明确失败。明确失败（非超时异常）只置 ok:false + error，无该标记；
+ * prepare failed（context_token 过期）走既有显式恢复提示，保持 ok:false 兼容。 */
+export async function sendMessage(payload, bot) {
+  const { to, text } = payload ?? {}
+  if (typeof to !== 'string' || !to.trim()) return { status: 400, ok: false, error: 'to 必填' }
+  if (typeof text !== 'string' || !text.trim()) return { status: 400, ok: false, error: 'text 必填' }
+  if (to !== OWNER_ID) return { status: 403, ok: false, error: 'forbidden recipient' }
+  // #224: 服务端拒发 "prepare failed" = context_token 过期（微信侧无公开 TTL，
+  // 实测最后一次收到用户消息后约 35h 失效；每次收到用户消息自动刷新）。
+  // 显式提示恢复路径，避免误判为网络/登录问题而盲目重扫码。
+  const isStaleToken = (reason) => reason.includes('prepare failed')
+  const isTimeout = (reason) => /^timeout \d+ms$/.test(reason)  // withTimeout 的 reject 消息
+  try {
+    await withTimeout(bot.send(to, text), SEND_TIMEOUT_MS)   // #84 send 超时兜底,不挂死请求
+    console.log(`[send] ${to}: ${text.length} chars`)  // 脱敏：不落正文（仅长度）
+    return { status: 200, ok: true }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    if (isStaleToken(reason)) {
+      console.error(`[send error] ${reason}（context_token 过期：从微信给机器人发一条消息即刷新恢复，无需重新扫码）`)
+    } else {
+      console.error(`[send error] ${reason}`)
+    }
+    // F-A17-003: 超时不确定 → 带 timeout_uncertain 标记（调用方别当明确失败退款）
+    if (isTimeout(reason)) {
+      return { status: 500, ok: false, error: reason, timeout_uncertain: true }
+    }
+    return { status: 500, ok: false, error: reason }
+  }
 }
 
 /** 命令链路默认实现:agent-run 模式 + daemon CLI(独立会话 chiguo-extract/verify;A4 shape 直读 stdout JSON) */

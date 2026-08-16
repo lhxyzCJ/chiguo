@@ -878,6 +878,12 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 - spawn 会话注入：loop `_try_generate` 的 spawn 回退注入 `AGENTRUN_SESSION=<toml [host].send_session_id（缺省 chiguo-send）>` + `AGENTRUN_ROTATE_SESSION=1`，对齐 tick.sh L127 —— 消除 send 会话落回复侧 chiguo-main 且不轮换的双路径分叉。
 - 前置检查：`chiguo-tick.sh` 的 OWNER（收件人）缺失与 node 缺失检查**前移到 `--compact`（决策记账）之前**——OWNER/node 异常时 evaluate 根本不执行，不再产生幻影记账（发送早退与 loop 收件人缺失分支的退款语义对齐）。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
 
+**R8 发送确认语义（F-A17-003/F-A15-002）——发送确认 ≠ 送达确认**：
+- **超时不确定（timeout_uncertain）**：`wechat-bridge/bridge.mjs` 对 `bot.send` 包 30s 超时（`withTimeout`），但 `bot.send` 底层**不可取消**——超时不代表未送达（超时后实际送达真实可能）。因此 bridge 超时 catch 返回 `{"ok":false, ..., "timeout_uncertain":true}`（继续保持 `ok:false` 兼容既有调用方），由上游区别处理。
+- **tick.sh 与 `_loop_send` 对 timeout_uncertain 分流**：收到该标记 → **不退款、不记 send_fail、不重发**——本 tick 直接结束（tick 退出 0、loop 置 `send_timeout_uncertain=true` 返回），下轮 evaluate 自然再试。若把「不确定」当「确定失败」退款（回滚能量/额度 + 清逃生阀冷却）会制造下次 tick 重发窗口 → 用户可能收到两条重复消息。**明确失败**（`ok:false` 非 timeout）仍照旧退款 + send_fail。
+- **退款幂等（F-A15-002）**：`refund_send` 在 `chiguo_state.json` 持久化**有界 FIFO**（`cooldown.refunded_msg_ids`，上限 200 条）——同一 msg_id 第二次退款直接被拒。原有的 `--send-result` 日志尾 500 行去重窗口之外的重放双退由此被封闭。
+- 文档与实现：改 bridge 超时值 / tick 与 loop 的 `/send` 超时必须两端同步（见 #261/CR-2）。
+
 ---
 
 ## 六、文件清单
@@ -1089,7 +1095,7 @@ python3 chiguo_daemon.py --memory-search "咖啡"  # 记忆检索（mem0 语义�
 python3 chiguo_daemon.py --user-msg-file /tmp/user_msg.txt
 python3 chiguo_daemon.py --analysis-file /tmp/analysis.json
 
-> **注意**：`--send-result` 是幂等的——重复报告同一条消息不会重复退款。
+> **注意**：`--send-result` 是幂等的——重复报告同一条消息不会重复退款。此外 `refund_send` 以 state 内有界 FIFO（`cooldown.refunded_msg_ids`，上限 200 条）兜底，日志尾 500 行去重窗口之外的同 msg_id 重放双退同样被拒（F-A15-002）。
 
 # 监控（委托给 chiguo_monitor.py）
 python3 chiguo_daemon.py --stats             # 最近7天统计

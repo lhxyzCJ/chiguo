@@ -273,6 +273,16 @@ class LoopSenderMixin(DecisionEngineBase):
                 # 35s 与 scripts/chiguo-tick.sh 主消息发送 curl --max-time 35 保持一致
                 # （#261/CR-2: 对齐 cron / loop 双路径超时；改此值须同步改 tick.sh）。
                 resp = _post("/send", {"to": to, "text": text}, 35.0)
+                # R8 (F-A17-003): bridge /send 超时不确定（timeout_uncertain）——bot.send
+                # 不可取消，超时不代表未送达。若按失败退款会恢复额度清冷却，制造下次 tick
+                # 重发窗口 → 用户可能收到两条。故不退款、不记 send_fail、不重发（本 tick
+                # 结束，下轮 evaluate 自然再试）；保留 out 标记供观测。
+                if resp.get("timeout_uncertain"):
+                    out["sent"] = False
+                    out["send_timeout_uncertain"] = True
+                    print(f"[chiguo_daemon] /send timeout_uncertain (msg_id={msg_id}): "
+                          f"不退款不重发，下轮自然再试", file=sys.stderr)
+                    return out
                 if not resp.get("ok"):
                     raise RuntimeError(str(resp.get("error") or "bridge /send ok=false"))
                 out["sent"] = True
