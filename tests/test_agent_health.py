@@ -181,3 +181,74 @@ def test_help_and_bad_args():
     p2 = subprocess.run([sys.executable, str(AGENT_HEALTH), "record", "--outcome", "bogus"],
                         capture_output=True, text=True)
     assert p2.returncode != 0, "非法 outcome 应失败"
+
+
+# ── F-A6-2: 发送域 outcome —— send_fail 复用 fail_streak/down/transition 告警 ──
+
+def test_send_fail_pushes_streak_to_down():
+    """send_fail 推进 fail_streak；达阈值 → down + transition；默认 reason 记 bridge 发送失败"""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        state = td / "agent_health.json"
+        cfg = td / "health.toml"
+        cfg.write_text("[health]\nfail_threshold = 3\n")
+
+        r1 = run("send_fail", state, cfg)
+        assert r1["state"] == "up", r1
+        assert r1["transition"] == "none", r1
+        assert r1["fail_streak"] == 1, r1
+
+        r2 = run("send_fail", state, cfg, "bridge timeout")
+        assert r2["fail_streak"] == 2, r2
+        assert r2["transition"] == "none", r2
+
+        # 第 3 次 send_fail 越过阈值 → down + transition + 告警含次数
+        r3 = run("send_fail", state, cfg)
+        assert r3["state"] == "down", r3
+        assert r3["transition"] == "down", r3
+        assert "3" in r3["message"], r3
+
+        # 默认 reason 区分发送失败（F-A6-2：发送失败显式提示 bridge send failed）
+        assert "bridge send failed" in r3["message"], r3
+        no_tmp_leftover(state)
+
+
+def test_send_fail_shared_with_fail_streak():
+    """send_fail 与 fail 共享同一条 fail_streak（生成+发送都推进，3 次即 down）"""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        state = td / "agent_health.json"
+        cfg = td / "health.toml"
+        cfg.write_text("[health]\nfail_threshold = 3\n")
+
+        run("fail", state, cfg, "生成故障")
+        assert json.loads(state.read_text())["fail_streak"] == 1
+        r2 = run("send_fail", state, cfg)
+        assert r2["fail_streak"] == 2, r2
+        # 第 3 次（发送失败）越过阈值 → down
+        r3 = run("send_fail", state, cfg)
+        assert r3["state"] == "down", r3
+        assert r3["transition"] == "down", r3
+        assert r3["fail_streak"] == 3, r3
+
+
+def test_send_fail_down_success_recovers():
+    """send_fail 致 down 后，一次 success 恢复 up + fail_streak 清零（语义与 fail 一致）"""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        state = td / "agent_health.json"
+        cfg = td / "health.toml"
+        cfg.write_text("[health]\nfail_threshold = 2\n")
+
+        run("send_fail", state, cfg)
+        r2 = run("send_fail", state, cfg)
+        assert r2["state"] == "down", r2
+        assert r2["transition"] == "down", r2
+
+        r3 = run("success", state, cfg)
+        assert r3["state"] == "up", r3
+        assert r3["transition"] == "up", r3
+        assert r3["fail_streak"] == 0, r3
+        data = json.loads(state.read_text())
+        assert data["fail_streak"] == 0, data
+        no_tmp_leftover(state)
