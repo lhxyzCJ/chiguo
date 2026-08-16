@@ -777,7 +777,7 @@ def test_state_anchor_regression_detected_on_load(cfg_path: Path):
         f"regressed mono_anchor({mono}) should be rebuilt to current domain (<= {MONO})")
 
     # 告警落审计（chiguo_state_audit.jsonl）
-    audit_path = s.anchored("chiguo_state_audit.jsonl")
+    audit_path = s.state_path.parent / "chiguo_state_audit.jsonl"
     if audit_path.exists():
         events = [json.loads(l)["event"]
                   for l in audit_path.read_text().splitlines() if l.strip()]

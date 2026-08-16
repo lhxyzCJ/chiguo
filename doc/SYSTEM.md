@@ -187,7 +187,7 @@ new_value = target - (target - current) × 2^(-hours / half_life)
 
 **NTP 前跳封顶（#206，持久化单调锚点）**：cron 模式每 15 分钟起新进程，`_monotonic_at_save` 恒 0 使 loop 模式单调防护失效——壁钟被 NTP 前跳后，以 `last_tick` 为基准的 `elapsed` 会虚增、情绪随之全量推进。为此 `chiguo_state.json` 顶层持久化 `(mono_anchor, wall_anchor)` 单调锚点对：每次 `save()` 写入 `time.monotonic()` 与 CST ISO 壁钟，加载时按类型校验恢复（旧文件/损坏字段回退 None，`monotonic_anchor()` 只读访问）。`_tick` 在倒退审计之后、loop 单调防护之前，用 `min(elapsed, (time.monotonic() - mono_anchor)/3600)` 封顶——单调钟只计真实流逝，NTP 前跳不再按假壁钟全量推进情绪；正常时真实流逝更大，`min` 无感。副作用：系统挂起（suspend）期间 `CLOCK_MONOTONIC` 不推进，唤醒后首次 tick 锚点会把 elapsed 压到 ≈0，情绪不按挂起时长推进——保守方向，与封顶意图一致。
 
-> 回退语义：`wall_anchor` 非法 ISO，或 `time.monotonic() < mono_anchor`（系统重启单调钟归零）→ 不加封顶走壁钟。
+> 回退语义（#335 F-A16-02 起更新）：`wall_anchor` 非法 ISO → 无锚点不加封顶；`time.monotonic() < mono_anchor`（系统重启单调钟归零 / 异机迁移时钟域切换）→ **不再不加封顶走壁钟**，改为保守封顶到 `REBOOT_ELAPSED_CAP_H`（30min，防 NTP 前跳全量推进情绪）；load 时若检测到锚点倒退（mono_anchor > 当前单调钟）→ 告警审计（`state_anchor_regression`）+ 用当前单调/壁钟重建锚点基准，下次 save 自愈。正常路径（monotonic ≥ 锚点）行为与旧版一致。
 
 **A1 弹性衰减（v1.10）**：`recover` 升级为 `elastic_recover`（`chiguo_math.py`）——有效半衰期随偏离度自适应，偏离 target 越远回弹越快：
 
