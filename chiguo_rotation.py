@@ -27,9 +27,18 @@ def _anchor_archive_dir(archive_dir: str) -> Path:
     return p
 
 
+# 轮转事件审计文件的可注入锚点。生产默认锚定模块目录（= 项目根，与 base_dir 一致）。
+# 测试注入隔离临时路径，避免轮转测试真实追加写项目根 chiguo_events.jsonl
+# （CONTRACT-016 测试隔离，Issue #333）。None = 用模块目录默认值。
+_EVENTS_LOG_PATH: Path | None = None
+
+
 def _events_log_path() -> Path:
     """轮转事件审计文件（chiguo_events.jsonl），锚定到模块目录（项目根）。
-    追加式 JSONL，一行一条：{event, kind, file, at}。供 monitor 时序指标消费。"""
+    追加式 JSONL，一行一条：{event, kind, file, at}。供 monitor 时序指标消费。
+    测试可用 `rot._EVENTS_LOG_PATH = <临时文件>` 注入隔离路径（生产保持 None）。"""
+    if _EVENTS_LOG_PATH is not None:
+        return _EVENTS_LOG_PATH
     return Path(__file__).resolve().parent / "chiguo_events.jsonl"
 
 
