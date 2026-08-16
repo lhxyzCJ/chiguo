@@ -295,6 +295,7 @@ post_texts | grep -q "测试主动消息" && pass "回退 spawn 的文本已发�
 : > "$FAKE_AGENT_CALLS"
 echo queue_busy > "$RPC_MODE"        # recorder /agent/prompt 返回 {ok:false,error:'queue_busy:...'}
 echo success > "$FAKE_AGENT_MODE_FILE"
+: > "$POST_LOG"                       # 隔离：只验本用例的发送记录
 HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >"$TMP/tickR10.log" 2>&1 \
   || { cat "$TMP/tickR10.log" >&2 || true; fail "queue_busy 明确失败用例 tick 应退出 0"; }
 [ "$(spawn_count)" -ge 1 ] && pass "queue_busy（明确失败）→ 立即回退 spawn" || fail "queue_busy 期望 spawn ≥1 实得 $(spawn_count)"
