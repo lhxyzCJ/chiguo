@@ -2,7 +2,7 @@
 """agent_health.py — agent 假死状态机（跨进程共享状态 + transition 告警文案）。
 
 用法:
-  agent_health.py record --outcome fail|success [--reason <r>] [--config <path>] [--state <path>]
+  agent_health.py record --outcome fail|send_fail|success [--reason <r>] [--config <path>] [--state <path>]
 
 stdout JSON: {"state": up|down, "transition": none|down|up, "message": 告警/恢复文案, "fail_streak": N}
 transition 只在 up→down 与 down→up 各输出一次（天然防重复告警）。
@@ -91,7 +91,7 @@ def record(outcome, reason, state_path, config_path):
         transition = "none"
         message = ""
 
-        if outcome == "fail":
+        if outcome in ("fail", "send_fail"):
             st["fail_streak"] = st.get("fail_streak", 0) + 1
             if st.get("fail_reason") is None:
                 st["fail_reason"] = reason
@@ -133,12 +133,17 @@ def cli():
     p = argparse.ArgumentParser(description="agent 假死状态机")
     sub = p.add_subparsers(dest="cmd", required=True)
     rec = sub.add_parser("record")
-    rec.add_argument("--outcome", choices=("fail", "success"), required=True)
+    rec.add_argument("--outcome", choices=("fail", "send_fail", "success"), required=True)
     rec.add_argument("--reason", default=None)
     rec.add_argument("--config", default=str(_anchor() / "chiguo_proactive.toml"))
     rec.add_argument("--state", default=str(_anchor() / "agent_health.json"))
     args = p.parse_args()
-    result = record(args.outcome, args.reason, Path(args.state), Path(args.config))
+    # F-A6-2: send_fail 缺省 reason 显式区分发送失败（bridge /send 故障），
+    # 便于告警文案诊断（默认桥发送失败，调用方可不传 --reason）。
+    reason = args.reason
+    if args.outcome == "send_fail" and not reason:
+        reason = "bridge send failed"
+    result = record(args.outcome, reason, Path(args.state), Path(args.config))
     print(json.dumps(result, ensure_ascii=False))
 
 

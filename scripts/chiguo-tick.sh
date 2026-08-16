@@ -154,8 +154,8 @@ except: print("")' 2>/dev/null || true)"
   fi
   exit 1
 fi
-# 消息已产出 → 先记 success（发送失败不丢成功信号）；再发送
-record_health success
+# 消息已产出 → 不再这里记 success（F-A6-2：发送失败也进健康状态机，成功必须是
+# 生成+发送都 OK；success 移到发送成功分支，避免发送前清零导致 send_fail 永不累积）
 BODY="$("$PY" -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "text": sys.argv[2]}))' "$OWNER" "$TEXT")"
 MSG_ID="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("msg_id",""))
@@ -187,8 +187,16 @@ if ! printf '%s' "$SEND_RESP" | grep -q '"ok": *true'; then
     "$PY" "$REPO/chiguo_daemon.py" --send-result "$MSG_ID" --send-status failed --error "$SEND_ERR" >/dev/null 2>&1 \
       || echo "[chiguo-tick] send-result(failed) 回传失败 msg_id=$MSG_ID" >&2
   fi
+  # F-A6-2: 发送失败也进健康状态机——生成已 OK，但发送（bridge /send）失败的轮次
+  # 视为一次失败，记 send_fail 推进 fail_streak；连续 3 次发送失败 → 达阈值 down +
+  # transition 告警 + 暂停，健康语义不再恒 up（与 R-TRO-010b 同点修复：不再发送前清零）。
+  # 复用 record_health（失败静默，transition 告警经 /send，bridge 挂时告警也推不出但记账正确）。
+  # 注意 record_health 签名是 <outcome> <reason>（内部自带 --reason），勿传 --reason 前缀。
+  record_health send_fail "bridge send failed"
   exit 1
 fi
+# 发送成功 → 记 health success（生成+发送双成功才算健康；down→up 恢复在此翻转）
+record_health success
 # 回传发送结果（health 已记 success）
 # A2: --trigger 来自决策 JSON（sent+1 的归因键），无 trigger（如告警直发）则跳过。
 if [ -n "$MSG_ID" ]; then

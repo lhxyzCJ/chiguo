@@ -99,11 +99,12 @@ unset AGENT_API_KEY OPENCODE_API_KEY
 # 默认 tags：含 qwen3-embedding（阶段 4 通过；用例 8 覆盖为空）
 printf '{"models":[{"name":"qwen3-embedding:0.6b","capabilities":["embedding"]}]}' > "$TAGS_FILE"
 
-setup_ready() {  # 预置全部已安装状态（auth/crontab 含 replan-tick 行）
+setup_ready() {  # 预置全部已安装状态（auth/crontab 含 replan-tick/alert-cron 行）
   mkdir -p "$HOME/.pi/agent"
   printf '{"opencode-go":{"type":"api_key","key":"sk-test"}}' > "$HOME/.pi/agent/auth.json"
   printf '*/15 * * * * %s/scripts/chiguo-tick.sh >> %s/logs/cron-tick.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" > "$CRON_STATE"
   printf '*/15 * * * * %s/scripts/replan-tick.sh >> %s/logs/cron-replan.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" >> "$CRON_STATE"
+  printf '0 */2 * * * %s/scripts/alert-cron.sh >> %s/logs/cron-alert.log 2>&1\n' "$CHIGUO_REPO_OVERRIDE" "$CHIGUO_REPO_OVERRIDE" >> "$CRON_STATE"
 }
 clean_home() { rm -rf "$HOME/.pi" "$HOME/.chiguo"; rm -f "$CRON_STATE"; }
 
@@ -121,6 +122,7 @@ set +e; OUT=$(bash scripts/install_agent.sh --dry-run 2>&1); RC=$?; set -e
 [ "$RC" = 1 ] && pass "干净环境 dry-run → 退出 1" || fail "期望 1 实得 $RC"
 echo "$OUT" | grep -q "chiguo-tick" || fail "待办清单缺 crontab"
 echo "$OUT" | grep -q "replan-tick" || fail "待办清单缺 replan crontab"
+echo "$OUT" | grep -q "alert-cron" || fail "待办清单缺 alert-cron crontab"
 echo "$OUT" | grep -q "auth.json" || fail "待办清单缺 auth.json"
 [ ! -e "$HOME/.pi" ] || fail "dry-run 不应创建 ~/.pi"
 [ ! -f "$CRON_STATE" ] || fail "dry-run 不应注册 crontab"
@@ -189,6 +191,7 @@ set +e; OUT=$(env -u AGENT_API_KEY -u OPENCODE_API_KEY bash scripts/install_agen
 [ "$RC" = 1 ] || fail "--yes 无 key 期望 1 实得 $RC"
 grep -q 'chiguo-tick' "$CRON_STATE" || fail "阶段 6 未注册 crontab"
 grep -q 'replan-tick' "$CRON_STATE" || fail "阶段 6 未注册 replan crontab"
+grep -q 'alert-cron' "$CRON_STATE" || fail "阶段 6 未注册 alert-cron crontab"
 [ ! -f "$HOME/.pi/agent/auth.json" ] || fail "无 OPENCODE_API_KEY 不应写 auth.json"
 pass "--yes 无 key → PENDING + 退出 1（阶段 6 crontab 产物已断言）"
 
@@ -246,6 +249,7 @@ set +e; OUT=$(bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "第二遍 --yes 期望 0 实得 $RC"
 [ "$(grep -c 'chiguo-tick' "$CRON_STATE" || true)" = 1 ] || fail "crontab 重复注册: $(cat "$CRON_STATE")"
 [ "$(grep -c 'replan-tick' "$CRON_STATE" || true)" = 1 ] || fail "replan crontab 重复注册: $(cat "$CRON_STATE")"
+[ "$(grep -c 'alert-cron' "$CRON_STATE" || true)" = 1 ] || fail "alert-cron crontab 重复注册: $(cat "$CRON_STATE")"
 [ ! -f "$HOME/.pi/agent/auth.json.bak.bak" ] || fail "两遍 --yes 不应重复 .bak"
 unset OPENCODE_API_KEY AGENT_API_KEY
 pass "--yes 两遍幂等（不重复 crontab/.bak）"
@@ -308,5 +312,26 @@ grep -q '^#' "$CRON_STATE" || fail "loop 模式不应删除被注释的 chiguo-t
 grep -q 'replan-tick' "$CRON_STATE" || fail "loop 模式应保留 replan-tick"
 echo "$OUT" | grep -q "被注释禁用" || fail "loop 模式应醒目提示被注释禁用"
 pass "loop 模式移除活动旧条目但保留被注释禁用行"
+
+# ── 用例 20: 被注释禁用的 alert-cron 条目 → dry-run 醒目提示 + 注释行保持原样 ──
+clean_home
+printf '# 手动停用 alert-cron（临时）\n' > "$CRON_STATE"
+set +e; OUT=$(bash scripts/install_agent.sh --dry-run 2>&1); RC=$?; set -e
+[ "$RC" = 1 ] || fail "被注释 alert-cron dry-run 期望 1 实得 $RC"
+echo "$OUT" | grep -q "被注释禁用" || fail "未醒目提示被注释禁用: $(echo "$OUT" | grep -o 'alert-cron[^ ]*' | head -1)"
+grep -q '^#' "$CRON_STATE" || fail "dry-run 不应改动被注释的 alert-cron 行"
+pass "被注释 alert-cron → dry-run 提示 + 注释行原样"
+
+# ── 用例 21: --yes 两遍后 alert-cron 恰好注册一条且不重复（幂等收尾验证）──
+setup_ready
+: > "$CRON_STATE"
+export OPENCODE_API_KEY=sk-idem
+set +e; OUT=$(bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "alert-cron --yes 第一遍期望 0 实得 $RC"
+set +e; OUT=$(bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "alert-cron --yes 第二遍期望 0 实得 $RC"
+[ "$(grep -c 'alert-cron' "$CRON_STATE" || true)" = 1 ] || fail "alert-cron 应恰好 1 条: $(cat "$CRON_STATE")"
+unset OPENCODE_API_KEY AGENT_API_KEY
+pass "alert-cron --yes 两遍幂等（恰好 1 条）"
 
 echo "test_install_agent: 通过"

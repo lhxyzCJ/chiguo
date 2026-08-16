@@ -35,7 +35,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 | `scripts/ci-test.sh` | 全量自检链（计数以此脚本为准），与 GitHub Actions 共用同一入口 |
 | `scripts/chiguo-tick.sh` | 主动发送链（crontab 触发：决策 → 生成 → 微信发送 → 健康记录） |
 | `scripts/replan-tick.sh` | 计划重分析（crontab 触发） |
-| `scripts/alert-cron.sh` | 告警微信推送（可选 crontab 触发：调 `chiguo_daemon.py --alerts-push` 推送新增 critical/warn 告警；不随 install_agent.sh 自动注册） |
+| `scripts/alert-cron.sh` | 告警微信推送（crontab 自动注册：调 `chiguo_daemon.py --alerts-push` 推送新增 critical/warn 告警；频率 `0 */2 * * *`，日志 `logs/cron-alert.log`） |
 | `scripts/install_agent.sh` | agent 环境安装（key 写入、crontab/常驻注册、冒烟） |
 | `scripts/agent-auth.sh` | 从 `~/.pi/agent/auth.json` 解析 API key 到 `OPENCODE_API_KEY`（供 tick 脚本 source） |
 | `scripts/service.sh` | 微信桥 systemd 自启/临时/状态/停止/卸载 |
@@ -88,13 +88,9 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 `bash scripts/netease-api.sh install` → systemd `netease-api.service`（需 root）；扫码登录 `uv run python -m netease.bridge --login`。可 `--skip-netease`。
 
-部署完成后 crontab 有两条：`*/15 chiguo-tick.sh` → `logs/cron-tick.log`、`*/15 replan-tick.sh` → `logs/cron-replan.log`。**loop 常驻形态下** crontab 仅剩 replan-tick（tick 条目互斥移除）。
+部署完成后 crontab 有三条：`*/15 chiguo-tick.sh` → `logs/cron-tick.log`、`*/15 replan-tick.sh` → `logs/cron-replan.log`、`0 */2 * * * alert-cron.sh` → `logs/cron-alert.log`。**loop 常驻形态下** crontab 为 `replan-tick` + `alert-cron`（tick 条目互斥移除；告警推送两种形态都保留）。
 
-**可选项：告警微信推送 cron**（Q24/#275）：`scripts/alert-cron.sh` 不随 install_agent.sh 自动注册——如需把新增 critical/warn 告警定时推送到微信，可手动加一行（*不会改变上方「两条」的默认计数*）：
-
-```cron
-0 */2 * * * /path/to/scripts/alert-cron.sh >> /path/to/logs/cron-alert.log 2>&1
-```
+**告警微信推送 cron**（Q24/#275，随 `install_agent.sh` 自动注册）：`0 */2 * * * scripts/alert-cron.sh >> logs/cron-alert.log 2>&1`（调 `chiguo_daemon.py --alerts-push` 推送新增 critical/warn 告警）。**手动停用**：注释该行（行首加 `#`）即可，install_agent.sh 会把被注释条目识别为手动禁用并原样保留，不会自动恢复。
 
 ## 七、机器落点地图
 
