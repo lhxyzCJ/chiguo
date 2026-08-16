@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """test_availability.py — availability 三层重组:档位矩阵 + 数值链 + 重叠优先级(批次 3a)"""
 
-import json, os, sys, tempfile
+import json, os, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -168,3 +168,87 @@ def test_lambda_monotonic():
         lam_exam = s.current_lambda(dt(2026, 3, 4, 14, 0))
         assert lam_exam < lam_free, f"考试周 λ 低于空闲: {lam_exam} vs {lam_free}"
     print("  OK test_lambda_monotonic")
+
+
+def test_semester_front_break_symmetry():
+    """F-A20-01 寒假/暑假对称:semester_start 前的工作日应走 break tier 0.85(与学期后对称)。
+    修复前:week_number max(1,..) 钳到第 1 周 → 按第 1 周课表上课中 → idle_school 0.12。"""
+    cfg_ok = {"schedule": {"enabled": True, "semester_start": "2026-02-23",
+                           "semester_end": "2026-07-04", "exam_weeks": []}}
+    winter_cache = {"cache_version": 2, "parsed_at": 0, "schedule": {
+        "1": {"5": {"course": "数分", "teacher": "李老师", "weeks": [1, 2, 3],
+                    "weeks_raw": "1-3周", "location": "A301", "alternates": []}}}}
+    with tempfile.TemporaryDirectory() as td:
+        # 2026-02-10 周二 14:00 第 5 节上课中;学期 02-23 才开始 → 寒假 → break 0.85
+        Path(td, "schedule_cache.json").write_text(json.dumps(winter_cache))
+        s = make_state(td, cfg_ok)
+        now = dt(2026, 2, 10, 14, 0)
+        assert s.availability(now) == 0.85, \
+            "寒假工作日应 break 0.85(修复前:week 1 课表上课中 0.12)"
+        sch = s.schedule_status(now)
+        assert sch is not None and sch["on_break"] is True and \
+            sch["break_reason"] == "学期未开始", f"schedule_status 应报学期前 break, got {sch}"
+    with tempfile.TemporaryDirectory() as td:
+        # 暑假对照:semester_end(07-04)后 → break 0.85 不变(既有行为)
+        Path(td, "schedule_cache.json").write_text(json.dumps(winter_cache))
+        s = make_state(td, cfg_ok)
+        assert s.availability(dt(2026, 7, 8, 14, 0)) == 0.85, "暑假 break 0.85 不变"
+    print("  OK test_semester_front_break_symmetry")
+
+
+def test_rc_cache_invalidates_on_source_change():
+    """F-A20-07 日键缓存失效:同日修改 schedule 源文件(schedule_overrides.json /
+    schedule_cache.json)→ _rc_cache 感知变更,新数据生效,无需手动清缓存。
+    修复前:缓存按日期键控,同日仍旧数据(旧测试须手动 _rc_cache={} 才可见变更)。"""
+    cfg_ok = {"schedule": {"enabled": True, "semester_start": "2026-02-23",
+                           "semester_end": "2099-12-31", "exam_weeks": []}}
+    now = dt(2026, 3, 4, 14, 0)   # 周三第 5 节上课中
+    # ① override 源变更:取消第 5 节 → 课间无课 0.85
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "schedule_cache.json").write_text(json.dumps(CACHE))
+        s = make_state(td, cfg_ok)
+        assert s.availability(now) == 0.12, "基线:周三第 5 节上课中 light 0.12"
+        ov = Path(td, "schedule_overrides.json")
+        ov.write_text(json.dumps({"override_version": 1, "items": [
+            {"id": "c1", "date": "2026-03-02", "end_date": "2026-03-06", "kind": "cancel",
+             "period": 5, "note": "本周停课", "created_at": "2026-03-01T10:00:00+08:00"}]},
+            ensure_ascii=False))
+        os.utime(ov, ns=(time.time_ns(), time.time_ns()))
+        assert s.availability(now) == 0.85, \
+            "同日 override 变更应即时失效(cancel 后课间无课 0.85;修复前仍旧 0.12)"
+    # ② schedule_cache 源变更:周三 3、5 节 → 周三仅 3 节(14:00 第 5 节课表无课)→ 0.85
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "schedule_cache.json").write_text(json.dumps(CACHE))
+        s = make_state(td, cfg_ok)
+        assert s.availability(now) == 0.12, "基线:周三第 5 节上课中 light 0.12"
+        light = {"cache_version": 2, "parsed_at": 0, "schedule": {
+            "2": {"3": {"course": "高数", "teacher": "刘洋", "weeks": [1, 2, 3, 4, 5],
+                        "weeks_raw": "2-5周", "location": "A301", "alternates": []}}}}
+        cp = Path(td, "schedule_cache.json")
+        cp.write_text(json.dumps(light))
+        os.utime(cp, ns=(time.time_ns(), time.time_ns()))
+        assert s.availability(now) == 0.85, \
+            "同日 schedule_cache 变更应即时生效(仅 3 节且 14:00 已过 → 0.85;修复前仍旧 0.12)"
+    print("  OK test_rc_cache_invalidates_on_source_change")
+
+
+def test_scale_cache_invalidates_on_plan_change():
+    """F-A20-07 日键缓存失效(scale 族):同日修改 schedule_plan.json → trigger_scale_now
+    感知变更。修复前:按日期缓存,同日仍旧 scale。"""
+    cfg_ok = {"schedule": {"enabled": True, "semester_start": "2026-02-23",
+                           "semester_end": "2099-12-31", "exam_weeks": []}}
+    now = dt(2026, 10, 1, 14, 0)   # 国庆节(hit "holiday:国庆节" ref)
+    with tempfile.TemporaryDirectory() as td:
+        pp = Path(td, "schedule_plan.json")
+        pp.write_text(json.dumps({"plan_version": 1, "generated_at": "2026-09-01T10:00:00+08:00",
+                                  "modifiers": [{"ref": "holiday:国庆节",
+                                                 "trigger_scale": {"morning": 0.2}}]}))
+        s = make_state(td, cfg_ok)
+        assert s.trigger_scale_now(now) == {"morning": 0.2}, "基线:国庆节 ref → morning 0.2"
+        pp.write_text(json.dumps({"plan_version": 1, "generated_at": "2026-09-02T10:00:00+08:00",
+                                  "modifiers": [{"ref": "holiday:国庆节",
+                                                 "trigger_scale": {"morning": 0.9}}]}))
+        os.utime(pp, ns=(time.time_ns(), time.time_ns()))
+        assert s.trigger_scale_now(now) == {"morning": 0.9}, \
+            "同日 plan 变更应即时失效(0.9;修复前仍旧 0.2)"
+    print("  OK test_scale_cache_invalidates_on_plan_change")
