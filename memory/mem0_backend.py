@@ -253,7 +253,17 @@ class Mem0Backend(MemoryBackend):
             ts = _parse_iso_ts(created)
         except (TypeError, ValueError, AttributeError):
             ts = 0.0
-        importance = self.clean_importance(meta) or 0.5
+        # F-A21-001 (#336): 区分"显式 importance"与"无 importance 信息"。
+        # mem0 无 importance 概念，读路径缺省回退 0.5 保持读侧稳定（search/随机加权
+        # 不受影响）；但 consolidate 过期需能识别"无 importance metadata"的行——
+        # 否则 _row 固定回退 0.5 ≥ min_importance(0.3) 使超龄行永不过期，记忆库无界
+        # 增长。importance_known=False 即"元数据无有效 importance"的信号，consolidate_plan
+        # 据此对超龄行单独放行过期。仅显式 >0 的数值 importance 才视为"有真实 importance
+        # 信息"（known=True）；缺 metadata / 显式 0 / NaN 一律 known=False —— 缺省 0.5 是
+        # 读路径回退、不代表真实重要性，超龄同样应可过期（避免这类行永不过期）。
+        raw_imp = self.clean_importance(meta)
+        importance_known = raw_imp > 0  # 显式 >0 才视为有真实 importance 信息
+        importance = raw_imp or 0.5
         if importance <= 0:
             importance = 0.5  # mem0 无 importance 概念；缺省中位权重，避免全零
         rc = meta.get("recall_count")
@@ -267,6 +277,9 @@ class Mem0Backend(MemoryBackend):
             "category": str(meta.get("category") or ""),
             "scope": str(meta.get("scope") or "global"),
             "importance": importance,
+            # F-A21-001: 有无真实 importance 信息（False = metadata 无有效 importance，
+            # _row 回退 0.5；供 consolidate_plan 对超龄无标记行放行过期）
+            "importance_known": importance_known,
             "timestamp": ts,
             "datetime": created,
             "memory_category": str(meta.get("memory_category") or "?"),
