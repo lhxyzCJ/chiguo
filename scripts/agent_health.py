@@ -92,7 +92,10 @@ def record(outcome, reason, state_path, config_path):
         message = ""
 
         if outcome in ("fail", "send_fail"):
-            st["fail_streak"] = st.get("fail_streak", 0) + 1
+            # R7 (F-A17-002): fail_streak 有界 —— down 态不再无条件 +1（否则无界增长）。
+            # down 后 fail_streak 封顶在阈值；down→up 仅由 success 触发（下方 else 分支）。
+            if st.get("state") != "down":
+                st["fail_streak"] = st.get("fail_streak", 0) + 1
             if st.get("fail_reason") is None:
                 st["fail_reason"] = reason
             st["last_fail_at"] = now
