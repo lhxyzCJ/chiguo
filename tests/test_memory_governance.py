@@ -221,18 +221,20 @@ def test_add_failure_exposes_count_in_stats():
     （供 monitor 感知 LLM 写链故障）。修复前红：无 add_fail_count 字段。"""
     with tempfile.TemporaryDirectory() as td:
         b = _fake_backend([], Path(td), fail_add=True)
-        assert b.add_messages([{"role": "user", "content": "写链故障"}])
-        # 第一次失败
+        # 首次 add 失败 → 计数 1 + 后端置不可用
+        assert b.add_messages([{"role": "user", "content": "写链故障"}]) is False
+        assert b._add_fail_count == 1
+        # 后端不可用后，再写直接短路返回 False（不计新 add 异常，不叠加计数）
         assert b.add_messages([{"role": "user", "content": "写链故障2"}]) is False
         assert b.add_messages([{"role": "user", "content": "写链故障3"}]) is False
+        assert b._add_fail_count == 1
         s = b.stats()
         assert "add_fail_count" in s, \
             f"stats() 应暴露 add_fail_count, got keys={sorted(s.keys())}"
-        assert s["add_fail_count"] == 2, \
-            f"两次 add 失败应累计 add_fail_count=2, got {s['add_fail_count']}"
+        assert s["add_fail_count"] == 1, \
+            f"一次 add 异常应累计 add_fail_count=1, got {s['add_fail_count']}"
         assert s.get("last_error") and s["last_error"][1] == "add", \
             f"last_error 应记录 add 失败, got {s.get('last_error')}"
-        assert b._add_fail_count == 2
         # 不可用分支也应暴露（恒 0 或当前值），不破 stats 形状
         b._available = False
         s2 = b.stats()
