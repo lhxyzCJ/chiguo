@@ -91,6 +91,8 @@ TOML
 cat > "$REPO/chiguo_daemon.py" <<'PY'
 import json, sys, os
 if "--compact" in sys.argv:
+    with open(os.environ.get("COMPACT_LOG", "/dev/null"), "a") as f:
+        f.write("compact\n")
     if os.environ.get("FAKE_DAEMON_ACTION") == "idle":
         print(json.dumps({"action": "idle"}))
     else:
@@ -347,6 +349,64 @@ test_activity_marker() {
   pass "#223 活动标记: send 写 / idle 不写 + spawn 轮换标志"
 }
 test_activity_marker
+
+# ── R7 (F-RT-003): OWNER/node 缺失早退须前置到 --compact 之前，避免幻影记账 ──
+# OWNER 缺失 → tick 应早于 evaluate 退出，chiguo_daemon.py --compact 根本不执行
+# （决策记账不落盘）→ 无幻影。断言：① 行为——OWNER 缺失时 --compact 未被调用；
+# ② 静态——tick.sh 源码中 OWNER 检查早于 --compact 调用。
+test_owner_missing_no_phantom() {
+  export COMPACT_LOG="$TMP/compact.log"
+  : > "$COMPACT_LOG"
+  # 清空收件人：无 credentials + 空 toml wechat_recipient → OWNER 缺失
+  cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+
+[wechat]
+wechat_recipient = ""
+TOML
+  set +e
+  HOME="$TMP/home" CHIGUO_REPO="$REPO" bash "$REAL_TICK" >/dev/null 2>&1
+  RC=$?
+  set -e
+  [ "$RC" = 1 ] || fail "OWNER 缺失 tick 应 exit 1, 实得 $RC"
+  [ ! -s "$COMPACT_LOG" ] && pass "OWNER 缺失 → --compact 未执行（无幻影决策记账）" \
+    || fail "OWNER 缺失时不应调用 --compact，但 daemon 已被调用: $(cat "$COMPACT_LOG")"
+  # 静态源码断言：OWNER 检查行号 < --compact 调用行号（前置）
+  local owner_line compact_line
+  owner_line="$(grep -n '未检测到收件人' "$REAL_TICK" | head -1 | cut -d: -f1)"
+  compact_line="$(grep -n -- '--compact' "$REAL_TICK" | head -1 | cut -d: -f1)"
+  [ -n "$owner_line" ] && [ -n "$compact_line" ] \
+    || fail "tick.sh 应含 OWNER 检查与 --compact (owner=$owner_line compact=$compact_line)"
+  [ "$owner_line" -lt "$compact_line" ] \
+    && pass "tick.sh OWNER 检查(L$owner_line)已前置到 --compact(L$compact_line) 之前" \
+    || fail "OWNER 检查应早于 --compact 调用 (owner=$owner_line, compact=$compact_line)"
+  # node 缺失检查同样须在 --compact 之前（node 缺失早退也避免幻影记账）
+  local node_line
+  node_line="$(grep -n 'node 缺失' "$REAL_TICK" | head -1 | cut -d: -f1)"
+  [ -n "$node_line" ] || fail "tick.sh 应含 node 缺失检查"
+  [ "$node_line" -lt "$compact_line" ] \
+    && pass "tick.sh node 缺失检查(L$node_line)已前置到 --compact(L$compact_line) 之前" \
+    || fail "node 缺失检查应早于 --compact 调用 (node=$node_line, compact=$compact_line)"
+  # 恢复后续用例（case 8 崩溃 tick）依赖的 toml：确保 send 路径配置完整
+  cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+send_session_id = "chiguo-send"
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+provider = "deepseek"
+model = "deepseek-chat"
+
+[wechat]
+wechat_recipient = "owner@im.wechat"
+
+[health]
+fail_threshold = 3
+TOML
+  mkdir -p "$TMP/home/.chiguo/auth/wechat"
+  printf '{"token":"t","userId":"real_openid@im.wechat","accountId":"a"}' \
+    > "$TMP/home/.chiguo/auth/wechat/credentials.json"
+}
+test_owner_missing_no_phantom
 
 # ── 用例 8（Issue #135）: daemon --compact 崩溃 → 非零退出 + stderr 告警（不得静默吞掉）──
 # 放在最末尾：替换 fake daemon 为崩溃版，不影响前面各用例依赖的 send 输出
