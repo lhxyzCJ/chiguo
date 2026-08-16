@@ -1102,6 +1102,15 @@ python3 chiguo_daemon.py --memory-search "咖啡"  # 记忆检索（mem0 语义�
 # 文件传参（避免 shell 转义问题）
 python3 chiguo_daemon.py --user-msg-file /tmp/user_msg.txt
 python3 chiguo_daemon.py --analysis-file /tmp/analysis.json
+```
+
+**写安排校验契约（R11 确定性拒绝层）**：`--schedule-change` 落盘前经 `OverrideStore.validate` + `ScheduleApi.apply_override` 双重确定性校验，拒绝即不落盘——
+
+- 必填键：`kind`/`date` 必有；`cancel`/`add` 必有 `period`，`move` 必有源 `period` 与 `to_period`（无源槽的移动语义不存在）。
+- 日期：ISO 或 MM-DD 双格式兼容，`end_date` 解析后归一 ISO 落盘（MM-DD 不被格式拒绝）。
+- 区间不变量：区间形态（`{date,end_date}`、顶层 `end_date` 与 `{start,end}` 三路径统一）`end_date` 不得早于 `date`，跨度 ≤ 60 天（恰 60 允许，与 `resolve_when` 语义一致）。
+- 其它拒绝：未知字段/未知 kind/`to_date` 非 move/倒序调课/过去日期（分端点）/学期边界（`before_semester`/`after_semester`）/`move` 源槽无课（`no_source_class`）→ `ApiRejection`（H5 澄清文案映射）。
+- 读路径防线：`schedule_overrides.json` 缺 `date` 等必填键的坏条目读入即剔除并置 `corrupt`（经 `_guard` 重建落盘），`for_date`/`cleanup`/`reminders_in` 等读路径不抛 KeyError。
 
 > **注意**：`--send-result` 是幂等的——重复报告同一条消息不会重复退款。此外 `refund_send` 以 state 内有界 FIFO（`cooldown.refunded_msg_ids`，上限 200 条）兜底，日志尾 500 行去重窗口之外的同 msg_id 重放双退同样被拒（F-A15-002）。
 
@@ -1112,7 +1121,6 @@ python3 chiguo_daemon.py --alerts            # 异常检测
 python3 chiguo_daemon.py --alerts-push       # Q24: 检出+持久化告警，并微信推送新增 critical/warn（cron 入口）
 python3 chiguo_daemon.py --monitor           # 完整报告（stats + alerts + health）
 # 告警 cron（Q24/#275）经 scripts/alert-cron.sh 调用 --alerts-push；日志 logs/cron-alert.log
-```
 
 ### chiguo_demo.py
 
