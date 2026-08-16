@@ -160,6 +160,8 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 ## 十三、常见问题
 
 - 微信桥装好了但收不到消息？（看桥日志：systemd 形态 `journalctl -u chiguo-bridge`；直接启动形态 `/tmp/opencode/wechat-bridge.log`；扫码态失效 → `bash scripts/wechat-bridge.sh login` 重登）
+- 登录失效期间 cron 每 15min 报 `exit 1`（日志/邮件噪音）？（**预期行为**：RF13——OWNER 缺失/credentials 失效时 tick 在决策前早退 `exit 1`，安全语义保留；`bash scripts/wechat-bridge.sh login` 重登后自动恢复，无需为登出期噪音报警）
+- node 缺失告警报「后端异常」？（RF12——node 缺失是**环境问题**（cron PATH 不完整/未安装），reason 标注「环境问题，非 agent 故障」，补装 node 或修正 PATH 后 `agent_health` 经 health 恢复；非 agent 后端故障）
 - tick 跑过没消息？（看 `logs/cron-tick.log`；决策门控正常——深夜/静默窗口不发）
 - agent 报 No API key / 401？（install_agent.sh 阶段 6 重写 key；`uv run python chiguo_envcheck.py` 复核）
 - 网易云服务起不来？（`bash scripts/netease-api.sh status`；可选组件可跳过）
