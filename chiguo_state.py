@@ -2602,14 +2602,40 @@ class ChiguoState:
         self._finalize(now)
         return True
 
-    def can_send(self, now: datetime, quiet_ok: bool = False) -> bool:
+    def _daily_max(self, now: datetime) -> int:
+        """当日配额上限：沉默 <8h 按活跃配额（max_daily_active），否则按静默配额
+        （max_daily_silent）。R13 (#315) 抽为方法 → can_send 与 decision 二次门禁
+        探测共用同一公式（门禁豁免集单一事实源）。"""
         cfg = self.config.get("cooldown", {})
         silent_h = self.cooldown.silent_hours(now)
+        return (cfg.get("max_daily_active", 4) if silent_h < 8
+                else cfg.get("max_daily_silent", 2))
 
-        # 硬性每日上限（v6: 逃生阀破防同 overflow 可突破日限额）
-        daily_max = cfg.get("max_daily_active", 4) if silent_h < 8 else cfg.get("max_daily_silent", 2)
-        if self.cooldown.messages_today >= daily_max:
-            if not (self.is_longing_overflow() or self.longing_break_eligible(now)):
+    def _daily_limit_break_ok(self, now: datetime, must_send: bool = False) -> bool:
+        """日限额突破钥匙（门禁豁免集单一事实源，R13 #315）：
+        ① is_longing_overflow 概率累积溢出；② 72h 逃生阀 longing_break；
+        ③ must_send 高段必发（用户决策 2026-08-16：配额满也发）。
+        must_send 只允许「恰好配额满」的一次突破：messages_today == daily_max →
+        放行；超额发出后 == daily_max+1 → 封顶（超额每日 ≤1 条，防 spam）。"""
+        if self.is_longing_overflow() or self.longing_break_eligible(now):
+            return True
+        if must_send:
+            return self.cooldown.messages_today < self._daily_max(now) + 1
+        return False
+
+    def daily_limit_reached(self, now: datetime) -> bool:
+        """日配额已满（messages_today >= daily_max）。供 decision 二次门禁
+        （must_send 第三把钥匙探测）判定「当前拦截的可疑门禁是否为日限额」。"""
+        return self.cooldown.messages_today >= self._daily_max(now)
+
+    def can_send(self, now: datetime, quiet_ok: bool = False,
+                 must_send: bool = False) -> bool:
+        cfg = self.config.get("cooldown", {})
+
+        # 硬性每日上限（v6: 逃生阀破防同 overflow 可突破日限额；
+        # R13 #315: must_send 成为第三把钥匙——配额满也发，超额每日封顶 1 条）
+        if self.cooldown.messages_today >= self._daily_max(now):
+            if not self._daily_limit_break_ok(now, must_send=must_send):
                 return False
 
         # 最小间隔
@@ -2636,10 +2662,14 @@ class ChiguoState:
         # 静默窗口禁止(配置默认 0-8;生物钟学习达标后为学习窗口)
         # B1(#136): quiet_ok=True(窗口内播放反证成立)时跳过——夜间活跃允许窗口内发送,
         # 其余 gate(日上限/最小间隔/元气/忙碌)不变。
+        # F-A15-001（#315 R13）：门禁豁免集单一事实源——逃生阀与 daily_limit 破防
+        # 同属豁免族，quiet gate 放行 escape（修复前不对称：Bayesian sleeping 有豁免
+        # 而静默窗口无 → 破防被推迟 ≤ 窗口长度）。
         if not quiet_ok:
             qs, qe = self.cooldown.quiet_window()
             if in_quiet_window(now, qs, qe):
-                return False
+                if not self.longing_break_eligible(now):
+                    return False
 
         # 忙碌抑制（用户说"忙"/"晚安"等）
         if self.cooldown.is_busy_suppressed(now):

@@ -156,6 +156,39 @@ class DecisionCoreMixin(DecisionEngineBase):
     
                 # 2. 能否发送（v4: 增加 Bayesian 用户状态门控;v8: 播放反证 quiet_ok 放行）
                 can_send = self.state.can_send(now, quiet_ok=play_proof)
+
+                # ── R13 (#315): 门禁豁免二次探测 ──
+                # can_send 在 evaluate_triggers **之前**调用——触发层的 must_send /
+                # escape_valve 标记此刻未知。F-A5-02（must_send 第三把钥匙破日限额，
+                # 用户决策 2026-08-16：配额满也发、超额每日封顶 1 条）与 F-A15-001
+                # （逃生阀豁免静默窗，修复前破防被推迟 ≤ 窗口长度）需要把豁免判定
+                # 前移。最简可行：门禁被拦时做一次探测评估（escape 分支在
+                # evaluate_triggers 首部即 return、零副作用；must_send 探测仅在
+                # daily_limit 是可疑拦截时进行），命中且 can_send 相应放行 →
+                # 复用探测结果，避免双评估副作用（follow_up attempted / mem0 采样）。
+                probe_trigger = None
+                if not can_send:
+                    if self.state.longing_break_eligible(now):
+                        # F-A15-001：逃生阀豁免 quiet gate（can_send 内部已含
+                        # daily_limit 与静默窗双豁免）→ 探测 escape_valve 触发
+                        probe_trigger = evaluate_triggers(
+                            self.state, now,
+                            trigger_scale=self.state.trigger_scale_now(now))
+                        if (probe_trigger is not None
+                                and probe_trigger.data.get("escape_valve")
+                                and self.state.can_send(now, quiet_ok=play_proof)):
+                            can_send = True
+                    elif self.state.daily_limit_reached(now):
+                        # F-A5-02：配额满 + 高段必发 → 破日限额（超额每日 ≤1 条，
+                        # 由 can_send(must_send=True) 内部判定——仅恰好配额满放行）
+                        probe_trigger = evaluate_triggers(
+                            self.state, now,
+                            trigger_scale=self.state.trigger_scale_now(now))
+                        if (probe_trigger is not None
+                                and probe_trigger.data.get("must_send")
+                                and self.state.can_send(now, quiet_ok=play_proof,
+                                                        must_send=True)):
+                            can_send = True
     
                 # Bayesian 阻塞：用户很可能在睡觉 → idle（v6: 逃生阀激活时豁免——
                 # 72h+ 沉默的高焦虑破防是仅有的救命通道，不能被"可能在睡觉"拦死）
@@ -187,8 +220,9 @@ class DecisionCoreMixin(DecisionEngineBase):
                         self._idle_reason(now, user_state, quiet_ok=play_proof)
                     return self._emit_idle(reason, now, user_state, data_warning)
     
-                # 3. 评估触发
-                trigger = evaluate_triggers(self.state, now, trigger_scale=self.state.trigger_scale_now(now))
+                # 3. 评估触发（二次门禁探测命中 → 复用探测结果，避免双评估副作用）
+                trigger = probe_trigger if probe_trigger is not None else evaluate_triggers(
+                    self.state, now, trigger_scale=self.state.trigger_scale_now(now))
                 # ── v7: 从未交互用户（last_user_message_at is None）无逃生阀豁免 ──
                 # 逃生阀语义需要既有关系；chiguo_trigger.py 直接查 longing_break_eligible
                 # （state 侧暂无 never-interacted 检查），这里在 daemon 决策点兜底降级。
