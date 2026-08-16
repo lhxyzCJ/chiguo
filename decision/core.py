@@ -178,9 +178,11 @@ class DecisionCoreMixin(DecisionEngineBase):
                                 and probe_trigger.data.get("escape_valve")
                                 and self.state.can_send(now, quiet_ok=play_proof)):
                             can_send = True
-                    elif self.state.daily_limit_reached(now):
+                    elif self.state.daily_limit_reached(now) \
+                            and self.state.cooldown.messages_today < self.state.daily_max(now) + 1:
                         # F-A5-02：配额满 + 高段必发 → 破日限额（超额每日 ≤1 条，
-                        # 由 can_send(must_send=True) 内部判定——仅恰好配额满放行）
+                        # 由 can_send(must_send=True) 内部判定——仅恰好配额满放行；
+                        # 已超额（>daily_max）时无突破可能 → 跳过探测省评估副作用）
                         probe_trigger = evaluate_triggers(
                             self.state, now,
                             trigger_scale=self.state.trigger_scale_now(now))

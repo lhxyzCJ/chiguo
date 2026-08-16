@@ -2602,9 +2602,9 @@ class ChiguoState:
         self._finalize(now)
         return True
 
-    def _daily_max(self, now: datetime) -> int:
+    def daily_max(self, now: datetime) -> int:
         """当日配额上限：沉默 <8h 按活跃配额（max_daily_active），否则按静默配额
-        （max_daily_silent）。R13 (#315) 抽为方法 → can_send 与 decision 二次门禁
+        （max_daily_silent）。R13 (#315) 抽为公开方法 → can_send 与 decision 二次门禁
         探测共用同一公式（门禁豁免集单一事实源）。"""
         cfg = self.config.get("cooldown", {})
         silent_h = self.cooldown.silent_hours(now)
@@ -2620,13 +2620,13 @@ class ChiguoState:
         if self.is_longing_overflow() or self.longing_break_eligible(now):
             return True
         if must_send:
-            return self.cooldown.messages_today < self._daily_max(now) + 1
+            return self.cooldown.messages_today < self.daily_max(now) + 1
         return False
 
     def daily_limit_reached(self, now: datetime) -> bool:
         """日配额已满（messages_today >= daily_max）。供 decision 二次门禁
         （must_send 第三把钥匙探测）判定「当前拦截的可疑门禁是否为日限额」。"""
-        return self.cooldown.messages_today >= self._daily_max(now)
+        return self.cooldown.messages_today >= self.daily_max(now)
 
     def can_send(self, now: datetime, quiet_ok: bool = False,
                  must_send: bool = False) -> bool:
@@ -2634,7 +2634,7 @@ class ChiguoState:
 
         # 硬性每日上限（v6: 逃生阀破防同 overflow 可突破日限额；
         # R13 #315: must_send 成为第三把钥匙——配额满也发，超额每日封顶 1 条）
-        if self.cooldown.messages_today >= self._daily_max(now):
+        if self.cooldown.messages_today >= self.daily_max(now):
             if not self._daily_limit_break_ok(now, must_send=must_send):
                 return False
 
