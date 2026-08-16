@@ -893,6 +893,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 **R7 发送链统一（F-RT-001/F-RT-003/F-A17-001/F-A17-002）**：
 - 抑制退款：loop `run_loop` 的 suppressed 分支（health down/降频区间判定 `_health_should_probe=False`）不再只跳过发送——对 evaluate 已记账的 send 决策调用 `record_send_result(msg_id, "failed", "suppressed")` 走退款闭环，回滚 energy/messages/Hawkes/**逃生阀 `last_longing_break_at`（3 天冷却不被白扣）**，对齐 cron 发送失败分支的 refund。
+- **生成失败退款（RF9/F-RTS-001）**：`chiguo-tick.sh` 生成失败分支与 loop `_loop_send` 生成失败分支不只在 `record_health fail` 记账——还从决策 JSON 取 msg_id 回传（tick `--send-result <msg_id> --send-status failed` / loop `record_send_result(msg_id, "failed", "generate_failed: …")`）走退款闭环，回滚 evaluate 已记账的 energy/quota/**`messages_without_reply`**/Hawkes。若不退款，未回复计数残留，连续 5 轮生成失败 → `backoff_level()==2(silent)` → `evaluate_triggers` 直接 `return None` → 恢复后机器人永久不发普通消息（cron 默认形态为主要受害；loop 的生成失败同样依赖本条退款，suppressed 退款只覆盖 down/降频抑制路径——双路径生成失败退款现已闭环）。`record_health fail` 语义不变：生成失败仍推进 fail_streak（健康状态机不回归），退款与健康记账是**两件并行的事**。
 - fail_streak 有界：`agent_health.py` 在状态已 down 后不再无条件 `+1`，fail_streak 封顶在 `[health].fail_threshold`；down→up 仍仅由 success 触发回到 0。
 - spawn 会话注入：loop `_try_generate` 的 spawn 回退注入 `AGENTRUN_SESSION=<toml [host].send_session_id（缺省 chiguo-send）>` + `AGENTRUN_ROTATE_SESSION=1`，对齐 tick.sh L127 —— 消除 send 会话落回复侧 chiguo-main 且不轮换的双路径分叉。
 - 前置检查：`chiguo-tick.sh` 的 OWNER（收件人）缺失与 node 缺失检查**前移到 `--compact`（决策记账）之前**——OWNER/node 异常时 evaluate 根本不执行，不再产生幻影记账（发送早退与 loop 收件人缺失分支的退款语义对齐）。见「七、CLI 参考 → chiguo_composer.py」与 AGENT_INTEGRATION.md。
