@@ -354,7 +354,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 |----|------|------|
 | 低段 | activation < `min_activation`（0.08） | 情绪类退出竞争（等效低能量沉默，仪式类照发） |
 | 中段 | 其余 | 现状加权随机（全部候选） |
-| 高段 | activation ≥ `must_send_activation`（0.75） | 情绪类加权随机**必选**（仪式类本轮退让），选中标记 `must_send: true` 进 decision JSON（context.must_send）。**门禁第三把钥匙（F-A5-02 #315 R13，用户决策 2026-08-16）**：配额满也发——`must_send` 突破日限额（每日超额封顶 1 条）；不突破睡觉门控/最小间隔等其他 gate。**reminder 例外（F-A5-01 #314 R9）**：窗口内（trigger_at 后 30min）的 reminder 候选先于高段分支处理——高段/上课都必发，不受「只从情绪候选选」压制（上次提醒丢失根因①）；mem0 随机浮现等 generic MEMORY 不豁免 |
+| 高段 | activation ≥ `must_send_activation`（0.75） | 情绪类加权随机**必选**（仪式类本轮退让），选中标记 `must_send: true` 进 decision JSON（context.must_send）。**门禁第三把钥匙（F-A5-02 #315 R13，用户决策 2026-08-16）**：配额满也发——`must_send` 突破日限额（每日超额封顶 1 条）；不突破睡觉门控/最小间隔等其他 gate。**reminder 例外（F-A5-01 #314 R9）**：窗口内（trigger_at 后 30min）的 reminder 候选先于高段分支处理——高段/上课都必发，不受「只从情绪候选选」压制（上次提醒丢失根因①）；mem0 随机浮现等 generic MEMORY 不豁免。**门禁层联动（D4 #349）**：reminder 的「准时优先」在**决策门禁层**同样成立——① 配额满时 `decision/core.py` 二次门禁探测把 break 条件从「仅 must_send 标记」扩展为「must_send 标记 **或** reminder 类型」，reminder 复用 `can_send(must_send=True)` 突破钥匙（超额每日封顶 1 条，与 must_send 同语义）；② silent 态（A5 退场）`evaluate_triggers` 首部预收集窗口内 reminder，到点即豁免返回（只豁免 reminder，情绪/仪式等保持禁发）。 |
 
 escape_valve 豁免（v6 逃生阀不走本层）。
 
@@ -364,7 +364,7 @@ escape_valve 豁免（v6 逃生阀不走本层）。
 |------|---------|------|
 | normal | < 3 | 正常竞争 |
 | backing_off | 3-4 | 情绪类候选整体跳过，仪式类照发 |
-| silent | ≥ 5 | 全禁发；escape_valve longing 破防豁免（防死锁语义） |
+| silent | ≥ 5 | 全禁发；escape_valve longing 破防豁免（防死锁语义）；**reminder 豁免（D4 #349）**——窗口内的 reminder 一次性记忆到点即发（用户显式托付、准时优先，与 escape 同属豁免族，仅豁免 reminder） |
 
 现有无回复 λ 衰减保留（`no_reply_lambda_decay=0.7`，λ × 0.7^n）。
 

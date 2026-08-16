@@ -47,6 +47,22 @@ def json_default(o):
     raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
 
+def _is_reminder_trigger(trigger) -> bool:
+    """D4 (#349)：判断触发是否为用户显式托付的 reminder 一次性记忆。
+
+    与 chiguo_trigger 的 reminder 分支判定同源：MEMORY 类型 + data.memory.type ==
+    "reminder"。R9 (F-A5-01) 只在触发层给 reminder 高段优先（候选先于情绪高段分支），
+    但 reminder 分支**不设** must_send 标记——因此 R13 (#315) 的二次门禁探测（只认
+    probe_trigger.data 的 must_send 标记）在配额满时识别不到 reminder，把"提醒准时优先"
+    的豁免在门禁层退化（review-batchB M1 影响面 a）。门禁层显式识别 reminder，即可与
+    must_send 复用同一把突破钥匙（can_send(must_send=True)，含超额每日封顶语义）。
+    返回 None-safe。
+    """
+    return (trigger is not None
+            and getattr(trigger, "type", None) == TriggerType.MEMORY
+            and (trigger.data.get("memory") or {}).get("type") == "reminder")
+
+
 class DecisionCoreMixin(DecisionEngineBase):
         @staticmethod
         def _make_msg_id() -> str:
@@ -210,12 +226,19 @@ class DecisionCoreMixin(DecisionEngineBase):
                             and self.state.cooldown.messages_today < self.state.daily_max(now) + 1:
                         # F-A5-02：配额满 + 高段必发 → 破日限额（超额每日 ≤1 条，
                         # 由 can_send(must_send=True) 内部判定——仅恰好配额满放行；
-                        # 已超额（>daily_max）时无突破可能 → 跳过探测省评估副作用）
+                        # 已超额（>daily_max）时无突破可能 → 跳过探测省评估副作用）。
+                        # D4 (#349)：break 条件从"仅 must_send 标记"扩展为"must_send
+                        # 标记 **或** reminder 类型"。reminder 是用户显式托付的一次性
+                        # 记忆（R9 触发层已保证高段优先），但 reminder 分支不设 must_send
+                        # 标记——若只认该标记，配额满时 reminder 决策仍被门禁层拦成 idle
+                        # （review-batchB M1 影响面 a）。识别出 reminder 后复用 must_send
+                        # 的突破钥匙 can_send(must_send=True)，超额每日封顶语义天然一致。
                         probe_trigger = evaluate_triggers(
                             self.state, now,
                             trigger_scale=self.state.trigger_scale_now(now))
                         if (probe_trigger is not None
-                                and probe_trigger.data.get("must_send")
+                                and (probe_trigger.data.get("must_send")
+                                     or _is_reminder_trigger(probe_trigger))
                                 and self.state.can_send(now, quiet_ok=play_proof,
                                                         must_send=True)):
                             can_send = True
