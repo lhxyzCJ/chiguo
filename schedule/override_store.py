@@ -5,6 +5,8 @@
 # ============================================================
 
 import json
+import os
+import shutil
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -83,6 +85,14 @@ class OverrideStore:
                   f"{self._path}", file=sys.stderr)
 
     def _save(self):
+        # 写前 .bak 备份(对齐 chiguo_state.StatePersistence:覆盖前复制现存文件,
+        # 保持 0600 隐私语义)——原子写只保护同名替换,不保旧内容;备份提供恢复路径
+        if self._path.exists():
+            try:
+                shutil.copy2(str(self._path), str(self._path) + ".bak")
+                os.chmod(str(self._path) + ".bak", 0o600)
+            except OSError:
+                pass  # 备份失败不阻断写(与 StatePersistence 同):备份是尽力而为
         data = json.dumps({"override_version": OVERRIDE_VERSION, "items": self._items},
                           ensure_ascii=False)
         atomic_write(self._path, data, mode=0o600)

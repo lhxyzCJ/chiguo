@@ -271,3 +271,57 @@ def test_plan_store_and_confirm():
         q2, m2 = build_question("no_source_class")
         assert "没有课" in q2 and "period" in m2
     print("  OK test_plan_store_and_confirm")
+
+
+def test_corrupt_mixed_items_preserves_valid_on_rebuild():
+    """回归(issue #308):混合坏/好条目文件 → 迁移重建不得清空好条目。
+    1 坏条目(period 越界) + ≥2 合法条目(reminder/cancel) → 触发写路径:
+    好条目保留落盘、坏条目剔除、文件有 .bak 备份。"""
+    import shutil
+    with tempfile.TemporaryDirectory() as td:
+        good_rem = {"id": "r1", "date": "2026-08-20", "kind": "reminder",
+                    "label": "交材料", "created_at": "2026-07-01T10:00:00+08:00"}
+        good_cancel = {"id": "c1", "date": "2026-08-21", "kind": "cancel",
+                       "period": 2, "note": "临时停课",
+                       "created_at": "2026-07-01T10:00:00+08:00"}
+        bad = {"id": "b1", "date": "2026-08-22", "kind": "cancel", "period": 12,  # period 越界 -> _load 剔除
+               "created_at": "2026-07-01T10:00:00+08:00"}
+        Path(td, "schedule_overrides.json").write_text(
+            json.dumps({"override_version": 1, "items": [good_rem, bad, good_cancel]},
+                       ensure_ascii=False))
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        # 读路径:坏条目剔除、好条目留在内存
+        assert api.overrides.corrupt, "含坏条目 → corrupt=True"
+        assert [i["id"] for i in api.overrides.items()] == ["r1", "c1"], \
+            f"_load 应保留好条目剔除坏条目, got {[i['id'] for i in api.overrides.items()]}"
+        api._guard()  # 触发迁移写路径
+        raw = json.loads(Path(td, "schedule_overrides.json").read_text())
+        kept = raw["items"]
+        ids = [i["id"] for i in kept]
+        assert "r1" in ids and "c1" in ids, f"好条目必须保留落盘, got {ids}"
+        assert "b1" not in ids, f"坏条目必须剔除, got {ids}"
+        assert len(kept) == 2, f"恰好 1 坏剔除 + 2 好保留, got {len(kept)}"
+        assert Path(td, "schedule_overrides.json.bak").exists(), \
+            "重建写前必须有 .bak 备份"
+        bak = json.loads(Path(td, "schedule_overrides.json.bak").read_text())
+        assert len(bak["items"]) == 3, f".bak 必须含原始坏/好混合内容, got {len(bak['items'])}"
+        # 二次实例化:重建后文件干净、corrupt 复位、好条目仍可读
+        api2 = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        assert not api2.overrides.corrupt, "重建后 corrupt 必须复位"
+        assert "r1" in [i["id"] for i in api2.overrides.items()]
+    print("  OK test_corrupt_mixed_items_preserves_valid_on_rebuild")
+
+
+def test_corrupt_fullfile_still_rebuilds_empty():
+    """对照(不回归):整文件 JSON 损坏 → 仍重建为空集(现有行为保持)。
+    分隔:损坏解析失败场景与"坏/好混合"场景语义不同,不得依赖修复合一。"""
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, "schedule_overrides.json").write_text("{broken")
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        assert api.overrides.items() == []
+        api._guard()
+        raw = json.loads(Path(td, "schedule_overrides.json").read_text())
+        assert raw == {"override_version": 1, "items": []}, f"整文件损坏须重建为空集, got {raw}"
+        api2 = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        assert not api2.overrides.corrupt
+    print("  OK test_corrupt_fullfile_still_rebuilds_empty")
