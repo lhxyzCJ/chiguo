@@ -458,7 +458,21 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             elif rate >= rfb_high:
                 c["weight"] *= max(0.0, 1.0 + rfb_boost)
 
-    if activation >= must_send_activation and emo_cands:
+    # ── F-A5-01 (#314 R9): reminder 高段豁免 ──
+    # 用户决策「提醒准时优先」：reminder 是用户显式托付的一次性记忆，必须准点发出。
+    # 此前高段必发分支「只从情绪候选选」会把 MEMORY 及 ritual 候选整体压制
+    # （审计 E1：空闲×1.2 孤独≥42 时 reminder 0/300），常态高段下确定性丢失。
+    # 处理顺序：窗口内的 reminder 候选先于情绪高段分支处理（仿 :81-82 escape_valve
+    # 豁免模式——用户托付优先于 A4 情绪必发）；仅 reminder 类型豁免，mem0 随机浮现
+    # 等 generic MEMORY 候选不豁免（保持"情绪类高段必发"原语义不回归）。
+    reminder_cands = [
+        c for c in weighted_candidates
+        if c["trigger"].type == TriggerType.MEMORY
+        and c["trigger"].data.get("memory", {}).get("type") == "reminder"
+    ]
+    if reminder_cands:
+        chosen = weighted_trigger_choice(reminder_cands)
+    elif activation >= must_send_activation and emo_cands:
         chosen = weighted_trigger_choice(emo_cands)
         must_send = True
     elif activation < min_activation:
