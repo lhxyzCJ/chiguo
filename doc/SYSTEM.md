@@ -306,7 +306,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 
 ### 2.6 触发决策（sigmoid 权重 + 加权随机）
 
-**14 种触发类型 = 情绪类 8 + 仪式类 6**（`trigger_types.py` `TriggerType` 枚举单一事实来源 + `EMOTION_TRIGGERS` frozenset，Q3 #265；仪式类豁免 A3 日程乘数 / A4 高段必选 / A5 退场禁发）。
+**14 种触发类型 = 情绪类 8 + 仪式类 6**（`trigger_types.py` `TriggerType` 枚举单一事实来源 + `EMOTION_TRIGGERS` frozenset，Q3 #265；仪式类豁免 A3 日程乘数 / A4 高段必选 / A5 退场禁发；F-A5-01 #314 R9 例外：**reminder 在窗口内先于 A4 高段必选处理**——用户显式托付、准时优先，见本段「reminder 高段豁免」）。
 
 **仪式类（6 种）**：
 
@@ -316,7 +316,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 | `morning` | weight=2.5 × 10%随机 | 8:00-10:00 早安窗口 |
 | `night` | weight=2.0 × 12%随机 | 20:00-21:00 晚安窗口 |
 | `meal` | weight=0.8 × 5%随机 | 饭点（上课时跳过） |
-| `memory` | weight=2.0（JSON 到期）/ 1.5 × 8%随机（mem0 浮现） | 单一触发类型、双数据源：手动记忆/习惯提醒到期（data/chiguo_memories.json）；mem0 沉默>6h 时随机浮现 |
+| `memory` | weight=2.0（JSON 到期）/ 1.5 × 8%随机（mem0 浮现） | 单一触发类型、双数据源：手动记忆/习惯提醒到期（data/chiguo_memories.json）；mem0 沉默>6h 时随机浮现。reminder 触发窗口 = `trigger_at` 后 **30 分钟**（≥2×15min cron 节拍，保证任意 tick 命中；见 A4「reminder 高段豁免」） |
 | `follow_up` | `follow_up_weight` × 年龄钟形 exp(-((age-peak)/σ)²) | 接话茬：pending 话题年龄 [2h, 48h]（峰值 4h, σ=3h, 基础 0.35）+ 近期用户相关记忆兜底 |
 
 **情绪类（8 种）**：
@@ -352,7 +352,7 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 |----|------|------|
 | 低段 | activation < `min_activation`（0.08） | 情绪类退出竞争（等效低能量沉默，仪式类照发） |
 | 中段 | 其余 | 现状加权随机（全部候选） |
-| 高段 | activation ≥ `must_send_activation`（0.75） | 情绪类加权随机**必选**（仪式类本轮退让），选中标记 `must_send: true` 进 decision JSON（context.must_send） |
+| 高段 | activation ≥ `must_send_activation`（0.75） | 情绪类加权随机**必选**（仪式类本轮退让），选中标记 `must_send: true` 进 decision JSON（context.must_send）。**reminder 例外（F-A5-01 #314 R9）**：窗口内（trigger_at 后 30min）的 reminder 候选先于高段分支处理——高段/上课都必发，不受「只从情绪候选选」压制（上次提醒丢失根因①）；mem0 随机浮现等 generic MEMORY 不豁免 |
 
 escape_valve 豁免（v6 逃生阀不走本层）。
 
@@ -429,7 +429,7 @@ evaluate():
      ├─ 每个触发计算 sigmoid 权重
      ├─ 傲娇/好感/变化率 调制权重
      ├─ A3 日程乘数 × 抖动（情绪类）→ A6 repeat 阻尼（全类型）
-     ├─ A4 三段激活（低段沉默 / 中段加权随机 / 高段必选 must_send）
+     ├─ A4 三段激活（低段沉默 / 中段加权随机 / 高段必选 must_send；reminder 窗口内先于高段处理，F-A5-01 #314 R9）
      ├─ A5 退场状态机（backing_off 禁情绪类 / silent 全禁发；escape_valve 豁免）
      ├─ 安全阀检查（崩溃冷却/强制温和）
      ├─ weighted_trigger_choice() 加权随机选一个
@@ -708,7 +708,7 @@ xlsx/cache 路径由 ChiguoState 以 `_base_dir` 锚定（cron 工作目录漂�
      MemoryBackend 基类共享 ebbinghaus_weight()/search_with_forgetting()/user_relevant_with_forgetting()/random_memory_with_forgetting()（后端无关）
 ```
 
-**Q7 reminder 去重标记持久化（#79/#260）**：`data/chiguo_memories.json` 是记忆内容**唯一事实源**，daemon 发送 reminder 后在记忆条目上写 `last_triggered_at` 去重标记仅存内存、不写回该文件（内容文件不变量）。为避免 cron 每 15 分钟新进程丢标记、窗口内多评估路径重复触发，该去重标记并入 `chiguo_state.json` 顶层 `memory_dedup` 字段（键 = 记忆去重键 = 剥离标记字段后的稳定 JSON，值 = `last_triggered_at`）：daemon 经 `ChiguoState.mark_memory_triggered()`（公开 API）标记并随 `save()` 落盘；`_load()` 读回并回写到 `self.memories` 对应条目，`trigger` 层 `_memory_should_trigger` 据此跳过。空标记不写该字段（状态文件保持干净，同 bayesian 策略）。
+**Q7 reminder 去重标记持久化（#79/#260）**：`data/chiguo_memories.json` 是记忆内容**唯一事实源**，daemon 发送 reminder 后在记忆条目上写 `last_triggered_at` 去重标记仅存内存、不写回该文件（内容文件不变量）。为避免 cron 每 15 分钟新进程丢标记、窗口内多评估路径重复触发，该去重标记并入 `chiguo_state.json` 顶层 `memory_dedup` 字段（键 = 记忆去重键 = 剥离标记字段后的稳定 JSON，值 = `last_triggered_at`）：daemon 经 `ChiguoState.mark_memory_triggered()`（公开 API）标记并随 `save()` 落盘；`_load()` 读回并回写到 `self.memories` 对应条目，`trigger` 层 `_memory_should_trigger` 据此跳过。空标记不写该字段（状态文件保持干净，同 bayesian 策略）。**F-A5-01 #314 R9 失败不丢提醒**：决策核心在标记的同时，把该 reminder 的记忆去重键写入对应 msg_id 的在途 Hawkes 事件（`memory_marker` 字段，随 cooldown 落盘）；发送失败 `refund_send()` 回滚成本时，据此按 msg_id 清除 `last_triggered_at` 与 `memory_dedup` 条目 → 下次 tick reminder 可再次触发（否则失败后永久丢提醒）。
 **B2 情绪-记忆耦合（v1.12）**：写侧 `emotion_tagging=True`（默认 False）时，daemon 对话写入 mem0 把当前情绪快照打标进 `metadata.emotion_tag`（`emotion_tag_snapshot()`：loneliness/affection/anxiety/energy → low/mid/high 三档（≤30 low / ≥70 high）+ `user_mood`）；读侧 `emotion_tag_weight > 0`（默认 0）时，`_apply_forgetting` 检索对带 `emotion_tag` 的记忆按情绪相近度加权——`_score *= (1 + emotion_tag_weight × sim)`（`emotion_tag_similarity`：记忆或请求任一缺 emotion_tag → 0 不加权）。对标情绪状态相关的记忆优先浮现。
 
 **C1 空闲期确定性记忆巩固（v1.12，零 LLM）**：对标 Letta dreaming / CowAgent Deep Dream，吸收思想不换库、不调 LLM——`MemoryBackend.consolidate_plan` 纯函数生成巩固计划（不写库）：
