@@ -529,6 +529,68 @@ TOML
 }
 test_owner_missing_no_phantom
 
+# ── RF12 (M3): node 缺失 = 环境故障，告警 reason 与 agent 故障区分，不误诊 ──
+# node 缺失（cron PATH 不完整/未安装）时 agent-run 无法执行 → 记 health fail（需 down/暂停），
+# 但 reason 必须显式标注「环境问题，非 agent 故障」，告警文案据此区分，避免误诊为后端故障。
+test_node_missing_env_fault() {
+  # 重置 agent_health（避免沿用前面用例的 fail_reason 遮蔽 RF12 文案断言）
+  rm -f "$REPO/agent_health.json"
+  # 建一个不含 node 的迷你 PATH（其余工具软链系统路径），使 `command -v node` 失配。
+  local MINIBIN="$TMP/minibin"
+  mkdir -p "$MINIBIN"
+  local t real_p
+  for t in bash cat curl sed grep date dirname readlink mktemp mkdir sleep flock head wc printf cut tr realpath stat; do
+    real_p="$(command -v "$t" 2>/dev/null || true)"
+    [ -n "$real_p" ] && ln -sf "$real_p" "$MINIBIN/$t" 2>/dev/null || true
+  done
+  rm -f "$MINIBIN/node"   # 保证 node 缺席（PATH 查询不命中）
+  [ -x "$MINIBIN/bash" ] || fail "RF12: 迷你 PATH 缺 bash"
+  local H2="$TMP/home_rf12"
+  mkdir -p "$H2/.chiguo/auth/wechat"
+  printf '{"token":"t","userId":"real_openid@im.wechat","accountId":"a"}' \
+    > "$H2/.chiguo/auth/wechat/credentials.json"
+  cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+
+[wechat]
+wechat_recipient = "owner@im.wechat"
+
+[health]
+fail_threshold = 3
+TOML
+  set +e
+  HOME="$H2" CHIGUO_REPO="$REPO" CHIGUO_LOCK_DIR="$TMP/rf12_lock" \
+    PATH="$MINIBIN" bash "$REAL_TICK" >/dev/null 2>&1
+  local RC=$?
+  set -e
+  [ "$RC" = 1 ] && pass "RF12: node 缺失 → tick exit 1" || fail "node 缺失应 exit 1, 实得 $RC"
+  grep -q '环境问题，非 agent 故障' "$REPO/agent_health.json" \
+    && pass "RF12: node 缺失 fail_reason 标注环境问题（区分 agent 故障）" \
+    || fail "node 缺失 fail_reason 应含「环境问题，非 agent 故障」: $(cat "$REPO/agent_health.json")"
+  grep -q '环境问题，非 agent 故障' "$REAL_TICK" \
+    && pass "RF12: 静态——tick.sh node 缺失 reason 含环境标注" \
+    || fail "tick.sh node 缺失 reason 应含「环境问题，非 agent 故障」"
+  grep -q '连续.*次失败（原因' "$REPO/scripts/agent_health.py" \
+    && pass "RF12: agent_health 告警文案不再硬说 pi-agent，中性化（原因区分归属）" \
+    || fail "agent_health 告警文案应中性化（连续 N 次失败 + reason）"
+  # 恢复 send 路径 toml 供后续用例
+  cat > "$REPO/chiguo_proactive.toml" <<TOML
+[host]
+send_session_id = "chiguo-send"
+wechat_bridge_url = "http://127.0.0.1:$PORT/send"
+provider = "deepseek"
+model = "deepseek-chat"
+
+[wechat]
+wechat_recipient = "owner@im.wechat"
+
+[health]
+fail_threshold = 3
+TOML
+}
+test_node_missing_env_fault
+
 # ── 用例 8（Issue #135）: daemon --compact 崩溃 → 非零退出 + stderr 告警（不得静默吞掉）──
 # 放在最末尾：替换 fake daemon 为崩溃版，不影响前面各用例依赖的 send 输出
 cat > "$REPO/chiguo_daemon.py" <<'PY'

@@ -62,10 +62,13 @@ except: print("||")' 2>/dev/null || true)"
       || echo "[chiguo-tick] 告警/恢复发送失败（transition=$trans），下个 tick 不再重发" >&2
   fi
 }
-# node 缺失（cron PATH 不完整时兜底）：显式记账 fail + 告警，而非静默降级
+# node 缺失（cron PATH 不完整时兜底）：显式记账 fail + 告警，而非静默降级。
+# RF12 (M3): reason 显式标注「环境问题，非 agent 故障」——node 缺失是 cron PATH/安装
+# 环境问题，不是 agent（后台）故障。仍归入 health fail_streak（agent-run 无法执行 →
+# 需要 down/暂停 + 告警），但告警文案经 reason 区分环境 vs agent，避免误诊为后端异常。
 if ! command -v node >/dev/null 2>&1; then
-  echo "[chiguo-tick] node 缺失（agent-run 无法执行），记录 health fail" >&2
-  record_health fail "tick node 缺失"
+  echo "[chiguo-tick] node 缺失（环境问题：cron PATH 不完整或未安装 node），agent-run 无法执行，记录 health fail" >&2
+  record_health fail "tick node 缺失（环境问题，非 agent 故障）"
   exit 1
 fi
 # ── 以下进入 evaluate（决策记账）阶段：前置检查已通过，才执行 --compact。──
