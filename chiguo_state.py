@@ -1436,7 +1436,7 @@ class ChiguoState:
 
     @property
     def on_break(self) -> bool:
-        """是否在假期中（日期区间 / 手动覆盖 / 学期自动结束）"""
+        """是否在假期中（日期区间 / 手动覆盖 / 学期自动结束 / 学期未开始）"""
         data = self._read_break_state()
         if data:
             # 手动无限期覆盖（兼容旧 on_break 字段）
@@ -1445,6 +1445,9 @@ class ChiguoState:
         today = datetime.now(CST).date()
         # 日期区间判定
         if self._in_break_range(today):
+            return True
+        # 学期未开始（寒假，与学期结束对称）
+        if self.semester_start and today < self.semester_start:
             return True
         # 学期自动结束
         if self.semester_end and today > self.semester_end:
@@ -1497,13 +1500,14 @@ class ChiguoState:
                             "active": start <= today <= end})
             return out
 
-        on_break = _on_break(src.break_state, src.semester_end, today)
+        on_break = _on_break(src.break_state, src.semester_start, src.semester_end, today)
         if on_break:
             return {"in_class": False, "current_course": None, "class_load": "free",
                     "remaining_classes": 0, "total_classes": 0, "on_break": True,
-                    "break_reason": "学期已结束" if (src.semester_end and today > src.semester_end) else
+                    "break_reason": "学期未开始" if (src.semester_start and today < src.semester_start) else
+                                    ("学期已结束" if (src.semester_end and today > src.semester_end) else
                                     ("手动无限期开启" if (src.break_state and (src.break_state.get("manual_override")
-                                     or src.break_state.get("on_break"))) else "日期区间"),
+                                     or src.break_state.get("on_break"))) else "日期区间")),
                     "breaks": _breaks_info()}
         hq = src.holiday.query(now)
         if hq["is_holiday"]:
