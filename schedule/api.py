@@ -53,12 +53,16 @@ class ScheduleApi:
         0. overrides 损坏重建 → ①. anniversaries 损坏重建 → ②. countdown→reminder(6c 激活)
         → ③. toml exam_weeks(批 4 激活) → ④. toml special_dates 合并(批 4 激活)。
         0 必须先于 ②:② 写 overrides,若重建在其后,刚迁入的 reminder 被空文件抹掉。"""
-        # 0. overrides 损坏 → 重建为合法空文件(非 0 字节,二十轮 LOW 钉死)
+        # 0. overrides 损坏 → 重建(非 0 字节,二十轮 LOW 钉死)
+        #   · 混合场景(坏/好条目共存):_load 已剔除坏条目、好条目保留在 _items →
+        #     直接落盘保留(issue #308,禁止整集清空丢用户 override/reminder)
+        #   · 整文件损坏场景:_load 解析失败 _items=[] → 写合法空文件(行为保持)
         if self.overrides.corrupt:
-            self.overrides._items = []  # noqa: 内部重建;写经 _save
-            self.overrides._corrupt = False
+            n = len(self.overrides._items)
             self.overrides._save()
-            print(f"[schedule.api] overrides 损坏已重建为空集: {self.overrides.path}", file=sys.stderr)
+            self.overrides._corrupt = False
+            print(f"[schedule.api] overrides 已重建({n} 条保留): {self.overrides.path}",
+                  file=sys.stderr)
         # ①. anniversaries 损坏 → 重建为默认生日(视同缺失路径,N1)
         if self.anniversary_mgr._corrupt or not self.anniversary_mgr._path.exists():
             self._materialize_anniversaries()
