@@ -555,6 +555,24 @@ class StatePersistence:
                         disk_seq = _disk_seq
                 except Exception:
                     pass
+                # ── F-A16-01 (#309): 降级进入的 RMW 防 lost update ──
+                # 本次以 state_lock 超时降级（无锁）进入临界区，内存快照是并发进程
+                # 落盘前的陈旧读。save 此刻二次取到锁（他进程已释放）后，不得用陈旧
+                # 快照覆盖他人已落盘的更新：写前重读磁盘，若 disk tick_seq 比内存新
+                # （其他进程已写）→ 放弃本次写并明确告警。正常持锁路径 _lock_degraded
+                # 恒 False，此分支不触发，CAS 语义与现状完全一致。
+                if (self._lock_degraded
+                        and disk_seq is not None
+                        and disk_seq > self.owner.tick_seq):
+                    print(
+                        "[chiguo_state] save 放弃：state_lock 降级进入且磁盘已更新到 "
+                        f"tick_seq={disk_seq}(内存={self.owner.tick_seq})，本次写未落盘"
+                        "（防 lost update；下轮基于最新磁盘状态重试）",
+                        file=sys.stderr,
+                    )
+                    self._audit("save_degraded_abort",
+                                f"disk_seq={disk_seq} in_mem_seq={self.owner.tick_seq}")
+                    return False
                 if disk_seq is not None and disk_seq > self.owner.tick_seq:
                     self.owner.tick_seq = disk_seq + 1
                 self.owner.tick_seq += 1
