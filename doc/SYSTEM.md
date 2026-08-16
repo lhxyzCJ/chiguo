@@ -455,6 +455,11 @@ evaluate():
 
   ⑦ on_character_message() → adapt_personality()（v4）→ save()
      → {"action": "send", "trigger": "...", "context": {...}}
+     └─ save() 失败（R15 #334, F-A18-04；锁降级放弃写/tmp 校验失败/OSError）→
+       本次记账（msg_id/触发标记/去重标记）未落盘，若仍发消息则下 tick 基于旧
+       状态重新触发（重复消息/重复触发）→ **阻断 send**：转
+       {"action": "idle", "reason": "state_save_failed"} + stderr 明确告警 +
+       audit；tick.sh 对非 send 输出 exit 0，发送链被阻断、cron 健康检查语义不变
 ```
 
 ### 2.9 生物钟学习（circadian，v7/v8 双作息）
