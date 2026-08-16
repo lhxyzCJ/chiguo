@@ -23,6 +23,19 @@ if [ ! -d wechat-bridge/node_modules/@wechatbot ]; then
   echo "[ci-test] 安装桥依赖（npm install file:./vendor/wechatbot）..."
   ( cd wechat-bridge && npm install --no-fund --no-audit )
 fi
+# B1（#313）：npm install file:./vendor/wechatbot 会把 node_modules/@wechatbot/wechatbot 建成
+# 指向 vendor/wechatbot 的软链。tests/test_bridge_auth.mjs 的 ensureStub() 会写该路径——
+# 经软链穿透到 git 跟踪的 vendor 源（覆写 package.json + 新增 index.mjs），每次 ci-test 后
+# 都需手动 `git checkout -- vendor/wechatbot/package.json && rm vendor/wechatbot/index.mjs`。
+# 根治：把软链物化为真实副本（不含 vendor 自身 node_modules，只留 SDK 运行产物），
+# 令测试 stub 只落在 gitignored 的 node_modules，不再穿透 vendor。幂等：已是副本则跳过。
+if [ -L wechat-bridge/node_modules/@wechatbot/wechatbot ]; then
+  echo "[ci-test] 物化 node_modules/@wechatbot/wechatbot 为真实副本（隔离测试 stub，防穿透 vendor）..."
+  rm -f wechat-bridge/node_modules/@wechatbot/wechatbot
+  mkdir -p wechat-bridge/node_modules/@wechatbot/wechatbot
+  ( cd wechat-bridge/vendor/wechatbot && tar cf - --exclude=node_modules . ) \
+    | ( cd wechat-bridge/node_modules/@wechatbot/wechatbot && tar xf - )
+fi
 
 # 动态计数（不硬编码数量，均按磁盘/pytest 收集结果实时计算）
 SCRIPT_MJS=$(ls tests/test_*.mjs 2>/dev/null | wc -l)
