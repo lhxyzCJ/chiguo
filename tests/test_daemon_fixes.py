@@ -776,13 +776,13 @@ def test_state_anchor_regression_detected_on_load(cfg_path: Path):
     assert mono <= MONO, (
         f"regressed mono_anchor({mono}) should be rebuilt to current domain (<= {MONO})")
 
-    # 告警落审计（chiguo_state_audit.jsonl）
+    # 告警落审计（chiguo_state_audit.jsonl）——load 倒退检测必须写出 state_anchor_regression
     audit_path = s.state_path.parent / "chiguo_state_audit.jsonl"
-    if audit_path.exists():
-        events = [json.loads(l)["event"]
-                  for l in audit_path.read_text().splitlines() if l.strip()]
-        assert any(e == "state_anchor_regression" for e in events), (
-            f"expected state_anchor_regression in audit, got {events}")
+    assert audit_path.exists(), "anchor regression must be recorded in state audit"
+    events = [json.loads(l)["event"]
+              for l in audit_path.read_text().splitlines() if l.strip()]
+    assert any(e == "state_anchor_regression" for e in events), (
+        f"expected state_anchor_regression in audit, got {events}")
     print(f"  OK test_state_anchor_regression_detected_on_load: rebuilt {mono!r}")
 
     audit_path.unlink(missing_ok=True)  # 清理本测试的审计条目，避免影响其它断言
