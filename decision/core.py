@@ -108,7 +108,14 @@ class DecisionCoreMixin(DecisionEngineBase):
             # 状态重查静默窗口并应用反证(_apply_play_proof)。
             plays = self._fetch_play_proof(now)
     
-            with self.state.state_lock():
+            with self.state.state_lock() as lock_acquired:
+                # F-A16-01 (#309): 5s 超时降级无锁 → 本次 evaluate 无锁执行。
+                # 无法保证 RMW 原子性，stderr 告警 + audit 以便观测；save() 侧另有
+                # 降级重读校验兜底防覆盖。正常持锁路径（acquired=True）行为与现状一致。
+                if not lock_acquired:
+                    print("[chiguo_daemon] state_lock 降级：本次 evaluate 无锁执行"
+                          "（并发持锁 >5s），已进入降级保护", file=sys.stderr)
+                    self.state.audit("state_lock_degraded", "evaluate")
                 self.state._load()
     
                 # 1. 时间推进

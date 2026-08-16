@@ -42,7 +42,13 @@ class AccountingMixin(DecisionEngineBase):
             # 避免覆盖调用方在构造后的内存修改」理由不成立：唯一生产调用点
             # （main 1855 行 engine 构造后立即调用）进锁前无任何进程内修改，
             # 重载幂等且安全。──
-            with self.state.state_lock():
+            with self.state.state_lock() as lock_acquired:
+                # F-A16-01 (#309): 降级无锁进入 → 告警 + audit；save() 侧降级重读
+                # 校验兜底防覆盖（正常持锁路径行为与现状一致）。
+                if not lock_acquired:
+                    print("[chiguo_daemon] state_lock 降级：record_message 无锁执行"
+                          "（并发持锁 >5s），已进入降级保护", file=sys.stderr)
+                    self.state.audit("state_lock_degraded", "record_message")
                 try:
                     self.state._load()
                 except Exception:  # noqa: BLE001 - 重载失败维持现有内存状态
@@ -250,7 +256,12 @@ class AccountingMixin(DecisionEngineBase):
                     # 磁盘最新状态，再 record_trigger_sent + save——cron --record-send
                     # 为一次性进程，不 save 则 sent 计数随进程退出丢失；与 --user-msg
                     # 并发时基于最新落盘状态记账，防止覆盖丢更新。
-                    with self.state.state_lock():
+                    with self.state.state_lock() as lock_acquired:
+                        # F-A16-01 (#309): 降级无锁进入 → 告警 + audit。
+                        if not lock_acquired:
+                            print("[chiguo_daemon] state_lock 降级：record_sent 无锁"
+                                  "执行（并发持锁 >5s），已进入降级保护", file=sys.stderr)
+                            self.state.audit("state_lock_degraded", "record_sent")
                         self.state._load()
                         self.state.record_trigger_sent(trigger)
                         self.state.save()
@@ -280,7 +291,14 @@ class AccountingMixin(DecisionEngineBase):
             # 不互斥）；本方法生产调用路径（--loop 主循环 / CLI --send-result）
             # 均单线程，并发去重保障针对跨进程（flock）场景。
             # 本方法为单次 CLI 进程（启动时已加载最新状态），不重载 _load。──
-            with self.state.state_lock():
+            with self.state.state_lock() as lock_acquired:
+                # F-A16-01 (#309): 降级无锁进入 → 告警 + audit；save 侧降级重读
+                # 校验防覆盖（本方法 v12-R2 锁内重载，但降级时锁内 _load 读到的
+                # 仍是并发进程落盘前的旧快照，需靠 save 兜底）。
+                if not lock_acquired:
+                    print("[chiguo_daemon] state_lock 降级：record_send_result 无锁"
+                          "执行（并发持锁 >5s），已进入降级保护", file=sys.stderr)
+                    self.state.audit("state_lock_degraded", "record_send_result")
                 # v12-R2: 锁内重载磁盘最新状态再执行退款——CLI --send-result 与
                 # cron evaluate 并发时，若基于构造时（T0）陈旧快照 refund 后 save，
                 # 会覆盖 evaluate 已落盘的情绪推进（tick_seq CAS 只防序列回退，

@@ -426,6 +426,10 @@ class StatePersistence:
     def __init__(self, config: dict, owner):
         self.config = config
         self.owner = owner
+        # F-A16-01 (#309): 本次 RMW 是否经降级（无锁）进入锁区。由 state_lock()
+        # 在超时降级进入时置位、退出时清除；save() 据此做写前重读校验防 lost
+        # update。正常持锁路径恒 False，save 行为与现状完全一致。
+        self._lock_degraded = False
 
     # ── v6: 路径锚定。运行时文件基于 _base_dir（config 所在目录）解析，
     # 不依赖 cwd —— 修复 cron 工作目录漂移导致的状态丢失/重建。
@@ -818,14 +822,24 @@ class StatePersistence:
 
     @contextmanager
     def state_lock(self):
-        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock）。"""
+        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock）。
+
+        F-A16-01 (#309): yield 出本次是否真正获锁（bool）。5s 超时/非 POSIX
+        会降级无锁返回 False，调用方必须感知降级——否则无锁进入 RMW、save 二次
+        获取成功后用陈旧快照覆盖并发进程的写入（lost update，组2 复核 CONFIRMED）。
+        """
         lock_path = str(self.state_path) + ".lock"
         acquired = self._lock_acquire(lock_path)
+        degraded = not acquired and not locks.in_lock(lock_path)
+        if degraded:
+            self._lock_degraded = True  # 供 save() 降级进入时的重读校验（#309）
         try:
-            yield
+            yield acquired
         finally:
             if acquired:
                 self._lock_release(lock_path)
+            if degraded:
+                self._lock_degraded = False
 
     def in_lock(self) -> bool:
         """当前进程是否已持有 state 锁。"""
@@ -1143,9 +1157,13 @@ class ChiguoState:
 
     @contextmanager
     def state_lock(self):
-        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock），委托持久化单类。"""
-        with self._persistence.state_lock():
-            yield
+        """持有 state 文件的跨进程独占锁（chiguo_state.json.lock），委托持久化单类。
+
+        F-A16-01 (#309): 透传持久化单类的 acquired（本次是否真正获锁）。超时
+        降级无锁时调用方可据此告警/预防 lost update。
+        """
+        with self._persistence.state_lock() as acquired:
+            yield acquired
 
     def _in_lock(self) -> bool:
         """当前进程是否已持有 state 锁（供 daemon 判断重入场景）。"""

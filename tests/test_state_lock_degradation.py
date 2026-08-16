@@ -99,7 +99,8 @@ while not (M/"a_start").exists():
     time.sleep(0.03)
 r = {}   # 透传读到的当前值给父进程
 t0 = time.monotonic()
-with st.state_lock():          # A 持锁中 → 5s 超时降级 acquired=False
+with st.state_lock() as acq:     # A 持锁中 → 5s 超时降级 acquired=False
+    r["acquired"] = acq          # F-A16-01 (#309): state_lock 必须 yield acquired
     r["wait"] = round(time.monotonic() - t0, 2)
     st._load()                 # A 尚未落盘 → 读旧值
     r["read_lon"] = st.emotion.loneliness
@@ -113,7 +114,7 @@ print("[B] " + json.dumps(r), flush=True)
 
 
 def _run_pair(base: Path):
-    """A/B 两个真实进程并发跑；返回 (a_out, b_out)。"""
+    """A/B 两个真实进程并发跑；返回 (a_out, a_err), (b_out, b_err)。"""
     lock = str(base / "chiguo_state.json.lock")
     M = base / "m"; M.mkdir()
     code_a = _CODE_A.replace("@@ROOT@@", str(ROOT))
@@ -129,7 +130,7 @@ def _run_pair(base: Path):
     outs = []
     for p in procs:
         out, err = p.communicate(timeout=40)
-        outs.append((out.strip(), err.strip().splitlines()[-2:]))
+        outs.append((out.strip(), err.strip()))
     return outs
 
 
@@ -149,8 +150,11 @@ def test_state_lock_degradation_preserves_prior_writer():
         base = Path(td)
         _make_state(base)
         (a_out, _a_err), (b_out, _b_err) = _run_pair(base)
-        # B 的 state_lock 确实经历了超时降级（降级路径读到的是 A 落盘前的旧值）
-        assert 'read_lon' in b_out, f"B 未完成降级路径: {b_out!r}"
+        # B 的 state_lock 确实经历了超时降级：yield 的 acquired 应为 False，
+        # 且在降级锁定区读到的是 A 落盘前的旧值（lost update 的前置条件）。
+        b = json.loads(b_out.split("[B] ", 1)[1])
+        assert b.get("acquired") is False, f"state_lock 应 yield acquired=False，实际 {b}"
+        assert b.get("read_lon") == 50.0, f"降级进入应读到 A 落盘前的旧值 50，实际 {b}"
         lon, mwr = _final_lon_mwr(base)
         # 核心断言：A（先写者）的修改必须保留，不被降级进入的 B 覆盖
         assert lon == 99.0, (
