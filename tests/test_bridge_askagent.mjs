@@ -391,6 +391,61 @@ t('handleMessage: 空文本 → 不调 agent/daemon、不回复', async () => {
   assert.strictEqual(dLines().length, db)
   assert.deepStrictEqual(bot.replies, [])
 })
+
+// ── F-SEC-03 (#316): 白名单模式 —— 非 owner 消息须走白名单门，白名单外零 LLM 调用并拒答 ──
+const guest = (text) => ({ userId: 'guest@im.wechat', text })    // 非 owner、不在白名单
+const friend = (text) => ({ userId: 'friend@im.wechat', text })  // 非 owner、在白名单
+const REJECT = '这是迟菓的私人助手，暂不对陌生人开放哦'
+t('F-SEC-03: 非白名单非 owner → 固定拒答文案、零 LLM 调用（不调 askChat/askAgent）', async () => {
+  const db = dLines().length
+  const pb = pLines().length
+  const bot = botStub()
+  const r = await handleMessage('你好，你是谁', guest('你好，你是谁'), bot, queue, { whitelist: ['friend@im.wechat'] })
+  assert.strictEqual(r, 'rejected', `返回值应为 rejected，实际 ${r}`)
+  assert.strictEqual(pLines().length, pb, '非白名单消息不应触发任何 LLM 调用')
+  assert.strictEqual(dLines().length, db, '非 owner 不进状态/记忆/命令路径（无 daemon 调用）')
+  assert.deepStrictEqual(bot.replies, [REJECT], '应回复固定拒答文案')
+})
+t('F-SEC-03: 白名单内非 owner → 正常对话（askAgent 被调用、回复原文）', async () => {
+  const pb = pLines().length
+  setResponse({ ok: true, text: '唔……陌生人也能聊两句。', analysis: { warmth: 0.3, effort: 0.2 } })
+  const bot = botStub()
+  const r = await handleMessage('你好', friend('你好'), bot, queue, { whitelist: ['friend@im.wechat'] })
+  assert.strictEqual(r, 'agent', `白名单消息应走 agent 链，实际 ${r}`)
+  assert.strictEqual(pLines().length, pb + 1, '白名单联系人应触发一次 LLM 调用')
+  assert.deepStrictEqual(JSON.parse(pLines()[pb]), ['--prompt', '你好', '--analysis-mode'])
+  assert.deepStrictEqual(bot.replies, ['唔……陌生人也能聊两句。'])
+})
+t('F-SEC-03: 白名单内非 owner 仍不进状态/记忆/命令路径（C1 门保持）', async () => {
+  const db = dLines().length
+  const pb = pLines().length
+  setResponse({ ok: true, text: '正常回复', analysis: { warmth: 0.5, effort: 0.4 } })
+  const bot = botStub()
+  await handleMessage('记住5月11日是生日', friend('记住5月11日是生日'), bot, queue,
+    { whitelist: ['friend@im.wechat'] })
+  // 白名单非 owner 即便文本撞上特殊命令，也不走 daemon 写路径（仅 askChat）
+  assert.strictEqual(pLines().length, pb + 1, '白名单联系人走 agent 而非特殊命令')
+  const addedDaemon = dLines().slice(db).map((l) => JSON.parse(l)[0])
+  assert.deepStrictEqual(addedDaemon, [], `本消息不应触发任何 daemon 调用，实际 ${JSON.stringify(addedDaemon)}`)
+})
+t('F-SEC-03: owner → 正常对话（白名单不影响 owner，不回归）', async () => {
+  const pb = pLines().length
+  setResponse({ ok: true, text: '主人专属回复', analysis: { warmth: 0.9, effort: 0.1 } })
+  const bot = botStub()
+  const r = await handleMessage('正文消息', msg('正文消息'), bot, queue, { whitelist: [] })
+  assert.strictEqual(r, 'agent')
+  assert.strictEqual(pLines().length, pb + 1, 'owner 应正常调 LLM')
+  assert.deepStrictEqual(bot.replies, ['主人专属回复'])
+})
+t('F-SEC-03: 缺省配置（无白名单）→ 非 owner 拒答（安全默认 = 仅 owner）', async () => {
+  // 空白名单 = 仅 owner 可对话（自包含；不回退宿主 toml/env 配置，杜绝环境耦合导致测试翻转）
+  const pb = pLines().length
+  const bot = botStub()
+  const r = await handleMessage('在吗？', guest('在吗？'), bot, queue, { whitelist: [] })
+  assert.strictEqual(r, 'rejected', `缺省白名单下非 owner 应拒答，实际 ${r}`)
+  assert.strictEqual(pLines().length, pb, '缺省配置非 owner 不应触发 LLM')
+  assert.deepStrictEqual(bot.replies, [REJECT])
+})
 // U8c: AGENT_RUN_SCRIPT 启动校验 —— checkAgentRunScript 纯函数(导出,不启动 WeChatBot)
 t('checkAgentRunScript: 存在的脚本 → null(通过)', () => {
   assert.strictEqual(checkAgentRunScript(FAKE_AGENT), null)
