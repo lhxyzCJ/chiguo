@@ -3,6 +3,7 @@
 
 import sys, os
 import re
+import json
 import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -534,6 +535,135 @@ def test_decision_must_send_quota_overflow_capped():
         assert d2.get("reason") == "daily_limit", \
             f"idle reason 应为 daily_limit, got {d2.get('reason')}"
     print("  OK test_decision_must_send_quota_overflow_capped")
+
+
+# ═══════════════════════════════════════════════════════════
+# F-D4 (#349, review-batchB M1): R9 reminder 豁免只到触发层、门禁层未联动
+# 用户决策「提醒准时优先」的承诺在门禁层退化——配额满 / silent 态下
+# reminder 决策仍被拦截。本批把 reminder 门禁豁免补全到决策层，测试分四类：
+#   ① 配额满 + reminder 窗口命中 → send（修复前红：idle）
+#   ② silent 态 + reminder 窗口命中 → send（修复前红：idle）
+#   ③ 超额封顶：reminder 也遵守「每日至多 1 条超额」（与 must_send 同语义）
+#   ④ 非 reminder 场景配额满 → 仍 idle（不回归）
+#═══════════════════════════════════════════════════════════════
+
+def _write_memories(td_path: Path, memories: list[dict]) -> None:
+    """把 reminder 记忆写入 daemon 锚定的 memories 文件（<base_dir>/data/chiguo_memories.json）。
+
+    daemon.evaluate() 在锁内先 _load() 重载状态，会把 _load_memories 重置为磁盘
+    memories 文件内容（缺文件 → 清空）。必须落盘才能在决策链里被读到（R9 触发层单测
+    直接调 evaluate_triggers 不受此影响，决策级测试需走真实持久化入口）。"""
+    p = td_path / "data" / "chiguo_memories.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(memories))
+    # 启动引擎后，engine.state.memories 由 _load_memories 从该文件读出（同一引用），
+    # 此处不再手改 engine.state.memories——避免被之后的 evaluate _load 覆盖造成不一致。
+
+
+def _make_reminder_daemon(td_path: Path, now: datetime, **overrides):
+    """基于 _make_daemon 构造带窗口内 reminder 记忆的 daemon。低孤独（非 must_send）
+    使本批测试只验 reminder 门禁豁免，不与 A4 高段 must_send 语义混淆。
+
+    memories 通过 _write_memories 落盘（decision 链在 evaluate 内 _load 重载记忆）。"""
+    memories = overrides.pop("memories", None) or [{
+        "type": "reminder",
+        "trigger_at": (now - timedelta(minutes=5)).isoformat(),  # 窗口内（delta 5min < 30min）
+        "content": "喝水",
+    }]
+    _write_memories(td_path, memories)
+    engine = _make_daemon(td_path, now)
+    st = engine.state
+    st.emotion.loneliness = 15.0   # 低孤独 → 非高段 must_send
+    st.emotion.anxiety = 40.0
+    for k, v in overrides.items():
+        if hasattr(st.emotion, k):
+            setattr(st.emotion, k, v)
+        elif hasattr(st.cooldown, k):
+            setattr(st.cooldown, k, v)
+    return engine
+
+
+def test_decision_reminder_breaks_daily_limit():
+    """F-D4 ①：配额满（messages_today=max_daily_active=4）+ 窗口内 reminder
+    → evaluate() 出 send。修复前红：R13 二次门禁探测只认 probe_trigger.data 的
+    must_send 标记，而 reminder 分支（chiguo_trigger）不设该标记 → 配额满时
+    reminder 决策被拦成 idle（review-batchB M1 影响面 a）。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 7, 31, 14, 0, tzinfo=CST)
+        engine = _make_reminder_daemon(Path(td), now)
+        engine.state.cooldown.messages_today = 4  # active 配额满（max_daily_active=4）
+        with _fixed_now(now):
+            decision = engine.evaluate()
+        assert decision["action"] == "send", \
+            f"配额满 + 《窗口内 reminder》应突破日限额发送, got {decision['action']}: {decision.get('reason')}"
+    print("  OK test_decision_reminder_breaks_daily_limit")
+
+
+def test_decision_reminder_bypasses_silent():
+    """F-D4 ②：silent 退场态（messages_without_reply ≥ backoff_silent=5 → backoff_level=2）
+    + 窗口内 reminder → evaluate() 出 send。修复前红：evaluate_triggers 首部
+    backoff>=2 直接 return None，reminder 候选未收集 → 门禁层 silent 仍禁发
+    （review-batchB M1 影响面 b）。只豁免 reminder，保持 silent 对其他类型禁发语义。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 7, 31, 14, 0, tzinfo=CST)
+        engine = _make_reminder_daemon(Path(td), now)
+        engine.state.cooldown.messages_without_reply = 5  # backoff_silent=5 → silent（backoff 2）
+        with _fixed_now(now):
+            decision = engine.evaluate()
+        assert decision["action"] == "send", \
+            f"silent 态 + 《窗口内 reminder》应豁免禁发发送, got {decision['action']}: {decision.get('reason')}"
+    print("  OK test_decision_reminder_bypasses_silent")
+
+
+def test_decision_reminder_overflow_capped_daily():
+    """F-D4 ③：reminder 也遵守「每日至多 1 条超额」——配额满首次 reminder 突破后
+    （messages_today = daily_max+1=5），同日第二个窗口内 reminder 评估 → idle daily_limit。
+    与 must_send 语义（R13 test_decision_must_send_quota_overflow_capped）同源。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 7, 31, 14, 0, tzinfo=CST)
+        # 两条 reminder：① now 窗口内（首发送）② now+30min 窗口内（第二次评估刚进窗口）
+        memories = [
+            {"type": "reminder", "trigger_at": (now - timedelta(minutes=5)).isoformat(),
+             "content": "喝水"},
+            {"type": "reminder", "trigger_at": (now + timedelta(minutes=30)).isoformat(),
+             "content": "吃药"},
+        ]
+        engine = _make_reminder_daemon(Path(td), now, memories=memories)
+        st = engine.state
+        st.cooldown.messages_today = 4  # 恰好配额满 → 允许一次 reminder 突破
+        with _fixed_now(now):
+            d1 = engine.evaluate()
+        assert d1["action"] == "send", \
+            f"首次 reminder 应突破, got {d1['action']}: {d1.get('reason')}"
+        assert st.cooldown.messages_today == 5, \
+            f"发送后 messages_today 应=配额+1（超额 1 条）, got {st.cooldown.messages_today}"
+        # 同日第二次评估（跳 30min 最小间隔）：第二条 reminder 到点，但已超额 → 封顶
+        later = now + timedelta(minutes=31)
+        with _fixed_now(later):
+            d2 = engine.evaluate()
+        assert d2["action"] == "idle", \
+            f"第二条 reminder 超额应被封顶 → idle, got {d2['action']}: {d2.get('reason')}"
+        assert d2.get("reason") == "daily_limit", \
+            f"idle reason 应为 daily_limit, got {d2.get('reason')}"
+    print("  OK test_decision_reminder_overflow_capped_daily")
+
+
+def test_decision_quota_full_non_reminder_still_idle():
+    """F-D4 ④ 回归：配额满 + **非** reminder / 非 must_send（低孤独低焦虑无纪念日）
+    → 仍 idle daily_limit——门禁豁免扩展不得把普通场景一并破限（只豁免 must_send / reminder）。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 7, 31, 14, 0, tzinfo=CST)
+        engine = _make_daemon(Path(td), now)
+        engine.state.emotion.loneliness = 15.0
+        engine.state.emotion.anxiety = 40.0
+        engine.state.cooldown.messages_today = 4  # active 配额满
+        with _fixed_now(now):
+            d = engine.evaluate()
+        assert d["action"] == "idle", \
+            f"配额满 + 非 reminder/非 must_send → 应 idle, got {d['action']}: {d.get('reason')}"
+        assert d.get("reason") == "daily_limit", \
+            f"idle reason 应为 daily_limit, got {d.get('reason')}"
+    print("  OK test_decision_quota_full_non_reminder_still_idle")
 
 
 # ═══════════════════════════════════════════════════════════
