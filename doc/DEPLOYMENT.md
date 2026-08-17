@@ -1,4 +1,4 @@
-# 迟菓系统部署指南（v1.22）
+# 迟菓系统部署指南（v1.23）
 
 > 面向从零部署；本文是操作手册不是教程。系统文档见 [SYSTEM.md](SYSTEM.md)；agent 集成细节见 [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md)。
 > 仓库公开，任何人都可为自己部署；系统只与一个用户聊天（下文称「哥哥」，人格设定的一部分）。
@@ -22,7 +22,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 - Debian Linux + systemd（root 或可 sudo——微信桥自启与网易云服务要写 systemd）
 - git / curl（deploy.sh 自装 uv 需要 curl）/ Node.js + npm（wechatbot SDK 要构建）
-- Python 3.14+（deploy.sh 用 uv 安装；当前版本 v1.22）
+- Python 3.14+（deploy.sh 用 uv 安装；当前版本 v1.23）
 - 模型 API key（`export AGENT_API_KEY=...` 再跑部署）
 - 可选：ollama（`qwen3-embedding:0.6b` 嵌入模型，mem0 记忆用；缺则记忆降级，不影响主链路）
 - 默认端口：18790（微信桥 /send）/ 3000（网易云 API）/ 11434（ollama）
