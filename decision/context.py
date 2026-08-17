@@ -8,7 +8,7 @@ import random
 import re
 
 from decision.base import DecisionEngineBase
-from chiguo_math import mood_fresh, user_mood_note
+from chiguo_math import mood_fresh, user_mood_note, self_mood_note
 from chiguo_paths import PROJECT_ROOT
 from trigger_types import TriggerType  # T7·Q3 (#265) 移植：触发类型枚举单一事实源
 
@@ -126,7 +126,22 @@ class ContextMixin(DecisionEngineBase):
                 if user_state and user_state.get("most_likely") == "needs_care":
                     mood_note += "\n（哥哥可能需要关心（Bayesian 推断））"
     
-            guidance = layer_guidance.get(emo.dominant_layer, "") + energy_note + rate_urgency_note + personality_note + safety_note + mood_note
+            # ── Issue #356: 自身情绪注解（self_mood_note；开关默认关闭=逐字节恒等）──
+            # 与 energy_note 互补：energy 档属 energy_note，本表专注组合语义；
+            # emo_cfg 为 [emotion] 段配置（上方已取），仅叠加注解不改变人格铁律。
+            self_note = ""
+            if emo_cfg.get("self_mood_note_enabled", 0) != 0:
+                self_note = self_mood_note({
+                    "loneliness": emo.loneliness,
+                    "affection": emo.affection,
+                    "anxiety": emo.anxiety,
+                    "energy": emo.energy,
+                    "tsundere_index": emo.tsundere_index,
+                })
+                if self_note:
+                    self_note = f"\n【自身情绪】{self_note}"
+
+            guidance = layer_guidance.get(emo.dominant_layer, "") + energy_note + rate_urgency_note + personality_note + safety_note + mood_note + self_note
     
             # ── v7: 接话茬提示 ──
             if trigger.type == TriggerType.FOLLOW_UP:
