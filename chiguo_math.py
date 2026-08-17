@@ -231,6 +231,70 @@ def user_mood_note(kind: str, intensity: float) -> str:
     return tpl.format(i=intensity)
 
 
+# ── 自身情绪注解表 self_mood_note（Issue #356）──────────────────
+# 迟菓自身情绪 → 中文语气注解（最主导 1-2 条，注入 _build_context guidance）。
+# 与 energy_note 互补：energy 档注解属既有 energy_note，本表专注
+# loneliness/affection/anxiety/tsundere 组合语义；主导优先级：
+# 委屈难过(kernel 级) > 开心 > 高好感 > 高傲娇 > 中孤独；非命中 → ""。
+# 措辞参照人格文件『情绪武器』：开心得意=感叹号+行动证明；委屈难过=省略号碎句；
+# 嘴硬=短句连发+否认+反问；并始终与角色铁律协同（被夸不得直接开心 → 开心注解
+# 保留"先嘴硬、行动回应"约束）。缺键容错：缺失维度按非命中处理。纯函数，
+# 不依赖 chiguo_state dataclass（调用方传 dict，参照 apply_interaction_matrix）。
+
+def self_mood_note(emotion: dict) -> str:
+    """
+    自身情绪 → 语气注解（最多 1-2 条，按主导情绪优先级）。
+    - 委屈难过: loneliness > 70 且 anxiety > 60   （kernel 级，最优先）
+    - 开心:     energy > 80 且 loneliness < 30 且 affection > 70
+    - 高好感:   affection > 70
+    - 高傲娇:   tsundere_index > 80
+    - 中孤独:   loneliness > 50
+    非命中区间 → 空串；缺键维度按非命中处理（防御性，不抛异常）。
+    任意主导下同时命中傲娇底色（tsundere_index > 80）→ 叠加 1 条嘴硬注脚
+    （共 ≤2 条）——嘴硬是人格底色而非仅主导态，开心也受铁律⑦约束。
+    """
+    def _num(key: str) -> float | None:
+        v = emotion.get(key)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    loneliness = _num("loneliness")
+    affection = _num("affection")
+    anxiety = _num("anxiety")
+    energy = _num("energy")
+    tsundere = _num("tsundere_index")
+
+    notes: list[str] = []
+    # ① 委屈难过（kernel 级，最优先）
+    if loneliness is not None and anxiety is not None and loneliness > 70 and anxiety > 60:
+        notes.append(
+            f"（此刻有点委屈难过（孤独{loneliness:.0f}，不安{anxiety:.0f}），"
+            "碎句加省略号，可以流露一点真实的脆弱，不质问不卖惨）"
+        )
+    # ② 开心（铁律⑦协同：被夸仍先嘴硬，行动回应不直接承认）
+    elif (energy is not None and loneliness is not None and affection is not None
+          and energy > 80 and loneliness < 30 and affection > 70):
+        notes.append(
+            "（当前心情偏开心，语气可活泼些，感叹号加行动证明，"
+            "但被夸仍先嘴硬，行动回应不直接承认）"
+        )
+    # ③ 高好感
+    elif affection is not None and affection > 70:
+        notes.append("（对哥哥好感偏高，想亲近但口是心非，关心带上刺）")
+    # ④ 高傲娇
+    elif tsundere is not None and tsundere > 80:
+        notes.append("（此刻傲娇上头，短句连发，先否认再反问，语气嘴硬心软）")
+    # ⑤ 中孤独（以上均不命中时兜底）
+    elif loneliness is not None and loneliness > 50:
+        notes.append("（有点想哥哥了，试探着问两句，但绝不直说等待）")
+    # 傲娇底色叠加注脚（任意主导下共 ≤2 条）
+    if notes and tsundere is not None and tsundere > 80 and "傲娇上头" not in notes[0]:
+        notes.append("（嘴硬底色仍在，先推开再接受）")
+    return "；".join(notes)
+
+
 def mood_fresh(mood: dict | None, now, ttl_minutes: float = 360.0) -> bool:
     """
     user_mood 感知是否仍在有效窗口内（TTL 默认 6h）。

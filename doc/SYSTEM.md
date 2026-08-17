@@ -218,6 +218,8 @@ new_value = target - (target - current) × 2^(-hours / effective_hl)
 
 **A14 情绪基线长期漂移（v1.11）**：`ChiguoEmotion` 新增 `baseline_loneliness/anxiety/affection`（默认 = 原收敛 target 100/100/0 → 恒等，旧状态缺字段自动补默认，不升 STATE_VERSION）。`update_emotion_baseline(interaction)` 事件驱动慢漂移（`baseline_shift_of` 方向表：冷落/冷淡/未回复 → loneliness↑affection↓、温柔 → anxiety↓affection↑），`[emotion].baseline_drift_rate=0` 关闭灰度；有界钳位 `baseline_max_drift=20` + 淡忘回归 720h 防无限漂移；tick 3 处 `elastic_recover` target 改用漂移后基线。与人格层 `regress_to_baseline` 分层（人格稳定、情绪基线可漂移），tsundere 全归人格层避免双重回归。对标 astrbot_plugin_emotion_state_machine 的 GROUP/RELATION_BASELINE 概念。
 
+**A15 自身情绪注解（#356）**：`chiguo_math.self_mood_note()` 纯函数（输入 `emotion` dict，不依赖 dataclass；缺键维度按非命中容错）按主导情绪优先级产出至多 1-2 条中文语气注解注入 `_build_context` guidance：委屈难过（kernel 级：loneliness>70 且 anxiety>60）> 开心（energy>80 且 loneliness<30 且 affection>70）> 高好感（affection>70）> 高傲娇（tsundere_index>80）> 中孤独（loneliness>50）；非命中 → ""。与 `energy_note` 互补（energy 档仍归 energy_note，不重复）；与角色铁律协同（开心仍受铁律⑦"被夸不得直接开心"约束，措辞保留先嘴硬、行动回应）；任意主导叠加命中傲娇底色时追加 1 条嘴硬注脚（共 ≤2 条）。开关 `[emotion].self_mood_note_enabled=0` 默认关闭 → 注入为空串，guidance 与现状逐字节恒等。
+
 **B1 事件类型化情绪 delta（v1.12）**：analysis 显式携带事件类型（`event_type`/`event` 键）时，按规则表 `EVENT_DELTA`（`chiguo_state.py`）直接加减情绪——不走 `impact_inertia` 惯性阻尼（事件语义是一次性事实判定，非连续微调）：
 
 | 事件类型 | 情绪 delta | 说明 |
@@ -1440,6 +1442,7 @@ user_mood_happy_affection_factor = 0.0
 user_mood_angry_anxiety_factor = 0.0
 user_mood_angry_affection_factor = 0.0
 event_delta_enabled = false        # B1 事件类型化情绪 delta（默认关闭恒等）
+self_mood_note_enabled = 0         # A15 自身情绪注解（self_mood_note 注入 guidance；0=关闭恒等）
 
 [sigmoid]    # 触发概率 sigmoid 参数
 loneliness_low_k = 0.20

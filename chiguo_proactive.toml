@@ -169,6 +169,10 @@ user_mood_angry_affection_factor = 0.0      # angry：affection -1.0 × intensit
 # → {loneliness/affection/anxiety} 直接加减）时按事件直接改情绪（不走 impact_inertia 阻尼）。
 # 事件类型从 analysis 宽松提取（event_type/event 键 + warmth/user_mood/topic 信号推断）。
 event_delta_enabled = false
+# ── 自身情绪注解（默认 0 = 关闭恒等, 可灰度）──
+# Issue #356: self_mood_note 注入 _build_context guidance（chiguo_math 按主导情绪
+# 优先级产出 1-2 条中文语气注解）；0=不注入 → 与现状逐字节恒等。
+self_mood_note_enabled = 0
 
 [sigmoid]
 # ── 触发概率的 sigmoid 参数 ──
