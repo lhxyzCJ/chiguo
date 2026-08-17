@@ -3,7 +3,7 @@
 set -euo pipefail
 # cron 环境 PATH 精简，补齐 node/python3 常用安装目录
 # （issue #85: crontab 缺 /usr/local/bin、/opt/homebrew/bin 时裸 node/python3 找不到）
-export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin"
+export PATH="$PATH:${CHIGUO_PATH_BOOTSTRAP:-/usr/local/bin:/opt/homebrew/bin}"
 # 并发锁：上一 tick 未结束时跳过（cron 重入防护，拿不到锁即退出 0）
 # R16: 锁移入 $HOME/.chiguo/run（/tmp 世界可写 → 符号链接指向任意文件被 O_TRUNC 截断攻击面）
 LOCK_DIR="${CHIGUO_LOCK_DIR:-$HOME/.chiguo/run}"
