@@ -544,6 +544,8 @@ test_node_missing_env_fault() {
     [ -n "$real_p" ] && ln -sf "$real_p" "$MINIBIN/$t" 2>/dev/null || true
   done
   rm -f "$MINIBIN/node"   # 保证 node 缺席（PATH 查询不命中）
+  # tick.sh 会追加 PATH 补齐（#85），须注入空补齐目录才能模拟 node 真缺失
+  mkdir -p "$TMP/noboot"
   [ -x "$MINIBIN/bash" ] || fail "RF12: 迷你 PATH 缺 bash"
   local H2="$TMP/home_rf12"
   mkdir -p "$H2/.chiguo/auth/wechat"
@@ -561,6 +563,7 @@ fail_threshold = 3
 TOML
   set +e
   HOME="$H2" CHIGUO_REPO="$REPO" CHIGUO_LOCK_DIR="$TMP/rf12_lock" \
+    CHIGUO_PATH_BOOTSTRAP="$TMP/noboot" \
     PATH="$MINIBIN" bash "$REAL_TICK" >/dev/null 2>&1
   local RC=$?
   set -e
