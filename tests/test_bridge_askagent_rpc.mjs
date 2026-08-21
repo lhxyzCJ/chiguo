@@ -21,7 +21,7 @@ const DAEMON_LOG = join(tmp, 'daemon.log')
 // O2: 防写真实 logs/agent-run.log
 process.env.AGENTRUN_TELEMETRY = '0'
 // R3: 干净 HOME 注入——AgentRpc 构造会 mkdir PID_DIR + _killStale() 扫描 ~/.pi/agent,
-// 不隔离会杀掉线上 bridge 的常驻 rpc 子进程(homedir() 在模块顶层求值,须在 import 前设置)。
+// 不隔离会杀掉线上 bridge 的常驻 rpc 子进程(homeDir() 在模块顶层求值,须在 import 前设置)。
 const prevHome = process.env.HOME
 const cleanHome = join(tmpdir(), `chiguo-bridge-askagent-rpc-${process.pid}`)
 process.env.HOME = cleanHome

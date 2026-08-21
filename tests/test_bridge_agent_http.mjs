@@ -15,7 +15,7 @@ process.env.AGENTRUN_TELEMETRY = '0'
 // B2: 本文件测的是 RPC 可用路径 → 显式开启(否则 handleAgentPrompt 会 503 拒绝)
 process.env.WECHAT_BRIDGE_AGENT_RPC = '1'
 // R3: 干净 HOME 注入——AgentRpc 构造会 mkdir PID_DIR + _killStale() 扫描 ~/.pi/agent,
-// 不隔离会杀掉线上 bridge 的常驻 rpc 子进程(homedir() 在模块顶层求值,须在 import 前设置)。
+// 不隔离会杀掉线上 bridge 的常驻 rpc 子进程(homeDir() 在模块顶层求值,须在 import 前设置)。
 const prevHome = process.env.HOME
 const cleanHome = join(tmpdir(), `chiguo-bridge-agent-http-${process.pid}`)
 process.env.HOME = cleanHome
