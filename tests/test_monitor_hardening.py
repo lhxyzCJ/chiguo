@@ -235,6 +235,27 @@ def test_invalid_decision_count_in_stats():
     print("  OK test_invalid_decision_count_in_stats")
 
 
+def test_invalid_decision_count_window_scope():
+    """B10: invalid_decision_count 随 days 窗口过滤——历史非法行不计入窗口
+    （计数在 since 过滤后发生，对齐 unparsed_time_count 窗口语义）。"""
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "decisions.jsonl"
+        old = (datetime.now(CST) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M")
+        recent = datetime.now(CST).strftime("%Y-%m-%d %H:%M")
+        lines = [
+            json.dumps({"action": "explode", "state": {"time": old}},   # 30 天前非法 → 窗口外
+                       ensure_ascii=False),
+            json.dumps({"action": "explode", "state": {"time": recent}},  # 今日非法 → 窗口内
+                       ensure_ascii=False),
+        ]
+        log.write_text("\n".join(lines) + "\n")
+        mon = ChiguoMonitor(str(log), str(Path(td) / "state.json"))
+        assert mon.stats(days=7)["period"]["invalid_decision_count"] == 1
+        # days=0（全历史）→ 两条都计入
+        assert mon.stats(days=0)["period"]["invalid_decision_count"] == 2
+    print("  OK test_invalid_decision_count_window_scope")
+
+
 def test_log_line_bad_shape_skipped():
     """R2: 日志行是合法 JSON 但非 dict（[]/\"x\"/123）→ 跳过，stats() 不崩溃。"""
     with tempfile.TemporaryDirectory() as td:

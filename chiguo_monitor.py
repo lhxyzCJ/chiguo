@@ -122,7 +122,8 @@ class ChiguoMonitor:
         不据此跳过（不破坏历史读取）。真正的形状防御由下游 _normalize_entry。
         B10：消费 validate_decision 返回值——非法记录计入 _invalid_decision_count
         （由 stats() 暴露为 period.invalid_decision_count），非法 JSONL 行既不再
-        静默吞没也不影响 stats 循环（统计仍基于合法可解析行）。
+        静默吞没也不影响 stats 循环（统计仍基于合法可解析行）。计数在 since
+        过滤之后（仅窗口内将 yield 的行），与 unparsed_time_count 窗口语义一致。
         """
         if not self.log_path.exists():
             return
@@ -140,12 +141,12 @@ class ChiguoMonitor:
                         continue  # 合法 JSON 但非 dict（形状漂移）→ 跳过，防 AttributeError
                     # 消费同一 schema（非破坏：仅校验不跳过，历史无 contract 兼容）
                     errs = validate_decision(d)
-                    if errs:
-                        self._invalid_decision_count += 1
                     if since:
                         ts = self._extract_time(d)
                         if ts and ts < since:
                             continue
+                    if errs:  # 窗口内非法记录计数（since 过滤后，窗口粒度语义）
+                        self._invalid_decision_count += 1
                     yield d
         except OSError:
             return  # 权限/删除竞态 → 静默跳过
