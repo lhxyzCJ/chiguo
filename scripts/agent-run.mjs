@@ -46,8 +46,8 @@ const SESSION_ID = process.env.AGENTRUN_SESSION ?? HOST.session_id ?? 'chiguo-ma
 if (process.env.AGENTRUN_NEW_SESSION === '1' && !process.env.AGENTRUN_SESSION) {
   try {
     const { backupSessionFile } = await import(pathToFileURL(path.join(REPO, 'wechat-bridge', 'command-detect.mjs')))
-    const { homedir } = await import('node:os')
-    const dst = backupSessionFile(process.cwd(), path.join(homedir(), '.chiguo', 'session-backups'))
+    const { homeDir } = await import(pathToFileURL(path.join(REPO, 'wechat-bridge', 'home-dir.mjs')))
+    const dst = backupSessionFile(process.cwd(), path.join(homeDir(), '.chiguo', 'session-backups'))
     if (dst) console.error(`[new-session] 旧会话已备份: ${dst}`)
   } catch (err) {
     console.error('[new-session] 备份失败:', err instanceof Error ? err.message : String(err))
@@ -58,8 +58,8 @@ if (process.env.AGENTRUN_NEW_SESSION === '1' && !process.env.AGENTRUN_SESSION) {
 if (process.env.AGENTRUN_ROTATE_SESSION === '1') {
   try {
     const { backupSessionFile } = await import(pathToFileURL(path.join(REPO, 'wechat-bridge', 'command-detect.mjs')))
-    const { homedir } = await import('node:os')
-    const dst = backupSessionFile(process.cwd(), path.join(homedir(), '.chiguo', 'session-backups'), SESSION_ID)
+    const { homeDir } = await import(pathToFileURL(path.join(REPO, 'wechat-bridge', 'home-dir.mjs')))
+    const dst = backupSessionFile(process.cwd(), path.join(homeDir(), '.chiguo', 'session-backups'), SESSION_ID)
     if (dst) console.error(`[rotate-session] 旧会话已备份: ${dst}`)
   } catch (err) {
     console.error('[rotate-session] 备份失败:', err instanceof Error ? err.message : String(err))

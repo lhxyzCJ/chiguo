@@ -15,7 +15,7 @@
  * 活动文件格式：epoch 秒（整数），由 bridge（onMessage 生产入口）与 chiguo-tick.sh
  * （ACTION=send 判定）写入；文件缺失视为空闲（允许轮换）。
  */
-import { homedir } from 'node:os'
+import { homeDir } from './home-dir.mjs'
 import { dirname, join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { backupSessionFile } from './command-detect.mjs'
@@ -103,8 +103,8 @@ export async function rotateIfDue({ now = new Date(), markerPath, backupsDir, cw
 /** 默认路径（生产）：备份目录 + 幂等标记 + 活动时间戳，均锚定 ~/.chiguo/。 */
 export function defaultRotatePaths() {
   return {
-    backupsDir: join(homedir(), '.chiguo', 'session-backups'),
-    markerPath: join(homedir(), '.chiguo', 'session-rotate-last'),
-    activityFile: join(homedir(), '.chiguo', 'session-activity-last'),
+    backupsDir: join(homeDir(), '.chiguo', 'session-backups'),
+    markerPath: join(homeDir(), '.chiguo', 'session-rotate-last'),
+    activityFile: join(homeDir(), '.chiguo', 'session-activity-last'),
   }
 }
