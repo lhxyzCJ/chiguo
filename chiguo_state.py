@@ -48,6 +48,7 @@ from datetime import date as date_type
 from chiguo_time import CST
 import chiguo_locks as locks
 from chiguo_atomic import atomic_write
+from trigger_types import TriggerType
 
 # ── Q21: 跨进程 fcntl 锁已收敛至共享模块 chiguo_locks（可重入;同进程共享
 # 同一 fd 与深度计数）。本模块经 state_lock/_in_lock 复用之。
@@ -2425,7 +2426,7 @@ class ChiguoState:
 
         # ── v4.1: 安全阀 — 追踪崩溃触发 ──
         # ── v6: 崩溃记录改为时间戳列表，_prune_crash_history 按 48h 窗口滑动过滤 ──
-        crash_types = ("lonely_high", "anxiety")
+        crash_types = (TriggerType.LONELY_HIGH, TriggerType.ANXIETY)
         if trigger_type in crash_types:
             self.cooldown.last_crash_at = now.isoformat()
             self.cooldown.crash_timestamps.append(now.isoformat())
@@ -2488,7 +2489,7 @@ class ChiguoState:
 
     # ── 概率触发（sigmoid 替代硬阈值） ──────────────────
 
-    def trigger_weight(self, trigger_type: str) -> float:
+    def trigger_weight(self, trigger_type: str | TriggerType) -> float:
         """
         返回某类触发在当前情绪下的概率权重（0~1）。
         不再 if loneliness > 55，而是平滑概率。
@@ -2497,16 +2498,16 @@ class ChiguoState:
         lo = self.emotion.loneliness
         anx = self.emotion.anxiety
 
-        if trigger_type == "lonely_low":
+        if trigger_type == TriggerType.LONELY_LOW:
             return sigmoid(lo, cfg.get("loneliness_low_mid", 38),
                            cfg.get("loneliness_low_k", 0.20))
-        elif trigger_type == "lonely_mid":
+        elif trigger_type == TriggerType.LONELY_MID:
             return sigmoid(lo, cfg.get("loneliness_mid_mid", 55),
                            cfg.get("loneliness_mid_k", 0.18))
-        elif trigger_type == "lonely_high":
+        elif trigger_type == TriggerType.LONELY_HIGH:
             return sigmoid(lo, cfg.get("loneliness_high_mid", 78),
                            cfg.get("loneliness_high_k", 0.15))
-        elif trigger_type == "anxiety":
+        elif trigger_type == TriggerType.ANXIETY:
             return sigmoid(anx, cfg.get("anxiety_mid", 58),
                            cfg.get("anxiety_k", 0.12))
         return 0.0
