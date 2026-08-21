@@ -49,12 +49,14 @@ class NeteaseService:
         self.source_weights = [0.5, 0.5]
         sw = tp.get("netease_source_weights")
         if isinstance(sw, list) and len(sw) == 2:
-            try:
-                w0, w1 = max(0.0, float(sw[0])), max(0.0, float(sw[1]))  # 负权重钳制为 0
-                if w0 > 0 or w1 > 0:  # 两权重全 ≤0 → 回退默认(退化分布防御)
-                    self.source_weights = [w0, w1]
-            except TypeError, ValueError:
-                pass
+            # B8: 复用 cfg_float 统一解析——非数值/NaN/inf 逐项回退默认 0.5、
+            # clamp_min=0 钳制负值（对齐 retry_backoff/reprobe 用法）。
+            # 修复前 max(0.0, float()) 无 isfinite 守卫：inf → total=inf → r<w0 恒 False
+            # → 恒选 recent 单源；cfg_float 兜底后非法输入不再毒化加权选源。
+            w0 = cfg_float(sw[0], 0.5, clamp_min=0.0)
+            w1 = cfg_float(sw[1], 0.5, clamp_min=0.0)
+            if w0 > 0 or w1 > 0:  # 两权重全 ≤0 → 回退默认(退化分布防御)
+                self.source_weights = [w0, w1]
         self.enabled = bool(net.get("enabled", True))   # 可选来源开关
         self.play_cache_ttl_minutes = self._cfg_int(net.get("play_cache_ttl_minutes", 15), 15)
         self.base_dir = Path(base_dir)
