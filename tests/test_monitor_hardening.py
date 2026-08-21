@@ -17,7 +17,6 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CST = timezone(timedelta(hours=8))
 
@@ -193,6 +192,68 @@ def test_iso_time_entries_counted_in_stats():
         assert s7["activity"]["total_sends"] == 3
         assert s7["period"]["unparsed_time_count"] == 2
     print("  OK test_iso_time_entries_counted_in_stats")
+
+
+def test_invalid_decision_count_in_stats():
+    """B10: _iter_decisions 消费 validate_decision 返回值——非法决策行计入
+    period.invalid_decision_count（不跳过不静默），合法行统计不受影响。
+    注：make_log_entry 简化 fixture 缺 version/msg_id/context 会被 schema 判非法，
+    故本条用补全必填字段的合规记录构造合法基线。"""
+    def full_send(time_str):
+        return {
+            "action": "send", "trigger": "morning", "intensity": "soft",
+            "version": "1.23", "msg_id": "m1", "context": {},
+            "state": {
+                "emotion": {"loneliness": 15.0, "affection": 55.0,
+                            "anxiety": 40.0, "energy": 85.0, "tsundere_index": 70.0},
+                "dominant_layer": "shell",
+                "cooldown": {"messages_today": 0, "silent_hours": 10.0,
+                             "minutes_since_last": 60.0,
+                             "messages_without_reply": 0, "can_send": True},
+                "time": time_str,
+            },
+        }
+
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "decisions.jsonl"
+        t0 = datetime.now(CST) - timedelta(days=1)
+        ts = t0.strftime("%Y-%m-%d %H:%M")
+        lines = [
+            json.dumps(full_send(ts), ensure_ascii=False),           # 合法 send
+            json.dumps({"action": "explode", "state": {"time": ts}},  # action 不在枚举 → 非法
+                       ensure_ascii=False),
+            json.dumps({"state": {"time": ts}}, ensure_ascii=False),  # 缺 action → 非法
+        ]
+        log.write_text("\n".join(lines) + "\n")
+        mon = ChiguoMonitor(str(log), str(Path(td) / "state.json"))
+        s = mon.stats(days=0)
+        assert s["period"]["invalid_decision_count"] == 2, f"got {s['period']}"
+        assert s["period"]["total_entries"] == 1, f"got {s['period']}"
+        assert s["activity"]["total_sends"] == 1
+        # 窗口粒度：再次调用 stats 独立复位，不累积残留污染
+        assert mon.stats(days=0)["period"]["invalid_decision_count"] == 2
+    print("  OK test_invalid_decision_count_in_stats")
+
+
+def test_invalid_decision_count_window_scope():
+    """B10: invalid_decision_count 随 days 窗口过滤——历史非法行不计入窗口
+    （计数在 since 过滤后发生，对齐 unparsed_time_count 窗口语义）。"""
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "decisions.jsonl"
+        old = (datetime.now(CST) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M")
+        recent = datetime.now(CST).strftime("%Y-%m-%d %H:%M")
+        lines = [
+            json.dumps({"action": "explode", "state": {"time": old}},   # 30 天前非法 → 窗口外
+                       ensure_ascii=False),
+            json.dumps({"action": "explode", "state": {"time": recent}},  # 今日非法 → 窗口内
+                       ensure_ascii=False),
+        ]
+        log.write_text("\n".join(lines) + "\n")
+        mon = ChiguoMonitor(str(log), str(Path(td) / "state.json"))
+        assert mon.stats(days=7)["period"]["invalid_decision_count"] == 1
+        # days=0（全历史）→ 两条都计入
+        assert mon.stats(days=0)["period"]["invalid_decision_count"] == 2
+    print("  OK test_invalid_decision_count_window_scope")
 
 
 def test_log_line_bad_shape_skipped():
