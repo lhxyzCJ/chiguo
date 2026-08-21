@@ -18,7 +18,6 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CST = timezone(timedelta(hours=8))
 NOW = datetime(2026, 7, 31, 22, 30, 0, tzinfo=CST)   # 周五 22:30
@@ -491,6 +490,27 @@ def test_source_weights_clamped_non_negative():
         svc3 = _make_service(os.path.join(td, "b"), weights=[0, 0])
         assert svc3.source_weights == [0.5, 0.5]
     print("  OK test_source_weights_clamped_non_negative")
+
+
+def test_source_weights_inf_nan_fallback():
+    """B8: inf/nan 权重经 cfg_float 回退默认(isfinite 守卫)——权重全有限、
+    加权选源不恒选单源(daily/recent 都出现)。
+    修复前 max(0.0, inf)=inf → total=inf → r<w0 恒 False → 恒选 recent。"""
+    import math as _math
+    for weights in ([float("inf"), 1], [float("nan"), 1]):
+        with tempfile.TemporaryDirectory() as td:
+            svc = _make_service(td, quota=200, weights=weights,
+                                daily=lambda *a, **k: _songs(), recent=lambda *a, **k: _plays())
+            assert all(_math.isfinite(w) for w in svc.source_weights), \
+                f"inf/nan 残留: {weights} → {svc.source_weights}"
+            random.seed(42)
+            seen = set()
+            for _ in range(120):
+                t = _mt(svc, NOW)
+                assert t is not None
+                seen.add(t["data"]["source"])
+            assert seen == {"daily", "recent"}, f"恒选单源: {weights} → {seen}"
+    print("  OK test_source_weights_inf_nan_fallback")
 
 
 def test_config_invalid_values_fallback():
