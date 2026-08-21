@@ -2,12 +2,30 @@
 """test_schedule_cli.py — daemon 三新子命令输出契约(批次 5,二十轮 A4)"""
 
 import contextlib, io, json, os, re, sys, tempfile
+from datetime import date
+from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pathlib import Path
 
 import cli.commands as C
+import schedule.api
+
+# 固定 today（与 test_schedule_override.TODAY 同值）:CLI 内 ScheduleApi 构造自取真实
+# date.today()（生产期望行为），测试用 mock 固定之，2026-08-20 恒为"未来"，断言不随
+# 墙钟漂移（对齐 AGENTS.md「fixed CST datetimes 确定性」铁律，解测试日期时间炸弹）。
+FIXED_TODAY = date(2026, 8, 3)
+
+
+class _FixedTodayDate(date):
+    """schedule.api 命名空间内 date 的替身：today() 返回固定 FIXED_TODAY，其余
+    （fromisoformat / 构造 / 比较）继承 datetime.date。直接 patch datetime.date.today
+    会因不可变类型报错（cannot set 'today' attribute of immutable type 'datetime.date'）。"""
+
+    @classmethod
+    def today(cls):
+        return FIXED_TODAY
 
 
 def _tmp_cfg(td, sched_overrides=None):
@@ -43,31 +61,34 @@ def test_attention_shape_and_zero_write():
 
 
 def test_schedule_change_success_and_shapes():
-    with tempfile.TemporaryDirectory() as td:
-        cfg_p = _tmp_cfg(td)
-        code, r, _, _ = _run(C._cmd_schedule_change,
-                             '{"kind": "reminder", "when": {"date": "2026-08-20"}, "label": "交材料"}',
-                             cfg_p)
-        assert code == 0 and r["action"] == "schedule_change" and r["ok"] is True
-        assert "8月20日" in r["text"] and "周四" in r["text"], f"A4 text=确认文案(含星期+日期), got {r['text']}"
-        # 畸形 JSON → ok:false + bad_json + 不写入(十九轮安全钉)
-        before = Path(td, "schedule_overrides.json").read_text()
-        code, r, _, err = _run(C._cmd_schedule_change, "{not json", cfg_p)
-        assert code == 1 and r["ok"] is False and r["reason"] == "bad_json"
-        assert r["question"] == "处理失败,再试一次?"
-        assert Path(td, "schedule_overrides.json").read_text() == before, "畸形 JSON 不写入"
-        assert "畸形" in err, "stderr 诊断"
-        # ApiRejection → reason 类别 + H5 question
-        code, r, _, _ = _run(C._cmd_schedule_change,
-                             '{"kind": "reminder", "when": {"date": "2026-08-01"}, "label": "过去"}',
-                             cfg_p)
-        assert code == 1 and r["ok"] is False and r["reason"] == "past_date"
-        assert "过去了" in r["question"] and r.get("missing") == ["date"], f"got {r}"
-        # remove 路由
-        code, r, _, _ = _run(C._cmd_schedule_change,
-                             '{"kind": "remove", "match": {"date": "2026-08-20", "label": "交材料"}}',
-                             cfg_p)
-        assert code == 0 and r["ok"] is True
+    # CLI 内 ScheduleApi 构造自取 date.today()（生产真实时钟），测试固定 today（2026-08-20
+    # 恒为未来、08-01 恒为过去），使日期相对断言不随墙钟漂移（日期确定性铁律）。
+    with mock.patch.object(schedule.api, "date", _FixedTodayDate):
+        with tempfile.TemporaryDirectory() as td:
+            cfg_p = _tmp_cfg(td)
+            code, r, _, _ = _run(C._cmd_schedule_change,
+                                 '{"kind": "reminder", "when": {"date": "2026-08-20"}, "label": "交材料"}',
+                                 cfg_p)
+            assert code == 0 and r["action"] == "schedule_change" and r["ok"] is True
+            assert "8月20日" in r["text"] and "周四" in r["text"], f"A4 text=确认文案(含星期+日期), got {r['text']}"
+            # 畸形 JSON → ok:false + bad_json + 不写入(十九轮安全钉)
+            before = Path(td, "schedule_overrides.json").read_text()
+            code, r, _, err = _run(C._cmd_schedule_change, "{not json", cfg_p)
+            assert code == 1 and r["ok"] is False and r["reason"] == "bad_json"
+            assert r["question"] == "处理失败,再试一次?"
+            assert Path(td, "schedule_overrides.json").read_text() == before, "畸形 JSON 不写入"
+            assert "畸形" in err, "stderr 诊断"
+            # ApiRejection → reason 类别 + H5 question（固定 today 下 08-01 恒为过去）
+            code, r, _, _ = _run(C._cmd_schedule_change,
+                                 '{"kind": "reminder", "when": {"date": "2026-08-01"}, "label": "过去"}',
+                                 cfg_p)
+            assert code == 1 and r["ok"] is False and r["reason"] == "past_date"
+            assert "过去了" in r["question"] and r.get("missing") == ["date"], f"got {r}"
+            # remove 路由
+            code, r, _, _ = _run(C._cmd_schedule_change,
+                                 '{"kind": "remove", "match": {"date": "2026-08-20", "label": "交材料"}}',
+                                 cfg_p)
+            assert code == 0 and r["ok"] is True
     print("  OK test_schedule_change_success_and_shapes")
 
 
