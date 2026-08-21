@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from chiguo_state import CST, ChiguoState
 from chiguo_math import cfg_float, weighted_trigger_choice, in_quiet_window, mood_fresh
 
-from trigger_types import TriggerType, EMOTION_TRIGGERS
+from trigger_types import TriggerType, EMOTION_TRIGGERS, RITUAL_TRIGGERS
 
 
 @dataclass
@@ -401,7 +401,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
     if backoff == 1:
         weighted_candidates = [
             c for c in weighted_candidates
-            if c["trigger"].type not in EMOTION_TRIGGERS
+            if c["trigger"].type in RITUAL_TRIGGERS
         ]
 
     if not weighted_candidates:
@@ -457,7 +457,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
               f"（需 min < must，请检查 chiguo_proactive.toml [trigger]）",
               file=sys.stderr)
     emo_cands = [c for c in weighted_candidates if c["trigger"].type in EMOTION_TRIGGERS]
-    ritual_cands = [c for c in weighted_candidates if c["trigger"].type not in EMOTION_TRIGGERS]
+    ritual_cands = [c for c in weighted_candidates if c["trigger"].type in RITUAL_TRIGGERS]
     activation = _activation_score(emo_cands)
     must_send = False
     # 抖动一次采样全局乘（防机械感）：各乘数逐项乘积、换序等价，故最终权重分布不变；
