@@ -23,7 +23,7 @@ def _cancel(store, when, period=3, note="临时停课"):
 
 def test_apply_and_file_schema():
     with tempfile.TemporaryDirectory() as td:
-        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         r = _cancel(api, {"date": "2026-08-20"})
         assert r["ok"] is True and "text" in r
         raw = json.loads(Path(td, "schedule_overrides.json").read_text())
@@ -40,7 +40,7 @@ def test_apply_and_file_schema():
 
 def test_validation_matrix():
     with tempfile.TemporaryDirectory() as td:
-        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         bads = [
             {"kind": "explode", "when": {"date": "2026-08-20"}},                       # kind 枚举
             {"kind": "cancel", "when": {"date": "2026-08-20"}, "period": 0},           # period 越界
@@ -72,7 +72,7 @@ def test_interval_end_date_ordering():
     """R11: 区间 end_date<date 死区间 → 拒绝;==date 单日退化 / >date 正常 → 接受。
     双路径覆盖:when={"date","end_date"} 与顶层 end_date+when={"date"}。"""
     with tempfile.TemporaryDirectory() as td:
-        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         # 路径①:when 内联区间,死区间 → 拒绝
         for item in (
             {"kind": "cancel", "period": 5, "when": {"date": "2026-08-20", "end_date": "2026-08-10"}},
@@ -230,7 +230,7 @@ def test_apply_override_rejection_branches():
 
 def test_idempotent_write():
     with tempfile.TemporaryDirectory() as td:
-        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         api.apply_override({"kind": "reminder", "when": {"date": "2026-08-20"}, "label": "交材料"})
         api.apply_override({"kind": "reminder", "when": {"date": "2026-08-20"}, "label": "交材料"})
         assert len(api.overrides.items()) == 1, "reminder date+label 全等 → 替换不新增"
@@ -244,7 +244,7 @@ def test_idempotent_write():
 
 def test_remove_override():
     with tempfile.TemporaryDirectory() as td:
-        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         _cancel(api, {"date": "2026-08-20"}, period=3)
         _cancel(api, {"date": "2026-08-20", "end_date": "2026-08-24"}, period=5)
         # 按 id 删
@@ -281,7 +281,7 @@ def test_cleanup_endpoints():
                  "label": "期末", "created_at": "2026-06-01T10:00:00+08:00"},
                 {"id": "r1", "date": "2026-07-30", "kind": "reminder", "label": "已过提醒",
                  "created_at": "2026-07-01T10:00:00+08:00"}]}, ensure_ascii=False))
-        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         api.apply_override({"kind": "cancel", "when": {"date": "2027-08-20"},
                             "end_date": "2027-08-24", "period": 2})   # 区间 end 未到 → 留
         api.apply_override({"kind": "add", "when": {"date": "2027-08-03"}, "period": 8,
@@ -307,7 +307,7 @@ def test_corrupt_and_migration_order():
     with tempfile.TemporaryDirectory() as td:
         Path(td, "schedule_overrides.json").write_text("{broken")
         Path(td, "anniversaries.json").write_text("{also broken")
-        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         # 读路径先验证:损坏 → 空集 + 不落盘
         assert api.overrides.items() == []
         assert api.anniversary_mgr.visible_items(), "anniversaries 损坏 → 视同缺失合并默认"
@@ -321,7 +321,7 @@ def test_corrupt_and_migration_order():
         # ② 已激活(6c):历史 countdown → 迁移为 reminder(豁免过去校验)并从文件移除
         Path(td, "anniversaries.json").write_text(json.dumps({"anniversaries": [
             {"id": "c1", "type": "countdown", "name": "考试", "date": "2026-12-25", "note": "", "created_at": "2026-08-01"}]}))
-        api2 = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api2 = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         api2._guard()
         rem = [i for i in api2.overrides.items() if i["kind"] == "reminder"]
         assert len(rem) == 1 and rem[0]["date"] == "2026-12-25" and rem[0]["label"] == "考试", \
@@ -418,7 +418,7 @@ def test_corrupt_mixed_items_preserves_valid_on_rebuild():
         Path(td, "schedule_overrides.json").write_text(
             json.dumps({"override_version": 1, "items": [good_rem, bad, good_cancel]},
                        ensure_ascii=False))
-        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         # 读路径:坏条目剔除、好条目留在内存
         assert api.overrides.corrupt, "含坏条目 → corrupt=True"
         assert [i["id"] for i in api.overrides.items()] == ["r1", "c1"], \
@@ -435,7 +435,7 @@ def test_corrupt_mixed_items_preserves_valid_on_rebuild():
         bak = json.loads(Path(td, "schedule_overrides.json.bak").read_text())
         assert len(bak["items"]) == 3, f".bak 必须含原始坏/好混合内容, got {len(bak['items'])}"
         # 二次实例化:重建后文件干净、corrupt 复位、好条目仍可读
-        api2 = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api2 = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         assert not api2.overrides.corrupt, "重建后 corrupt 必须复位"
         assert "r1" in [i["id"] for i in api2.overrides.items()]
     print("  OK test_corrupt_mixed_items_preserves_valid_on_rebuild")
@@ -446,11 +446,11 @@ def test_corrupt_fullfile_still_rebuilds_empty():
     分隔:损坏解析失败场景与"坏/好混合"场景语义不同,不得依赖修复合一。"""
     with tempfile.TemporaryDirectory() as td:
         Path(td, "schedule_overrides.json").write_text("{broken")
-        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         assert api.overrides.items() == []
         api._guard()
         raw = json.loads(Path(td, "schedule_overrides.json").read_text())
         assert raw == {"override_version": 1, "items": []}, f"整文件损坏须重建为空集, got {raw}"
-        api2 = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}})
+        api2 = ScheduleApi(td, {"schedule": {"semester_start": "2026-02-23"}}, today=TODAY)
         assert not api2.overrides.corrupt
     print("  OK test_corrupt_fullfile_still_rebuilds_empty")
