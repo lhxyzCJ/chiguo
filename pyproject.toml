@@ -1,6 +1,6 @@
 [project]
 name = "chiguo"
-version = "1.19"
+version = "1.23"
 description = "迟菓主动消息系统 — 数学驱动的角色主动消息引擎（零 LLM 决策 + LLM 消息生成）"
 readme = "README.md"
 requires-python = ">=3.14"

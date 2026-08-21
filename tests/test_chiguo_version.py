@@ -57,3 +57,17 @@ def test_consumer_modules_loadable():
     for mod in ("chiguo_envcheck", "chiguo_monitor"):
         assert importlib.import_module(mod) is not None, f"import {mod} 失败"
     print("  OK test_consumer_modules_loadable")
+
+def test_pyproject_version_sync():
+    """pyproject.toml [project].version 与 chiguo_version.VERSION 同步，防漂移悄然过绿。
+
+    pyproject 版本号格式与 VERSION 字符串完全一致（如 "1.23"），逐字相等即通过。
+    """
+    import tomllib
+    pyproj = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproj_version = pyproj["project"]["version"]
+    assert pyproj_version == VERSION, (
+        f"pyproject.toml version={pyproj_version!r} 与 chiguo_version.VERSION={VERSION!r} 漂移"
+        " —— 须同步 pyproject.toml [project].version"
+    )
+    print(f"  OK test_pyproject_version_sync (pyproject={pyproj_version} == VERSION={VERSION})")
