@@ -13,7 +13,6 @@ import sys
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from chiguo_daemon import DecisionEngine  # noqa: E402
 

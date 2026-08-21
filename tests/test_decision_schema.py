@@ -13,7 +13,6 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from decision_schema import (  # noqa: E402
     CONTRACT, ACTIONS, validate, with_contract, send_top_level_fields,
