@@ -337,9 +337,8 @@ def generate(year: int, force: bool = False, with_solar: bool = False):
         if solar_path.exists() and not force:
             print(f"❌ {solar_path} 已存在。用 --force 覆盖。")
         else:
-            solar_path.write_text(
-                json.dumps(terms, indent=2, ensure_ascii=False) + "\n"
-            )
+            atomic_write(solar_path,
+                         json.dumps(terms, indent=2, ensure_ascii=False) + "\n")
             print(f"📅 {solar_path} 已生成 ({len(terms)} 个节气)")
 
 
