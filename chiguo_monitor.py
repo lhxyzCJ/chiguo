@@ -60,6 +60,7 @@ class ChiguoMonitor:
         self.alerts_path = Path(alerts_path)
         self.events_path = Path(events_path)
         self._monitor_config = self._load_monitor_config(self.config_path)
+        self._invalid_decision_count = 0  # B10: _iter_decisions 校验失败计数（stats 窗口粒度）
 
     def _load_monitor_config(self, config_path: Path) -> dict:
         """读取 [monitor] 段配置，缺省硬编码阈值。
@@ -119,6 +120,9 @@ class ChiguoMonitor:
         Q16：每条 dict 记录都经决策 schema（decision_schema.validate）消费——
         旧 jsonl 无 contract 键按缺省 1 处理（兼容不跳）；仍 yield 原记录，
         不据此跳过（不破坏历史读取）。真正的形状防御由下游 _normalize_entry。
+        B10：消费 validate_decision 返回值——非法记录计入 _invalid_decision_count
+        （由 stats() 暴露为 period.invalid_decision_count），非法 JSONL 行既不再
+        静默吞没也不影响 stats 循环（统计仍基于合法可解析行）。
         """
         if not self.log_path.exists():
             return
@@ -135,7 +139,9 @@ class ChiguoMonitor:
                     if not isinstance(d, dict):
                         continue  # 合法 JSON 但非 dict（形状漂移）→ 跳过，防 AttributeError
                     # 消费同一 schema（非破坏：仅校验不跳过，历史无 contract 兼容）
-                    validate_decision(d)
+                    errs = validate_decision(d)
+                    if errs:
+                        self._invalid_decision_count += 1
                     if since:
                         ts = self._extract_time(d)
                         if ts and ts < since:
@@ -237,6 +243,9 @@ class ChiguoMonitor:
         since = None
         if days > 0:
             since = self._now() - timedelta(days=days)
+        # B10: 非法决策计数为 stats 窗口粒度——每次统计独立复位，
+        # 避免前次遍历（stats/alerts）残留累积污染本次输出。
+        self._invalid_decision_count = 0
 
         # ── D1: 主动消息效果评估（对标 ProactiveEval；[monitor].proactive_eval 默认 False 恒等）──
         proactive_eval = bool(self._monitor_config.get("proactive_eval", False))
@@ -514,6 +523,8 @@ class ChiguoMonitor:
                 "span_days": round(span_days, 1),
                 "total_entries": total_sends + total_idles,  # 口径：send + idle 决策条数（不含 recv/send_result）
                 "unparsed_time_count": unparsed_time_count,
+                # B10: 窗口内被决策 schema 判为非法的记录数（decision_schema.validate 非空）
+                "invalid_decision_count": self._invalid_decision_count,
             },
             "activity": {
                 "total_sends": total_sends,
