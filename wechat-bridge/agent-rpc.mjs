@@ -20,13 +20,13 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { homeDir } from './home-dir.mjs'
 import {
   buildBaseAgentArgs, buildAnalysisPrompt, buildSendPrompt,
   parseNdjson, extractAnalysis, parseUsage, appendTelemetry, AGENT_TIMEOUT,
 } from '../scripts/agent-run.mjs'
 
-const PID_DIR = join(homedir(), '.pi', 'agent')
+const PID_DIR = join(homeDir(), '.pi', 'agent')
 const DEFAULT_SESSIONS = { analysis: 'chiguo-main', send: 'chiguo-send' }
 // R1: 单行(无 \n 残段)累积上限——异常 pi 打出无换行巨型行时防 lineBuffer 无限增长 OOM
 const MAX_LINE_BUFFER = 1024 * 1024

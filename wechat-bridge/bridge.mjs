@@ -33,7 +33,7 @@ import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
+import { homeDir } from './home-dir.mjs'
 import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand, backupSessionFile } from './command-detect.mjs'
 import { msToNextCheck, rotateIfDue, defaultRotatePaths, writeActivity, cstDateStr } from './session-rotate.mjs'
 // #99 A 路：askAgent（agent-run.mjs 统一入口）由阶段 4 集成接入；当前保留原 spawn 调用结构
@@ -491,7 +491,7 @@ export async function handleAgentPrompt(payload, res, queue = fallbackTurnQueue)
       // 本轮从空会话开始 → 上下文恒 ≤1 轮（决策 JSON 自足，事实注入全在 JSON 里，不丢课表/提醒）。
       if (mode === 'send') {
         await globalThis.__agentRpc.restart({ mode: 'send' })
-        const dst = backupSessionFile(BRIDGE_DIR, join(homedir(), '.chiguo', 'session-backups'), 'chiguo-send')
+        const dst = backupSessionFile(BRIDGE_DIR, join(homeDir(), '.chiguo', 'session-backups'), 'chiguo-send')
         if (dst) console.log(`[rotate] send 会话已轮换: ${dst}`)
       }
       // 处理步计时计入总预算：处理(restart+ensureStarted+prompt)不得把整个请求拖过 deadline。

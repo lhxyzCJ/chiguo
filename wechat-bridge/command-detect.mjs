@@ -14,7 +14,7 @@
  */
 import { dirname, join } from 'node:path'
 import { mkdirSync, readdirSync, renameSync, statSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homeDir } from './home-dir.mjs'
 
 const CST_OFFSET_MS = 8 * 3600 * 1000
 const MAX_LEN = 40
@@ -272,7 +272,7 @@ export function encodeSessionDir(cwd) {
 /** 备份并移走最近一个 <suffix> 会话文件(与 AGENTRUN_NEW_SESSION 共享逻辑)。返回备份路径或 null。
  *  suffix 默认 chiguo-main（回复链）；chiguo-send（主动发送链）由每日轮换调用。 */
 export function backupSessionFile(cwd, backupsDir, suffix = 'chiguo-main') {
-  const dir = join(homedir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
+  const dir = join(homeDir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
   let files = []
   try { files = readdirSync(dir).filter((f) => f.endsWith(`_${suffix}.jsonl`)) } catch {}
   if (!files.length) return null
@@ -339,7 +339,7 @@ function fmtTokens(n) {
  *  /记忆、/记得什么 均可用。 */
 export async function executeSlashCommand(spawnFn, spec, cwd) {
   const repo = process.env.CHIGUO_REPO ?? dirname(cwd)
-  const backups = join(homedir(), '.chiguo', 'session-backups')
+  const backups = join(homeDir(), '.chiguo', 'session-backups')
   // 记忆后端 CLI：解释器/argv 均可 env 覆盖（测试注入 fake；生产默认 .venv python + -m memory）
   const memPy = process.env.WECHAT_BRIDGE_MEMORY_PY ?? join(repo, '.venv', 'bin', 'python')
   // argv 默认用数组（['-m','memory'] 承载含空格模块路径），env 覆盖仍走 split 空格——
@@ -370,7 +370,7 @@ export async function executeSlashCommand(spawnFn, spec, cwd) {
         const total = (usage.cacheRead ?? 0) + (usage.input ?? 0)
         let fileSize = 0
         try {
-          const dir = join(homedir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
+          const dir = join(homeDir(), '.pi', 'agent', 'sessions', encodeSessionDir(cwd))
           const files = readdirSync(dir).filter((f) => f.endsWith('_chiguo-main.jsonl')).sort()
           if (files.length) fileSize = statSync(join(dir, files[files.length - 1])).size
         } catch {}
