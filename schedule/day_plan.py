@@ -3,6 +3,7 @@
 # 全部纯函数收 sources 参数,零 I/O。消费方:chiguo_state(3a)/--attention(5)/replan(7)。
 # ============================================================
 
+import logging
 from datetime import date, time, timedelta
 
 from schedule.query import current_period, PERIOD_TIMES
@@ -208,5 +209,5 @@ def bayesian_adjust(base: float, user_state: dict, emotion, config: dict) -> flo
         if emotion.anxiety > config.get("cooldown", {}).get("anxiety_block_threshold", 70.0):
             base *= 0.3
     except Exception:
-        pass
+        logging.debug("day_plan anxiety 调制失败", exc_info=True)
     return base

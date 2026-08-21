@@ -1,6 +1,6 @@
 # 迟菓主动消息系统 — 系统文档
 
-> 版本: v1.23（`chiguo_version.py` VERSION=1.23,规则: MINOR+1 次版本步进（1.9→1.10→1.11→1.12→1.13→1.14→1.15→1.16→1.17→1.18→1.19→1.20→1.21→1.22→1.23,非十进制加法）;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
+> 版本: v1.24（`chiguo_version.py` VERSION=1.24,规则: MINOR+1 次版本步进（1.9→1.10→1.11→1.12→1.13→1.14→1.15→1.16→1.17→1.18→1.19→1.20→1.21→1.22→1.23→1.24,非十进制加法）;决策 JSON/envcheck/monitor 报告带 `version`/`app_version` 字段。注意:状态文件 `_version` 是 schema 号 STATE_VERSION=10,与项目版本无关）| 数学驱动: Hawkes + Sigmoid + 半衰期 + Bayesian | 零本地 LLM 依赖
 >
 > 版本摘要：v1.13（#137）`mono_anchor`/`wall_anchor` 单调锚对持久化，cap NTP 时钟前跳时情绪 elapsed 在 cron 形态被高估；v1.14（#139）`record_user_message`/`record_send_result` 锁内先 `_load` 重载磁盘最新状态再 RMW，防 cron evaluate 并发丢更新。
 

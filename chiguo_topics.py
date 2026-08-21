@@ -8,6 +8,7 @@
 # 0 token 消耗，0 新依赖。
 # ============================================================
 
+import logging
 import random
 import threading
 from datetime import datetime
@@ -202,7 +203,7 @@ class TopicPicker:
                 else:
                     self.netease_service.consume_music_topic(now)
             except Exception:
-                pass
+                logging.debug("netease consume 失败: %s", __import__('traceback').format_exc(), exc_info=False)
         return topic
 
     def _modulation_context(self, now: datetime) -> dict:
@@ -250,7 +251,7 @@ class TopicPicker:
                 else:
                     self.netease_service.consume_music_topic(now)
             except Exception:
-                pass
+                logging.debug("netease consume 失败: %s", __import__('traceback').format_exc(), exc_info=False)
         return topic
 
     # ── 来源 1：课表/假期/周末 ──────────────────────────────

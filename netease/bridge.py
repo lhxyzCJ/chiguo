@@ -110,12 +110,12 @@ class NeteaseBridge:
 
     def _save_cookie(self, raw):
         """Persist raw cookie to file (stores original for debugging).
-        权限 0600 一步到位：os.open(O_CREAT, 0o600) 落盘即 0600，无先写后 chmod 的泄露窗口。"""
+        权限 0600 一步到位：经 chiguo_atomic.atomic_write 落盘即 0600，无先写后 chmod 的泄露窗口。"""
+        from chiguo_atomic import atomic_write
+
         self.data_dir.mkdir(parents=True, exist_ok=True)
         path = self._cookie_file()
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(raw)
+        atomic_write(path, raw, mode=0o600)
         print(f"[ok] Cookie saved to {path}", file=sys.stderr)
 
     # ── HTTP ─────────────────────────────────────────────────
@@ -135,10 +135,12 @@ class NeteaseBridge:
         if cookie:
             headers["Cookie"] = cookie
         req = urllib.request.Request(url, headers=headers)
-        # Q15: 显式 ProxyHandler({}) 回环直连（等价 curl --noproxy '*',同 chiguo_envcheck._urlopen）。
+        from chiguo_net import build_no_proxy_opener
+
+        # Q15: 显式回环直连（等价 curl --noproxy '*',同 chiguo_envcheck._urlopen）。
         # 本桥接请求携带隐私 MUSIC_U/__csrf cookie（凭据外发即泄露）且目标为本机 API 服务:
         # 本机配 http_proxy 时显式绕代理可避免 cookie 随请求发往/被代理劫持渗漏。
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        opener = build_no_proxy_opener()
         for attempt in range(self.retry_count + 1):
             try:
                 with opener.open(req, timeout=timeout) as resp:
@@ -196,8 +198,9 @@ class NeteaseBridge:
         if "," in qr_data:
             b64_data = qr_data.split(",", 1)[1]
             try:
-                with open(self.qr_path, "wb") as f:
-                    f.write(base64.b64decode(b64_data))
+                from chiguo_atomic import atomic_write
+
+                atomic_write(self.qr_path, base64.b64decode(b64_data), mode=0o600)
                 print(f"      二维码图片: {self.qr_path}")
                 print(f"      (请用任意图片查看器打开，或 scp 到本地扫描)")
             except Exception as e:

@@ -12,6 +12,7 @@
 
 import json
 import os
+import logging
 import random
 import re
 import math
@@ -561,7 +562,7 @@ class StatePersistence:
                     if isinstance(_disk_seq, int):
                         disk_seq = _disk_seq
                 except Exception:
-                    pass
+                    logging.debug("F-A16-01 disk_seq 读取失败: %s", __import__('traceback').format_exc(), exc_info=False)
                 # ── F-A16-01 (#309): 降级进入的 RMW 防 lost update ──
                 # 本次以 state_lock 超时降级（无锁）进入临界区，内存快照是并发进程
                 # 落盘前的陈旧读。save 此刻二次取到锁（他进程已释放）后，不得用陈旧
@@ -1336,7 +1337,7 @@ class ChiguoState:
             sch = self.schedule_status(now)
             in_class = bool(sch and sch.get("in_class"))
         except Exception:
-            pass
+            logging.debug("schedule_status 获取失败: %s", __import__('traceback').format_exc(), exc_info=False)
 
         observations = {
             "reply_latency": last_latency,
@@ -1724,7 +1725,7 @@ class ChiguoState:
                 elif sch and sch.get("class_load") == "heavy":
                     anx_hl *= 1.4  # 满课日 → 焦虑涨得慢
             except Exception:
-                pass
+                logging.debug("anxiety 半衰期调制失败: %s", __import__('traceback').format_exc(), exc_info=False)
         self.emotion.anxiety = elastic_recover(self.emotion.anxiety, self.emotion.baseline_anxiety, hours, anx_hl, elastic_baseline)
 
         # 记录变化率（urgency 感知：暴涨 vs 缓慢累积）
@@ -2212,7 +2213,7 @@ class ChiguoState:
                 actual = "chatting"
             self.bayesian_estimator.record_observation(obs, actual_state=actual)
         except Exception:
-            pass
+            logging.debug("bayesian 记录失败: %s", __import__('traceback').format_exc(), exc_info=False)
 
         # ── v7/v8: 生物钟学习(每次回复记录小时 + 重算窗口;v8 按当日分桶)──
         circ_cfg = self.config.get("circadian", {})
@@ -2798,7 +2799,7 @@ class ChiguoState:
             try:
                 user_state = self.infer_user_state(now)
             except Exception:
-                pass
+                logging.debug("infer_user_state 失败: %s", __import__('traceback').format_exc(), exc_info=False)
 
         snap = {
             "emotion": asdict(self.emotion),

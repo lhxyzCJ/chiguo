@@ -109,10 +109,11 @@ def check_env() -> dict:
 def _urlopen(req, timeout: float = 5):
     """本地回环目标禁用系统代理(等价 install_agent.sh 的 curl --noproxy '*'),
     远程目标保留默认代理。本机有 http_proxy 时 localhost 直连不被劫持。"""
+    from chiguo_net import build_no_proxy_opener, is_local_host
+
     host = urllib.parse.urlsplit(req.full_url).hostname or ""
-    if host in ("localhost", "127.0.0.1", "::1"):
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        return opener.open(req, timeout=timeout)
+    if is_local_host(host):
+        return build_no_proxy_opener().open(req, timeout=timeout)
     return urllib.request.urlopen(req, timeout=timeout)
 
 
@@ -229,12 +230,9 @@ def _key_env_hint(provider: str) -> str:
 
 def _pi_api_key(provider: str = "opencode-go") -> str | None:
     """~/.pi/agent/auth.json 读 pi provider key；失败返回 None。"""
-    try:
-        import json as _json
-        with open(os.path.expanduser("~/.pi/agent/auth.json"), encoding="utf-8") as f:
-            return (_json.load(f).get(provider) or {}).get("key")
-    except Exception:
-        return None
+    from chiguo_auth import pi_api_key as _auth_pi_key
+
+    return _auth_pi_key(provider)
 
 
 def check_mem0(qdrant_dir: Path, history_db: Path) -> dict:

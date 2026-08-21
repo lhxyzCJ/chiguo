@@ -21,6 +21,10 @@ ROOT = Path(__file__).resolve().parent.parent
 @pytest.fixture(scope="session", autouse=True)
 def _q26_project_root_cwd():
     """会话级：CWD 固定为仓库根，测试执行期间不漂移（原模块级 os.chdir 之 fixture 化）。"""
+    import sys
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
     prev = os.getcwd()
     os.chdir(ROOT)
     yield

@@ -3,6 +3,7 @@
 # 用 sigmoid 概率加权随机选择，替代硬阈值排序
 # ============================================================
 
+import logging
 import random
 import math
 import sys
@@ -548,7 +549,7 @@ def _schedule_multiplier(state: ChiguoState, now: datetime, free_mult: float) ->
         if sch and sch.get("in_class"):
             return 0.3
     except Exception:
-        pass
+        logging.debug("free_mult 计算失败: %s", __import__('traceback').format_exc(), exc_info=False)
     if _is_free_time(state, now):
         return free_mult
     return 0.6

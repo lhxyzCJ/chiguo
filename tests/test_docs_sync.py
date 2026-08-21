@@ -236,3 +236,12 @@ def test_agents_documents_reference_deployment():
 def test_docs_sync_self_is_collected():
     """本测试自身具备 test_* 函数（Q26 迁移后不再有模块级 sys.exit runner）。"""
     assert True
+
+def test_system_version_sync():
+    """doc/SYSTEM.md 首行版本必须与 chiguo_version.VERSION 一致（防漂移）"""
+    from chiguo_version import VERSION
+    import pathlib
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+    system = (ROOT / "doc/SYSTEM.md").read_text(encoding="utf-8")
+    assert f"VERSION={VERSION}" in system or f"v{VERSION}" in system, f"SYSTEM.md 未同步到 {VERSION}"
+    assert VERSION in system

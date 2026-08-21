@@ -81,11 +81,9 @@ _DEFAULT_HISTORY_DB = "data/mem0/history.db"
 
 def _pi_api_key(provider: str = "opencode-go") -> str | None:
     """从 ~/.pi/agent/auth.json 读 pi provider 的 API key；失败返回 None。"""
-    try:
-        with open(os.path.expanduser("~/.pi/agent/auth.json"), encoding="utf-8") as f:
-            return (json.load(f).get(provider) or {}).get("key") or None
-    except Exception:
-        return None
+    from chiguo_auth import pi_api_key as _auth_pi_key
+
+    return _auth_pi_key(provider)
 
 
 def _finite_float(value, default: float) -> float:

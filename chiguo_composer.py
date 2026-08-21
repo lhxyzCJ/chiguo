@@ -514,11 +514,10 @@ class MessageComposer:
 
 
 # ═══════════════════════════════════════════════════════════
-# A8: 生成失败确定性回退 CLI（零 LLM）
-# agent 生成失败时由 scripts/chiguo-tick.sh 调用本 CLI 兜底：
-# 接收 daemon decision JSON（或 --trigger），用现有
-# select_combo + 模板池直接拼出 1-3 句可发送文本，输出到 stdout。
-# 不追求文采（兜底场景），模板直出即可。
+# A8: 生成失败确定性回退 CLI（零 LLM）— 独立 CLI 直出（v1.16 起不再被发送链自动兜底）
+# 能力保留为独立 CLI：`python chiguo_composer.py <decision.json>` / `--trigger <type>`
+# 直接基于 select_combo + 模板池拼 1-3 句可发送文本，输出到 stdout，不追求文采。
+# 发送链失败路径自 v1.16 起走 agent_health 记账（5s 抖动重试后中止→告警/暂停），不再自动调用本 CLI。
 # ═══════════════════════════════════════════════════════════
 
 # A8: intent 无 cue 模板（size=1 等）时的兜底文案池。
@@ -577,8 +576,21 @@ def _cli_main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     if args.decision_file:
+        # CLI 路径白名单：仅允许项目根或 /tmp 下的 JSON，防止任意文件读取
         try:
-            with open(args.decision_file, "r", encoding="utf-8-sig") as f:
+            p = Path(args.decision_file).resolve()
+            allowed = (
+                p.is_relative_to(Path(__file__).parent.resolve())
+                or p.is_relative_to(Path("/tmp"))
+            )
+            if not allowed:
+                print(f"composer fallback: 决策文件路径越界: {args.decision_file}", file=sys.stderr)
+                return 1
+        except Exception as e:
+            print(f"composer fallback: 路径校验失败: {e}", file=sys.stderr)
+            return 1
+        try:
+            with open(p, "r", encoding="utf-8-sig") as f:
                 decision = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             print(f"composer fallback: 决策文件不可读: {e}", file=sys.stderr)

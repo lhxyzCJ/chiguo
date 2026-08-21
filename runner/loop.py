@@ -16,6 +16,7 @@ from datetime import datetime, timezone, timedelta
 
 from decision.base import DecisionEngineBase
 from chiguo_version import VERSION
+from chiguo_net import build_no_proxy_opener, is_local_host
 
 CST = timezone(timedelta(hours=8))
 
@@ -170,12 +171,10 @@ class LoopSenderMixin(DecisionEngineBase):
                     headers={"Content-Type": "application/json"})
                 if token:
                     req.add_header("X-Bridge-Token", token)
-                # B5: 回环 bridge 调用绕系统代理（同 chiguo_envcheck._urlopen：本机有
-                # http_proxy 时 localhost 直连不被劫持，防回环请求走代理失败降级）
+                # B5: 回环 bridge 调用绕系统代理（同 chiguo_envcheck._urlopen）
                 host = urllib.request.urlsplit(req.full_url).hostname or ""
-                if host in ("localhost", "127.0.0.1", "::1"):
-                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                    resp = opener.open(req, timeout=t)
+                if is_local_host(host):
+                    resp = build_no_proxy_opener().open(req, timeout=t)
                 else:
                     resp = urllib.request.urlopen(req, timeout=t)
                 with resp:
