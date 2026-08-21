@@ -9,7 +9,6 @@ mem0 _row 契约透传 emotion_tag / base 读侧相似度加权（emotion_tag_we
 
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import re
 import tempfile

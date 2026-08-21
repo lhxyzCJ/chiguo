@@ -11,7 +11,6 @@
 import sys, os, shutil, tempfile, tomllib
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from chiguo_personality import default_personality, PersonalityDeltas, PersonalityTraits
 
