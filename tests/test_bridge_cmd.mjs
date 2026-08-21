@@ -386,7 +386,7 @@ t('slash: /new 移走最近 chiguo-main 会话文件到备份目录（HOME 注�
   const fs = await import('node:fs')
   const os = await import('node:os')
   const path = await import('node:path')
-  // HOME 注入临时目录：backupSessionFile 经 os.homedir() 读 $HOME（Node 优先环境变量）
+  // HOME 注入临时目录：backupSessionFile 经 homeDir() 读 $HOME（统一解析，Node 优先环境变量）
   // → 会话与备份全部落在临时 HOME，绝不触碰真实 ~/.pi、~/.chiguo；跑完恢复并删除。
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'slash-home-'))
   const prevHome = process.env.HOME
