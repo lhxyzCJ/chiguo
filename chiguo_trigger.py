@@ -95,120 +95,48 @@ def _due_reminder_trigger(state: ChiguoState, now: datetime, trg_cfg: dict) -> d
     return chosen if chosen is not None else None
 
 
-def evaluate_triggers(state: ChiguoState, now: datetime,
-                      trigger_scale: dict | None = None) -> Trigger | None:
-    """
-    评估触发。
-    v2 改进：不再硬排序取优先级最高者。
-    而是：先收集所有合法候选 → 按 sigmoid 权重随机选一个。
-    结果：53 孤独 + 48 不安时，lonely_mid 和 anxiety 都有概率被选中。
-    v9 schedule-center:trigger_scale = 计划文件修饰参数,
-    候选收集后统一乘,只改类型间相对概率;逃生阀在缩放前 return,天然豁免。
-    """
-    # ── v6: 溢出逃生阀 — 死锁态破防（高焦虑阻塞+沉默超限），强制最高优先 ──
-    # 高焦虑阻塞（≥ anxiety_block_threshold）时，正常的 longing overflow
-    # 数学上永远无法到达（accumulation 被 blocked），必须用时间+状态驱动破防。
-    # longing_break_eligible 检查：① 焦虑 ≥ 阻塞阈值 ② 墙钟沉默 ≥ 72h ③ 冷却期外
-    if state.longing_break_eligible(now):
-        return Trigger(TriggerType.LONGING, "high", data={"escape_valve": True})
 
-    # Q10 (#276): 触发离散概率/魔法权重配置化——统一在函数顶部读一次 [trigger] 节，
-    # 默认值 = 改动前的硬编码现值 → 缺省配置行为不变。trg_cfg 供本函数各候选块复用。
-    trg_cfg = state.config.get("trigger", {})
-
-    # ── A5: 未回复退场状态机（硬性禁发层，escape_valve 已在上面 return → 天然豁免）──
-    # 0=normal 正常竞争；1=backing_off 情绪类禁发、仪式类照发；2=silent 全禁发。
-    # D4 (#349)：silent 态豁免 reminder——「提醒准时优先」用户决策（R9 F-A5-01）承诺
-    # 门禁层也成立（review-batchB M1 影响面 b）。只豁免 reminder（显式托付的一次性记忆，
-    # 类比 escape_valve 豁免族），silent 对情绪/仪式等其他类型的禁发语义保持不变。
-    # 与 current_lambda 的 0.7^n 退避（λ 降频）是两层独立机制，不冲突。
-    backoff = backoff_level(state, now)
-    if backoff >= 2:
-        reminder = _due_reminder_trigger(state, now, trg_cfg)
-        if reminder is not None:
-            return reminder["trigger"]
-        return None
-
-    weighted_candidates: list[dict] = []
-
-    # 仪式触发权重缩放（默认为1.0，调低可减少仪式触发对情绪触发的压制）
-    ritual_scale = cfg_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0)
-
-    # Q10: 仪式类基础权重（默认 = 现值；乘 ritual_scale，可独立调参/灰度）
+def _collect_ritual_candidates(state, now, trg_cfg, ritual_scale) -> list[dict]:
+    """仪式类候选收集：特殊日/早安/晚安/用餐/手动记忆/mem0 随机浮现"""
+    cands: list[dict] = []
     ritual_special = cfg_float(trg_cfg.get("ritual_special_weight", 3.0), 3.0)
     ritual_morning = cfg_float(trg_cfg.get("ritual_morning_weight", 2.5), 2.5)
     ritual_night = cfg_float(trg_cfg.get("ritual_night_weight", 2.0), 2.0)
     ritual_meal = cfg_float(trg_cfg.get("ritual_meal_weight", 0.8), 0.8)
     ritual_memory = cfg_float(trg_cfg.get("ritual_memory_weight", 2.0), 2.0)
     ritual_mem0 = cfg_float(trg_cfg.get("ritual_mem0_weight", 1.5), 1.5)
-
-    # Q10: mem0 随机浮现条件（沉默阈值 + 概率门控，默认 = 现值）
     mem0_min_silent = cfg_float(trg_cfg.get("mem0_surface_min_silent_hours", 6.0), 6.0)
     mem0_prob = _clamp01(trg_cfg.get("mem0_surface_probability", 0.08), 0.08)
-
-    # ── 固定事件（权重固定，会概率性参与竞争） ──────────
-
-    # 特殊日期(schedule-center 3c:数据源 = anniversary_mgr 当天匹配,原读 toml special_dates)
+    # 特殊日期
     try:
         anniv_today = state.anniversary_mgr.get_today(now.date())
         special_hit = any(a.type == "anniversary" for a in anniv_today)
     except Exception:
         special_hit = False
     if special_hit:
-        weighted_candidates.append({
-            "trigger": Trigger(type=TriggerType.SPECIAL, intensity="soft"),
-            "weight": ritual_special * ritual_scale,  # 高权重,但非绝对
-        })
-
-    # 早安
+        cands.append({"trigger": Trigger(type=TriggerType.SPECIAL, intensity="soft"), "weight": ritual_special * ritual_scale})
     if _should_morning(state, now):
-        weighted_candidates.append({
-            "trigger": Trigger(type=TriggerType.MORNING, intensity="soft"),
-            "weight": ritual_morning * ritual_scale,
-        })
-
-    # 晚安
+        cands.append({"trigger": Trigger(type=TriggerType.MORNING, intensity="soft"), "weight": ritual_morning * ritual_scale})
     if _should_night(state, now):
-        weighted_candidates.append({
-            "trigger": Trigger(type=TriggerType.NIGHT, intensity="soft"),
-            "weight": ritual_night * ritual_scale,
-        })
-
-    # 用餐（上课时跳过）
+        cands.append({"trigger": Trigger(type=TriggerType.NIGHT, intensity="soft"), "weight": ritual_night * ritual_scale})
     if _should_meal(now, state):
-        weighted_candidates.append({
-            "trigger": Trigger(type=TriggerType.MEAL, intensity="soft"),
-            "weight": ritual_meal * ritual_scale,
-        })
-
-    # ── 记忆触发 ──
-    # 两层：① JSON 手动记忆（习惯提醒等）② mem0 随机回忆
+        cands.append({"trigger": Trigger(type=TriggerType.MEAL, intensity="soft"), "weight": ritual_meal * ritual_scale})
     for mem in state.memories:
         if not isinstance(mem, dict):
-            continue  # 数据防御：非 dict 条目跳过（state 加载已净化，这里再兜底防崩）
+            continue
         if _memory_should_trigger(mem, now, trg_cfg):
-            weighted_candidates.append({
-                "trigger": Trigger(type=TriggerType.MEMORY, intensity="soft",
-                                   data={"memory": mem}),
-                "weight": ritual_memory * ritual_scale,
-            })
-
-    # mem0 随机浮现（低概率，仅在主人沉默时）
-    # 如果 mem0 不可用，自动跳过
+            cands.append({"trigger": Trigger(type=TriggerType.MEMORY, intensity="soft", data={"memory": mem}), "weight": ritual_memory * ritual_scale})
     silent_h = state.cooldown.silent_hours(now)
     if silent_h > mem0_min_silent and random.random() < mem0_prob and state.memory_bridge.available:
         mem0_mem = state.memory_bridge.random_memory(min_importance=0.4)
         if mem0_mem:
-            weighted_candidates.append({
-                "trigger": Trigger(type=TriggerType.MEMORY, intensity="soft",
-                                   data={"mem0_memory": mem0_mem}),
-                "weight": ritual_mem0 * ritual_scale,
-            })
+            cands.append({"trigger": Trigger(type=TriggerType.MEMORY, intensity="soft", data={"mem0_memory": mem0_mem}), "weight": ritual_mem0 * ritual_scale})
+    return cands
 
-    # ── v7: 接话茬(follow_up)触发 ──
-    # 待接续话题(analysis topic,2-48h 内)优先;无待接续话题 → 近期用户相关记忆兜底。
-    # 权重 = follow_up_weight × 年龄钟形(峰值 follow_up_peak_hours)。
-    # 触发后标记 attempted(单次尝试);过期话题顺带清理。
+
+def _collect_followup_candidates(state, now, trg_cfg) -> list[dict]:
+    """接话茬候选收集：pending 话题 + 记忆兜底"""
+    cands: list[dict] = []
     fup_min = trg_cfg.get("follow_up_min_age_hours", 2.0)
     fup_max = trg_cfg.get("follow_up_max_age_hours", 48.0)
     state.prune_pending_topics(now, fup_max)
@@ -223,92 +151,60 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         age = (now - dt).total_seconds() / 3600
         if fup_min <= age <= fup_max:
             follow_entries.append((t, age))
-
     if follow_entries:
         for entry, age in follow_entries:
             cand = _followup_candidate(entry, age, trg_cfg)
             if cand:
-                weighted_candidates.append(cand)
+                cands.append(cand)
     elif (not state.pending_topics and state.memory_bridge.available
           and random.random() < _clamp01(trg_cfg.get("followup_memory_probability", 0.5), 0.5)):
-        # 记忆兜底:近 48h 内、用户相关的记忆,选中一条作为接话茬素材(不落盘)
-        # #83: ① 概率门控(50%)——pending_topics 为空时不得每 tick 无条件多关键词搜索
-        # (热点 IO;与同文件 mem0 随机浮现块同款降频风格;概率经 [trigger].followup_memory_probability 可配);
-        # ② timestamp 类型防护——ISO 字符串等非数值直接跳过,防 str > float TypeError。
         now_ts = now.timestamp()
         for mem in state.memory_bridge.user_relevant(limit=10, min_importance=0.4):
             ts = mem.get("timestamp") or 0
             if not ts or not isinstance(ts, (int, float)):
                 continue
-            ts = ts / 1000.0 if ts > 1e12 else ts  # epoch ms → s
+            ts = ts / 1000.0 if ts > 1e12 else ts
             age = (now_ts - ts) / 3600
             if 0 < age <= fup_max:
-                # C3: l0_abstract 已废弃，text 兜底为准。
                 text = (mem.get("text") or mem.get("l0_abstract") or "").strip()[:50]
                 if text:
-                    follow_entries.append(
-                        ({"topic": text, "source": "memory",
-                          "created_at": now.isoformat()}, age))
+                    follow_entries.append(({"topic": text, "source": "memory", "created_at": now.isoformat()}, age))
                     break
         if follow_entries:
             cand = _followup_candidate(follow_entries[0][0], follow_entries[0][1], trg_cfg)
             if cand:
-                weighted_candidates.append(cand)
+                cands.append(cand)
+    return cands
 
-    # ── 情绪驱动事件（sigmoid 权重） ─────────────────────
+
+def _collect_emotion_candidates(state, now, trg_cfg, silent_h) -> list[dict]:
+    """情绪驱动候选收集：孤独三级/anxiety/comfort/boredom/reflect/longing"""
+    cands: list[dict] = []
     emo = state.emotion
-
-    # 孤独三级：权重 = sigmoid(孤独值) × 傲娇修正 × 变化率因子
-    # 傲娇高 → 嘴硬中位触发更易（不愿示弱）；傲娇低 → 崩溃触发更易（防线已软）
-    tsun = emo.tsundere_index / 100  # 0.1~0.95
-    # 变化率因子：暴涨（>1.5/h）→ urgency 高，权重放大（孤独+不安）
+    tsun = emo.tsundere_index / 100
     lo_rate = emo.loneliness_rate
     anx_rate = emo.anxiety_rate
     rate_factor = 1.0 + max(0, (lo_rate - 1.5) * 0.3) + max(0, (anx_rate - 2.0) * 0.2)
-
     raw_low = state.trigger_weight("lonely_low") * (1 + 0.3 * tsun) * rate_factor
     raw_mid = state.trigger_weight("lonely_mid") * (1 + 0.5 * tsun) * rate_factor
-    # v10 (#73 A6): lonely_high 专属 0.3^n 阻尼已删除 → 统一 repeat 阻尼（候选收集后统一乘）覆盖
     raw_high = state.trigger_weight("lonely_high") * (1 - 0.4 * tsun) * rate_factor
-    # Softmax 式归一化：三个触发互斥，改一个中点 → 另两个自动重分配
-    total = raw_low + raw_mid + raw_high + 0.5  # 0.5 = "不触发"基线
+    total = raw_low + raw_mid + raw_high + 0.5
     w_low = raw_low / total
     w_mid = raw_mid / total
     w_high = raw_high / total
-
     if w_low > 0.03:
-        weighted_candidates.append({
-            "trigger": Trigger(type=TriggerType.LONELY_LOW, intensity="soft"),
-            "weight": w_low,
-        })
-
+        cands.append({"trigger": Trigger(type=TriggerType.LONELY_LOW, intensity="soft"), "weight": w_low})
     if w_mid > 0.03:
-        weighted_candidates.append({
-            "trigger": Trigger(type=TriggerType.LONELY_MID, intensity="medium"),
-            "weight": w_mid,
-        })
-
+        cands.append({"trigger": Trigger(type=TriggerType.LONELY_MID, intensity="medium"), "weight": w_mid})
     if w_high > 0.02:
-        weighted_candidates.append({
-            "trigger": Trigger(type=TriggerType.LONELY_HIGH, intensity="intense"),
-            "weight": w_high,
-        })
-
-    # anxiety：与孤独三级同款 "不触发基线" softmax 归一化（raw / (raw + baseline)）
-    # v7 修复：原 0.05 硬门槛在 anxiety=40（raw≈0.103）即恒候选，沉默期确定性发满日上限。
-    # 归一化后 40 → ≈0.171 < anxiety_min_weight(0.3)，不再成为唯一候选；高焦虑仍强候选。
+        cands.append({"trigger": Trigger(type=TriggerType.LONELY_HIGH, intensity="intense"), "weight": w_high})
+    # anxiety
     anx_baseline = _clamp01(trg_cfg.get("anxiety_baseline", 0.5), 0.5)
     anx_min_weight = _clamp01(trg_cfg.get("anxiety_min_weight", 0.3), 0.3)
     raw_anx = state.trigger_weight("anxiety")
-
-    # ── v1.11 ①: 用户情绪感知（user_mood） ──
-    # 新鲜窗口内（默认 6h）低落/崩溃 → comfort 安慰触发 + anxiety 权重加成。
-    # 全部参数默认 0/关闭 → 行为恒等（灰度先例）。
     mood = state.cooldown.get_user_mood()
-    mood_fresh_flag = bool(mood and mood_fresh(
-        mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0)))
+    mood_fresh_flag = bool(mood and mood_fresh(mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0)))
     if mood_fresh_flag:
-        # 低落时 anxiety 触发小幅加成（user_mood_anxiety_bonus 默认 0；仅 low/distressed）
         anx_bonus = trg_cfg.get("user_mood_anxiety_bonus", 0.0)
         try:
             anx_bonus = max(0.0, float(anx_bonus))
@@ -316,164 +212,76 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             anx_bonus = 0.0
         if anx_bonus > 0 and mood.get("mood") in ("low", "distressed"):
             raw_anx = raw_anx * (1.0 + anx_bonus * mood.get("intensity", 0.0))
-
-    # #169: bonus 放大可能让 raw_anx 超过 1.0，而 denom=raw+baseline*(1-raw) 假设 [0,1]
-    # → 先钳到 1.0 再归一化（无 bonus 时 raw 已为 sigmoid ∈ [0,1]，此钳制为 no-op）。
     raw_anx = min(1.0, raw_anx)
-
-    # B2 (#137): A4 must_send 标定矛盾修复 —— 原归一化 w=raw/(raw+baseline) 把 w_anx
-    # 钳在 max≈0.664 < must_send_activation(0.75)，anxiety 单源永远到不了高段必发。
-    # 改为 w=raw/(raw+baseline*(1-raw))：raw→1 时 w→1（高焦虑可达 must_send 高段），
-    # 中低段基本保持（anx=40 → ≈0.187 vs 原 0.171，仍 < anxiety_min_weight 0.3 不成候选）。
     denom_anx = raw_anx + anx_baseline * (1 - raw_anx)
     w_anx = raw_anx / denom_anx if denom_anx > 0 else 0.0
     if w_anx > anx_min_weight:
-        weighted_candidates.append({
-            "trigger": Trigger(type=TriggerType.ANXIETY, intensity="medium"),
-            "weight": w_anx,
-        })
-
-    # comfort 安慰触发（对标 ESConv：感知到低落 → 更主动安慰）
+        cands.append({"trigger": Trigger(type=TriggerType.ANXIETY, intensity="medium"), "weight": w_anx})
+    # comfort
     comfort_base = trg_cfg.get("comfort_weight_base", 0.0)
     try:
         comfort_base = float(comfort_base)
     except (TypeError, ValueError):
         comfort_base = 0.0
     if mood_fresh_flag and comfort_base > 0 and mood.get("mood") in ("low", "distressed"):
-        # 强度 × 好感调制（高好感更想哄）；softmax 归一化防恒候选（同 anxiety 模式）
         raw_cf = comfort_base * mood.get("intensity", 0.0) * (1 + (emo.affection - 50) / 100)
         cf_baseline = _clamp01(trg_cfg.get("comfort_baseline", 0.5), 0.5)
         cf_min = _clamp01(trg_cfg.get("comfort_min_weight", 0.03), 0.03)
         w_cf = raw_cf / (raw_cf + cf_baseline) if raw_cf + cf_baseline > 0 else 0.0
         if w_cf > cf_min:
-            weighted_candidates.append({
-                "trigger": Trigger(TriggerType.COMFORT, "soft"),
-                "weight": w_cf,
-            })
-
-    # 好感度调制：高好感 → 甜蜜触发权重上升
-    aff_factor = 1 + (emo.affection - 50) / 100  # 0.5~1.5
-
-    # boredom / playful 触发：高元气 + 沉默适中 + 非上课
+            cands.append({"trigger": Trigger(TriggerType.COMFORT, "soft"), "weight": w_cf})
+    aff_factor = 1 + (emo.affection - 50) / 100
     if emo.energy > 70 and 2 < silent_h < 48 and _is_free_time(state, now):
-        # v4: 外向性调制 playful；基础权重经 [trigger].playful_base_weight 可配（默认 0.15）
         pers_extra = getattr(getattr(state, 'personality', None), 'extraversion', 60.0)
-        pers_extra_factor = 0.5 + (pers_extra / 100) * 1.0  # 0.5~1.5
-        w_bored = (cfg_float(trg_cfg.get("playful_base_weight", 0.15), 0.15)
-                   * (emo.energy / 100) * aff_factor * pers_extra_factor)
+        pers_extra_factor = 0.5 + (pers_extra / 100) * 1.0
+        w_bored = (cfg_float(trg_cfg.get("playful_base_weight", 0.15), 0.15) * (emo.energy / 100) * aff_factor * pers_extra_factor)
         if w_bored > 0.03:
-            weighted_candidates.append({
-                "trigger": Trigger(type=TriggerType.PLAYFUL, intensity="soft"),
-                "weight": w_bored,
-            })
-
-    # ── v4: reflect 触发（角色内省）──
-    # 条件：高好感 + 低沉默 + 高元气 + 低神经质
+            cands.append({"trigger": Trigger(type=TriggerType.PLAYFUL, intensity="soft"), "weight": w_bored})
     pers = getattr(state, 'personality', None)
     if pers:
         neuroticism = getattr(pers, 'neuroticism', 60.0)
-        # Q10: 概率门控经 [trigger].reflect_probability 可配（默认 0.08）
-        if (emo.affection > 70 and silent_h < 2 and emo.energy > 60
-                and neuroticism < 70 and random.random() < _clamp01(trg_cfg.get("reflect_probability", 0.08), 0.08)):
-            w_reflect = cfg_float(trg_cfg.get("reflect_base_weight", 0.08), 0.08) \
-                * (emo.affection / 100) * (1 - neuroticism / 100) * (emo.energy / 100)
+        if (emo.affection > 70 and silent_h < 2 and emo.energy > 60 and neuroticism < 70 and random.random() < _clamp01(trg_cfg.get("reflect_probability", 0.08), 0.08)):
+            w_reflect = cfg_float(trg_cfg.get("reflect_base_weight", 0.08), 0.08) * (emo.affection / 100) * (1 - neuroticism / 100) * (emo.energy / 100)
             if w_reflect > 0.02:
-                weighted_candidates.append({
-                    "trigger": Trigger(type=TriggerType.REFLECT, intensity="soft"),
-                    "weight": w_reflect,
-                })
-
-    # ── v4: longing 触发（概率累积溢出）──
-    # held_count 高 + accumulated_lambda 高 → "累积的想念终于溢出"
+                cands.append({"trigger": Trigger(type=TriggerType.REFLECT, intensity="soft"), "weight": w_reflect})
     held = state.cooldown.get_held_count()
     acc_lam = state.cooldown.get_accumulated_lambda() or 0
     base_lambda = cfg_float(state.config.get("poisson", {}).get("base_lambda", 0.25), 0.25)
     if state.is_longing_overflow() and base_lambda > 0:
         w_longing = min(0.5, (acc_lam / base_lambda - 1) * 0.3)
         if w_longing > 0.03:
-            weighted_candidates.append({
-                "trigger": Trigger(type=TriggerType.LONGING, intensity="soft",
-                                   data={"held_count": held, "accumulated_lambda": round(acc_lam, 3)}),
-                "weight": w_longing,
-            })
+            cands.append({"trigger": Trigger(type=TriggerType.LONGING, intensity="soft", data={"held_count": held, "accumulated_lambda": round(acc_lam, 3)}), "weight": w_longing})
+    return cands
 
-    # ── A5: backing_off（1 级）→ 情绪类候选整体跳过，仪式类照发 ──
-    # 过滤在加权选择前统一执行（不散落各收集块），仪式类候选不受影响。
-    if backoff == 1:
-        weighted_candidates = [
-            c for c in weighted_candidates
-            if c["trigger"].type in RITUAL_TRIGGERS
-        ]
 
-    if not weighted_candidates:
-        return None
-
-    # ── schedule-center:计划文件修饰参数(§5.2,拷问 18)──
-    # 单点缩放:统一乘 scale.get(type, scale.get("default", 1.0));不动 13 处候选逻辑。
-    # 逃生阀 longing 已在函数首 return → 天然豁免。共同缩放因子会被概率竞争约掉,
-    # 只改变类型间相对概率(写 default 全局缩放无实际效果)。
+def _apply_modifiers_and_select(state, now, trg_cfg, weighted_candidates, trigger_scale):
+    """应用 A3/A6/A4/抖动/反馈并做三段选择"""
     if trigger_scale:
         for c in weighted_candidates:
-            c["weight"] *= trigger_scale.get(c["trigger"].type,
-                                             trigger_scale.get("default", 1.0))
-
-    # ── v10 (#73): 触发层三段优化 — A3 日程乘数 → A6 repeat 阻尼 → A4 三段激活 ──
-    # trg_cfg 已在函数顶部定义，此处复用。
-
-    # A3 日程乘数 + 抖动：只作用于情绪类候选，仪式类（morning/night/meal/special/memory/follow_up）豁免。
-    # 上课中 ×0.3；空闲（节假日/周末/课间）× free_multiplier（默认 1.2）；半忙 ×0.6。
-    # 再乘 uniform(0.8, 1.2) 随机抖动防机械感。逃生阀已在函数首 return → 天然豁免。
+            c["weight"] *= trigger_scale.get(c["trigger"].type, trigger_scale.get("default", 1.0))
     free_mult = cfg_float(trg_cfg.get("free_multiplier", 1.2), 1.2)
     sched_mult = _schedule_multiplier(state, now, free_mult)
     for c in weighted_candidates:
         if c["trigger"].type in EMOTION_TRIGGERS:
             c["weight"] *= sched_mult
-
-    # A6 统一 repeat 阻尼：trigger_history 按 type 计数 n，weight ×= repeat_decay ** min(n, cap)。
-    # 对所有 trigger 类型统一生效（daemon 发送时 append history，本层只读不写）。
     repeat_decay = _clamp01(trg_cfg.get("repeat_decay", 0.6), 0.6)
-    # B1: repeat_cap 走 _clamp_int 兜底（字符串"3"/None 等脏配置回退默认 3，负数钳 0），
-    # 与 min(n, repeat_cap) 的整型语义一致（裸取遇字符串会 TypeError）
     repeat_cap = _clamp_int(trg_cfg.get("repeat_cap", 3), 3)
     history = state.cooldown.get_trigger_history()
     for c in weighted_candidates:
         n = sum(1 for t in history if t == c["trigger"].type)
         c["weight"] *= repeat_decay ** min(n, repeat_cap)
-
-    # A4 三段激活阈值：activation = 情绪维度族取 max（#79 后 0.75 按单源标定）。
-    # 孤独三级（lonely_low/mid/high）是同一孤独维度的互斥表达 → 族内求和；其余情绪
-    # （anxiety/playful/reflect/longing/comfort）各自单源取 max。两股中低情绪叠加
-    # （如孤独35+焦虑57 空闲）不再凑到高段，孤独族和（孤独≥45）或单源焦虑强才必发。
-    # 低段（< min_activation）→ 情绪类退出竞争（等效低能量沉默，仪式类照发）；
-    # 中段 → 现状加权随机；高段（>= must_send_activation）→ 情绪类加权随机必选
-    # （仪式类本轮退让），选中结果标记 must_send: true。
-    # activation 在抖动前计算 → 三段归属是逐状态的确定性属性（同状态不会因随机
-    # uniform(0.8,1.2) 抖动在发/不发间随机翻转）。抖动随后全局乘，防机械感。
-    # #79: 阈值解析钳制到 [0,1]（配置越界/非数值不破坏三段语义），并校验 min < must
     min_activation = _clamp01(trg_cfg.get("min_activation", 0.08), 0.08)
     must_send_activation = _clamp01(trg_cfg.get("must_send_activation", 0.75), 0.75)
     if min_activation >= must_send_activation:
-        print(f"[trigger] WARNING: min_activation({min_activation:.2f}) >= "
-              f"must_send_activation({must_send_activation:.2f}), A4 高段必发失效"
-              f"（需 min < must，请检查 chiguo_proactive.toml [trigger]）",
-              file=sys.stderr)
+        print(f"[trigger] WARNING: min_activation({min_activation:.2f}) >= must_send_activation({must_send_activation:.2f})", file=sys.stderr)
     emo_cands = [c for c in weighted_candidates if c["trigger"].type in EMOTION_TRIGGERS]
     ritual_cands = [c for c in weighted_candidates if c["trigger"].type in RITUAL_TRIGGERS]
     activation = _activation_score(emo_cands)
     must_send = False
-    # 抖动一次采样全局乘（防机械感）：各乘数逐项乘积、换序等价，故最终权重分布不变；
-    # 仅在加权选择前统一作用于情绪类候选（仪式类豁免），不扰动已定的 activation 与三段归属。
     jitter = random.uniform(0.8, 1.2)
     for c in weighted_candidates:
         if c["trigger"].type in EMOTION_TRIGGERS:
             c["weight"] *= jitter
-
-    # ── A2: 分类型回复率反馈闭环（reply_feedback_enabled 默认 0 关闭恒等，可灰度）──
-    # 对标 revive-companion 的反馈闭环：低回复率类型 weight ×(1-damp)（降频），
-    # 高回复率类型 ×(1+boost)（微加成）。damp/boost 为 0 → 恒等。统计源 =
-    # 状态持久化的 cooldown.reply_stats（daemon 发送时 sent+1、--user-msg 收到
-    # 回复时 replied+1），样本数 < min_samples 不调整（防冷启动误伤）。
-    # 放在抖动后、三段选择前 → 只影响类型间相对概率，不扰动 A4 三段归属阈值。
     if trg_cfg.get("reply_feedback_enabled", 0):
         stats = state.cooldown.get_reply_stats() or {}
         rfb_damp = cfg_float(trg_cfg.get("reply_feedback_damp", 0.0), 0.0)
@@ -488,25 +296,13 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             except (TypeError, ValueError):
                 continue
             if sent < rfb_min or sent <= 0:
-                continue  # 样本不足 → 保持默认权重
+                continue
             rate = replied / sent
             if rate < rfb_low:
                 c["weight"] *= max(0.0, 1.0 - rfb_damp)
             elif rate >= rfb_high:
                 c["weight"] *= max(0.0, 1.0 + rfb_boost)
-
-    # ── F-A5-01 (#314 R9): reminder 高段豁免 ──
-    # 用户决策「提醒准时优先」：reminder 是用户显式托付的一次性记忆，必须准点发出。
-    # 此前高段必发分支「只从情绪候选选」会把 MEMORY 及 ritual 候选整体压制
-    # （审计 E1：空闲×1.2 孤独≥42 时 reminder 0/300），常态高段下确定性丢失。
-    # 处理顺序：窗口内的 reminder 候选先于情绪高段分支处理（仿 :81-82 escape_valve
-    # 豁免模式——用户托付优先于 A4 情绪必发）；仅 reminder 类型豁免，mem0 随机浮现
-    # 等 generic MEMORY 候选不豁免（保持"情绪类高段必发"原语义不回归）。
-    reminder_cands = [
-        c for c in weighted_candidates
-        if c["trigger"].type == TriggerType.MEMORY
-        and c["trigger"].data.get("memory", {}).get("type") == "reminder"
-    ]
+    reminder_cands = [c for c in weighted_candidates if c["trigger"].type == TriggerType.MEMORY and c["trigger"].data.get("memory", {}).get("type") == "reminder"]
     if reminder_cands:
         chosen = weighted_trigger_choice(reminder_cands)
     elif activation >= must_send_activation and emo_cands:
@@ -516,18 +312,39 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
         chosen = weighted_trigger_choice(ritual_cands)
     else:
         chosen = weighted_trigger_choice(weighted_candidates)
+    return chosen, must_send, activation
+
+
+def evaluate_triggers(state: ChiguoState, now: datetime,
+                      trigger_scale: dict | None = None) -> Trigger | None:
+    """评估触发 — 表驱动重构：主函数仅编排，候选收集下沉到 _collect_* 助手。"""
+    if state.longing_break_eligible(now):
+        return Trigger(TriggerType.LONGING, "high", data={"escape_valve": True})
+    trg_cfg = state.config.get("trigger", {})
+    backoff = backoff_level(state, now)
+    if backoff >= 2:
+        reminder = _due_reminder_trigger(state, now, trg_cfg)
+        if reminder is not None:
+            return reminder["trigger"]
+        return None
+    weighted_candidates: list[dict] = []
+    ritual_scale = cfg_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0)
+    weighted_candidates.extend(_collect_ritual_candidates(state, now, trg_cfg, ritual_scale))
+    weighted_candidates.extend(_collect_followup_candidates(state, now, trg_cfg))
+    silent_h = state.cooldown.silent_hours(now)
+    weighted_candidates.extend(_collect_emotion_candidates(state, now, trg_cfg, silent_h))
+    if backoff == 1:
+        weighted_candidates = [c for c in weighted_candidates if c["trigger"].type in RITUAL_TRIGGERS]
+    if not weighted_candidates:
+        return None
+    chosen, must_send, _ = _apply_modifiers_and_select(state, now, trg_cfg, weighted_candidates, trigger_scale)
     if chosen is None:
         return None
-
     trigger = chosen["trigger"]
     if must_send:
         trigger.data["must_send"] = True
-
-    # ── v7: 接话茬触发后标记已尝试(防重复;记忆兜底条目不在 pending 中,no-op)──
     if trigger.type == TriggerType.FOLLOW_UP and chosen.get("topic_ref") is not None:
         state.mark_pending_topic_attempted(chosen["topic_ref"].get("topic", ""))
-
-    # ── v4.1: 安全阀 — 连续崩溃降级（降级只改类型/强度，继承 data 保留 must_send 标记）──
     safety = state.safety_level(now)
     if safety >= 1 and trigger.type == TriggerType.LONELY_HIGH:
         trigger = Trigger(type=TriggerType.LONELY_MID, intensity="soft", data=trigger.data)
@@ -536,7 +353,6 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             trigger = Trigger(type=TriggerType.LONELY_LOW, intensity="soft", data=trigger.data)
         else:
             trigger.intensity = "soft"
-
     return trigger
 
 
