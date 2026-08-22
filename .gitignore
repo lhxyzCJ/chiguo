@@ -112,3 +112,6 @@ docs/
 
 # gh/claude 本地设备缓存（不进 git）
 .local/
+
+# ULW 临时任务延续台账（本地，不入库）
+.omo/
