@@ -61,7 +61,7 @@ def test_consumer_modules_loadable():
 def test_pyproject_version_sync():
     """pyproject.toml [project].version 与 chiguo_version.VERSION 同步，防漂移悄然过绿。
 
-    pyproject 版本号格式与 VERSION 字符串完全一致（如 "1.23"），逐字相等即通过。
+    pyproject 版本号格式与 VERSION 字符串完全一致（如 "1.24"），逐字相等即通过。
     """
     import tomllib
     pyproj = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))

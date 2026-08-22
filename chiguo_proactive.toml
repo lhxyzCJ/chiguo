@@ -280,6 +280,29 @@ playful_base_weight = 0.15
 reflect_base_weight = 0.08
 reflect_probability = 0.08
 
+# ── T08 math 收敛：消除触发硬编码 → CONFIG 单源（默认值 = 原硬编码，行为恒等）──
+# rate_factor = 1 + max(0,(lo_rate-lo_thresh)*lo_factor) + max(0,(anx_rate-anx_thresh)*anx_factor)
+lonely_rate_lo_threshold = 1.5       # lo_rate 阈值（原 1.5）
+lonely_rate_lo_factor = 0.3          # lo_rate 超阈后放大系数（原 0.3）
+lonely_rate_anx_threshold = 2.0      # anx_rate 阈值（原 2.0）
+lonely_rate_anx_factor = 0.2         # anx_rate 超阈后放大系数（原 0.2）
+# 孤独三级 tsundere 修饰
+lonely_tsundere_low_factor = 0.3     # low: ×(1+0.3*tsun)（原 0.3）
+lonely_tsundere_mid_factor = 0.5     # mid: ×(1+0.5*tsun)（原 0.5）
+lonely_tsundere_high_factor = 0.4    # high: ×(1-0.4*tsun)（原 0.4）
+lonely_bias = 0.5                    # lonely softmax 分母偏置（原 0.5）
+# lonely 归一化权重阈值（> 阈值才成为候选）
+lonely_w_low_threshold = 0.03        # w_low 阈值（原 0.03）
+lonely_w_mid_threshold = 0.03        # w_mid 阈值（原 0.03）
+lonely_w_high_threshold = 0.02       # w_high 阈值（原 0.02）
+# longing 溢出参数
+longing_cap = 0.5                    # w_longing 上限 min(0.5, ·)（原 0.5）
+longing_factor = 0.3                 # w_longing 系数 (acc_lam/base-1)*0.3（原 0.3）
+longing_min_weight = 0.03            # w_longing 成为候选阈值（原 0.03）
+# jitter 抖动区间（情绪类候选权重 × uniform(low, high)）
+jitter_low = 0.8                     # 原 0.8
+jitter_high = 1.2                    # 原 1.2
+
 [poisson]
 # ── Poisson 过程参数 ──
 # λ = base_lambda × sigmoid(loneliness) × sigmoid(anxiety)

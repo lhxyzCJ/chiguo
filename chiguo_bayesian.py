@@ -6,8 +6,149 @@
 
 import math
 from datetime import datetime
+from enum import Enum
 
 from chiguo_time import CST  # Q22: 共享时区常量
+
+
+# ── 类型化 6 states 枚举（单一事实源）───────────────────────
+class UserState(str, Enum):
+    """6 种隐藏用户状态，字符串枚举兼容旧 str 键。"""
+    CHATTING = "chatting"
+    BROWSING = "browsing"
+    BUSY = "busy"
+    SLEEPING = "sleeping"
+    AWAY = "away"
+    NEEDS_CARE = "needs_care"
+
+    @classmethod
+    def values(cls) -> list[str]:
+        return [m.value for m in cls]
+
+
+# ── 模块级常量：单一事实源 ─────────────────────────────────
+# 行内概率归一化为 1（马尔可夫一行）；经验值：状态保持概率最高，
+# 睡觉/离开有向活跃状态滑落的倾向，needs_care 保持但会缓慢衰减。
+# config 可整体覆盖某一行：`[bayesian].transition_chatting = { chatting = 0.4, ... }`，
+# 覆盖后行内重新归一化。transition_enabled=False 时完全不参与推断（恒等）。
+TRANSITIONS: dict[str, dict[str, float]] = {
+    "chatting":   {"chatting": 0.45, "browsing": 0.25, "busy": 0.10, "sleeping": 0.02, "away": 0.08, "needs_care": 0.10},
+    "browsing":   {"chatting": 0.25, "browsing": 0.45, "busy": 0.10, "sleeping": 0.05, "away": 0.10, "needs_care": 0.05},
+    "busy":       {"chatting": 0.10, "browsing": 0.10, "busy": 0.45, "sleeping": 0.05, "away": 0.25, "needs_care": 0.05},
+    "sleeping":   {"chatting": 0.02, "browsing": 0.05, "busy": 0.03, "sleeping": 0.70, "away": 0.18, "needs_care": 0.02},
+    "away":       {"chatting": 0.15, "browsing": 0.25, "busy": 0.10, "sleeping": 0.10, "away": 0.35, "needs_care": 0.05},
+    "needs_care": {"chatting": 0.15, "browsing": 0.10, "busy": 0.05, "sleeping": 0.05, "away": 0.20, "needs_care": 0.45},
+}
+
+STATE_UTILITY: dict[str, float] = {
+    "chatting": 0.2,
+    "browsing": 0.7,
+    "busy": 0.1,
+    "sleeping": 0.0,
+    "away": 0.3,
+    "needs_care": 0.9,
+}
+
+STATE_DESCRIPTIONS: dict[str, str] = {
+    "chatting": "正在聊天",
+    "browsing": "在刷手机",
+    "busy": "忙",
+    "sleeping": "睡觉",
+    "away": "离开",
+    "needs_care": "需要关心",
+}
+
+# 合法观测空间（restore_state_dict 校验用）
+OBS_SPACE: dict[str, set[str]] = {
+    "reply_latency": {"fast", "normal", "slow", "very_slow", "none"},
+    "msg_length": {"short", "medium", "long", "none"},
+    "silence": {"active", "recent", "moderate", "long"},
+}
+
+
+# ── 纯函数：前向滤波 / 后验更新 / 熵 / 效用 ──────────────────
+def _normalize_dist(dist: dict[str, float]) -> dict[str, float]:
+    total = sum(dist.values())
+    if total > 0:
+        return {k: v / total for k, v in dist.items()}
+    return dict(dist)
+
+
+def compute_entropy(posterior: dict[str, float]) -> float:
+    """后验熵 bits，纯函数不依赖全局。"""
+    return -sum(p * math.log2(p) for p in posterior.values() if p > 0)
+
+
+def posterior_update(prior: dict[str, float], likelihood: dict[str, float]) -> dict[str, float]:
+    """纯函数：prior × likelihood 归一化 → posterior，不依赖全局/配置。"""
+    keys = set(prior.keys()) | set(likelihood.keys())
+    if not keys:
+        return {}
+    unnorm = {k: float(prior.get(k, 0.0)) * float(likelihood.get(k, 0.0)) for k in keys}
+    total = sum(unnorm.values())
+    if total > 0:
+        return {k: v / total for k, v in unnorm.items()}
+    # 兜底均匀分布
+    n = len(keys)
+    return {k: 1.0 / n for k in keys}
+
+
+def state_utility(state: "UserState | str") -> float:
+    """纯函数：state → 发送效用，接收 Enum 或 str。"""
+    key = state.value if isinstance(state, UserState) else str(state)
+    return float(STATE_UTILITY.get(key, 0.0))
+
+
+def state_description(state: "UserState | str") -> str:
+    """纯函数：state → 人类可读描述。"""
+    key = state.value if isinstance(state, UserState) else str(state)
+    return STATE_DESCRIPTIONS.get(key, key)
+
+
+def forward_filter(
+    prev_posterior: dict[str, float],
+    transitions: dict[str, dict[str, float]] = None,  # type: ignore[assignment]
+    config: dict | None = None,
+) -> dict[str, float]:
+    """纯函数：前向滤波先验 = prev_posterior × TRANSITIONS（矩阵向量乘）。
+
+    不依赖全局单例；config 仅用于逐行覆盖（transition_<state>），覆盖后行内归一化。
+    输入 prev_posterior + transitions/config → 预测先验，幂等可测。
+    """
+    if transitions is None:
+        transitions = TRANSITIONS
+    if config is None:
+        config = {}
+    states = list(UserState.values())
+    # 构建带覆盖的转移矩阵（纯局部变量，无全局写）
+    trans: dict[str, dict[str, float]] = {}
+    for s in states:
+        row = dict(transitions.get(s, {}))
+        override = config.get(f"transition_{s}")
+        if isinstance(override, dict):
+            row = {}
+            for k, v in override.items():
+                if k not in states:
+                    continue
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(fv) or fv < 0:
+                    continue
+                row[k] = fv
+        total = sum(row.values())
+        if total > 0:
+            row = {k: v / total for k, v in row.items()}
+        trans[s] = row
+    prior: dict[str, float] = {}
+    for ns in states:
+        prior[ns] = sum(prev_posterior.get(s, 0.0) * trans[s].get(ns, 0.0) for s in states)
+    return _normalize_dist(prior)
+
+
+# 兼容别名（旧名 _forward_filter）
+_forward_filter = forward_filter
 
 
 class UserStateEstimator:
@@ -33,49 +174,12 @@ class UserStateEstimator:
     参考：revive-companion 的 Bayesian state estimator
     """
 
-    STATES = ["chatting", "browsing", "busy", "sleeping", "away", "needs_care"]
+    STATES = UserState.values()
 
-    # 合法观测空间（restore_state_dict 校验用）：obs_key → 合法 obs_value 集合。
-    # 与 _init_default_likelihoods 的经验参数表保持一致。
-    OBS_SPACE = {
-        "reply_latency": {"fast", "normal", "slow", "very_slow", "none"},
-        "msg_length": {"short", "medium", "long", "none"},
-        "silence": {"active", "recent", "moderate", "long"},
-    }
-
-    # 状态 → 发送效用（越高越适合发送）
-    UTILITY = {
-        "chatting": 0.2,
-        "browsing": 0.7,
-        "busy": 0.1,
-        "sleeping": 0.0,
-        "away": 0.3,
-        "needs_care": 0.9,
-    }
-
-    # 状态 → 人类可读描述
-    STATE_DESCRIPTIONS = {
-        "chatting": "正在聊天",
-        "browsing": "在刷手机",
-        "busy": "忙",
-        "sleeping": "睡觉",
-        "away": "离开",
-        "needs_care": "需要关心",
-    }
-
-    # ── A1: 状态转移矩阵（前向滤波，state → {next_state: prob}）──
-    # 行内概率归一化为 1（马尔可夫一行）；经验值：状态保持概率最高，
-    # 睡觉/离开有向活跃状态滑落的倾向，needs_care 保持但会缓慢衰减。
-    # config 可整体覆盖某一行：`[bayesian].transition_chatting = { chatting = 0.4, ... }`，
-    # 覆盖后行内重新归一化。transition_enabled=False 时完全不参与推断（恒等）。
-    TRANSITIONS = {
-        "chatting":   {"chatting": 0.45, "browsing": 0.25, "busy": 0.10, "sleeping": 0.02, "away": 0.08, "needs_care": 0.10},
-        "browsing":   {"chatting": 0.25, "browsing": 0.45, "busy": 0.10, "sleeping": 0.05, "away": 0.10, "needs_care": 0.05},
-        "busy":       {"chatting": 0.10, "browsing": 0.10, "busy": 0.45, "sleeping": 0.05, "away": 0.25, "needs_care": 0.05},
-        "sleeping":   {"chatting": 0.02, "browsing": 0.05, "busy": 0.03, "sleeping": 0.70, "away": 0.18, "needs_care": 0.02},
-        "away":       {"chatting": 0.15, "browsing": 0.25, "busy": 0.10, "sleeping": 0.10, "away": 0.35, "needs_care": 0.05},
-        "needs_care": {"chatting": 0.15, "browsing": 0.10, "busy": 0.05, "sleeping": 0.05, "away": 0.20, "needs_care": 0.45},
-    }
+    OBS_SPACE = OBS_SPACE
+    UTILITY = STATE_UTILITY
+    STATE_DESCRIPTIONS = STATE_DESCRIPTIONS
+    TRANSITIONS = TRANSITIONS
 
     def __init__(self, config: dict = None):
         self.config = config or {}
@@ -323,42 +427,9 @@ class UserStateEstimator:
 
     def _transition_prior(self, prev_posterior: dict) -> dict:
         """A1: 前向滤波先验 = prev_posterior × TRANSITIONS（矩阵向量乘）。
-
-        config 支持逐行覆盖：`transition_<state>` 键为 dict 时以该行替换默认行，
-        覆盖后行内归一化（防配置配错导致行和 ≠ 1）。返回归一化后的预测分布。
+        委托纯函数 forward_filter，保持单一事实源。
         """
-        trans: dict[str, dict] = {}
-        for s in self.STATES:
-            row = dict(self.TRANSITIONS.get(s, {}))
-            override = self.config.get(f"transition_{s}")
-            if isinstance(override, dict):
-                # 配置行 = 整行覆盖（含 0 值），防漏配状态被默认保持概率吞掉
-                row = {}
-                for k, v in override.items():
-                    if k not in self.STATES:
-                        continue
-                    try:
-                        fv = float(v)
-                    except (TypeError, ValueError):
-                        continue  # 非法数值忽略，缺省 0
-                    if not math.isfinite(fv) or fv < 0:
-                        continue  # NaN/inf/负数忽略：防 NaN 传播进 posterior → JSONL 非法 token
-                    row[k] = fv
-            total = sum(row.values())
-            if total > 0:
-                row = {k: v / total for k, v in row.items()}
-            trans[s] = row
-        prior = {}
-        for next_state in self.STATES:
-            prior[next_state] = sum(
-                prev_posterior.get(s, 0.0) * trans[s].get(next_state, 0.0)
-                for s in self.STATES
-            )
-        total = sum(prior.values())
-        if total > 0:
-            for s in prior:
-                prior[s] /= total
-        return prior
+        return forward_filter(prev_posterior, TRANSITIONS, self.config)
 
     def infer(self, observations: dict, now: datetime = None,
               prev_posterior: dict | None = None) -> dict:
@@ -443,18 +514,15 @@ class UserStateEstimator:
 
             posterior[state] = post
 
-        # 归一化
-        total = sum(posterior.values())
-        if total > 0:
-            for state in posterior:
-                posterior[state] /= total
+        # 归一化（委托纯函数语义，保持一致）
+        posterior = _normalize_dist(posterior) if posterior else posterior
 
         # 最可能状态
         most_likely = max(posterior, key=posterior.get)
         confidence = posterior[most_likely]
 
-        # 加权发送效用
-        utility = sum(posterior[s] * self.UTILITY[s] for s in self.STATES)
+        # 加权发送效用（委托纯函数 state_utility 语义，但批量计算保持高效）
+        utility = sum(posterior[s] * state_utility(s) for s in self.STATES)
 
         # ── A1: 当前后验持久化（下一 tick 前向滤波用）+ 后验熵（bits）──
         # 仅 A1 启用（transition_enabled 或 info_gain_threshold>0）时产出熵/透传后验并
@@ -470,11 +538,11 @@ class UserStateEstimator:
             "confidence": round(confidence, 4),
             "utility": round(utility, 4),
             "should_send_bayesian": utility >= self.utility_threshold,
-            "state_description": self.STATE_DESCRIPTIONS[most_likely],
+            "state_description": state_description(most_likely),
         }
         if a1_active:
             self.prev_posterior = {s: float(posterior[s]) for s in self.STATES}
-            entropy = -sum(p * math.log2(p) for p in posterior.values() if p > 0)
+            entropy = compute_entropy(posterior)
             out["entropy"] = round(entropy, 4)
             out["prev_posterior"] = {s: round(posterior[s], 4) for s in self.STATES}
         else:
@@ -603,4 +671,3 @@ class BayesianLearner:
                     k2 = (true_state, obs_key, ov)
                     old_val = self.estimator._likelihood_cache.get(k2, 0.05)
                     self.estimator._likelihood_cache[k2] = old_val / group_sum  # ponytail: no clamp, let sum=1.0 naturally
-

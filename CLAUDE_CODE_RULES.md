@@ -1,6 +1,6 @@
 # Claude Code 开发规则 — Chiguo Proactive Message System
 
-> 定位：纯 Claude Code 开发规则（构建、测试、约定、gotchas）。版本 v1.19。
+> 定位：纯 Claude Code 开发规则（构建、测试、约定、gotchas）。版本 v1.24。
 > 架构（文件依赖树、evaluate() 决策流、5 维情绪引擎、触发系统、话题注入、消息 composer、Ship of Theseus 配置参数、决策输出 schema、运行时数据文件归属）详见 **doc/SYSTEM.md**。
 > agent 后端集成（LLM Host、send/reply 侧、SUN2.md 人格宪法、skill 文件边界）详见 **doc/AGENT_INTEGRATION.md**。
 > 测试由 pytest 驱动（Q26 迁移；py 走 pytest 收集，mjs/sh 脚本链保留）；测试清单唯一权威为 scripts/ci-test.sh（计数动态化，以 pytest 收集结果为准）。

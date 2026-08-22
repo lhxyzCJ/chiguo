@@ -20,11 +20,11 @@ from decision_schema import (  # noqa: E402
 from chiguo_daemon import DecisionEngine  # noqa: E402
 
 _GOOD_SEND = {
-    "action": "send", "version": "1.19", "msg_id": "m1",
+    "action": "send", "version": "1.24", "msg_id": "m1",
     "trigger": "lonely_mid", "intensity": "soft",
     "context": {"layer": "shell"}, "state": {},
 }
-_GOOD_IDLE = {"action": "idle", "version": "1.19", "reason": "no_trigger", "state": {}}
+_GOOD_IDLE = {"action": "idle", "version": "1.24", "reason": "no_trigger", "state": {}}
 _GOOD_RECV = {"action": "recv", "msg_id": "m2", "message_text": "hi",
               "message_length": 2, "state": {}}
 _GOOD_UPGRADE = {"action": "recv_upgrade", "msg_id": "m3", "message_text": "hi",

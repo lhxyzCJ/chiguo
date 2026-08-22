@@ -33,8 +33,10 @@ def cfg_float(value, default: float, clamp_min: float | None = None) -> float:
 
 # ── Sigmoid（逻辑函数）────────────────────────────────────
 # 替代硬阈值：x 在 midpoint 附近柔和过渡，k 控制陡峭度
+# 默认参数 midpoint=50 / steepness=0.1 为 CONFIG fallback（[sigmoid]/poisson 等）——
+# 调用方优先从 CONFIG 读取，未配置时回退此值；保留默认值以兼容裸调用。
 
-def sigmoid(x: float, midpoint: float = 50, steepness: float = 0.1) -> float:
+def sigmoid(x: float, midpoint: float = 50, steepness: float = 0.1) -> float:  # fallback: CONFIG [sigmoid] / [poisson]
     """返回 0~1 的概率值。x=midpoint 时返回 0.5。"""
     return 1.0 / (1.0 + math.exp(-steepness * (x - midpoint)))
 
@@ -366,9 +368,9 @@ def dynamic_lambda(
     anxiety: float,
     base_lambda: float = 0.3,
     loneliness_mid: float = 50,
-    loneliness_k: float = 0.1,
+    loneliness_k: float = 0.08,  # fallback: CONFIG [poisson].lambda_loneliness_k=0.08 (T08 收敛 0.1→0.08)
     anxiety_mid: float = 45,
-    anxiety_k: float = 0.08,
+    anxiety_k: float = 0.08,  # fallback: CONFIG [poisson].lambda_anxiety_k (0.06) 的通用回退；poisson 段以 cfg_float 为准
 ) -> float:
     """
     计算动态事件率 λ。
@@ -457,7 +459,7 @@ def hawkes_intensity(
 def longing_accumulate(
     current_lambda: float,
     base_lambda: float,
-    growth_factor: float = 0.08,
+    growth_factor: float = 0.08,  # fallback: CONFIG [cooldown].longing_growth_factor=0.08
     anxiety: float = 0.0,
     anxiety_block_threshold: float = 70.0,
     held_count: int = 0,

@@ -15,6 +15,13 @@ from chiguo_math import cfg_float, weighted_trigger_choice, in_quiet_window, moo
 
 from trigger_types import TriggerType, EMOTION_TRIGGERS, RITUAL_TRIGGERS
 
+# ── T08: jitter 隔离实例（不污染全局 random）──────────────────────
+_jitter_rng = random.Random()
+# 别名供测试探针（兼容 _rng / jitter_rng 命名）
+_jitter_rng_alias = _jitter_rng
+_rng = _jitter_rng
+jitter_rng = _jitter_rng
+
 
 @dataclass
 class Trigger:
@@ -99,13 +106,13 @@ def _due_reminder_trigger(state: ChiguoState, now: datetime, trg_cfg: dict) -> d
 def _collect_ritual_candidates(state, now, trg_cfg, ritual_scale) -> list[dict]:
     """仪式类候选收集：特殊日/早安/晚安/用餐/手动记忆/mem0 随机浮现"""
     cands: list[dict] = []
-    ritual_special = cfg_float(trg_cfg.get("ritual_special_weight", 3.0), 3.0)
-    ritual_morning = cfg_float(trg_cfg.get("ritual_morning_weight", 2.5), 2.5)
-    ritual_night = cfg_float(trg_cfg.get("ritual_night_weight", 2.0), 2.0)
-    ritual_meal = cfg_float(trg_cfg.get("ritual_meal_weight", 0.8), 0.8)
-    ritual_memory = cfg_float(trg_cfg.get("ritual_memory_weight", 2.0), 2.0)
-    ritual_mem0 = cfg_float(trg_cfg.get("ritual_mem0_weight", 1.5), 1.5)
-    mem0_min_silent = cfg_float(trg_cfg.get("mem0_surface_min_silent_hours", 6.0), 6.0)
+    ritual_special = cfg_float(trg_cfg.get("ritual_special_weight", 3.0), 3.0, clamp_min=0.0)
+    ritual_morning = cfg_float(trg_cfg.get("ritual_morning_weight", 2.5), 2.5, clamp_min=0.0)
+    ritual_night = cfg_float(trg_cfg.get("ritual_night_weight", 2.0), 2.0, clamp_min=0.0)
+    ritual_meal = cfg_float(trg_cfg.get("ritual_meal_weight", 0.8), 0.8, clamp_min=0.0)
+    ritual_memory = cfg_float(trg_cfg.get("ritual_memory_weight", 2.0), 2.0, clamp_min=0.0)
+    ritual_mem0 = cfg_float(trg_cfg.get("ritual_mem0_weight", 1.5), 1.5, clamp_min=0.0)
+    mem0_min_silent = cfg_float(trg_cfg.get("mem0_surface_min_silent_hours", 6.0), 6.0, clamp_min=0.0)
     mem0_prob = _clamp01(trg_cfg.get("mem0_surface_probability", 0.08), 0.08)
     # 特殊日期
     try:
@@ -137,8 +144,8 @@ def _collect_ritual_candidates(state, now, trg_cfg, ritual_scale) -> list[dict]:
 def _collect_followup_candidates(state, now, trg_cfg) -> list[dict]:
     """接话茬候选收集：pending 话题 + 记忆兜底"""
     cands: list[dict] = []
-    fup_min = trg_cfg.get("follow_up_min_age_hours", 2.0)
-    fup_max = trg_cfg.get("follow_up_max_age_hours", 48.0)
+    fup_min = cfg_float(trg_cfg.get("follow_up_min_age_hours", 2.0), 2.0, clamp_min=0.0)
+    fup_max = cfg_float(trg_cfg.get("follow_up_max_age_hours", 48.0), 48.0, clamp_min=0.0)
     state.prune_pending_topics(now, fup_max)
     follow_entries: list[tuple[dict, float]] = []
     for t in state.pending_topics:
@@ -178,25 +185,39 @@ def _collect_followup_candidates(state, now, trg_cfg) -> list[dict]:
 
 
 def _collect_emotion_candidates(state, now, trg_cfg, silent_h) -> list[dict]:
-    """情绪驱动候选收集：孤独三级/anxiety/comfort/boredom/reflect/longing"""
+    """情绪驱动候选收集：孤独三级/anxiety/comfort/boredom/reflect/longing
+    T08: rate/tsundere/bias/w阈 均走 CONFIG（cfg_float/_clamp01），默认值=原硬编码，行为恒等。"""
     cands: list[dict] = []
     emo = state.emotion
     tsun = emo.tsundere_index / 100
     lo_rate = emo.loneliness_rate
     anx_rate = emo.anxiety_rate
-    rate_factor = 1.0 + max(0, (lo_rate - 1.5) * 0.3) + max(0, (anx_rate - 2.0) * 0.2)
-    raw_low = state.trigger_weight("lonely_low") * (1 + 0.3 * tsun) * rate_factor
-    raw_mid = state.trigger_weight("lonely_mid") * (1 + 0.5 * tsun) * rate_factor
-    raw_high = state.trigger_weight("lonely_high") * (1 - 0.4 * tsun) * rate_factor
-    total = raw_low + raw_mid + raw_high + 0.5
+    # T08 CONFIG 单源：rate_factor 阈值与系数
+    lo_thresh = cfg_float(trg_cfg.get("lonely_rate_lo_threshold", 1.5), 1.5, clamp_min=0.0)
+    lo_factor = cfg_float(trg_cfg.get("lonely_rate_lo_factor", 0.3), 0.3, clamp_min=0.0)
+    anx_thresh = cfg_float(trg_cfg.get("lonely_rate_anx_threshold", 2.0), 2.0, clamp_min=0.0)
+    anx_factor = cfg_float(trg_cfg.get("lonely_rate_anx_factor", 0.2), 0.2, clamp_min=0.0)
+    rate_factor = 1.0 + max(0, (lo_rate - lo_thresh) * lo_factor) + max(0, (anx_rate - anx_thresh) * anx_factor)
+    # T08 CONFIG 单源：tsundere 修饰
+    tsun_low = cfg_float(trg_cfg.get("lonely_tsundere_low_factor", 0.3), 0.3, clamp_min=0.0)
+    tsun_mid = cfg_float(trg_cfg.get("lonely_tsundere_mid_factor", 0.5), 0.5, clamp_min=0.0)
+    tsun_high = cfg_float(trg_cfg.get("lonely_tsundere_high_factor", 0.4), 0.4, clamp_min=0.0)
+    lonely_bias = cfg_float(trg_cfg.get("lonely_bias", 0.5), 0.5, clamp_min=0.0)
+    raw_low = state.trigger_weight("lonely_low") * (1 + tsun_low * tsun) * rate_factor
+    raw_mid = state.trigger_weight("lonely_mid") * (1 + tsun_mid * tsun) * rate_factor
+    raw_high = state.trigger_weight("lonely_high") * (1 - tsun_high * tsun) * rate_factor
+    total = raw_low + raw_mid + raw_high + lonely_bias
     w_low = raw_low / total
     w_mid = raw_mid / total
     w_high = raw_high / total
-    if w_low > 0.03:
+    w_low_thr = _clamp01(trg_cfg.get("lonely_w_low_threshold", 0.03), 0.03)
+    w_mid_thr = _clamp01(trg_cfg.get("lonely_w_mid_threshold", 0.03), 0.03)
+    w_high_thr = _clamp01(trg_cfg.get("lonely_w_high_threshold", 0.02), 0.02)
+    if w_low > w_low_thr:
         cands.append({"trigger": Trigger(type=TriggerType.LONELY_LOW, intensity="soft"), "weight": w_low})
-    if w_mid > 0.03:
+    if w_mid > w_mid_thr:
         cands.append({"trigger": Trigger(type=TriggerType.LONELY_MID, intensity="medium"), "weight": w_mid})
-    if w_high > 0.02:
+    if w_high > w_high_thr:
         cands.append({"trigger": Trigger(type=TriggerType.LONELY_HIGH, intensity="intense"), "weight": w_high})
     # anxiety
     anx_baseline = _clamp01(trg_cfg.get("anxiety_baseline", 0.5), 0.5)
@@ -205,11 +226,7 @@ def _collect_emotion_candidates(state, now, trg_cfg, silent_h) -> list[dict]:
     mood = state.cooldown.get_user_mood()
     mood_fresh_flag = bool(mood and mood_fresh(mood, now, trg_cfg.get("user_mood_ttl_minutes", 360.0)))
     if mood_fresh_flag:
-        anx_bonus = trg_cfg.get("user_mood_anxiety_bonus", 0.0)
-        try:
-            anx_bonus = max(0.0, float(anx_bonus))
-        except (TypeError, ValueError):
-            anx_bonus = 0.0
+        anx_bonus = cfg_float(trg_cfg.get("user_mood_anxiety_bonus", 0.0), 0.0, clamp_min=0.0)
         if anx_bonus > 0 and mood.get("mood") in ("low", "distressed"):
             raw_anx = raw_anx * (1.0 + anx_bonus * mood.get("intensity", 0.0))
     raw_anx = min(1.0, raw_anx)
@@ -218,11 +235,7 @@ def _collect_emotion_candidates(state, now, trg_cfg, silent_h) -> list[dict]:
     if w_anx > anx_min_weight:
         cands.append({"trigger": Trigger(type=TriggerType.ANXIETY, intensity="medium"), "weight": w_anx})
     # comfort
-    comfort_base = trg_cfg.get("comfort_weight_base", 0.0)
-    try:
-        comfort_base = float(comfort_base)
-    except (TypeError, ValueError):
-        comfort_base = 0.0
+    comfort_base = cfg_float(trg_cfg.get("comfort_weight_base", 0.0), 0.0, clamp_min=0.0)
     if mood_fresh_flag and comfort_base > 0 and mood.get("mood") in ("low", "distressed"):
         raw_cf = comfort_base * mood.get("intensity", 0.0) * (1 + (emo.affection - 50) / 100)
         cf_baseline = _clamp01(trg_cfg.get("comfort_baseline", 0.5), 0.5)
@@ -234,22 +247,25 @@ def _collect_emotion_candidates(state, now, trg_cfg, silent_h) -> list[dict]:
     if emo.energy > 70 and 2 < silent_h < 48 and _is_free_time(state, now):
         pers_extra = getattr(getattr(state, 'personality', None), 'extraversion', 60.0)
         pers_extra_factor = 0.5 + (pers_extra / 100) * 1.0
-        w_bored = (cfg_float(trg_cfg.get("playful_base_weight", 0.15), 0.15) * (emo.energy / 100) * aff_factor * pers_extra_factor)
+        w_bored = (cfg_float(trg_cfg.get("playful_base_weight", 0.15), 0.15, clamp_min=0.0) * (emo.energy / 100) * aff_factor * pers_extra_factor)
         if w_bored > 0.03:
             cands.append({"trigger": Trigger(type=TriggerType.PLAYFUL, intensity="soft"), "weight": w_bored})
     pers = getattr(state, 'personality', None)
     if pers:
         neuroticism = getattr(pers, 'neuroticism', 60.0)
-        if (emo.affection > 70 and silent_h < 2 and emo.energy > 60 and neuroticism < 70 and random.random() < _clamp01(trg_cfg.get("reflect_probability", 0.08), 0.08)):
-            w_reflect = cfg_float(trg_cfg.get("reflect_base_weight", 0.08), 0.08) * (emo.affection / 100) * (1 - neuroticism / 100) * (emo.energy / 100)
+        if (emo.affection > 70 and silent_h < 2 and emo.energy > 60 and neuroticism < 70 and random.random() < _clamp01(trg_cfg.get("reflect_probability", 0.08), 0.08)):  # fallback: CONFIG
+            w_reflect = cfg_float(trg_cfg.get("reflect_base_weight", 0.08), 0.08, clamp_min=0.0) * (emo.affection / 100) * (1 - neuroticism / 100) * (emo.energy / 100)  # fallback: CONFIG
             if w_reflect > 0.02:
                 cands.append({"trigger": Trigger(type=TriggerType.REFLECT, intensity="soft"), "weight": w_reflect})
     held = state.cooldown.get_held_count()
     acc_lam = state.cooldown.get_accumulated_lambda() or 0
-    base_lambda = cfg_float(state.config.get("poisson", {}).get("base_lambda", 0.25), 0.25)
+    base_lambda = cfg_float(state.config.get("poisson", {}).get("base_lambda", 0.25), 0.25, clamp_min=0.0)
     if state.is_longing_overflow() and base_lambda > 0:
-        w_longing = min(0.5, (acc_lam / base_lambda - 1) * 0.3)
-        if w_longing > 0.03:
+        longing_cap = cfg_float(trg_cfg.get("longing_cap", 0.5), 0.5, clamp_min=0.0)
+        longing_factor = cfg_float(trg_cfg.get("longing_factor", 0.3), 0.3, clamp_min=0.0)
+        longing_min = _clamp01(trg_cfg.get("longing_min_weight", 0.03), 0.03)
+        w_longing = min(longing_cap, (acc_lam / base_lambda - 1) * longing_factor)
+        if w_longing > longing_min:
             cands.append({"trigger": Trigger(type=TriggerType.LONGING, intensity="soft", data={"held_count": held, "accumulated_lambda": round(acc_lam, 3)}), "weight": w_longing})
     return cands
 
@@ -259,7 +275,7 @@ def _apply_modifiers_and_select(state, now, trg_cfg, weighted_candidates, trigge
     if trigger_scale:
         for c in weighted_candidates:
             c["weight"] *= trigger_scale.get(c["trigger"].type, trigger_scale.get("default", 1.0))
-    free_mult = cfg_float(trg_cfg.get("free_multiplier", 1.2), 1.2)
+    free_mult = cfg_float(trg_cfg.get("free_multiplier", 1.2), 1.2, clamp_min=0.0)
     sched_mult = _schedule_multiplier(state, now, free_mult)
     for c in weighted_candidates:
         if c["trigger"].type in EMOTION_TRIGGERS:
@@ -278,16 +294,27 @@ def _apply_modifiers_and_select(state, now, trg_cfg, weighted_candidates, trigge
     ritual_cands = [c for c in weighted_candidates if c["trigger"].type in RITUAL_TRIGGERS]
     activation = _activation_score(emo_cands)
     must_send = False
-    jitter = random.uniform(0.8, 1.2)
+    # T08: jitter 区间走 CONFIG + 隔离 Random（不污染全局 random）
+    jitter_low = cfg_float(trg_cfg.get("jitter_low", 0.8), 0.8, clamp_min=0.0)
+    jitter_high = cfg_float(trg_cfg.get("jitter_high", 1.2), 1.2, clamp_min=0.0)
+    # 防御：非数值/反序/相等时回退 0.8/1.2
+    if not math.isfinite(jitter_low) or not math.isfinite(jitter_high) or jitter_low >= jitter_high:
+        jitter_low, jitter_high = 0.8, 1.2
+    # T08 隔离：用全局状态快照播种隔离实例 → 确定性跟随全局 seed 但不污染全局序列
+    try:
+        _jitter_rng.setstate(random.getstate())
+    except Exception:
+        pass
+    jitter = _jitter_rng.uniform(jitter_low, jitter_high)
     for c in weighted_candidates:
         if c["trigger"].type in EMOTION_TRIGGERS:
             c["weight"] *= jitter
     if trg_cfg.get("reply_feedback_enabled", 0):
         stats = state.cooldown.get_reply_stats() or {}
-        rfb_damp = cfg_float(trg_cfg.get("reply_feedback_damp", 0.0), 0.0)
-        rfb_boost = cfg_float(trg_cfg.get("reply_feedback_boost", 0.0), 0.0)
-        rfb_low = cfg_float(trg_cfg.get("reply_feedback_low_rate", 0.3), 0.3)
-        rfb_high = cfg_float(trg_cfg.get("reply_feedback_high_rate", 0.7), 0.7)
+        rfb_damp = cfg_float(trg_cfg.get("reply_feedback_damp", 0.0), 0.0, clamp_min=0.0)
+        rfb_boost = cfg_float(trg_cfg.get("reply_feedback_boost", 0.0), 0.0, clamp_min=0.0)
+        rfb_low = cfg_float(trg_cfg.get("reply_feedback_low_rate", 0.3), 0.3, clamp_min=0.0)
+        rfb_high = cfg_float(trg_cfg.get("reply_feedback_high_rate", 0.7), 0.7, clamp_min=0.0)
         rfb_min = _clamp_int(trg_cfg.get("reply_feedback_min_samples", 3), 3)
         for c in weighted_candidates:
             st = stats.get(c["trigger"].type) or {}
@@ -328,7 +355,7 @@ def evaluate_triggers(state: ChiguoState, now: datetime,
             return reminder["trigger"]
         return None
     weighted_candidates: list[dict] = []
-    ritual_scale = cfg_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0)
+    ritual_scale = cfg_float(state.config.get("cooldown", {}).get("ritual_weight_scale", 1.0), 1.0, clamp_min=0.0)
     weighted_candidates.extend(_collect_ritual_candidates(state, now, trg_cfg, ritual_scale))
     weighted_candidates.extend(_collect_followup_candidates(state, now, trg_cfg))
     silent_h = state.cooldown.silent_hours(now)
@@ -372,7 +399,7 @@ def _schedule_multiplier(state: ChiguoState, now: datetime, free_mult: float) ->
 
 
 def _activation_score(emo_cands: list[dict]) -> float:
-    """A4 activation：按情绪维度族取 max（#79 后 must_send_activation=0.75 按单源标定）。
+    """A4 activation：按情绪维度族取 max（#79 后 CONFIG fallback must_send_activation=0.75 按单源标定）。
 
     孤独三级（lonely_low/mid/high）是同一孤独维度的互斥表达 → 族内求和（孤独总量压力）；
     其余情绪（anxiety/playful/reflect/longing/comfort）各自独立维度 → 单源取 max。
@@ -395,15 +422,13 @@ def _followup_candidate(entry: dict, age: float, trg_cfg: dict) -> dict | None:
         return None
     # 峰值/钟形宽度配置防御：非数值回退默认；sigma<=0 → 回退 3.0（bell 分母
     # e^{-((age-peak)/sigma)^2}，sigma=0 会 ZeroDivisionError，兄弟配置键同有 clamp 防御）。
-    try:
-        peak = float(trg_cfg.get("follow_up_peak_hours", 4.0))
-        sigma = float(trg_cfg.get("follow_up_sigma_hours", 3.0))
-    except (TypeError, ValueError):
-        peak, sigma = 4.0, 3.0
+    peak = cfg_float(trg_cfg.get("follow_up_peak_hours", 4.0), 4.0)
+    sigma = cfg_float(trg_cfg.get("follow_up_sigma_hours", 3.0), 3.0)
     if not math.isfinite(peak) or not math.isfinite(sigma) or sigma <= 0:
         peak, sigma = 4.0, 3.0
+    # sigma 已经 cfg_float 守卫 nan/inf，仍需钳制 <=0 回退默认，已在上方处理
     bell = math.exp(-((age - peak) / sigma) ** 2)
-    w = cfg_float(trg_cfg.get("follow_up_weight", 0.35), 0.35) * bell
+    w = cfg_float(trg_cfg.get("follow_up_weight", 0.35), 0.35, clamp_min=0.0) * bell
     if w <= _clamp01(trg_cfg.get("follow_up_min_weight", 0.03), 0.03):
         return None
     return {

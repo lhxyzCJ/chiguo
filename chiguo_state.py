@@ -1,14 +1,3 @@
-# ============================================================
-# chiguo_state.py — 迟菓情绪状态引擎 v9
-# 数学驱动：Sigmoid 概率 + 半衰期衰减 + Hawkes 自激过程
-# v4 新增：多维人格、Bayesian 用户状态推断、概率累积
-# v5 新增：状态备份(.bak)、fsync、tick_seq、损坏审计、tmp验证
-# v6 新增：逃生阀、跨进程可重入锁、滑动崩溃窗口、配置化睡眠窗口、校验和强制回退
-# v7 新增:生物钟学习(circadian) + 接话茬(pending_topics)
-# v8 新增:双作息(circadian 分桶学习/迁移,STATE_VERSION 8)
-# v9 新增:recv_dedup 用户消息去重标记(桥确定性记录 + standing order 分析升级共用)
-# v10 新增:人格基线回归(regress_to_baseline, 防漂移) + personality_history 持久化(STATE_VERSION 10)
-# ============================================================
 
 import json
 import os
@@ -51,372 +40,53 @@ import chiguo_locks as locks
 from chiguo_atomic import atomic_write
 from trigger_types import TriggerType
 
-# ── Q21: 跨进程 fcntl 锁已收敛至共享模块 chiguo_locks（可重入;同进程共享
-# 同一 fd 与深度计数）。本模块经 state_lock/_in_lock 复用之。
+from chiguo_state_models import (  # noqa: F401 — re-export for compat
+    ChiguoEmotion,
+    CooldownState,
+    BASELINE_DEFAULTS,
+    EVENT_DELTA,
+    EVENT_TYPE_SYNONYMS,
+    emotion_tag_snapshot,
+    REFUND_FIFO_MAX,
+    _MEMORY_MARKER_KEYS,
+    _coerce_dataclass_fields,
+    _memory_dedup_key,
+)
+from chiguo_pending import (  # T10 补充：pending 纯逻辑薄包装
+    pending_add,
+    pending_resolve,
+    pending_mark_attempted,
+    pending_prune,
+)
 
-# ── Q7 (#79/#260): reminder 去重标记（last_triggered_at）跨进程持久化。
-# 该标记是运行时写上的去重状态，不属于记忆内容本身——持久化时从记忆的
-# 「内容键」（排除标记字段）中剥离，状态 payload 只存标记（不进 memories 全文）。
-# _memory_dedup_key 见下方；chiguo_memories.json 仍是记忆内容的唯一事实源。
-_MEMORY_MARKER_KEYS = ("last_triggered_at",)
+_OWNER_PLACEHOLDER = "owner@im.wechat"
 
+def _config_owner(cfg: dict) -> str | None:
+    if not isinstance(cfg, dict):
+        return None
+    if "owner" in cfg and cfg["owner"]:
+        v = cfg["owner"]
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    w = cfg.get("wechat")
+    if isinstance(w, dict):
+        for k in ("wechat_recipient", "owner"):
+            v = w.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    v = cfg.get("wechat_recipient")
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return None
 
-def _memory_dedup_key(mem: dict) -> str:
-    """记忆去重/内容键：排除运行时标记字段后的稳定标识（跨进程可匹配）。"""
-    key = {k: v for k, v in mem.items() if k not in _MEMORY_MARKER_KEYS}
-    return json.dumps(key, sort_keys=True, ensure_ascii=False)
+def _is_placeholder_owner(v: str | None) -> bool:
+    return not v or v == _OWNER_PLACEHOLDER
 
-
-@dataclass
-class ChiguoEmotion:
-    loneliness: float = 15.0
-    affection: float = 55.0
-    anxiety: float = 40.0
-    energy: float = 85.0
-    tsundere_index: float = 70.0
-    loneliness_rate: float = 0.0    # Δloneliness/hour
-    anxiety_rate: float = 0.0       # Δanxiety/hour
-    baseline_loneliness: float = 100.0  # v1.11 ④: 长期收敛目标（默认=现 tick target → 恒等）
-    baseline_anxiety: float = 100.0     # v1.11 ④
-    baseline_affection: float = 0.0     # v1.11 ④
-
-    @property
-    def neediness(self) -> float:
-        return self.loneliness * (1 - self.tsundere_index / 200) * (self.anxiety / 100)
-
-    @property
-    def dominant_layer(self) -> str:
-        if self.anxiety > 70 or self.loneliness > 80:
-            return "kernel"
-        elif self.loneliness > 50:
-            return "middle"
-        else:
-            return "shell"
-
-    def clamp(self):
-        self.loneliness = max(0, min(100, self.loneliness))
-        self.affection = max(5, min(100, self.affection))
-        self.anxiety = max(0, min(100, self.anxiety))
-        self.energy = max(0, min(100, self.energy))
-        self.tsundere_index = max(10, min(95, self.tsundere_index))
-
-
-def _coerce_dataclass_fields(fields: dict, cls) -> dict:
-    """v11: dataclass 数值字段(annotation 为 int/float)类型强转。
-    手改/损坏数据可能字符串化或为 None → float()/int() 失败时回退字段默认值，
-    防 ChiguoEmotion.clamp()/can_send 的 max/min 比较直接 TypeError。
-    B2: int|None/float|None 联合注解（如 cooldown.last_user_msg_length）规约到数值
-    基底同样强转，None 值显式放行（联合即允许空，不强转不触发比较 TypeError）。"""
-    out = dict(fields)
-    for name, fdef in cls.__dataclass_fields__.items():
-        ann = fdef.type
-        nullable = False
-        # B2: int|None 等联合注解 → 规约到数值基底（last_user_msg_length 损坏为字符串
-        # 时下方 int(float(val)) 兜回；否则恢复成字符串会让后续 >30 比较 TypeError）
-        if isinstance(ann, types.UnionType):
-            args = getattr(ann, "__args__", ())
-            if len(args) == 2 and type(None) in args:
-                base = args[0] if args[1] is type(None) else args[1]
-                if base in (int, float):
-                    ann = base
-                    nullable = True
-        if ann not in (int, float, "int", "float"):
-            continue
-        if name not in out:
-            continue
-        val = out[name]
-        if val is None:
-            if nullable:
-                continue  # int|None 联合字段允许 None，保留空值
-            out[name] = fdef.default  # 非可空数值字段：None 也回退默认（v11 原行为）
-            continue
-        if isinstance(val, (int, float)):
-            continue
-        try:
-            if ann is int or ann == "int":
-                out[name] = int(float(val))
-            else:
-                out[name] = float(val)
-        except (ValueError, TypeError, OverflowError):
-            out[name] = fdef.default
-    return out
-
-
-# v1.11 ④: 情绪基线全局默认（= 原 tick 收敛 target：loneliness/anxiety→100、affection→0）
-BASELINE_DEFAULTS = {"loneliness": 100.0, "anxiety": 100.0, "affection": 0.0}
-
-
-# ── B1: 事件类型化情绪 delta（event_delta_enabled 默认 False → 恒等，可灰度）──
-# 对标 pad-plus-ai event_listener：按 analysis 事件类型直接加减情绪（规则表语义，
-# 不走 impact_inertia 阻尼）。情绪维度取值域与 chiguo_state 保持一致。
-EVENT_DELTA = {
-    "praise":        {"loneliness": -3.0, "affection": 2.0},    # 夸奖 → 孤独降、好感升
-    "criticism":     {"loneliness": 2.0, "anxiety": 3.0},       # 批评 → 孤独升、不安升
-    "contradiction": {"anxiety": 4.0},                           # 反驳/抬杠 → 不安升
-    "comfort":       {"anxiety": -3.0, "affection": 1.5},       # 安慰 → 不安降、好感微升
-    "new_topic":     {"affection": 1.0},                         # 主动换话题 → 好感微升
-    "question":      {"affection": 0.8},                         # 提问 → 好感微升
-    "complaint":     {"anxiety": 2.0},                           # 抱怨 → 不安升
-}
-
-# B1: 事件类型宽松匹配别名（归一化后的原始串 → 规范事件类型）
-EVENT_TYPE_SYNONYMS = {
-    "praise": "praise", "夸": "praise", "夸奖": "praise", "表扬": "praise",
-    "赞": "praise", "赞美": "praise",
-    "criticism": "criticism", "批评": "criticism", "责备": "criticism",
-    "骂": "criticism", "指责": "criticism",
-    "contradiction": "contradiction", "反驳": "contradiction", "抬杠": "contradiction",
-    "comfort": "comfort", "安慰": "comfort", "哄": "comfort", "安抚": "comfort",
-    "new_topic": "new_topic", "newtopic": "new_topic", "换话题": "new_topic", "新话题": "new_topic",
-    "question": "question", "提问": "question", "问": "question",
-    "complaint": "complaint", "抱怨": "complaint", "吐槽": "complaint",
-}
-
-
-def emotion_tag_snapshot(emotion) -> dict:
-    """B2: 情绪 → 离散档标签（写侧打标用，读侧加权比对）。
-
-    档位阈值（low ≤30 / high ≥70，中段为 mid）与触发/分类经验保持一致；
-    任何取值都映射到 {low, mid, high} 三档之一，标签可直接存 mem0 metadata。
-    """
-    def _level(v: float) -> str:
-        if v <= 30:
-            return "low"
-        if v >= 70:
-            return "high"
-        return "mid"
-    return {
-        "loneliness": _level(emotion.loneliness),
-        "affection": _level(emotion.affection),
-        "anxiety": _level(emotion.anxiety),
-        "energy": _level(emotion.energy),
-    }
-
-
-# F-A15-002: refunded msg_id 有界 FIFO 上限——记录最近已退款的 msg_id，防越窗口
-# （chiguo_decisions.jsonl 尾 500 行之外的）同 msg_id 重放双退。有界存储防 state 膨胀。
-REFUND_FIFO_MAX = 200
-
-
-@dataclass
-class CooldownState:
-    last_message_at: str | None = None
-    last_user_message_at: str | None = None
-    messages_today: int = 0
-    messages_without_reply: int = 0
-    current_date: str = ""
-    morning_sent: bool = False
-    night_sent: bool = False
-    trigger_history: list[str] = field(default_factory=list)  # 最近N次发送的触发类型，用于话题多样性
-    event_timestamps: list[dict] = field(default_factory=list)  # [{"type":str,"time":str},...] Hawkes 用
-    reply_latencies: list[float] = field(default_factory=list)  # 最近N次回复延迟（小时），用于参数校准
-    busy_suppress_until: str | None = None  # 忙碌抑制截止时间 ISO
-    held_count: int = 0  # v4: 连续抑制计数（概率累积用）
-    accumulated_lambda: float = 0.0  # v4: 累积的 longing λ（概率累积机制）
-    last_user_msg_length: int | None = None  # v4.2: 最近一次用户消息长度
-    last_crash_at: str | None = None  # v4.1: 上次崩溃触发时间 ISO
-    crash_count_48h: int = 0  # v4.1: 48h 内崩溃次数（用于安全阀降级）
-    crash_timestamps: list[str] = field(default_factory=list)  # v6: 崩溃触发时间戳列表（滑动窗口统计）
-    last_longing_break_at: str | None = None  # v6: 上次逃生阀破防时间 ISO（冷却用）
-    recv_dedup: dict | None = None  # v9: 最近一次用户消息去重标记 {"text_sha","at","analysis"}（bridge 确定性记录 + standing order 升级共用）
-    drop_events: list[dict] = field(default_factory=list)  # A10: 回复饱和阻尼事件 [{time: iso, direction: str}]（30 分钟窗口滚动）
-    user_mood: dict | None = None  # v1.11 ①: 最近一次用户情绪感知 {"mood","intensity","at"}（TTL 由读取端 mood_fresh 判定，旧状态缺省自动补 None）
-    reply_stats: dict = field(default_factory=dict)  # A2: 分类型回复率统计 {trigger_type: {"sent": n, "replied": m}}（触发权重反馈闭环，daemon 发送时 sent+1、--user-msg 回复时 replied+1）
-    reply_pending: list[str] = field(default_factory=list)  # A2: FIFO 归因队列（未回复发送的 trigger 类型，回复时 pop 最旧一条，防多未回复时全记给最新）
-    consolidate_last_at: str | None = None  # C1: 上次记忆巩固时间 ISO（空闲静默路径防每 tick 重复）
-    refunded_msg_ids: list[str] = field(default_factory=list)  # F-A15-002: 最近退款 msg_id（有界 FIFO，防越窗口重放双退）
-
-    # ── 公开只读访问器（T11·Q1 字段收口：外部只读应走 getter，不直取字段）──
-    def get_last_message_at(self) -> str | None:
-        return self.last_message_at
-
-    def get_last_user_message_at(self) -> str | None:
-        return self.last_user_message_at
-
-    def get_messages_today(self) -> int:
-        return self.messages_today
-
-    def get_messages_without_reply(self) -> int:
-        return self.messages_without_reply
-
-    def get_trigger_history(self) -> list[str]:
-        return self.trigger_history
-
-    def get_event_timestamps(self) -> list[dict]:
-        return self.event_timestamps
-
-    def get_reply_latencies(self) -> list[float]:
-        return self.reply_latencies
-
-    def get_busy_suppress_until(self) -> str | None:
-        return self.busy_suppress_until
-
-    def get_held_count(self) -> int:
-        return self.held_count
-
-    def get_accumulated_lambda(self) -> float:
-        return self.accumulated_lambda
-
-    def get_recv_dedup(self) -> dict | None:
-        return self.recv_dedup
-
-    def get_user_mood(self) -> dict | None:
-        return self.user_mood
-
-    def get_reply_stats(self) -> dict:
-        return self.reply_stats
-
-    def get_consolidate_last_at(self) -> str | None:
-        return self.consolidate_last_at
-
-    def is_morning_sent(self) -> bool:
-        return self.morning_sent
-
-    def is_night_sent(self) -> bool:
-        return self.night_sent
-
-    def get_current_date(self) -> str:
-        return self.current_date
-
-    # ── 公开变更方法（T11·Q1 字段收口：外部变更应走方法，不直写字段）──
-
-    def append_trigger_history(self, trigger_type: str, max_len: int = 6):
-        """记录一次已发送触发类型（话题多样性）。超出按 FIFO 截断。"""
-        self.trigger_history.append(trigger_type)
-        if len(self.trigger_history) > max_len:
-            self.trigger_history = self.trigger_history[-max_len:]
-
-    def mark_morning_sent(self):
-        self.morning_sent = True
-
-    def mark_night_sent(self):
-        self.night_sent = True
-
-    def increment_held(self) -> int:
-        """累计一次空闲抑制（概率累积）。返回新的 held_count。"""
-        self.held_count += 1
-        return self.held_count
-
-    def set_accumulated_lambda(self, value: float):
-        self.accumulated_lambda = float(value)
-
-    def set_consolidate_last_at(self, value: str | None):
-        self.consolidate_last_at = value
-
-    def set_recv_dedup(self, dedup: dict | None):
-        self.recv_dedup = dedup
-
-    def set_last_message_at(self, value: str | None):
-        self.last_message_at = value
-
-    def set_last_user_message_at(self, value: str | None):
-        self.last_user_message_at = value
-
-    def set_user_mood(self, value: dict | None):
-        self.user_mood = value
-
-    def __post_init__(self):
-        # v6: 睡眠窗口来源配置（非 dataclass 字段，不序列化）。ChiguoState 负责注入。
-        self._quiet_start = 0
-        self._quiet_end = 8
-
-    def set_quiet_window(self, start: int, end: int):
-        """v6: 注入睡眠窗口（来自 config [schedule] quiet_start/quiet_end）。
-        v11: 类型强转 + 0-23 值域校验，非法回退默认 (0,8)，
-        防 _sleep_hours_in_range 的 day.replace(hour=…) 抛 ValueError。"""
-        try:
-            start, end = int(start), int(end)
-        except (ValueError, TypeError):
-            start, end = 0, 8
-        if not (0 <= start <= 23 and 0 <= end <= 23):
-            start, end = 0, 8
-        self._quiet_start = start
-        self._quiet_end = end
-
-    def quiet_window(self) -> tuple[int, int]:
-        """v7: 当前生效的静默窗口(start, end,含跨午夜语义)。
-        来源:生物钟学习(置信度达标)或配置默认——由 _sync_quiet_window 决定。"""
-        return self._quiet_start, self._quiet_end
-
-    def silent_hours(self, now: datetime, wall: bool = False) -> float:
-        """沉默时间（小时）。默认清醒沉默 = 墙钟 - 静默窗口（睡眠不算真沉默）；
-        wall=True 返回墙钟沉默（不减睡眠窗口，Bayesian/分类器用）。
-        时间戳缺失/不可解析 → 999.0（与"从未交互"语义一致），不崩溃。"""
-        if not self.last_user_message_at:
-            return 999.0
-        try:
-            last = datetime.fromisoformat(self.last_user_message_at)
-        except (ValueError, TypeError):
-            return 999.0
-        if last.tzinfo is None:
-            last = last.replace(tzinfo=CST)
-        raw = (now - last).total_seconds() / 3600
-        if wall:
-            return max(0.0, raw)
-        sleep_hours = self._sleep_hours_in_range(last, now)
-        return max(0.0, raw - sleep_hours)
-
-    # v6/v7: 睡眠窗口由 _sync_quiet_window 决定——生物钟学习置信度达标后
-    # 用学习窗口覆盖 config [schedule] quiet_start/quiet_end 默认值。
-    def _sleep_hours_in_range(self, start: datetime, end: datetime) -> float:
-        """计算 [start, end] 区间内落在睡眠窗口（配置注入，默认 0-8）的小时数。"""
-        qs, qe = self._quiet_start, self._quiet_end
-        total = 0.0
-        cur = start
-        guard = 0  # 防御性上限：每轮至少推进一个窗口，4000 轮 ≈ 数千天，杜绝死循环
-        while cur < end and guard < 4000:
-            day = cur.replace(hour=0, minute=0, second=0, microsecond=0)
-            ws = day.replace(hour=qs, minute=0, second=0, microsecond=0)
-            we = day.replace(hour=qe, minute=0, second=0, microsecond=0)
-            if qe < qs:
-                # v11: 跨午夜窗口先处理当天收尾段 [0:00, qe)（属昨日窗口尾声）。
-                # 否则查询起点 start 落在凌晨收尾段（如 6:30）时该窗口被整体跳过漏算。
-                if cur < we:  # 此时 we = 当天 qe
-                    tail_start = max(cur, day)
-                    tail_end = min(end, we)
-                    if tail_start < tail_end:
-                        total += (tail_end - tail_start).total_seconds() / 3600
-                    cur = we  # 推进到收尾段结束，再进入常规主段循环
-                    guard += 1
-                    continue
-                we = we + timedelta(days=1)  # 跨午夜窗口（如 22:00-08:00）
-            if we <= cur:
-                # 当前时间已在窗口之后 → 跳到下一天窗口起点
-                cur = ws + timedelta(days=1)
-                guard += 1
-                continue
-            if ws < end and we > cur:
-                overlap_start = max(cur, ws)
-                overlap_end = min(end, we)
-                total += (overlap_end - overlap_start).total_seconds() / 3600
-            cur = we
-            guard += 1
-        return total
-
-    def minutes_since_last_message(self, now: datetime) -> float | None:
-        """距上次主动消息的分钟数。naive 时间戳补 CST；解析失败返回 None；
-        未来时间戳返回 0（负值会被 can_send 误判为可发）。"""
-        if not self.last_message_at:
-            return 999.0
-        try:
-            last = datetime.fromisoformat(self.last_message_at)
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=CST)
-            delta = (now - last).total_seconds() / 60
-            return max(0.0, delta)
-        except (ValueError, TypeError):
-            return None
-
-    def is_busy_suppressed(self, now: datetime) -> bool:
-        """检查当前是否处于忙碌抑制期。"""
-        if not self.busy_suppress_until:
-            return False
-        try:
-            until = datetime.fromisoformat(self.busy_suppress_until)
-            return now < until
-        except (ValueError, TypeError):
-            return False
-
+def _check_owner_mismatch(config_owner: str | None, disk_owner: str | None) -> bool:
+    """真 owner 互异则需拦截。placeholder/空视为未分区不校验。"""
+    if _is_placeholder_owner(config_owner) or _is_placeholder_owner(disk_owner):
+        return False
+    return config_owner != disk_owner
 
 class StatePersistence:
     """T11·Q1 持久化单类：负责 chiguo_state.json 的原子读写 / 备份 / 校验和 /
@@ -434,13 +104,8 @@ class StatePersistence:
     def __init__(self, config: dict, owner):
         self.config = config
         self.owner = owner
-        # F-A16-01 (#309): 本次 RMW 是否经降级（无锁）进入锁区。由 state_lock()
-        # 在超时降级进入时置位、退出时清除；save() 据此做写前重读校验防 lost
-        # update。正常持锁路径恒 False，save 行为与现状完全一致。
         self._lock_degraded = False
 
-    # ── v6: 路径锚定。运行时文件基于 _base_dir（config 所在目录）解析，
-    # 不依赖 cwd —— 修复 cron 工作目录漂移导致的状态丢失/重建。
     def anchored(self, *parts: str) -> Path:
         base = self.config.get("_base_dir", ".") or "."
         return Path(base) / Path(*parts)
@@ -456,13 +121,10 @@ class StatePersistence:
     @property
     def memories_path(self) -> Path:
         mp = self.config.get("memory", {}).get("manual_path", "data/chiguo_memories.json")
-        # 绝对路径（测试/用户指定）原样保留；相对路径锚定到 base_dir
         p = Path(mp)
         if p.is_absolute():
             return p
         return self.anchored(mp)
-
-    # ── 持久化 ──────────────────────────────────────────
 
     def load(self):
         """从磁盘加载状态并应用到 owner。优先读正式文件，不存在则从 .tmp 恢复。
@@ -483,12 +145,10 @@ class StatePersistence:
                 self.apply_loaded_data(data)
                 restored = True
             except Exception as e:
-                # ── v5: 先尝试从 .bak 恢复 ──
                 if bak.exists():
                     try:
                         data = json.loads(bak.read_text())
                         self.apply_loaded_data(data)
-                        # 写入恢复后的主文件
                         self.save(_backup=False, _increment_tick=False)
                         restored = True
                         self.audit("state_recovered_from_bak", str(e))
@@ -498,7 +158,6 @@ class StatePersistence:
                     self.audit("state_corrupted", str(e))
 
                 if not restored:
-                    # .bak 也损坏或不存在 → 删除主文件，下次 save 重建
                     try:
                         p.unlink()
                     except OSError:
@@ -508,7 +167,6 @@ class StatePersistence:
             self.owner.last_tick = None
 
         if not restored and self.owner.last_tick is None:
-            # 从未运行过，或状态全部丢失
             self.audit("state_fresh_start", "no state file found")
 
         self._load_memories()
@@ -520,85 +178,88 @@ class StatePersistence:
         if mp.exists():
             try:
                 data = json.loads(mp.read_text())
-                # 数据防御：memories JSON 应为数组；dict 形状（遍历得键字符串）或含
-                # 非 dict 条目（mem.get 崩）→ 净化。
                 self.owner.memories = ([m for m in data if isinstance(m, dict)]
                                        if isinstance(data, list) else [])
             except Exception:
                 self.owner.memories = []
         else:
             self.owner.memories = []
-        # ── Q7 (#260): 读回持久化的 reminder 去重标记 → 回写到刚加载的记忆 ──
         self.owner._apply_memory_dedup()
 
+    def _cas_tick_seq(self, p: Path, owner=None) -> bool:
+        """CAS tick_seq: 读磁盘领先则跳升，降级且磁盘更新则 abort。返回 True 続行/False abort。纯 helper 可测。"""
+        o = owner or self.owner
+        disk_seq = None
+        try:
+            with open(p, "r", encoding="utf-8") as _f:
+                v = json.load(_f).get("tick_seq")
+            if isinstance(v, int):
+                disk_seq = v
+        except Exception:
+            logging.debug("F-A16-01 disk_seq 读取失败: %s", __import__('traceback').format_exc(), exc_info=False)
+        if self._lock_degraded and disk_seq is not None and disk_seq > o.tick_seq:
+            print(f"[chiguo_state] save 放弃：state_lock 降级且磁盘已更新到 tick_seq={disk_seq}(内存={o.tick_seq})", file=sys.stderr)
+            self._audit("save_degraded_abort", f"disk_seq={disk_seq} in_mem_seq={o.tick_seq}")
+            return False
+        if disk_seq is not None and disk_seq > o.tick_seq:
+            o.tick_seq = disk_seq + 1
+        o.tick_seq += 1
+        return True
+
+    def _backup_state(self, p: Path, bak_path: Path) -> None:
+        try:
+            shutil.copy2(str(p), str(bak_path))
+        except OSError:
+            pass
+        try:
+            os.chmod(bak_path, 0o600)
+        except OSError:
+            pass
+
+    def _read_disk_owner(self, p: Path) -> str | None:
+        try:
+            with open(p, "r", encoding="utf-8") as _f:
+                v = json.load(_f).get("owner")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        except Exception:
+            pass
+        return None
+
     def save(self, _backup: bool = True, _increment_tick: bool = True) -> bool:
-        """原子写入：先写 .tmp，再 os.replace（避免写崩损坏正式文件）。返回 bool。"""
+        """原子写入编排：锁→备份→OWNER校验→CAS→payload→checksum→atomic_write。"""
         p = self.state_path
         bak_path = Path(str(p) + ".bak")
         lock_path = str(p) + ".lock"
-        lock_acquired = self._lock_acquire(lock_path)
-        # ── #165: 锁获取失败（超时/降级）→ 不写盘，与 OSError 路径一致返回 False。
-        if not lock_acquired and not self.in_lock():
-            return False
-        try:
-            # ── v5: 写前备份 ──
-            if _backup and p.exists():
-                try:
-                    shutil.copy2(str(p), str(bak_path))
-                except OSError:
-                    pass
-                try:
-                    os.chmod(bak_path, 0o600)  # 备份含隐私状态 → 0600
-                except OSError:
-                    pass
-
-            if _increment_tick:
-                # ── v11 (#75): tick_seq 单调 CAS——写盘前读磁盘当前值，
-                # 若磁盘领先则内存值跳至磁盘值+1。
-                disk_seq = None
+        acquired = self._lock_acquire(lock_path)
+        if not acquired and not self.in_lock():
+            if self._lock_degraded:
+                # T14 巩固：降级进入时若本轮仍拿不到锁（对端仍持锁），
+                # 尝试读磁盘 CAS 审计分支，保证 save_degraded_abort
+                # 与 disk_seq>mem 组合审计 100% 覆盖（early abort 亦落审计）。
                 try:
                     with open(p, "r", encoding="utf-8") as _f:
-                        _disk_seq = json.load(_f).get("tick_seq")
-                    if isinstance(_disk_seq, int):
-                        disk_seq = _disk_seq
+                        _disk = json.load(_f).get("tick_seq")
+                    if isinstance(_disk, int) and _disk > self.owner.tick_seq:
+                        self._audit("save_degraded_abort", f"early_abort disk_seq={_disk} in_mem_seq={self.owner.tick_seq}")
                 except Exception:
-                    logging.debug("F-A16-01 disk_seq 读取失败: %s", __import__('traceback').format_exc(), exc_info=False)
-                # ── F-A16-01 (#309): 降级进入的 RMW 防 lost update ──
-                # 本次以 state_lock 超时降级（无锁）进入临界区，内存快照是并发进程
-                # 落盘前的陈旧读。save 此刻二次取到锁（他进程已释放）后，不得用陈旧
-                # 快照覆盖他人已落盘的更新：写前重读磁盘，若 disk tick_seq 比内存新
-                # （其他进程已写）→ 放弃本次写并明确告警。正常持锁路径 _lock_degraded
-                # 恒 False，此分支不触发，CAS 语义与现状完全一致。
-                if (self._lock_degraded
-                        and disk_seq is not None
-                        and disk_seq > self.owner.tick_seq):
-                    print(
-                        "[chiguo_state] save 放弃：state_lock 降级进入且磁盘已更新到 "
-                        f"tick_seq={disk_seq}(内存={self.owner.tick_seq})，本次写未落盘"
-                        "（防 lost update；下轮基于最新磁盘状态重试）",
-                        file=sys.stderr,
-                    )
-                    self._audit("save_degraded_abort",
-                                f"disk_seq={disk_seq} in_mem_seq={self.owner.tick_seq}")
+                    pass
+            return False
+        try:
+            if _backup and p.exists():
+                self._backup_state(p, bak_path)
+            if p.exists():
+                cfg_owner = _config_owner(self.config)
+                disk_owner = self._read_disk_owner(p)
+                if _check_owner_mismatch(cfg_owner, disk_owner):
+                    print(f"[chiguo_state] save 拒绝：owner 越权 config={cfg_owner!r} disk={disk_owner!r}", file=sys.stderr)
+                    self._audit("owner_mismatch", f"config_owner={cfg_owner!r} disk_owner={disk_owner!r}")
                     return False
-                if disk_seq is not None and disk_seq > self.owner.tick_seq:
-                    self.owner.tick_seq = disk_seq + 1
-                self.owner.tick_seq += 1
-
-            # 构建数据（不含 _checksum，先算哈希再添加）
+            if _increment_tick and not self._cas_tick_seq(p):
+                return False
             payload = self._build_payload()
-            # ── v5: 校验和（SHA256 of compact JSON，防位翻转）──
-            checksum = hashlib.sha256(
-                json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
-            ).hexdigest()
-            payload["_checksum"] = checksum
-
+            payload["_checksum"] = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             data = json.dumps(payload, indent=2, ensure_ascii=False)
-
-            # ── Q23: 原子写收敛至共享 chiguo_atomic.atomic_write
-            # （tmp 写入 0600 → fsync → 写前校验 → os.replace；
-            #  校验失败由 helper 清理 tmp 并抛异常，此处捕获后跳过本次 save——
-            #  与重构前一致：任何校验/读取失败都静默返回 False，不覆盖好状态）。
             def _verify_tmp(t):
                 try:
                     _v = json.loads(Path(t).read_text())
@@ -606,22 +267,16 @@ class StatePersistence:
                     raise ValueError("tmp validation failed: unreadable") from _e
                 if not isinstance(_v, dict) or "_version" not in _v:
                     raise ValueError("tmp validation failed: not a dict or no _version")
-
             try:
                 atomic_write(p, data, mode=0o600, fsync=True, verify=_verify_tmp)
             except (json.JSONDecodeError, ValueError) as e:
-                # R15 (#334, F-A18-04 M5): tmp 校验失败此前完全静默（连 warn 都无）
-                # ——补明确告警，与下方 OSError 路径（`save failed` warn）对齐可观测性；
-                # 返回值语义不变：跳过本次 save，不替换好状态。
-                print(f"[chiguo_state] save skipped: tmp 校验失败，不替换好状态: {e}",
-                      file=sys.stderr)
-                return False  # 跳过本次 save，不替换好状态
-
+                print(f"[chiguo_state] save skipped: tmp 校验失败，不替换好状态: {e}", file=sys.stderr)
+                return False
         except OSError as e:
             print(f"[chiguo_state] save failed: {e}", file=sys.stderr)
             return False
         finally:
-            if lock_acquired:
+            if acquired:
                 self._lock_release(lock_path)
         return True
 
@@ -641,16 +296,12 @@ class StatePersistence:
             "mono_anchor": time_module.monotonic(),
             "wall_anchor": datetime.now(CST).isoformat(),
             "tick_seq": o.tick_seq,
+            "owner": (_config_owner(self.config) if _config_owner(self.config) is not None else getattr(o, "_state_owner", None)),
         }
-        # ── v1.11+R3: Bayesian 在线学习缓存持久化 ──
         if o._bayesian_estimator is not None or o._bayesian_restored:
             payload["bayesian"] = (o.bayesian_estimator.to_state_dict()
                                    if o._bayesian_estimator is not None
                                    else o._bayesian_restored)
-        # ── Q7 (#260, T2 移植): reminder 去重标记持久化。从 o.memories 扫描带
-        # last_triggered_at 的条目（daemon 经 mark_memory_triggered 原地标记，
-        # 与 o.memories 共享对象引用），推导 {内容键: last_triggered_at} 落盘。
-        # 空 → 不写字段，状态文件保持干净（与 bayesian 字段同策略）。──
         dedup_payload = {
             _memory_dedup_key(m): m["last_triggered_at"]
             for m in o.memories
@@ -660,121 +311,84 @@ class StatePersistence:
             payload["memory_dedup"] = dedup_payload
         return payload
 
-    def apply_loaded_data(self, data: dict):
-        """解析并应用已加载的状态数据到 owner。v4/v5/v6 兼容（含校验和/版本门禁/迁移）。"""
-        o = self.owner
-        # ── v5: 校验和验证；v6: 不匹配 → 强制拒绝，走 load 的 .bak 恢复链。──
-        stored_checksum = data.pop("_checksum", None)
-        if stored_checksum:
-            recomputed = hashlib.sha256(
-                json.dumps(data, sort_keys=True, ensure_ascii=False).encode()
-            ).hexdigest()
-            if recomputed != stored_checksum:
-                self._audit("checksum_mismatch",
-                    f"stored={stored_checksum[:12]}... computed={recomputed[:12]}...")
-                raise ValueError("checksum mismatch — refusing to load, falling back to .bak")
+    def _hydrate_emotion(self, o, data: dict) -> None:
+        """纯段：emotion 字段过滤+强转→ChiguoEmotion。可测。"""
+        emo_fields = {k: v for k, v in data.get("emotion", {}).items() if k in ChiguoEmotion.__dataclass_fields__}
+        o.emotion = ChiguoEmotion(**_coerce_dataclass_fields(emo_fields, ChiguoEmotion))
 
-        # ── v6: 未来版本状态 → 记录审计并保守继续加载（字段过滤兜底）──
-        ver = data.get("_version")
-        if isinstance(ver, int) and ver > self.STATE_VERSION:
-            self._audit("state_future_version",
-                f"stored={ver} current={self.STATE_VERSION} loading anyway")
-
-        # 过滤未知字段，防止未来版本新增字段导致 dataclass __init__ 崩溃
-        emo_fields = {k: v for k, v in data.get("emotion", {}).items()
-                      if k in ChiguoEmotion.__dataclass_fields__}
-        # ── v11: 数值字段类型强转(字符串/None → 回退默认),防 clamp() TypeError ──
-        emo_fields = _coerce_dataclass_fields(emo_fields, ChiguoEmotion)
-        o.emotion = ChiguoEmotion(**emo_fields)
-        cd_fields = {k: v for k, v in data.get("cooldown", {}).items()
-                     if k in CooldownState.__dataclass_fields__}
-        # ── v11: 数值字段类型强转(如 messages_today 字符串 → 回退默认),防 can_send TypeError ──
-        cd_fields = _coerce_dataclass_fields(cd_fields, CooldownState)
-        # ── v5: accumulated_lambda null → 0.0 (type drift fix) ──
-        if cd_fields.get("accumulated_lambda") is None:
-            cd_fields["accumulated_lambda"] = 0.0
-        o.cooldown = CooldownState(**cd_fields)
-        # ── v6: 旧版本（无 crash_timestamps）迁移：从 last_crash_at 恢复单条记录 ──
-        if (not o.cooldown.crash_timestamps and
-                o.cooldown.last_crash_at):
+    def _hydrate_cooldown(self, o, data: dict) -> None:
+        """纯段：cooldown 字段过滤+强转+迁移。可测。"""
+        cd = {k: v for k, v in data.get("cooldown", {}).items() if k in CooldownState.__dataclass_fields__}
+        cd = _coerce_dataclass_fields(cd, CooldownState)
+        if cd.get("accumulated_lambda") is None:
+            cd["accumulated_lambda"] = 0.0
+        o.cooldown = CooldownState(**cd)
+        if not o.cooldown.crash_timestamps and o.cooldown.last_crash_at:
             o.cooldown.crash_timestamps = [o.cooldown.last_crash_at]
-        # ── v7: 生物钟学习器加载(字段过滤,旧版本无 circadian 字段 → 默认值)──
-        circ_fields = {k: v for k, v in (data.get("circadian") or {}).items()
-                       if k in CircadianTracker.__dataclass_fields__}
-        o.circadian = CircadianTracker(**circ_fields)
-        # ── v8: 双作息迁移(旧格式补桶 + 旧单桶窗口 → weekday_*)──
-        self.migrate_circadian_v8()
-        o._sync_quiet_window()
-        # ── v7: 待接续话题加载(普通 list,isinstance 检查兜底)──
-        pending = data.get("pending_topics")
-        o.pending_topics = pending if isinstance(pending, list) else []
-        o.last_tick = data.get("last_tick")
-        # ── 单调锚点对加载（类型校验；旧文件缺字段 → None 回退语义）──
-        mono = data.get("mono_anchor")
-        o.mono_anchor = (
-            mono if isinstance(mono, (int, float)) and not isinstance(mono, bool) else None)
-        wall = data.get("wall_anchor")
-        o.wall_anchor = wall if (isinstance(wall, str) and wall) else None
-        # ── F-A16-02 (#335): 锚点倒退检测 —— 系统重启后 time.monotonic() 归零 / 异机
-        # 迁移时钟域切换，持久化 mono_anchor > 当前单调钟（倒退）。若原样保留，当前进程
-        # _tick 的持久化单调锚点封顶基准失真（NTP 前跳防护在重启域失效）。这里检测到倒退
-        # → 告警审计 + 用当前 monotonic/CST 重建锚点基准，下次 save 落盘即自愈（CONTRACT-013
-        # 跨重启依旧有效）。wall_anchor 非法（非空 str）已由上方回退 None，下次 save 重建。
-        # 读路径保持防御式：检测失败/时间异常均不抛错，仅重建基准。──
-        if (o.mono_anchor is not None
-                and o.wall_anchor is not None
-                and time_module.monotonic() < o.mono_anchor):
-            self._audit(
-                "state_anchor_regression",
-                f"mono_anchor={o.mono_anchor:.2f} > current monotonic "
-                f"{time_module.monotonic():.2f} (reboot / clock-domain switch) "
-                f"— rebuilding anchor baseline")
-            o.mono_anchor = time_module.monotonic()
-            o.wall_anchor = datetime.now(CST).isoformat()
-        # ── v5: tick_seq ──
-        o.tick_seq = data.get("tick_seq", 0)
-        # ── v4: 加载人格 ──
-        pers_data = data.get("personality")
-        if pers_data:
-            o.personality = personality_from_dict(pers_data)
-            # ── v10: 恢复持久化基线（回归目标）；旧状态无 → 回退 toml 初始值 ──
-            saved_base = data.get("personality_baseline")
-            if isinstance(saved_base, dict) and saved_base:
-                o.personality.reset_baseline(saved_base)
-            else:
-                o.personality.reset_baseline(dict(o._personality_initial_baseline))
-        else:
-            emo_data = data.get("emotion", {})
-            tsun = emo_data.get("tsundere_index", 70.0)
-            o.personality.tsundere_intensity = tsun
-        # ── v10: 人格演变历史（普通 list，isinstance 检查兜底）──
-        ph = data.get("personality_history")
-        o.personality_history = ph if isinstance(ph, list) else []
-        # v2→v3 迁移：trigger_history 有数据但 event_timestamps 空
-        if (o.cooldown.trigger_history and
-                not o.cooldown.event_timestamps and
-                o.cooldown.last_message_at):
+        if o.cooldown.trigger_history and not o.cooldown.event_timestamps and o.cooldown.last_message_at:
             try:
-                base_time = datetime.fromisoformat(o.cooldown.last_message_at)
+                base = datetime.fromisoformat(o.cooldown.last_message_at)
                 n = len(o.cooldown.trigger_history)
                 for i, t in enumerate(o.cooldown.trigger_history):
-                    approx = base_time - timedelta(hours=(n - i) * 24 / max(n, 1))
-                    o.cooldown.event_timestamps.append({
-                        "type": t,
-                        "time": approx.isoformat(),
-                    })
+                    approx = base - timedelta(hours=(n - i) * 24 / max(n, 1))
+                    o.cooldown.event_timestamps.append({"type": t, "time": approx.isoformat()})
             except (ValueError, TypeError):
                 pass
 
-        # ── v1.11+R3: Bayesian 在线学习缓存（EMA 调优）还原——延迟初始化时交给 estimator ──
+    def _hydrate_circadian(self, o, data: dict) -> None:
+        """纯段：circadian 字段过滤+迁移+同步。可测。"""
+        cf = {k: v for k, v in (data.get("circadian") or {}).items() if k in CircadianTracker.__dataclass_fields__}
+        o.circadian = CircadianTracker(**cf)
+        self.migrate_circadian_v8()
+        o._sync_quiet_window()
+
+    def _hydrate_meta(self, o, data: dict) -> None:
+        pending = data.get("pending_topics")
+        o.pending_topics = pending if isinstance(pending, list) else []
+        o.last_tick = data.get("last_tick")
+        mono = data.get("mono_anchor")
+        o.mono_anchor = mono if isinstance(mono, (int, float)) and not isinstance(mono, bool) else None
+        wall = data.get("wall_anchor")
+        o.wall_anchor = wall if (isinstance(wall, str) and wall) else None
+        if o.mono_anchor is not None and o.wall_anchor is not None and time_module.monotonic() < o.mono_anchor:
+            self._audit("state_anchor_regression", f"mono_anchor={o.mono_anchor:.2f} > current {time_module.monotonic():.2f}")
+            o.mono_anchor = time_module.monotonic()
+            o.wall_anchor = datetime.now(CST).isoformat()
+        o.tick_seq = data.get("tick_seq", 0)
+        pers_data = data.get("personality")
+        if pers_data:
+            o.personality = personality_from_dict(pers_data)
+            sb = data.get("personality_baseline")
+            if isinstance(sb, dict) and sb:
+                o.personality.reset_baseline(sb)
+            else:
+                o.personality.reset_baseline(dict(o._personality_initial_baseline))
+        else:
+            o.personality.tsundere_intensity = data.get("emotion", {}).get("tsundere_index", 70.0)
+        ph = data.get("personality_history")
+        o.personality_history = ph if isinstance(ph, list) else []
         o._bayesian_restored = data.get("bayesian")
-        # ── Q7 (#260): reminder 去重标记还原（{记忆内容键: last_triggered_at}）。
-        # 缺失/非 dict → 空（旧状态/手改损坏不致崩，与未标记等价）。
-        # （T2 语义移植到 T11·Q1 StatePersistence apply_loaded_data。）──
         dedup = data.get("memory_dedup")
-        o._memory_dedup = (dict(dedup)
-                           if isinstance(dedup, dict)
-                           else {})
+        o._memory_dedup = dict(dedup) if isinstance(dedup, dict) else {}
+        raw_owner = data.get("owner")
+        o._state_owner = raw_owner.strip() if isinstance(raw_owner, str) and raw_owner.strip() else None
+
+    def apply_loaded_data(self, data: dict):
+        """解析并应用状态数据：校验和→版本门禁→3 hydrate 段→meta。可测分段编排。"""
+        o = self.owner
+        stored = data.pop("_checksum", None)
+        if stored:
+            recomputed = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            if recomputed != stored:
+                self._audit("checksum_mismatch", f"stored={stored[:12]}... computed={recomputed[:12]}...")
+                raise ValueError("checksum mismatch — refusing to load, falling back to .bak")
+        ver = data.get("_version")
+        if isinstance(ver, int) and ver > self.STATE_VERSION:
+            self._audit("state_future_version", f"stored={ver} current={self.STATE_VERSION} loading anyway")
+        self._hydrate_emotion(o, data)
+        self._hydrate_cooldown(o, data)
+        self._hydrate_circadian(o, data)
+        self._hydrate_meta(o, data)
 
     def migrate_circadian_v8(self):
         """v8 双作息迁移(幂等,加载时执行一次)：
@@ -797,8 +411,6 @@ class StatePersistence:
                     dt = datetime.fromisoformat(str(d.get("date", "")))
                 except (ValueError, TypeError):
                     continue  # 解析失败 → 丢弃
-                # 调休优先 → 节假日 → 周几启发式(迁移时 holiday_parser 已就绪;
-                # 构造失败为 None → 直接启发式)
                 hp = o.holiday_parser
                 if hp is not None and hp.is_makeup_workday(dt):
                     d["bucket"] = "weekday"
@@ -808,7 +420,6 @@ class StatePersistence:
                     d["bucket"] = "weekday" if dt.weekday() < 5 else "weekend"
                 migrated.append(d)
             setattr(o.circadian, key, migrated)
-        # 迁移门控类型漂移防护:旧 confidence 可能为字符串 → 强转,失败视为 0(不继承)
         try:
             legacy_conf = float(o.circadian.confidence)
         except (ValueError, TypeError):
@@ -841,10 +452,6 @@ class StatePersistence:
     def audit(self, event: str, detail: str = ""):
         """公开审计入口（daemon/核心公共 API 用）。"""
         self._audit(event, detail)
-
-    # ── Q21: 跨进程写锁（fcntl.flock）已收敛至共享模块 chiguo_locks。
-    # 锁文件常驻，os.replace 换 inode 不影响锁；可重入（同进程共享同一 fd
-    # 与深度计数），防止 cron + 手动运行多实例竞争写导致 checksum 不匹配→删重建。
 
     def _lock_acquire(self, lock_path: str) -> bool:
         """获取进程级独占锁（可重入，delegate → chiguo_locks.acquire）。
@@ -896,7 +503,6 @@ class StatePersistence:
         """返回持久化的单调锚点对 (mono, wall)，缺失/损坏为 None。"""
         return self.owner.mono_anchor, self.owner.wall_anchor
 
-
 class ChiguoState:
     """迟菓全局状态管理 v2"""
 
@@ -923,7 +529,6 @@ class ChiguoState:
 
     def __init__(self, config: dict):
         self.config = config
-        # ── T11·Q1: 持久化单类（文件层读写/锁/审计/校验和），持有 owner=self ──
         self._persistence = StatePersistence(config, self)
         emo_cfg = config.get("emotion", {})
         self.emotion = ChiguoEmotion(
@@ -933,31 +538,21 @@ class ChiguoState:
             energy=emo_cfg.get("energy", 85.0),
         )
         self.cooldown = CooldownState()
-        # ── v7: 生物钟学习器(作息数据 + 学习到的睡眠窗口)──
         self.circadian = CircadianTracker()
         self._apply_quiet_window()
         self.memories: list[dict] = []
-        # ── Q7 (#260): reminder 去重标记持久化缓存 {记忆内容键: last_triggered_at}。
-        # load 时读回 state 的 memory_dedup 字段，经 _apply_memory_dedup 回写到
-        # self.memories；save 时从 self.memories 扫描已标记条目落盘。──
         self._memory_dedup: dict[str, str] = {}
-        # ── v7: 待接续话题(接话茬)。[{topic, source, created_at, attempted}] ──
         self.pending_topics: list[dict] = []
         self.tick_seq: int = 0  # v5: 单调递增 tick 计数器，用于检测遗漏
+        self._state_owner: str | None = _config_owner(config)
 
-        # ── v4: 多维人格（构造统一走 _build_personality，与热重载单一构造点）──
         self.personality = self._build_personality(config)
-        # ── v10: 人格初始基线快照（__post_init__ 已记录构造值；加载旧状态无持久化基线时回退到它）──
         self._personality_initial_baseline = dict(self.personality._baseline)
-        # ── v10: 人格演变历史 [{ts, dims}]，滚动 200 条 ──
         self.personality_history: list[dict] = []
 
-        # ── v4: Bayesian 用户状态推断器（延迟初始化，避免循环导入）──
         self._bayesian_estimator = None
-        # ── v1.11+R3: 从状态文件还原的 Bayesian 似然缓存（在线学习 EMA 调优跨进程保留）──
         self._bayesian_restored: dict | None = None
 
-        # 课表解析器（v6.1: xlsx/cache 路径锚定 _base_dir，不依赖 cwd）
         sched = config.get("schedule", {})
         xlsx_path = sched.get("xlsx_path", "data/xskb.xlsx")
         sem_start_str = sched.get("semester_start", "")
@@ -975,7 +570,6 @@ class ChiguoState:
                 self.semester_end = date_type.fromisoformat(sem_end_str)
             except (ValueError, TypeError):
                 pass
-        # 考试周范围(3c:已移除 exam_ranges 属性,唯一来源 = override 区间门面 exam_season_now;M18)
         refresh_schedule_cache(
             str(self._anchored(xlsx_path)),
             str(self._anchored("schedule_cache.json")),
@@ -983,18 +577,14 @@ class ChiguoState:
             enabled=bool(sched.get("enabled", True)),
         )
 
-        # 节假日判断器（优先级高于课表）
         try:
             self.holiday_parser = HolidayParser(
                 data_path=str(self._anchored("holidays.json"))
             )
         except Exception as exc:
-            # 构造崩溃兜底(#83):内置数据/override 损坏时降级为无假日判定,
-            # 所有使用点均做 None 防护;配合 #82 的 holiday.py 修复。
             print(f"[warn] HolidayParser 构造失败，节假日判断降级: {exc}", file=sys.stderr)
             self.holiday_parser = None
 
-        # 记忆后端（v1.8 解耦：memory/ 包工厂；v1.15 起 mem0 唯一后端，backend 仅 mem0/auto）
         base_dir = str(self._anchored("."))
         mem_cfg = config.get("memory", {})
         self.memory_bridge = create_backend(mem_cfg, base_dir=base_dir)
@@ -1004,15 +594,10 @@ class ChiguoState:
         self._rc_cache: dict = {}   # {date_str: resolved_classes}(availability/schedule_status 共享)
         self._scale_cache: dict = {}   # {date_str: trigger_scale}(计划修饰参数,每 tick 按日期缓存)
 
-        # ── 单调锚点对（持久化顶层字段；cron 模式 NTP 壁钟前跳封顶用）──
-        # 与 last_tick 同区初始化：_load/_apply_loaded_data 从磁盘恢复，缺失/损坏回退 None。
         self.mono_anchor: float | None = None
         self.wall_anchor: str | None = None
 
         self._load()
-
-    # ── v6: 路径锚定。运行时文件基于 _base_dir（config 所在目录）解析，
-    # 不依赖 cwd —— 修复 cron 工作目录漂移导致的状态丢失/重建。
 
     def _anchored(self, *parts: str) -> Path:
         """v6: 路径锚定（委托到持久化单类）。运行时文件基于 _base_dir 解析。"""
@@ -1044,7 +629,6 @@ class ChiguoState:
             start, end, conf = int(start), int(end), float(conf)
         except (ValueError, TypeError):
             start, end, conf = 0, 8, 0.0
-        # v11: 0-23 值域校验(手改/损坏数据可能越界 → 回退配置默认),防 day.replace 抛 ValueError
         if not (0 <= start <= 23 and 0 <= end <= 23):
             start, end = 0, 8
         self.circadian.set_active_bucket(self._current_bucket(now), start, end, conf)
@@ -1087,14 +671,9 @@ class ChiguoState:
         _personality_initial_baseline（回归目标）与 holiday_parser 随 config 刷新。
         """
         self.config = new_config
-        # ① personality 初始基线（回归目标）随新 config 重算；运行时演变值保留到随后 _load()
         self._reapply_personality_config()
-        # ② holiday_parser：读取 base_dir 下 holidays.json（可能有运行时更新）
         self._reapply_holiday_parser()
-        # ③ cooldown 静默窗口（起始/结束）——conf 达标用学习窗口,否则回退 config 默认
         self._sync_quiet_window()
-        # ④ 学期日期同步:config 的 semester_start/end 可能变化 → 更新 state 复制品
-        #    (availability/on_break 判定以 load_sources 的新值为主,此处供 state 层属性一致)
         sched = new_config.get("schedule", {})
         try:
             self.semester_start = date_type.fromisoformat(sched.get("semester_start", ""))
@@ -1107,8 +686,6 @@ class ChiguoState:
                 self.semester_end = date_type.fromisoformat(se_str)
             except (ValueError, TypeError):
                 pass
-        # ⑤ 日键缓存失效:_rc_cache/_scale_cache 与 config 派生数据同根,显式清空
-        #    (config 替换不体现于源文件 mtime → 指纹机制覆盖不到,清理钩子兜底,F-A20-07)
         self._rc_cache = {}
         self._scale_cache = {}
 
@@ -1127,7 +704,6 @@ class ChiguoState:
                 data_path=str(self._anchored("holidays.json"))
             )
         except Exception as exc:
-            # 构造崩溃兜底(#83):与 __init__ 同语义,降级为无假日判定
             print(f"[warn] HolidayParser 构造失败，节假日判断降级: {exc}", file=sys.stderr)
             self.holiday_parser = None
 
@@ -1138,8 +714,6 @@ class ChiguoState:
     @property
     def memories_path(self) -> Path:
         return self._persistence.memories_path
-
-    # ── 持久化（文件层委托到 StatePersistence 单类；数据应用留在核心类）──
 
     def _load(self):
         """私有加载（测试白盒沿用），委托持久化单类。"""
@@ -1202,8 +776,6 @@ class ChiguoState:
                 mem.pop("last_triggered_at", None)
                 break
 
-
-
     def _migrate_personality_baseline(self, data: dict):
         """v10 迁移：恢复持久化人格基线（回归目标）；旧状态无持久化基线 →
         回退到 toml 构造函数初始基线（_personality_initial_baseline）。
@@ -1237,9 +809,6 @@ class ChiguoState:
 
     STATE_VERSION = 10  # v8: 双作息(circadian 分桶学习 + 迁移); v9: cooldown.recv_dedup; v10: personality_baseline + personality_history
 
-    # ── v6: 跨进程写锁（fcntl.flock）。文件层实现已委托到 StatePersistence；
-    # 这里保留公开委托入口，供核心决策与 daemon 复用同一把锁。
-
     def _lock_acquire(self, lock_path: str) -> bool:
         return self._persistence.lock_acquire(lock_path)
 
@@ -1269,8 +838,6 @@ class ChiguoState:
         """返回持久化的单调锚点对 (mono, wall)，缺失/损坏为 None。"""
         return self._persistence.monotonic_anchor_pair()
 
-    # ── v4：Bayesian 用户状态推断器（延迟初始化）────────────
-
     @property
     def bayesian_estimator(self):
         """延迟导入 Bayesian 推断器，避免循环依赖。"""
@@ -1279,7 +846,6 @@ class ChiguoState:
             self._bayesian_estimator = UserStateEstimator(
                 self.config.get("bayesian", {})
             )
-            # v1.11+R3: 还原上次进程的在线学习缓存（EMA 调优不丢）
             if self._bayesian_restored:
                 self._bayesian_estimator.restore_state_dict(self._bayesian_restored)
         return self._bayesian_estimator
@@ -1296,7 +862,6 @@ class ChiguoState:
         if now is None:
             now = datetime.now(CST)
 
-        # 从未交互过 → 返回默认中性状态（墙钟，睡眠也计入天数）
         silent_h = self.cooldown.silent_hours(now, wall=True)
         if silent_h > 720:  # 30 天从未交互
             default_posterior = {"chatting": 0.05, "browsing": 0.50, "busy": 0.10,
@@ -1309,7 +874,6 @@ class ChiguoState:
                 "should_send_bayesian": True,
                 "state_description": "未知（从未交互）",
             }
-            # A1: 仅启用时产出熵/透传后验（默认关闭恒等，与常规路径一致）
             b_cfg = self.config.get("bayesian", {})
             try:
                 ig_thr = float(b_cfg.get("info_gain_threshold", 0.0) or 0.0)
@@ -1331,7 +895,6 @@ class ChiguoState:
                 self.cooldown.last_user_msg_length if self.cooldown.last_user_msg_length is not None else 10
             )
 
-        # 课表状态（schedule_status 门面:节假日/周末恒 not-in-class;课表不可用 → None → 不算 busy）
         in_class = False
         try:
             sch = self.schedule_status(now)
@@ -1342,7 +905,6 @@ class ChiguoState:
         observations = {
             "reply_latency": last_latency,
             "msg_length": last_msg_len,
-            # 墙钟沉默时间：Bayesian classifier 阈值基于墙钟校准
             "silence_hours": self.cooldown.silent_hours(now, wall=True),
             "in_class": in_class,
             "is_weekend": now.weekday() >= 5,
@@ -1350,11 +912,6 @@ class ChiguoState:
 
         result = self.bayesian_estimator.infer(observations, now)
 
-        # ── A3: 信息增益门控「不确定才发」（info_gain_threshold 默认 0 关闭恒等，可灰度）──
-        # 对标 revive-companion 的信息增益/不确定性驱动探测：熵高（状态不确定）→ 微调
-        # Bayesian 发送效用（+info_gain_utility_bonus，默认 0.1）并放行 should_send_bayesian，
-        # 提高探询型消息的发送概率（agent 侧读 decision.bayesian.utility 感知）。
-        # 最简单实现：只上调 utility/放行标记；触发类型级加权为可扩展点。
         b_cfg = self.config.get("bayesian", {})
         try:
             ig_threshold = float(b_cfg.get("info_gain_threshold", 0.0) or 0.0)
@@ -1370,8 +927,6 @@ class ChiguoState:
             result["info_gain_boost"] = True
         return result
 
-    # ── v4: 人格自适应 ─────────────────────────────────────
-
     def adapt_personality(self, interaction: dict):
         """
         根据互动微调人格。变化极小（每次 <0.15），经数周/月才显著。
@@ -1385,8 +940,6 @@ class ChiguoState:
         itype = interaction.get("type", "")
 
         if itype == "user_reply":
-            # M-10: LLM 分析可能给出字符串/None → 强转兜底（非数值回退默认），
-            # 防 TypeError 使整段人格演化/基线回归/演变历史被外层 except 静默跳过
             try:
                 warmth = float(interaction.get("warmth", 0.0))
             except (TypeError, ValueError):
@@ -1397,14 +950,11 @@ class ChiguoState:
             except (TypeError, ValueError):
                 msg_len = 10
 
-            # 温暖回复
             if warmth > 0.3:
                 delta = delta.evolve(PersonalityDeltas.WARM_REPLY)
-            # 冷淡回复
             elif warmth < -0.2:
                 delta = delta.evolve(PersonalityDeltas.COLD_REPLY)
 
-            # 回复速度
             if lat_cat == "fast":
                 delta = delta.evolve(PersonalityDeltas.FAST_REPLY)
             elif lat_cat == "slow":
@@ -1412,7 +962,6 @@ class ChiguoState:
             elif lat_cat == "very_slow":
                 delta = delta.evolve(PersonalityDeltas.VERY_SLOW_REPLY)
 
-            # 长消息 → 更开放
             if msg_len > 30:
                 delta = delta.evolve(PersonalityDeltas.LONG_MESSAGE)
 
@@ -1425,15 +974,12 @@ class ChiguoState:
 
         self.personality.evolve(delta)
 
-        # ── v10: 基线回归：每步向初始值软靠拢 v += (baseline - v) * rate，
-        # 防人格漂移（热情回复甜妹化/持续沉默极端化）。rate 从 toml [personality] 读，0=关闭。
         try:
             rate = float(self.config.get("personality", {}).get("regress_rate", 0.01))
         except (ValueError, TypeError):
             rate = 0.01
         self.personality.regress_to_baseline(rate)
 
-        # ── v10: 人格演变历史（滚动 200 条，超出丢最旧）──
         self.personality_history.append({
             "ts": datetime.now(CST).isoformat(),
             "dims": {
@@ -1443,8 +989,6 @@ class ChiguoState:
         })
         if len(self.personality_history) > 200:
             del self.personality_history[:-200]
-
-    # ── 寒暑假检测 ────────────────────────────────────────
 
     @property
     def break_state_path(self) -> Path:
@@ -1480,22 +1024,16 @@ class ChiguoState:
         """是否在假期中（日期区间 / 手动覆盖 / 学期自动结束 / 学期未开始）"""
         data = self._read_break_state()
         if data:
-            # 手动无限期覆盖（兼容旧 on_break 字段）
             if data.get("manual_override") or data.get("on_break"):
                 return True
         today = datetime.now(CST).date()
-        # 日期区间判定
         if self._in_break_range(today):
             return True
-        # 学期未开始（寒假，与学期结束对称）
         if self.semester_start and today < self.semester_start:
             return True
-        # 学期自动结束
         if self.semester_end and today > self.semester_end:
             return True
         return False
-
-    # ── 课表查询 ──────────────────────────────────────────
 
     def _cache_fingerprint(self) -> str:
         """日键缓存失效指纹(§3.3):读路径源文件 mtime 摘要。
@@ -1579,7 +1117,6 @@ class ChiguoState:
                     "on_break": False, "breaks": _breaks_info()}
         if not src.schedule_valid:
             return None  # 课表未启用/无数据/解析异常 → None 语义保持
-        # ── 组装（读路径 load_sources 缓存，形状与旧 schedule_query 逐键兼容）──
         active = {p: c for p, c in rc.items() if not c.get("cancelled")}
         cp = current_period(now)
         result = {"in_class": cp in active, "on_break": False, "breaks": _breaks_info()}
@@ -1591,8 +1128,6 @@ class ChiguoState:
                                         "minutes_remaining": max(0, (end_time - now).total_seconds() / 60)}
         else:
             result["current_course"] = None
-        # 深夜修复(#83):cp=None 时 `p > (cp or 0)` 会把已结束课程算入 →
-        # 追加 `_PERIOD_START[p] > now.time()`(与 day_plan.py 同模式)
         future = [p for p in sorted(active) if p > (cp or 0) and _PERIOD_START[p] > now.time()]
         nxt = next((active[p] for p in future), None)
         if nxt is not None:
@@ -1634,8 +1169,6 @@ class ChiguoState:
             if s <= today <= e:
                 return True
         return False
-
-    # ── 计划修饰参数(§5.2) ──────────────────────────────
 
     def trigger_scale_now(self, now) -> dict:
         """计划文件修饰参数(§5.2):ref → 日期解析,当日命中取 trigger_scale 映射。
@@ -1686,124 +1219,104 @@ class ChiguoState:
         self._scale_cache = {"key": key, "scale": scale}
         return scale
 
-    # ── 时间推进（半衰期驱动） ──────────────────────────
-
-    def tick(self, hours: float, now: datetime):
-        """
-        推进时间。所有情绪变化用半衰期公式，不再线性。
-        """
-        cfg = self.config.get("emotion", {})
-        silent_h = self.cooldown.silent_hours(now)
-        # A1: 弹性衰减基准（偏离 target 越远回弹越快；默认 100 = 情绪值域）
-        # 注意：变量名避开下方 tsundere 人格回归的 baseline（tsundere_intensity）
-        elastic_baseline = cfg.get("elastic_baseline", 100.0)
-
-        # ── 孤独值: 向 100 靠拢，半衰期控制速度 ──
-        half_life = cfg.get("loneliness_gain_half_life", 40.0)
-        # 长时间沉默，靠拢加速（半衰期 ×0.6 → 恢复速度 ≈ 1.67 倍）
+    def _tick_loneliness(self, cur: float, hours: float, silent_h: float, cfg: dict) -> float:
+        """纯 helper：孤独向 baseline 弹性恢复，静默>24h 半衰期×0.6。"""
+        hl = cfg.get("loneliness_gain_half_life", 40.0)
         if silent_h > 24:
-            half_life = half_life * 0.6
-        old_lo = self.emotion.loneliness
-        self.emotion.loneliness = elastic_recover(
-            self.emotion.loneliness, self.emotion.baseline_loneliness, hours, half_life, elastic_baseline
-        )
+            hl *= 0.6
+        return elastic_recover(cur, self.emotion.baseline_loneliness, hours, hl, cfg.get("elastic_baseline", 100.0))
 
-        # ── 不安值: 向 100 靠拢。知道主人在上课时焦虑减速 ──
-        old_anx = self.emotion.anxiety
-        anx_hl = cfg.get("anxiety_gain_half_life", 30.0)
-        # 节假日/周末：主人休息，焦虑极慢（构造失败 None → 走课表调节分支）
+    def _tick_anxiety(self, cur: float, hours: float, now: datetime, cfg: dict) -> float:
+        """纯 helper：不安向 baseline 恢复，节假日/课表调节半衰期。"""
+        hl = cfg.get("anxiety_gain_half_life", 30.0)
         if self.holiday_parser is not None and self.holiday_parser.is_holiday(now):
-            anx_hl *= 2.5  # 放假，完全放松
+            hl *= 2.5
         elif self.holiday_parser is not None and not self.holiday_parser.is_school_day(now):
-            anx_hl *= 2.0  # 普通周末，焦虑减速
+            hl *= 2.0
         else:
-            # 课表调节:主人在上课/今天满课 → 焦虑涨得慢（已知原因,不那么慌）
             try:
                 sch = self.schedule_status(now)
                 if sch and sch["in_class"]:
-                    anx_hl *= 1.8  # 半衰期延长80% → 焦虑几乎不涨
+                    hl *= 1.8
                 elif sch and sch.get("class_load") == "heavy":
-                    anx_hl *= 1.4  # 满课日 → 焦虑涨得慢
+                    hl *= 1.4
             except Exception:
                 logging.debug("anxiety 半衰期调制失败: %s", __import__('traceback').format_exc(), exc_info=False)
-        self.emotion.anxiety = elastic_recover(self.emotion.anxiety, self.emotion.baseline_anxiety, hours, anx_hl, elastic_baseline)
+        return elastic_recover(cur, self.emotion.baseline_anxiety, hours, hl, cfg.get("elastic_baseline", 100.0))
 
-        # 记录变化率（urgency 感知：暴涨 vs 缓慢累积）
-        if hours > 0.01:
-            self.emotion.loneliness_rate = (
-                self.emotion.loneliness - old_lo
-            ) / hours
-            self.emotion.anxiety_rate = (
-                self.emotion.anxiety - old_anx
-            ) / hours
+    def _tick_affection(self, cur: float, hours: float, silent_h: float, cfg: dict) -> float:
+        """纯 helper：好感向 baseline 极慢靠拢，静默>24 才动。"""
+        if silent_h <= 24:
+            return cur
+        ahl = cfg.get("affection_loss_half_life", 500.0)
+        return elastic_recover(cur, self.emotion.baseline_affection, hours, ahl, cfg.get("elastic_baseline", 100.0))
 
-        # ── 好感值: 向基线（默认 0）极慢靠拢 ──
-        aff_hl = cfg.get("affection_loss_half_life", 500.0)
-        if silent_h > 24:
-            self.emotion.affection = elastic_recover(self.emotion.affection, self.emotion.baseline_affection, hours, aff_hl, elastic_baseline)
+    def _tick_energy(self, cur: float, hours: float, cfg: dict) -> float:
+        """纯 helper：元气向 100 恢复。"""
+        hl = cfg.get("energy_regen_half_life", 8.0)
+        return elastic_recover(cur, 100.0, hours, hl, cfg.get("elastic_baseline", 100.0))
 
-        # ── 傲娇指数（快变量：情绪波动）──
+    def _tick_tsundere(self, hours: float) -> None:
         if self.emotion.affection > 65:
             self.emotion.tsundere_index -= 0.3 * hours
         if self.emotion.anxiety > 60:
             self.emotion.tsundere_index += 0.2 * hours
-
-        # ── v4: 傲娇指数向人格基线回归 ──
         baseline = self.personality.tsundere_intensity
         if self.emotion.tsundere_index != baseline:
-            # 慢速向基线靠拢（半衰期 ~200h）
             self.emotion.tsundere_index += (baseline - self.emotion.tsundere_index) * (1 - 2.0 ** (-hours / 200.0))
 
-        # ── 元气值: 向 100 恢复 ──
-        energy_hl = cfg.get("energy_regen_half_life", 8.0)
-        self.emotion.energy = elastic_recover(self.emotion.energy, 100.0, hours, energy_hl, elastic_baseline)
+    def _tick_noise(self, old_lo: float, old_anx: float, hours: float, cfg: dict) -> None:
+        """OU 噪声：经 closure 传递 _noise_x 私有可变状态，不共享。"""
+        if cfg.get("noise_enabled", 0) == 0:
+            return
+        try:
+            theta = float(cfg.get("noise_theta", 0.5))
+            lo_sigma = float(cfg.get("noise_loneliness_sigma", 0.3))
+            anx_sigma = float(cfg.get("noise_anxiety_sigma", 0.3))
+        except (TypeError, ValueError):
+            theta, lo_sigma, anx_sigma = 0.5, 0.3, 0.3
+        rng = self._noise_rng()
+        lo_step = abs(self.emotion.loneliness - old_lo)
+        anx_step = abs(self.emotion.anxiety - old_anx)
+        nx = self._noise_x
+        prev_lo, prev_anx = nx["loneliness"], nx["anxiety"]
+        x_lo = ou_step(prev_lo, 0.0, theta, lo_sigma, hours, rng)
+        x_anx = ou_step(prev_anx, 0.0, theta, anx_sigma, hours, rng)
+        nx["loneliness"], nx["anxiety"] = x_lo, x_anx
+        self.emotion.loneliness += noise_cap(lo_step, x_lo - prev_lo)
+        self.emotion.anxiety += noise_cap(anx_step, x_anx - prev_anx)
 
-        # ── A2: 情绪交互矩阵（推进后调用一次；乘数=1.0 默认关闭 → 恒等）──
+    def _tick_baseline_forget(self, hours: float, cfg: dict) -> None:
+        try:
+            hl = float(cfg.get("baseline_forget_half_life", 720.0))
+        except (TypeError, ValueError):
+            hl = 720.0
+        if hl <= 0 or hours <= 0:
+            return
+        for dim, dflt in BASELINE_DEFAULTS.items():
+            key = f"baseline_{dim}"
+            cur = getattr(self.emotion, key)
+            if cur != dflt:
+                setattr(self.emotion, key, cur + (dflt - cur) * (1 - 2.0 ** (-hours / hl)))
+
+    def tick(self, hours: float, now: datetime):
+        """推进时间：4 delta helpers + 交互矩阵 + OU + 基线淡忘。"""
+        cfg = self.config.get("emotion", {})
+        silent_h = self.cooldown.silent_hours(now)
+        old_lo, old_anx = self.emotion.loneliness, self.emotion.anxiety
+        self.emotion.loneliness = self._tick_loneliness(old_lo, hours, silent_h, cfg)
+        self.emotion.anxiety = self._tick_anxiety(old_anx, hours, now, cfg)
+        if hours > 0.01:
+            self.emotion.loneliness_rate = (self.emotion.loneliness - old_lo) / hours
+            self.emotion.anxiety_rate = (self.emotion.anxiety - old_anx) / hours
+        self.emotion.affection = self._tick_affection(self.emotion.affection, hours, silent_h, cfg)
+        self._tick_tsundere(hours)
+        self.emotion.energy = self._tick_energy(self.emotion.energy, hours, cfg)
         new_vals = apply_interaction_matrix(asdict(self.emotion), cfg)
         for k, v in new_vals.items():
             setattr(self.emotion, k, v)
-
-        # ── ② 情绪自然波动（OU 噪声；noise_enabled=0 关闭 → 行为恒等，可灰度）──
-        # 对标 lacuna_core FluctuationEngine：小幅带均值回归的噪声消除"机械感"。
-        # 仅作用于 loneliness/anxiety（当下感受维度）；affection（长期存量）/tsundere
-        # （角色维度）/energy（资源+安全阀）不碰。独立 RNG 不污染全局 random 序列；
-        # 噪声为瞬态不落盘；动态上限 min(σ√Δt, 0.5×弹性步进) 保证 噪声<信号。
-        if cfg.get("noise_enabled", 0) != 0:
-            try:
-                noise_theta = float(cfg.get("noise_theta", 0.5))
-                lo_sigma = float(cfg.get("noise_loneliness_sigma", 0.3))
-                anx_sigma = float(cfg.get("noise_anxiety_sigma", 0.3))
-            except (TypeError, ValueError):
-                noise_theta, lo_sigma, anx_sigma = 0.5, 0.3, 0.3
-            rng = self._noise_rng()
-            lo_step = abs(self.emotion.loneliness - old_lo)
-            anx_step = abs(self.emotion.anxiety - old_anx)
-            # OU 内存态：x += θ(0−x)Δt + σ√Δt·ε；cron 单次 tick 从 0 出发等效
-            # 零均值扰动，loop 常驻模式连续 tick 时均值回归生效（θ 有效）。
-            # A4 修复：x 是累积状态，加到 emotion 的必须是"本次增量"x_i − x_{i-1}，
-            # 而非完整 x_i——否则 loop 常驻模式第 N tick 会把前 N-1 次噪声再累加一遍
-            # （单次 cron 从 0 出发 prev=0 → 增量=x，行为与之前逐位一致）。
-            nx = self._noise_x
-            prev_lo, prev_anx = nx["loneliness"], nx["anxiety"]
-            x_lo = ou_step(prev_lo, 0.0, noise_theta, lo_sigma, hours, rng)
-            x_anx = ou_step(prev_anx, 0.0, noise_theta, anx_sigma, hours, rng)
-            nx["loneliness"], nx["anxiety"] = x_lo, x_anx
-            self.emotion.loneliness += noise_cap(lo_step, x_lo - prev_lo)
-            self.emotion.anxiety += noise_cap(anx_step, x_anx - prev_anx)
-
-        # ── ④ 情绪基线淡忘（向全局默认弱回归，防无限漂移；默认 720h）──
-        try:
-            forget_hl = float(cfg.get("baseline_forget_half_life", 720.0))
-        except (TypeError, ValueError):
-            forget_hl = 720.0
-        if forget_hl > 0 and hours > 0:
-            for dim, dflt in BASELINE_DEFAULTS.items():
-                key = f"baseline_{dim}"
-                cur = getattr(self.emotion, key)
-                if cur != dflt:
-                    setattr(self.emotion, key,
-                            cur + (dflt - cur) * (1 - 2.0 ** (-hours / forget_hl)))
-
+        self._tick_noise(old_lo, old_anx, hours, cfg)
+        self._tick_baseline_forget(hours, cfg)
         self._finalize(now)
 
     def update_emotion_baseline(self, interaction: dict):
@@ -1853,75 +1366,25 @@ class ChiguoState:
             self._noise_x = {"loneliness": 0.0, "anxiety": 0.0}
         return rng
 
-    # ── v7: 接话茬 — 待接续话题管理 ────────────────────
-
     def add_pending_topic(self, topic: str, now: datetime, source: str = "analysis"):
-        """记录待接续话题。同话题视为已接续 → 移除旧条目后重新计时(活跃对话不触发)。
-        非字符串/空白 → 忽略。上限 20 条,超出丢弃最旧。"""
-        if not isinstance(topic, str) or not topic.strip():
-            return
-        topic = topic.strip()[:50]
-        self.pending_topics = [
-            t for t in self.pending_topics
-            if not (isinstance(t, dict) and t.get("topic") == topic)
-        ]
-        self.pending_topics.append({
-            "topic": topic,
-            "source": source,
-            "created_at": now.isoformat(),
-            "attempted": False,
-            # F-A19-001 族：LLM 派生话题标记为不可信数据（只读参考、纯文本）——
-            # 读取方（decision/context 注入点）据此以数据形态呈现而非指令。结构向后兼容，
-            # 读取方一律 t.get('untrusted') 防御；旧条目缺字段不影响消费。
-            "untrusted": True,
-        })
-        self._cap_pending_topics()
+        """薄包装：委托 chiguo_pending.pending_add（纯函数），保持 API 与行为不变。"""
+        self.pending_topics = pending_add(self.pending_topics, topic, now, source)
 
     def resolve_pending_topic(self, topic: str | None, now: datetime):
-        """topic_resolved=true → 移除对应话题。未指定 topic → 移除最旧一条。"""
-        if isinstance(topic, str) and topic.strip():
-            topic = topic.strip()[:50]   # 与 add_pending_topic 的截断一致(#83)
-            self.pending_topics = [
-                t for t in self.pending_topics
-                if not (isinstance(t, dict) and t.get("topic") == topic)
-            ]
-        elif self.pending_topics:
-            self.pending_topics.pop(0)
+        """薄包装：委托 pending_resolve。"""
+        self.pending_topics = pending_resolve(self.pending_topics, topic, now)
 
     def mark_pending_topic_attempted(self, topic: str):
-        """接话茬触发后标记已尝试(该话题不再重复触发)。"""
-        for t in self.pending_topics:
-            if not isinstance(t, dict):
-                continue
-            if t.get("topic") == topic:
-                t["attempted"] = True
+        """薄包装：委托 pending_mark_attempted（就地）。"""
+        pending_mark_attempted(self.pending_topics, topic)
 
     def prune_pending_topics(self, now: datetime, max_age_hours: float = 48.0):
-        """移除过期/已尝试话题,防状态膨胀。坏时间戳直接丢弃。
-        #79: 非 dict / 缺 topic 键 / topic 非字符串 → 直接丢弃（防后续 KeyError）。"""
-        kept = []
-        for t in self.pending_topics:
-            if not isinstance(t, dict):
-                continue
-            if not isinstance(t.get("topic"), str):
-                continue  # #79: 缺 topic 键或非字符串 → 丢弃
-            try:
-                dt = datetime.fromisoformat(t.get("created_at", ""))
-            except (ValueError, TypeError):
-                continue
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=CST)
-            age = (now - dt).total_seconds() / 3600
-            if age <= max_age_hours and not t.get("attempted"):
-                kept.append(t)
-        self.pending_topics = kept
-        self._cap_pending_topics()
+        """薄包装：委托 pending_prune。"""
+        self.pending_topics = pending_prune(self.pending_topics, now, max_age_hours)
 
     def _cap_pending_topics(self, cap: int = 20):
         if len(self.pending_topics) > cap:
             self.pending_topics = self.pending_topics[-cap:]
-
-    # ── 事件响应（半衰期衰减） ──────────────────────────
 
     def _apply_analysis_impact(self, analysis: dict, now: datetime | None = None):
         """v9: LLM 分析微调独立应用（情绪影响 + 接话茬话题摄入）。
@@ -1931,18 +1394,12 @@ class ChiguoState:
         并叠加情绪 delta（系数默认 0 关闭）。
         B1: 事件类型化情绪 delta 最先应用（规则表直接加减，_anxiety_before_analysis
         在其后取值 → 事件 delta 不被 anxiety_sensitivity 二次缩放）。"""
-        # ── B1: 事件类型化情绪 delta（event_delta_enabled 默认 False 关闭恒等）──
         self.apply_event_delta(self._extract_event_type(analysis), now or datetime.now(CST))
         self._anxiety_before_analysis = self.emotion.anxiety
         self._apply_emotion_impact(analysis, now)
 
-        # ── v1.11 ①: 用户情绪感知 ──
         self._consume_user_mood(analysis, now or datetime.now(CST))
         mood = self.cooldown.user_mood
-        # v1.11+R4': TTL 门禁——过期感知(>TTL,默认 6h)不再重放 delta。
-        # _consume_user_mood 仅在本次 analysis 携带新感知时刷新 cooldown.user_mood,
-        # 无感知时沿用旧感知;无门禁则过期低落 delta 会随每条消息无限重放。
-        # 与 trigger:258 / daemon:760 的 mood_fresh 门禁语义一致。
         if mood_fresh(mood, now or datetime.now(CST),
                       self.config.get("trigger", {}).get("user_mood_ttl_minutes", 360.0)):
             cfg = self.config.get("emotion", {})
@@ -1950,16 +1407,12 @@ class ChiguoState:
                     mood.get("mood", "calm"), mood.get("intensity", 0.0), cfg).items():
                 setattr(self.emotion, dim, getattr(self.emotion, dim) + d)
 
-        # ── v7: 接话茬话题摄入 ──
         topic = analysis.get("topic")
         if analysis.get("topic_resolved"):
             self.resolve_pending_topic(topic, now)
         elif topic:
             self.add_pending_topic(topic, now)
 
-        # ── U4 (#232, M-1): 越界钳制 —— recv_dedup 升级路径叠加 emotion delta /
-        # user_mood 后可能越界（如 anxiety≈99 + 冷淡升级 → 102.3），直接落盘存续到下次
-        # _finalize 才钳回；此处幂等 clamp 到 [0,100]（on_user_message 亦覆盖）。──
         self.emotion.clamp()
 
     def apply_analysis_impact(self, analysis: dict, now: datetime | None = None):
@@ -1992,8 +1445,6 @@ class ChiguoState:
         else:
             self.cooldown.user_mood = {
                 "mood": mood, "intensity": intensity, "at": now.isoformat()}
-
-    # ── B1: 事件类型化情绪 delta（event_delta_enabled 默认 False → 恒等，可灰度）──
 
     @staticmethod
     def _normalize_event_type(event_type: str) -> str:
@@ -2049,11 +1500,7 @@ class ChiguoState:
         for dim, d in delta.items():
             if hasattr(self.emotion, dim):
                 setattr(self.emotion, dim, getattr(self.emotion, dim) + d)
-        # 边界钳制：delta 可能把情绪推出 [0,100] 取值域（如 anxiety 99 + contradiction 4 → 103），
-        # 立即 clamp 保证 state.json 持久化值不越域（clamp() 与 tick 收尾同源）。
         self.emotion.clamp()
-
-    # ── A2: 分类型回复率统计（触发权重反馈闭环的数据源）──
 
     def record_trigger_sent(self, trigger_type: str):
         """A2: 发送一条消息 → 该触发类型 sent+1（daemon record_send_text 调用）。
@@ -2085,92 +1532,56 @@ class ChiguoState:
         stats = self.cooldown.reply_stats.setdefault(str(trigger_type), {"sent": 0, "replied": 0})
         stats["replied"] = stats.get("replied", 0) + 1
 
-    def on_user_message(self, now: datetime, msg_length: int = 10,
-                         analysis: dict | None = None):
-        """收到主人消息：情绪骤降，用半衰期建模。
-        若提供 LLM 分析结果（analysis），在基础效果之上叠加内容感知微调。
-        回复速度影响情感变化量（秒回更开心，很久才回效果打折）。"""
+    def _compute_latency(self, now: datetime) -> float | None:
+        """计算距上次发送的小时数并维护 latencies 滑动 20。纯 helper 可测。"""
+        if not self.cooldown.last_message_at:
+            return None
+        try:
+            last = datetime.fromisoformat(self.cooldown.last_message_at)
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=CST)
+            h = max(0.0, (now - last).total_seconds() / 3600)
+            self.cooldown.reply_latencies.append(h)
+            if len(self.cooldown.reply_latencies) > 20:
+                self.cooldown.reply_latencies = self.cooldown.reply_latencies[-20:]
+            return h
+        except (ValueError, TypeError):
+            return None
+
+    def _decay_all(self, lo: float, anx: float, now=None, damp: float = 1.0) -> tuple[float, float]:
+        """纯 helper：孤独/不安骤降 decay，可测。now 仅为兼容旧签。"""
         cfg = self.config.get("emotion", {})
-
-        # ── 先计算回复延迟（在情感变化之前）──
-        latency_h: float | None = None
-        if self.cooldown.last_message_at:
-            try:
-                last_send = datetime.fromisoformat(self.cooldown.last_message_at)
-                if last_send.tzinfo is None:
-                    last_send = last_send.replace(tzinfo=CST)
-                latency_h = max(0.0, (now - last_send).total_seconds() / 3600)   # 负延迟钳 0(#83)
-                self.cooldown.reply_latencies.append(latency_h)
-                if len(self.cooldown.reply_latencies) > 20:
-                    self.cooldown.reply_latencies = self.cooldown.reply_latencies[-20:]
-            except (ValueError, TypeError):
-                pass
-
-        # ── 回复速度倍率 ──
-        lat_mult = self._latency_multiplier(latency_h) if latency_h is not None else {}
-
-        # ── A10: 回复饱和阻尼（同向加成防刷）──
-        # 30 分钟窗口内第 n 次同向回复事件 → 正向加成 × damp（decay 骤降同样按比例放缓）
-        cd_cfg = self.config.get("cooldown", {})
-        damp = self._reply_damp(
-            now,
-            window_minutes=cd_cfg.get("drop_damp_window_minutes", 30),
-            factor=cd_cfg.get("drop_damp_factor", 0.5),
-            cap=cd_cfg.get("drop_damp_max", 3),
-        )
-
-        # 孤独骤降（半衰期 0.35h ≈ 21分钟减半）
-        hl = cfg.get("loneliness_decay_on_reply", 0.35)
-        lo_decayed = decay(self.emotion.loneliness, 1.0, hl)
-        self.emotion.loneliness += (lo_decayed - self.emotion.loneliness) * damp
-
-        # 不安骤降（半衰期 0.5h，很久才回时部分抵消）
+        lo_hl = cfg.get("loneliness_decay_on_reply", 0.35)
         anx_hl = cfg.get("anxiety_decay_on_reply", 0.5)
-        anx_decayed = decay(self.emotion.anxiety, 1.0, anx_hl)
-        self.emotion.anxiety += (anx_decayed - self.emotion.anxiety) * damp
-        if lat_mult.get("anxiety_rebound", 0) > 0:
-            self.emotion.anxiety += lat_mult["anxiety_rebound"]  # 负向回升不 damp
+        lo1 = lo + (decay(lo, 1.0, lo_hl) - lo) * damp
+        anx1 = anx + (decay(anx, 1.0, anx_hl) - anx) * damp
+        return lo1, anx1
 
-        # 好感微增（基础值 × 回复速度倍率）
-        gain = cfg.get("affection_gain_per_interaction", 0.8)
+    def _affection_gain(self, msg_length: int, affection_mult: float = 1.0, damp: float = 1.0) -> float:
+        """纯 helper：好感增量，可测。"""
+        g = self.config.get("emotion", {}).get("affection_gain_per_interaction", 0.8)
         if msg_length > 30:
-            gain *= 1.5
-        affection_mult = lat_mult.get("affection", 1.0)
-        self.emotion.affection += gain * affection_mult * damp
+            g *= 1.5
+        return g * affection_mult * damp
 
-        # 元气奖励（基础值 + 秒回额外奖励）
-        bonus = cfg.get("energy_bonus_on_reply", 10.0)
-        self.emotion.energy += (bonus + lat_mult.get("energy_extra", 0)) * damp
+    def _affection_energy(self, msg_length: int, affection_mult: float, damp: float) -> float:  # alias for spec
+        return self._affection_gain(msg_length, affection_mult, damp)
 
-        # 傲娇软化（基础值 + 秒回额外）
-        tsun_drop = 1.5 + lat_mult.get("tsundere_extra_drop", 0)
-        self.emotion.tsundere_index -= tsun_drop * damp
+    def _energy_bonus(self, energy_extra: float = 0.0, damp: float = 1.0) -> float:
+        """纯 helper：元气奖励，可测。"""
+        bonus = self.config.get("emotion", {}).get("energy_bonus_on_reply", 10.0)
+        return (bonus + energy_extra) * damp
 
-        # ── LLM 内容分析微调（叠加在基础上） ──
-        if analysis is not None:
-            self._apply_analysis_impact(analysis, now)
+    def _tsundere_drop(self, extra: float = 0.0, damp: float = 1.0) -> float:
+        return (1.5 + extra) * damp
 
-        self.cooldown.last_user_message_at = now.isoformat()
-        self.cooldown.last_user_msg_length = msg_length
-        self.cooldown.messages_without_reply = 0
-
-        # ── A10: 记录本次同向回复事件（供下次回复的 damp 计数）──
-        # 记录本次回复事件（滚动窗口裁剪由 _reply_damp 负责；
-        # 窗口关闭（window_minutes<=0）→ 不记录，_reply_damp 已清空历史）
-        if cd_cfg.get("drop_damp_window_minutes", 30) > 0:
-            self.cooldown.drop_events.append({"time": now.isoformat(), "direction": "reply"})
-
-        # ── v4: 概率累积重置 ──
+    def _reset_rate_limit(self) -> None:
         self.cooldown.held_count = 0
         if self.cooldown.accumulated_lambda > 0:
-            poisson_cfg = self.config.get("poisson", {})
-            base = poisson_cfg.get("base_lambda", 0.25)
-            self.cooldown.accumulated_lambda = longing_decay(
-                self.cooldown.accumulated_lambda, base,
-                decay_factor=self.config.get("cooldown", {}).get("longing_decay_factor", 0.5)
-            )
+            base = self.config.get("poisson", {}).get("base_lambda", 0.25)
+            self.cooldown.accumulated_lambda = longing_decay(self.cooldown.accumulated_lambda, base, decay_factor=self.config.get("cooldown", {}).get("longing_decay_factor", 0.5))
 
-        # ── v4: 人格自适应（用户回复类）──
+    def _adapt_on_reply(self, latency_h: float | None, analysis: dict | None, msg_length: int) -> None:
         try:
             lat_cat = "normal"
             if latency_h is not None:
@@ -2183,45 +1594,47 @@ class ChiguoState:
                 else:
                     lat_cat = "very_slow"
             warmth = analysis.get("warmth", 0.0) if analysis else 0.0
-            self.adapt_personality({
-                "type": "user_reply",
-                "warmth": warmth,
-                "latency_category": lat_cat,
-                "msg_length": msg_length,
-            })
-            # v1.11 ④: 情绪基线漂移（同一 interaction，默认关闭）
-            self.update_emotion_baseline({
-                "type": "user_reply",
-                "warmth": warmth,
-                "latency_category": lat_cat,
-                "msg_length": msg_length,
-            })
+            inter = {"type": "user_reply", "warmth": warmth, "latency_category": lat_cat, "msg_length": msg_length}
+            self.adapt_personality(inter)
+            self.update_emotion_baseline(inter)
         except Exception as e:
-            # M-10: 不再完全静默——人格演化异常记审计日志，便于排查（audit 失败不影响主流程）
             self._audit("adapt_personality_error", repr(e))
 
-        # ── v4: Bayesian 在线学习 ──
+    def _record_bayesian(self, now: datetime, latency_h: float | None, msg_length: int) -> None:
         try:
             silence_h = self.cooldown.silent_hours(now, wall=True) if now else 0
-            obs = {
-                "reply_latency": round(latency_h, 3) if latency_h else None,
-                "msg_length": msg_length,
-                "silence_hours": round(silence_h, 2),
-            }
-            actual = None
-            if latency_h is not None and latency_h < 0.5:
-                actual = "chatting"
+            obs = {"reply_latency": round(latency_h, 3) if latency_h else None, "msg_length": msg_length, "silence_hours": round(silence_h, 2)}
+            actual = "chatting" if latency_h is not None and latency_h < 0.5 else None
             self.bayesian_estimator.record_observation(obs, actual_state=actual)
         except Exception:
             logging.debug("bayesian 记录失败: %s", __import__('traceback').format_exc(), exc_info=False)
 
-        # ── v7/v8: 生物钟学习(每次回复记录小时 + 重算窗口;v8 按当日分桶)──
+    def on_user_message(self, now: datetime, msg_length: int = 10, analysis: dict | None = None):
+        """收到主人消息：情绪骤降编排（helpers 纯函数可测）。"""
+        latency_h = self._compute_latency(now)
+        lat_mult = self._latency_multiplier(latency_h) if latency_h is not None else {}
+        cfg = self.config.get("cooldown", {})
+        damp = self._reply_damp(now, window_minutes=cfg.get("drop_damp_window_minutes", 30), factor=cfg.get("drop_damp_factor", 0.5), cap=cfg.get("drop_damp_max", 3))
+        lo, anx = self._decay_all(self.emotion.loneliness, self.emotion.anxiety, now, damp)
+        self.emotion.loneliness, self.emotion.anxiety = lo, anx
+        if lat_mult.get("anxiety_rebound", 0) > 0:
+            self.emotion.anxiety += lat_mult["anxiety_rebound"]
+        self.emotion.affection += self._affection_gain(msg_length, lat_mult.get("affection", 1.0), damp)
+        self.emotion.energy += self._energy_bonus(lat_mult.get("energy_extra", 0), damp)
+        self.emotion.tsundere_index -= self._tsundere_drop(lat_mult.get("tsundere_extra_drop", 0), damp)
+        if analysis is not None:
+            self._apply_analysis_impact(analysis, now)
+        self.cooldown.last_user_message_at = now.isoformat()
+        self.cooldown.last_user_msg_length = msg_length
+        self.cooldown.messages_without_reply = 0
+        if cfg.get("drop_damp_window_minutes", 30) > 0:
+            self.cooldown.drop_events.append({"time": now.isoformat(), "direction": "reply"})
+        self._reset_rate_limit()
+        self._adapt_on_reply(latency_h, analysis, msg_length)
+        self._record_bayesian(now, latency_h, msg_length)
         circ_cfg = self.config.get("circadian", {})
         self.circadian.record(now, circ_cfg.get("history_days", 14), self._current_bucket(now))
-        # v8: 与 record 使用同一 now(测试注入过去时间时桶选择语义一致)
-        # Q30: 重算+同步收敛到 _relearn_windows 单门面（circadian 双源合并）
         self._relearn_windows(now)
-
         self._finalize(now)
 
     def _reply_damp(self, now: datetime, window_minutes: float = 30.0,
@@ -2234,7 +1647,6 @@ class ChiguoState:
         except (TypeError, ValueError):
             window_minutes = 30.0
         if window_minutes <= 0:
-            # 关闭阻尼 → 事件无保留价值，清空防无限增长
             self.cooldown.drop_events = []
             return 1.0
         cutoff = now - timedelta(minutes=window_minutes)
@@ -2291,80 +1703,50 @@ class ChiguoState:
                 "anxiety_rebound": cfg.get("reply_very_slow_anxiety_rebound", 3.0),
             }
 
-    def _apply_emotion_impact(self, analysis: dict, now: datetime | None = None):
-        """
-        根据 agent 情绪分析结果微调情绪状态。
-        三个维度：warmth（温暖度）、effort（用心度）、attention（关注度）。
-        所有系数从配置文件注入，可调参。
-        """
+    def _inertia_params(self) -> tuple[float, float, float]:
         cfg = self.config.get("emotion", {})
-
-        # 钳位到有效范围（LLM 输出可能为字符串/None → 强转失败回退默认，防 TypeError）
-        def _num(key: str, default: float, lo: float, hi: float) -> float:
-            try:
-                v = float(analysis.get(key, default))
-            except (TypeError, ValueError):
-                v = default
-            return max(lo, min(hi, v))
-
-        warmth = _num("warmth", 0.0, -1.0, 1.0)
-        effort = _num("effort", 0.0, 0.0, 1.0)
-        attention = _num("attention", 0.0, 0.0, 1.0)
-
-        # ── ③ 回复影响惯性阻尼（默认 0 = 关闭恒等，可灰度）──
-        # 对标 lacuna_core InertiaFilter：单条 analysis delta 幅度压缩，负向更重。
         try:
-            inertia_pos = float(cfg.get("impact_inertia_positive", 0.0))
-            inertia_neg = float(cfg.get("impact_inertia_negative", 0.0))
-            aff_mod = float(cfg.get("impact_inertia_affection_mod", 0.0))
+            pos = float(cfg.get("impact_inertia_positive", 0.0))
+            neg = float(cfg.get("impact_inertia_negative", 0.0))
+            mod = float(cfg.get("impact_inertia_affection_mod", 0.0))
         except (TypeError, ValueError):
-            inertia_pos = inertia_neg = aff_mod = 0.0
+            pos = neg = mod = 0.0
+        return pos, neg, mod
 
-        def _damp(delta: float, channel: str = "auto") -> float:
-            """按通道效价选择惯性键（不依赖 delta 数值符号）：
-            auto = 按 delta 符号（affection/energy 增减）；
-            neg  = 效价恒负（anxiety 回升）→ 恒用 inertia_neg；
-            pos  = 效价恒正（tsundere 软化）→ 恒用 inertia_pos。"""
-            if channel == "neg":
-                return impact_inertia(delta, inertia_neg, inertia_neg,
-                                      aff_mod, self.emotion.affection)
-            if channel == "pos":
-                return impact_inertia(delta, inertia_pos, inertia_pos,
-                                      aff_mod, self.emotion.affection)
-            return impact_inertia(delta, inertia_pos, inertia_neg,
-                                  aff_mod, self.emotion.affection)
+    def _damp(self, delta: float, channel: str = "auto") -> float:
+        """惯性阻尼 helper：按通道效价选择键，可测。"""
+        pos, neg, mod = self._inertia_params()
+        if channel == "neg":
+            return impact_inertia(delta, neg, neg, mod, self.emotion.affection)
+        if channel == "pos":
+            return impact_inertia(delta, pos, pos, mod, self.emotion.affection)
+        return impact_inertia(delta, pos, neg, mod, self.emotion.affection)
 
-        # ── 温暖度 → 好感 & 元气 ──
-        self.emotion.affection += _damp(warmth * cfg.get("affection_warmth_factor", 1.5))
-        self.emotion.energy += _damp(warmth * cfg.get("energy_warmth_factor", 4.0))
-
-        # 负温暖 → 不安回升（冷淡回复部分抵消 decay 效果；效价恒负 → neg 键）
+    def _impact_warmth(self, warmth: float, cfg: dict) -> None:
+        self.emotion.affection += self._damp(warmth * cfg.get("affection_warmth_factor", 1.5))
+        self.emotion.energy += self._damp(warmth * cfg.get("energy_warmth_factor", 4.0))
         if warmth < 0:
-            self.emotion.anxiety += _damp(
-                abs(warmth) * cfg.get("anxiety_warmth_recovery", 3.0), "neg")
+            self.emotion.anxiety += self._damp(abs(warmth) * cfg.get("anxiety_warmth_recovery", 3.0), "neg")
 
-        # ── 用心度 → 好感 & 傲娇软化（软化效价恒正 → pos 键）──
-        self.emotion.affection += _damp(effort * cfg.get("affection_effort_factor", 1.0))
-        self.emotion.tsundere_index -= _damp(
-            effort * cfg.get("tsundere_effort_factor", 2.0), "pos")
+    def _impact_effort(self, effort: float, cfg: dict) -> None:
+        self.emotion.affection += self._damp(effort * cfg.get("affection_effort_factor", 1.0))
+        self.emotion.tsundere_index -= self._damp(effort * cfg.get("tsundere_effort_factor", 2.0), "pos")
 
-        # ── 关注度 → 元气 & 被忽视时不安（回升效价恒负 → neg 键）──
-        self.emotion.energy += _damp(attention * cfg.get("energy_attention_factor", 4.0))
+    def _impact_attention(self, attention: float, cfg: dict) -> None:
+        self.emotion.energy += self._damp(attention * cfg.get("energy_attention_factor", 4.0))
         if attention < 0.3:
-            self.emotion.anxiety += _damp(
-                (0.3 - attention) * cfg.get("anxiety_ignore_factor", 2.0), "neg")
+            self.emotion.anxiety += self._damp((0.3 - attention) * cfg.get("anxiety_ignore_factor", 2.0), "neg")
 
-        # ── v4: 人格 anxiety_sensitivity 调制不安变化幅度 ──
+    def _impact_anxiety_sens(self) -> None:
         anx_sens = self.personality.anxiety_sensitivity()
         if anx_sens != 1.0 and hasattr(self, '_anxiety_before_analysis'):
-            delta = self.emotion.anxiety - self._anxiety_before_analysis
-            if delta != 0:
-                self.emotion.anxiety = self._anxiety_before_analysis + delta * anx_sens
+            d = self.emotion.anxiety - self._anxiety_before_analysis
+            if d != 0:
+                self.emotion.anxiety = self._anxiety_before_analysis + d * anx_sens
 
-        # ── 忙碌抑制（LLM 检测到用户想结束话题）──
-        suppress_hours = _num("suppress_hours", 0, 0, 24)
+    def _impact_busy(self, analysis: dict, now: datetime | None, num) -> None:
+        suppress_hours = num("suppress_hours", 0, 0, 24)
         if now is not None and suppress_hours > 0:
-            # 取两者中较晚的（已设抑制期 → 新值更晚时覆盖延长），只延长不缩短
             until = (now + timedelta(hours=suppress_hours)).isoformat()
             if self.cooldown.busy_suppress_until:
                 try:
@@ -2375,32 +1757,37 @@ class ChiguoState:
                     self.cooldown.busy_suppress_until = until
             else:
                 self.cooldown.busy_suppress_until = until
-        elif (now is not None and "suppress_hours" in analysis
-              and analysis.get("suppress_hours") == 0):
-            # F-A19-002：LLM 显式上报 suppress_hours=0 → 主动清除抑制期
-            # （提供清除入口，LLM 单次误判可即时解除，避免 ≤24h 停摆）。
-            # RF3（M4-2）：假值集合收紧为显式 ==0（含 0/0.0）才清除——
-            # 旧实现 `not x` 对 ""/None/[] 也误清，而模型常照模板输出 0，
-            # 若清理 ""/None 会在「开会去」设的抑制期被普通消息误清。
-            # 与 _num 语义对齐：键存在但为 ""/None/[] 时不解除抑制（不清除）；
-            # 键缺失（默认 0）不触碰，保持 >0 的「只延长」且普通消息不误清。
-            # 文档明示：显式 0 才解除抑制。
+        elif now is not None and "suppress_hours" in analysis and analysis.get("suppress_hours") == 0:
             self.cooldown.busy_suppress_until = None
+
+    def _apply_emotion_impact(self, analysis: dict, now: datetime | None = None):
+        cfg = self.config.get("emotion", {})
+        def _num(key: str, default: float, lo: float, hi: float) -> float:
+            try:
+                v = float(analysis.get(key, default))
+            except (TypeError, ValueError):
+                v = default
+            return max(lo, min(hi, v))
+        warmth = _num("warmth", 0.0, -1.0, 1.0)
+        effort = _num("effort", 0.0, 0.0, 1.0)
+        attention = _num("attention", 0.0, 0.0, 1.0)
+        self._impact_warmth(warmth, cfg)
+        self._impact_effort(effort, cfg)
+        self._impact_attention(attention, cfg)
+        self._impact_anxiety_sens()
+        self._impact_busy(analysis, now, _num)
 
     def on_character_message(self, now: datetime, trigger_type: str = "",
                              msg_id: str | None = None):
         """迟菓发出主动消息后。msg_id（v6）写入 Hawkes 事件，供 refund_send 按 id 回滚。"""
         cfg = self.config.get("emotion", {})
 
-        # 消耗元气
         cost = cfg.get("energy_cost_per_message", 20.0)
         self.emotion.energy = max(0, self.emotion.energy - cost)
 
-        # 表达欲满足，孤独缓降（半衰期 2h）
         send_hl = cfg.get("loneliness_decay_on_send", 2.0)
         self.emotion.loneliness = decay(self.emotion.loneliness, 1.0, send_hl)
 
-        # 不安小升（"我是不是太烦了"）
         anx_gain = cfg.get("anxiety_gain_on_send", 2.0)
         self.emotion.anxiety += anx_gain
 
@@ -2408,7 +1795,6 @@ class ChiguoState:
         self.cooldown.messages_today += 1
         self.cooldown.messages_without_reply += 1
 
-        # Hawkes 事件记录
         if trigger_type:
             event = {
                 "type": trigger_type,
@@ -2417,16 +1803,12 @@ class ChiguoState:
             if msg_id is not None:
                 event["msg_id"] = msg_id  # v6: 供 refund_send 按 msg_id 精确回滚
             self.cooldown.event_timestamps.append(event)
-            # 保留最近 50 条
             if len(self.cooldown.event_timestamps) > 50:
                 self.cooldown.event_timestamps = self.cooldown.event_timestamps[-50:]
 
-        # ── v5: 发送时重置累积（0.0 而非 None，消除 type drift）──
         self.cooldown.held_count = 0
         self.cooldown.accumulated_lambda = 0.0
 
-        # ── v4.1: 安全阀 — 追踪崩溃触发 ──
-        # ── v6: 崩溃记录改为时间戳列表，_prune_crash_history 按 48h 窗口滑动过滤 ──
         crash_types = (TriggerType.LONELY_HIGH, TriggerType.ANXIETY)
         if trigger_type in crash_types:
             self.cooldown.last_crash_at = now.isoformat()
@@ -2435,10 +1817,7 @@ class ChiguoState:
                 self.cooldown.crash_timestamps = self.cooldown.crash_timestamps[-50:]
         self._prune_crash_history(now)
 
-
         self._finalize(now)
-
-    # ── Poisson 事件率 ──────────────────────────────────
 
     def current_lambda(self, now: datetime = None) -> float:
         """
@@ -2457,16 +1836,13 @@ class ChiguoState:
             base, lo_mid, lo_k, anx_mid, anx_k,
         )
 
-        # 课表调节：上课时 λ 降低
         if now:
             lam *= self.availability(now)
 
-        # 无回复退避：每条未回复消息，λ 衰减
         decay_factor = self.config.get("cooldown", {}).get("no_reply_lambda_decay", 0.7)
         n = self.cooldown.messages_without_reply
         lam *= decay_factor ** min(n, 5)
 
-        # ── Hawkes 自激过程（替代原 1+0.15*lonely_count 粗略近似）──
         hawkes_cfg = self.config.get("hawkes", {})
         if hawkes_cfg.get("enabled", True) and self.cooldown.event_timestamps:
             alpha = hawkes_cfg.get("alpha", 0.3)
@@ -2477,7 +1853,6 @@ class ChiguoState:
                 alpha, beta, window,
             )
 
-        # ── 变化率加速 ──
         emo_cfg = self.config.get("emotion", {})
         lo_rate = self.emotion.loneliness_rate
         anx_rate = self.emotion.anxiety_rate
@@ -2487,8 +1862,6 @@ class ChiguoState:
         lam *= rate_boost
 
         return lam
-
-    # ── 概率触发（sigmoid 替代硬阈值） ──────────────────
 
     def trigger_weight(self, trigger_type: str | TriggerType) -> float:
         """
@@ -2513,8 +1886,6 @@ class ChiguoState:
                            cfg.get("anxiety_k", 0.12))
         return 0.0
 
-    # ── 能否发送 ────────────────────────────────────────
-
     def is_longing_overflow(self) -> bool:
         """概率累积溢出检查：held_count > 3 且 λ 累积到阈值且焦虑不阻塞。"""
         cfg = self.config.get("cooldown", {})
@@ -2523,11 +1894,6 @@ class ChiguoState:
         return (self.cooldown.held_count > 3
                 and acc_lam >= base_lambda * 1.5
                 and self.emotion.anxiety < cfg.get("anxiety_block_threshold", 70.0))
-
-    # ── v6: 溢出逃生阀 ────────────────────────────────────
-    # 死锁态（anxiety ≥ 阻塞阈值）下 longing 数学自我否决（blocked 不累积，
-    # λ 回退值被 availability×0.3 + 退避压到 ~0.008），overflow 永远到不了。
-    # 逃生阀改为时间+状态驱动：阻塞态 + 沉默超限 + 冷却期外 → 破防发送。
 
     def longing_break_eligible(self, now: datetime) -> bool:
         """逃生阀激活检查：高焦虑阻塞 + 持续沉默超限 + 冷却期外。"""
@@ -2572,15 +1938,9 @@ class ChiguoState:
         - 返回 True=已执行退款副作用（成本回滚+事件移除+逃生阀冷却重置）；
           False=msg_id 未在任何在途事件中定位且存在带 msg_id 的事件（或事件为空），
           调用方据此决定是否 save。msg_id 与 legacy 判定收敛于此单处。"""
-        # F-A15-002: 同 msg_id 已退款过（FIFO 命中考勤）→ 直接拒绝，防越窗口双退。
-        # 每个 send 决策自带新 msg_id，正常失败退款只发生一次；命中 FIFO = 重放。
         if msg_id is not None and msg_id in self.cooldown.refunded_msg_ids:
             print(f"[refund_send] msg_id {msg_id!r} 已退款过（FIFO），拒绝重复退款", file=sys.stderr)
             return False
-        # 单处判定：msg_id 非空时只需 匹配到该 msg_id or 全部事件为 legacy → 才执行退款。
-        # 事件为空 → 视为"未知 msg_id"，与历史 daemon 门控语义一致（不退款）。
-        # memory_marker（F-A5-01）：被移除事件携带的 reminder 记忆键，先在删除前捕获，
-        # 退款副作用里据此回滚 last_triggered_at（发送失败 → reminder 可再次触发）。
         memory_marker = None
         if msg_id is not None:
             events = self.cooldown.event_timestamps
@@ -2596,7 +1956,6 @@ class ChiguoState:
                     matched = True
                     break
             if not matched and not legacy_events:
-                # 未匹配到该 msg_id → 不误删其他事件记录(#83)、不回滚（防凭空刷新冷却）
                 print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
                 return False
             if not matched:
@@ -2607,7 +1966,6 @@ class ChiguoState:
             memory_marker = self.cooldown.event_timestamps[-1].get("memory_marker") \
                 if isinstance(self.cooldown.event_timestamps[-1], dict) else None
             self.cooldown.event_timestamps.pop()
-        # ── 退款副作用：成本回滚 + 逃生阀冷却重置 ──
         cfg = self.config.get("emotion", {})
         cost = cfg.get("energy_cost_per_message", 20.0)
         self.emotion.energy = min(100.0, self.emotion.energy + cost)
@@ -2616,14 +1974,10 @@ class ChiguoState:
         self.cooldown.messages_today = max(0, self.cooldown.messages_today - 1)
         self.cooldown.messages_without_reply = max(0, self.cooldown.messages_without_reply - 1)
         self.cooldown.last_longing_break_at = None
-        # F-A15-002: 有界 FIFO 记录已退款 msg_id（防越窗口重放双退；有界防 state 膨胀）
         if msg_id is not None:
             self.cooldown.refunded_msg_ids.append(msg_id)
             if len(self.cooldown.refunded_msg_ids) > REFUND_FIFO_MAX:
                 self.cooldown.refunded_msg_ids = self.cooldown.refunded_msg_ids[-REFUND_FIFO_MAX:]
-        # F-A5-01（#314 R9）：发送失败 → 回滚被移除事件关联的 reminder 触发标记
-        # （last_triggered_at 清除 + 去重缓存清除），下次 tick 可再次触发。
-        # 无 memory_marker（非 reminder 触发/旧事件）→ no-op，不影响既有退款语义。
         if memory_marker:
             self._unmark_memory_by_key(memory_marker)
         self._finalize(now)
@@ -2674,20 +2028,15 @@ class ChiguoState:
                  must_send: bool = False) -> bool:
         cfg = self.config.get("cooldown", {})
 
-        # 硬性每日上限（v6: 逃生阀破防同 overflow 可突破日限额；
-        # R13 #315: must_send 成为第三把钥匙——配额满也发，超额每日封顶 1 条）
         if self.cooldown.messages_today >= self.daily_max(now):
             if not self._daily_limit_break_ok(now, must_send=must_send):
                 return False
 
-        # 最小间隔
         min_interval = cfg.get("min_interval_minutes", 30)
         mins_since = self.cooldown.minutes_since_last_message(now)
-        # v6: 解析失败返回 None → 数据可疑但放行（与"从未发过"一致），不误判为过频
         if mins_since is not None and mins_since < min_interval:
             return False
 
-        # 元气检查（孤独暴涨时可覆盖）
         if self.emotion.energy < 12:
             emo_cfg = self.config.get("emotion", {})
             if emo_cfg.get("rate_energy_override", False):
@@ -2701,19 +2050,12 @@ class ChiguoState:
             else:
                 return False
 
-        # 静默窗口禁止(配置默认 0-8;生物钟学习达标后为学习窗口)
-        # B1(#136): quiet_ok=True(窗口内播放反证成立)时跳过——夜间活跃允许窗口内发送,
-        # 其余 gate(日上限/最小间隔/元气/忙碌)不变。
-        # F-A15-001（#315 R13）：门禁豁免集单一事实源——逃生阀与 daily_limit 破防
-        # 同属豁免族，quiet gate 放行 escape（修复前不对称：Bayesian sleeping 有豁免
-        # 而静默窗口无 → 破防被推迟 ≤ 窗口长度）。
         if not quiet_ok:
             qs, qe = self.cooldown.quiet_window()
             if in_quiet_window(now, qs, qe):
                 if not self.longing_break_eligible(now):
                     return False
 
-        # 忙碌抑制（用户说"忙"/"晚安"等）
         if self.cooldown.is_busy_suppressed(now):
             return False
 
@@ -2774,17 +2116,14 @@ class ChiguoState:
         except (ValueError, TypeError):
             return 0
 
-        # 过期 → 滑动窗口重算（v6: 委托 _prune_crash_history 逐条过期）
         if hours_since > crash_window:
             self._prune_crash_history(now)
             if not self.cooldown.last_crash_at:
                 return 0
 
-        # Level 2: 48h 内 ≥ crash_max 次崩溃
         if self.cooldown.crash_count_48h >= crash_max:
             return 2
 
-        # Level 1: 24h 内有过崩溃
         if hours_since < cooldown_hours:
             return 1
 
@@ -2794,7 +2133,6 @@ class ChiguoState:
         sch = self.schedule_status(now)
         hq = self.holiday_parser.query(now) if self.holiday_parser else None
 
-        # ── v4: Bayesian 用户状态推断 ──
         if user_state is None:
             try:
                 user_state = self.infer_user_state(now)
@@ -2832,7 +2170,6 @@ class ChiguoState:
                     self.cooldown.minutes_since_last_message(now)),
                 "can_send": self.can_send(now),
             },
-            # ── v4: 人格 + 用户状态 ──
             "personality": {
                 "profile": self.personality.dominant_profile(),
                 "tsundere_intensity": round(self.personality.tsundere_intensity, 1),
@@ -2846,9 +2183,6 @@ class ChiguoState:
         from schedule.sources import load_sources
         from schedule.attention import build_attention
         src, _rc = self._resolved_for(now)
-        # ── M-2 (#230, D5): attention 并入 _rc_cache 按日缓存——_resolved_for 已保证
-        # date 匹配时 _rc_cache 原样复用、跨日整体重建(丢键)；故首次/跨日这里才重算，
-        # 消除每条消息 3-4 遍 snapshot 的重复 build_attention（跨日自动失效，无额外失效逻辑）──
         if "attention" not in self._rc_cache:
             self._rc_cache["attention"] = build_attention(src, now.date())
         snap["attention"] = self._rc_cache["attention"]

@@ -12,6 +12,7 @@
 [![zero-LLM](https://img.shields.io/badge/决策核心-zero--LLM%20数学引擎-2ea44f)](doc/SYSTEM.md)
 [![WeChat](https://img.shields.io/badge/WeChat-07C160?logo=wechat&logoColor=white)](wechat-bridge/)
 [![uv](https://img.shields.io/badge/uv-8A2BE2)](https://docs.astral.sh/uv/)
+[![version](https://img.shields.io/badge/version-1.24-blue)](chiguo_version.py)
 
 [简体中文] | [English](README_EN.md)（英文版可能滞后，以中文版为准）
 

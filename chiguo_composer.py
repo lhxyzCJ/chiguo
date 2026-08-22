@@ -199,23 +199,23 @@ class MessageComposer:
         self.state = state
         self.config = config or {}
 
-        # combo 尺寸权重（选几层组合）
+        # combo 尺寸权重（选几层组合）— cfg_float clamp_min=0 单源，无 max(0,float) 毒化
         self.size_weights = {
-            1: max(0.0, cfg_float(self.config.get("size_1_weight", 0.20), 0.20)),
-            2: max(0.0, cfg_float(self.config.get("size_2_weight", 0.50), 0.50)),
-            3: max(0.0, cfg_float(self.config.get("size_3_weight", 0.30), 0.30)),
+            1: cfg_float(self.config.get("size_1_weight", 0.20), 0.20, clamp_min=0.0),
+            2: cfg_float(self.config.get("size_2_weight", 0.50), 0.50, clamp_min=0.0),
+            3: cfg_float(self.config.get("size_3_weight", 0.30), 0.30, clamp_min=0.0),
         }
 
-        # cue 基础权重（会被 personality 调制）
+        # cue 基础权重（会被 personality 调制）— clamp_min=0 单源
         self.cue_weights = {
-            "tsundere_classic": max(0.0, cfg_float(self.config.get("cue_tsundere_weight", 0.40), 0.40)),
-            "tsundere_soft": max(0.0, cfg_float(self.config.get("cue_tsundere_soft_weight", 0.20), 0.20)),
-            "tsundere_cool": max(0.0, cfg_float(self.config.get("cue_tsundere_cool_weight", 0.05), 0.05)),
-            "dere_dere": max(0.0, cfg_float(self.config.get("cue_dere_weight", 0.05), 0.05)),
-            "playful_bubbly": max(0.0, cfg_float(self.config.get("cue_playful_weight", 0.15), 0.15)),
-            "anxious_clingy": max(0.0, cfg_float(self.config.get("cue_anxious_weight", 0.10), 0.10)),
-            "caring_gentle": max(0.0, cfg_float(self.config.get("cue_caring_weight", 0.10), 0.10)),
-            "trade_tsundere": max(0.0, cfg_float(self.config.get("cue_trade_weight", 0.15), 0.15)),
+            "tsundere_classic": cfg_float(self.config.get("cue_tsundere_weight", 0.40), 0.40, clamp_min=0.0),
+            "tsundere_soft": cfg_float(self.config.get("cue_tsundere_soft_weight", 0.20), 0.20, clamp_min=0.0),
+            "tsundere_cool": cfg_float(self.config.get("cue_tsundere_cool_weight", 0.05), 0.05, clamp_min=0.0),
+            "dere_dere": cfg_float(self.config.get("cue_dere_weight", 0.05), 0.05, clamp_min=0.0),
+            "playful_bubbly": cfg_float(self.config.get("cue_playful_weight", 0.15), 0.15, clamp_min=0.0),
+            "anxious_clingy": cfg_float(self.config.get("cue_anxious_weight", 0.10), 0.10, clamp_min=0.0),
+            "caring_gentle": cfg_float(self.config.get("cue_caring_weight", 0.10), 0.10, clamp_min=0.0),
+            "trade_tsundere": cfg_float(self.config.get("cue_trade_weight", 0.15), 0.15, clamp_min=0.0),
         }
 
         # personality toml 接线（Task 7）：cue ↔ 原著台词模板

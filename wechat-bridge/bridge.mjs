@@ -119,18 +119,45 @@ const DEFAULT_STORAGE = new URL('./credentials/', import.meta.url).pathname
  *     给 turn 加排队预算——若在 waitMaxMs（或 deadline 余量）内仍未能开始处理 →
  *     快速判败 `queue_busy` 且**被取消的 turn 绝不执行**（不留孤儿 LLM 卡在队列里）。
  *     deadline 为整体超时点（覆盖排队+处理），由调用方在 wrap 处理步内兜底。 */
+/** 脱敏：错误消息中若含完整 prompt 明文（长串），替换为长度标记后截断 100，确保不回显全文 */
+export function sanitizeError(reason, payloadText) {
+  let r = String(reason ?? '')
+  if (payloadText && typeof payloadText === 'string' && payloadText.length > 20) {
+    if (r.includes(payloadText)) {
+      r = r.split(payloadText).join(`[prompt ${payloadText.length} chars]`)
+    } else {
+      // 部分包含（如错误只含 prompt 前缀 30 字符）：检测最长公共前缀
+      const head = payloadText.slice(0, 30)
+      if (head && r.includes(head)) {
+        r = r.split(head).join('[prompt redacted]')
+      }
+    }
+  }
+  return r.slice(0, 100)
+}
+
 export class TurnQueue {
-  constructor() {
+  constructor(maxQueue = 10) {
     this.tail = Promise.resolve()
+    this.maxQueue = maxQueue
+    this.pending = 0
   }
 
   run(task, opts = {}) {
     const { deadline, waitMaxMs } = opts
     const budgeted = deadline !== undefined || waitMaxMs !== undefined
+    // 显式限界：pending（含正在执行的 1 个）>= maxQueue → 直接 queue_busy 拒绝，不入队
+    if (this.pending >= this.maxQueue) {
+      const err = new Error('queue_busy: TurnQueue 已满，拒绝新任务')
+      err.code = 'QUEUE_BUSY'
+      return Promise.reject(err)
+    }
+    this.pending++
+    const dec = () => { this.pending = Math.max(0, this.pending - 1) }
     if (!budgeted) {
       const next = this.tail.then(task, task)
       this.tail = next.catch(() => {})
-      return next
+      return next.finally(dec)
     }
     // 预算版：gate 在前一 turn 结束后才放行任务；但若等待超过排队预算，
     // 先判败 queue_busy 并取消任务（重入 gate 回调见 cancelled 即不再执行）。
@@ -154,7 +181,7 @@ export class TurnQueue {
     })
     const next = gate.then(() => task(), (err) => { cancelled = true; throw err })
     this.tail = next.catch(() => {})
-    return next
+    return next.finally(dec)
   }
 }
 
@@ -504,7 +531,8 @@ export async function handleAgentPrompt(payload, res, queue = fallbackTurnQueue)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: true, text: r.text, analysis: r.analysis ?? null }))
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
+    const rawReason = err instanceof Error ? err.message : String(err)
+    const reason = sanitizeError(rawReason, text)
     console.error('[agent/prompt error]', reason)
     // R10: send 侧一旦判败（queue_busy 未执行 / 处理超预算）→ 杀 send 会话进程，
     // 确保不留孤儿 LLM（被取消的队列 turn 从不执行；已开始但超预算的 prompt 也被终止）。
@@ -543,15 +571,19 @@ function startSendServer(bot, queue) {
       return
     }
     let body = ''
+    let oversize = false
     req.on('data', (c) => {
+      if (oversize) return
       body += c
-      if (body.length > 1_000_000) {
-        deny(413, 'payload too large')
+      if (Buffer.byteLength(body, 'utf8') > 1_000_000) {
+        oversize = true
+        if (!res.writableEnded && !res.destroyed) deny(413, 'payload too large')
         req.destroy()
       }
     })
     req.on('error', () => {})  // destroy 后连接重置，避免未处理错误事件
     req.on('end', async () => {
+      if (oversize) return
       // #84 参数校验:非法 JSON / 必填缺失 → 400(而非 500)
       let payload
       try { payload = JSON.parse(body || '{}') } catch { deny(400, 'invalid JSON'); return }
@@ -780,9 +812,10 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
         console.log(`[slash] ${slash.action} → ok=${r.ok}`)
         await bot.reply(msg, r.reply)
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
+        const raw = err instanceof Error ? err.message : String(err)
+        const reason = sanitizeError(raw, text)
         console.error('[slash error]', reason)
-        await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
+        await bot.reply(msg, `⚠️ 处理失败：${reason}`).catch(() => {})
       }
     })
     return 'slash'
@@ -797,9 +830,10 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
         console.log(`[special] ${special.daemon.join(' ')} → ok=${r.ok}`)
         await bot.reply(msg, r.reply)
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
+        const raw = err instanceof Error ? err.message : String(err)
+        const reason = sanitizeError(raw, text)
         console.error('[special error]', reason)
-        await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
+        await bot.reply(msg, `⚠️ 处理失败：${reason}`).catch(() => {})
       }
     })
     return 'special'
@@ -842,14 +876,15 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
         }
         if (!recalled) {
           await upgradeAnalysis(text, analysis, recvId)  // recv_dedup 升级语义，不重复记账
-          console.log(`[out] ${(reply ?? '').slice(0, 80)}`)
+          console.log(`[out] ${(reply ?? '').length} chars`)
           await bot.reply(msg, reply).catch((e) => console.error('[reply error]', e))
         }
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
+        const raw = err instanceof Error ? err.message : String(err)
+        const reason = sanitizeError(raw, text)
         console.error('[agent error]', reason)
-        await bot.reply(msg, `⚠️ 处理失败：${reason.slice(0, 100)}`).catch(() => {})
-        await recordAgentHealth(bot, 'fail', reason)
+        await bot.reply(msg, `⚠️ 处理失败：${reason}`).catch(() => {})
+        await recordAgentHealth(bot, 'fail', raw)
         return
       }
       // 回复失败不记 agent 假死（发送故障 ≠ agent 故障）；记账在回复后执行，不延迟当前消息

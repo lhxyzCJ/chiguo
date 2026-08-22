@@ -31,10 +31,10 @@ class NeteaseService:
     @staticmethod
     def _cfg_int(raw, default):
         """v9 审计 F-1:toml 数值兜底——非法/缺失/None → 默认;合法负值钳制为 0。
-        热重载与构造共用,非法数值不再抛 ValueError 崩溃。"""
+        热重载与构造共用,非法数值不再抛异常崩溃；与 chiguo_math.cfg_float 同源 max(0,int) 守卫 + isfinite 语义一致。"""
         try:
             return max(0, int(raw))
-        except ValueError, TypeError:
+        except ValueError, TypeError, OverflowError:
             return default
 
     def __init__(self, config: dict, base_dir: str,

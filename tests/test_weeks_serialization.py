@@ -200,7 +200,7 @@ def test_dispatch_send_decision_serialization_fallback():
 
         def evaluate(self):
             # 最坏情形：send 决策残留 set（主修复前形态）
-            return {"action": "send", "version": "1.19", "msg_id": "m1",
+            return {"action": "send", "version": "1.24", "msg_id": "m1",
                     "trigger": "morning", "context": {"t3": {1: {3: {"weeks": {2, 3}}}}}}
 
     engine = _FakeEngine()

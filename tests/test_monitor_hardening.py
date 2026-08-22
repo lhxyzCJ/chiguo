@@ -202,7 +202,7 @@ def test_invalid_decision_count_in_stats():
     def full_send(time_str):
         return {
             "action": "send", "trigger": "morning", "intensity": "soft",
-            "version": "1.23", "msg_id": "m1", "context": {},
+            "version": "1.24", "msg_id": "m1", "context": {},
             "state": {
                 "emotion": {"loneliness": 15.0, "affection": 55.0,
                             "anxiety": 40.0, "energy": 85.0, "tsundere_index": 70.0},

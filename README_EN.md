@@ -12,6 +12,7 @@ Zero-LLM math decision engine · LLM message generation · WeChat delivery
 [![zero-LLM](https://img.shields.io/badge/decision%20core-zero--LLM%20math-2ea44f)](doc/SYSTEM.md)
 [![WeChat](https://img.shields.io/badge/WeChat-07C160?logo=wechat&logoColor=white)](wechat-bridge/)
 [![uv](https://img.shields.io/badge/uv-8A2BE2)](https://docs.astral.sh/uv/)
+[![version](https://img.shields.io/badge/version-1.24-blue)](chiguo_version.py)
 
 [简体中文](README.md) | **English**（The English version may lag behind; the Chinese version is authoritative.）
 
