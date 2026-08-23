@@ -443,8 +443,8 @@ class DecisionCoreMixin(IdleMixin):
     
             # ── v13 (#206): 持久化单调锚点封顶 NTP 前跳（cron 新进程无 _monotonic_at_save）──
             # save() 每次写盘锚点对（chiguo_state.monotonic_anchor）。monotonic 显示只过了
-            # elapsed_real、而壁钟前跳很多 → 用真实流逝封顶。wall_anchor 非法 ISO → 视为
-            # 无锚点不加封顶。min() 只在 elapsed_real 更小时收敛，正常时无感。
+            # elapsed_real、而壁钟前跳很多 → 用真实流逝封顶。wall_anchor 非法 ISO → 与重启
+            # 封顶一致保守封顶到 REBOOT_ELAPSED_CAP_H（0.5h）。min() 只在 elapsed_real 更小时收敛，正常时无感。
             # ── F-A16-02 (#335): time.monotonic() < mono_anchor（系统重启单调钟归零 /
             # 异机迁移时钟域切换）→ 不再"不加封顶走壁钟"（那样 NTP 前跳防护失效、壁钟差
             # 全量推进情绪），改为保守封顶到 REBOOT_ELAPSED_CAP_H（30min）防前跳冲击；
@@ -455,7 +455,16 @@ class DecisionCoreMixin(IdleMixin):
                 try:
                     datetime.fromisoformat(wall_anchor)
                 except (ValueError, TypeError):
-                    pass  # wall_anchor 损坏 → 视为无锚点，不加封顶
+                    # wall_anchor 损坏 → 与重启封顶语义一致，保守封顶到 REBOOT_ELAPSED_CAP_H
+                    if elapsed > REBOOT_ELAPSED_CAP_H:
+                        msg = (f"wall_anchor corrupted (invalid ISO): {wall_anchor!r}, "
+                               f"capping elapsed to {REBOOT_ELAPSED_CAP_H}h")
+                        print(f"[chiguo_daemon] {msg}", file=sys.stderr)
+                        try:
+                            self.state._audit("wall_anchor_corrupted_fallback", msg)
+                        except (ValueError, TypeError, AttributeError):
+                            pass
+                        elapsed = min(elapsed, REBOOT_ELAPSED_CAP_H)
                 else:
                     if time.monotonic() >= mono_anchor:
                         elapsed_real = (time.monotonic() - mono_anchor) / 3600
