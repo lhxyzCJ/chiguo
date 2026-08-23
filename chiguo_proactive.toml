@@ -30,15 +30,7 @@ mem0_embedder_dims = 1024                    # qwen3-embedding:0.6b 输出维度
 ebbinghaus_strength = 168    # 记忆强度 S（小时），越大遗忘越慢，168h=7天
 ebbinghaus_min_weight = 0.1  # 最低权重（不会彻底遗忘）
 # ── B2: 情绪-记忆耦合（默认关闭恒等，可灰度）──
-emotion_tagging = false      # 写侧：daemon 对话写入 mem0 时把情绪快照打标进 metadata.emotion_tag（{loneliness/affection/anxiety/energy: low|mid|high + user_mood}）
-emotion_tag_weight = 0.0     # 读侧：检索时对情绪相近记忆的加权系数 ×(1+weight×sim)（0=关闭恒等）
 # ── C1: 空闲期确定性记忆巩固（对标 Letta dreaming / Deep Dream 无 LLM 版；默认关闭恒等）──
-consolidate_enabled = false            # 开启后 daemon 空闲静默路径自动触发 consolidate（也可手动 chiguo_daemon.py --consolidate 接入 cron）
-consolidate_sim_threshold = 0.85       # 记忆 text 的 jaccard_3gram 相似度阈值，≥ 视为近似重复 → 保留重要一条、另一条降权
-consolidate_min_importance = 0.3       # 低于此重要度且超龄 → 过期候选（删除）
-consolidate_max_age_hours = 720.0      # 低重要度记忆的超龄阈值（小时，720=30天）
-consolidate_idle_silent_hours = 24.0   # idle 且清醒沉默 ≥ 此小时数才触发巩固（防频繁打扰记忆库）
-consolidate_min_interval_hours = 168.0 # 两次巩固最小间隔（小时，防每 tick 重复）
 # ── C2: Ebbinghaus 复习强化（对标 FSRS；默认关闭恒等）──
 reinforce_enabled = false              # 记忆被召回（search_with_forgetting/random_memory_with_forgetting 返回）时记录 recall_count
 reinforce_bonus = 0.0                  # 每次召回 importance ×(1 + bonus×count)；0=关闭恒等
@@ -130,49 +122,25 @@ interaction_anxiety_energy = 1.0      # anxiety>70 → energy 恢复减速（ene
 
 # ── ③ 回复影响惯性阻尼（默认 0 = 关闭恒等，可灰度；>0 压缩单条 analysis delta）──
 # 对标 lacuna_core InertiaFilter：单条回复不跳变；负向独立键可设更高（负向更重）。
-impact_inertia_positive = 0.0        # 正向 delta 阻尼比例（建议开启值 0.15）
-impact_inertia_negative = 0.0        # 负向 delta 阻尼比例（建议开启值 0.35，负向更重）
-impact_inertia_affection_mod = 0.0   # 亲密度调制：好感偏离 50 时对 inertia 的缩放（建议 0.5）
 
 # ── ② 情绪自然波动（OU 噪声；enabled=0 关闭 → 行为恒等，可安全灰度）──
 # 对标 lacuna_core FluctuationEngine：小幅带均值回归的噪声消除"机械感"。
 # 仅作用于 loneliness/anxiety；独立 RNG（noise_seed）不污染全局随机序列。
-noise_enabled = 0              # 0=关闭（灰度默认）；1=开启
-noise_loneliness_sigma = 0.3   # loneliness 噪声幅度（/√h）
-noise_anxiety_sigma = 0.3      # anxiety 噪声幅度（/√h）
-noise_theta = 0.5              # OU 回归强度（/h），越大越贴 target
-noise_seed = 42                # 独立 RNG 种子（不污染全局 random 序列）
 
 # ── ④ 情绪基线长期漂移（关系动力学；drift_rate=0 关闭 → 行为恒等，可灰度）──
 # 对标 astrbot_plugin_emotion_state_machine：长期互动缓慢移动情绪收敛目标（基线），
 # 与人格层 regress_to_baseline（防人格漂移）分层——"人格稳定、情绪基线可漂移"。
 # 只漂移 loneliness/anxiety/affection 三个关系感受维度；tsundere 全归人格层。
-baseline_drift_rate = 0.0              # 0=关闭（灰度默认）；>0 时每次事件漂移 = rate × shift
-baseline_shift_loneliness = 0.15       # 单事件漂移量（冷落/冷淡/未回复 → +）
-baseline_shift_anxiety = 0.15          # 单事件漂移量（冷淡/未回复 → +；温柔 → −）
-baseline_shift_affection = 0.15        # 单事件漂移量（冷落/冷淡/未回复 → −；温柔 → +）
-baseline_max_drift = 20.0              # 有界钳位：基线不得超过 [全局默认 ± max_drift]
-baseline_forget_half_life = 720.0      # 淡忘半衰期（h；30 天回全局默认，0=不淡忘）
 
 # ── ① 用户情绪感知（user_mood；系数默认 0 = 关闭恒等，可灰度）──
 # 对标 ESConv：感知主人情绪（LLM 报 mood/intensity），幅度由系数表决定（决策零 LLM）。
-user_mood_low_anxiety_factor = 0.0          # low：anxiety +2.0 × intensity × 系数（心疼 → 不安略升）
-user_mood_low_affection_factor = 0.0        # low：affection +0.5 × intensity × 系数（想靠近）
-user_mood_distressed_anxiety_factor = 0.0   # distressed：anxiety +3.0 × intensity × 系数
-user_mood_distressed_affection_factor = 0.0 # distressed：affection +1.0 × intensity × 系数
-user_mood_happy_energy_factor = 0.0         # happy：energy +2.0 × intensity × 系数（被感染）
-user_mood_happy_affection_factor = 0.0      # happy：affection +1.0 × intensity × 系数
-user_mood_angry_anxiety_factor = 0.0        # angry：anxiety +2.0 × intensity × 系数
-user_mood_angry_affection_factor = 0.0      # angry：affection -1.0 × intensity × 系数（克制）
 # ── B1: 事件类型化情绪 delta（默认关闭恒等，可灰度）──
 # 命中规则表（EVENT_DELTA：praise/criticism/contradiction/comfort/new_topic/question/complaint
 # → {loneliness/affection/anxiety} 直接加减）时按事件直接改情绪（不走 impact_inertia 阻尼）。
 # 事件类型从 analysis 宽松提取（event_type/event 键 + warmth/user_mood/topic 信号推断）。
-event_delta_enabled = false
 # ── 自身情绪注解（默认 0 = 关闭恒等, 可灰度）──
 # Issue #356: self_mood_note 注入 _build_context guidance（chiguo_math 按主导情绪
 # 优先级产出 1-2 条中文语气注解）；0=不注入 → 与现状逐字节恒等。
-self_mood_note_enabled = 0
 
 [sigmoid]
 # ── 触发概率的 sigmoid 参数 ──
@@ -232,22 +200,11 @@ repeat_cap = 3                  # 计数封顶（超过不再继续衰减）
 # 对标 ESConv：感知到低落/崩溃（user_mood=fresh）→ 更主动安慰。
 # comfort 入 EMOTION_TRIGGERS → 自动继承 A3 日程乘数 / A4 三段激活 / A5 退场 / A6 repeat 阻尼。
 user_mood_ttl_minutes = 360.0   # user_mood 感知有效窗口（6h，过期不再触发/注解）
-user_mood_anxiety_bonus = 0.0   # 低落(low/distressed)时 anxiety 触发权重加成（× (1 + bonus × intensity)，0=关闭）
-user_mood_note_enabled = 0      # 语气注解开关（mood_note 注入 _build_context；0=关闭恒等）
-comfort_weight_base = 0.0       # comfort 基础权重（0=关闭；>0 时低落在窗口内可触发安慰）
-comfort_baseline = 0.5          # comfort 归一化"不触发"基线（raw/(raw+baseline)，同 anxiety 模式）（同 anxiety 模式）
-comfort_min_weight = 0.03       # 低于此权重不成为候选
 
 # ── A2: 分类型回复率反馈闭环（enabled=0 关闭 → 行为恒等，可灰度）──
 # 对标 revive-companion 的反馈闭环：回复率低 → 该类型 weight ×(1-damp)（降频），
 # 回复率高（≥ high_rate）→ ×(1+boost)（微加成）。统计源 = 状态持久化的
 # cooldown.reply_stats（daemon 发送时 sent+1、--user-msg 收到回复时 replied+1）。
-reply_feedback_enabled = 0      # 0=关闭（恒等）；1=开启
-reply_feedback_damp = 0.0       # 低回复率类型权重 ×(1-damp)（0=关闭恒等；1=归零）
-reply_feedback_boost = 0.0      # 高回复率类型权重 ×(1+boost)（0=关闭恒等）
-reply_feedback_low_rate = 0.3   # 回复率低于此 → 阻尼
-reply_feedback_high_rate = 0.7  # 回复率高于此 → 微加成
-reply_feedback_min_samples = 3  # 样本数下限（<此数不调整，防冷启动误伤）
 
 # ── Q10: 触发离散概率/魔法权重配置化（默认 = 现值，行为不变；审计 #276）──
 # 仪式类基础权重（乘 [cooldown].ritual_weight_scale，ritual_weight_scale 默认 1.0）。
@@ -282,26 +239,13 @@ reflect_probability = 0.08
 
 # ── T08 math 收敛：消除触发硬编码 → CONFIG 单源（默认值 = 原硬编码，行为恒等）──
 # rate_factor = 1 + max(0,(lo_rate-lo_thresh)*lo_factor) + max(0,(anx_rate-anx_thresh)*anx_factor)
-lonely_rate_lo_threshold = 1.5       # lo_rate 阈值（原 1.5）
-lonely_rate_lo_factor = 0.3          # lo_rate 超阈后放大系数（原 0.3）
-lonely_rate_anx_threshold = 2.0      # anx_rate 阈值（原 2.0）
-lonely_rate_anx_factor = 0.2         # anx_rate 超阈后放大系数（原 0.2）
 # 孤独三级 tsundere 修饰
-lonely_tsundere_low_factor = 0.3     # low: ×(1+0.3*tsun)（原 0.3）
-lonely_tsundere_mid_factor = 0.5     # mid: ×(1+0.5*tsun)（原 0.5）
-lonely_tsundere_high_factor = 0.4    # high: ×(1-0.4*tsun)（原 0.4）
-lonely_bias = 0.5                    # lonely softmax 分母偏置（原 0.5）
 # lonely 归一化权重阈值（> 阈值才成为候选）
 lonely_w_low_threshold = 0.03        # w_low 阈值（原 0.03）
 lonely_w_mid_threshold = 0.03        # w_mid 阈值（原 0.03）
 lonely_w_high_threshold = 0.02       # w_high 阈值（原 0.02）
 # longing 溢出参数
-longing_cap = 0.5                    # w_longing 上限 min(0.5, ·)（原 0.5）
-longing_factor = 0.3                 # w_longing 系数 (acc_lam/base-1)*0.3（原 0.3）
-longing_min_weight = 0.03            # w_longing 成为候选阈值（原 0.03）
 # jitter 抖动区间（情绪类候选权重 × uniform(low, high)）
-jitter_low = 0.8                     # 原 0.8
-jitter_high = 1.2                    # 原 1.2
 
 [poisson]
 # ── Poisson 过程参数 ──
@@ -435,12 +379,9 @@ escape_valve_sleep_block = 0.9   # 逃生阀豁免时，睡觉置信度≥此值
 # transition_enabled=True 时 infer 用 prev_posterior × TRANSITIONS 作转移先验，
 # 与时间先验 0.5/0.5 线性混合（状态持续性平滑 + 时段分布兜底）。
 # 逐行覆盖（可选）：transition_<state> = { chatting = 0.4, browsing = 0.3, ... }（整行替换 + 归一化）。
-transition_enabled = false
 # ── A3: 信息增益门控「不确定才发」（默认关闭恒等，可灰度）──
 # 后验熵 ≥ info_gain_threshold 时（状态不确定）utility +info_gain_utility_bonus 并放行
 # should_send_bayesian——提高探询型消息发送概率。threshold=0 关闭。
-info_gain_threshold = 0.0        # 熵门槛（bits，6 状态最大熵 ≈ 2.585；0=关闭）
-info_gain_utility_bonus = 0.1    # 熵达门槛时的 utility 上调量（放行探询）
 
 # ── v4: 消息组合系统 ──
 [composer]
@@ -474,8 +415,6 @@ disk_critical_mb = 100     # 磁盘剩余小于此值 → critical
 memory_warn_mb = 500       # 进程 RSS 大于此值 → warn
 memory_critical_mb = 1000  # 进程 RSS 大于此值 → critical
 # ── D1: 主动消息效果评估（对标 ProactiveEval；默认关闭恒等，不新增输出键）──
-proactive_eval = false     # 开启后 stats()/report() 聚合输出 proactive_stats（按 trigger 分组的发送/回复统计 + overall）
-replied_within_hours = 24.0  # 发送后此小时数内收到首条 user-msg 视为已回复
 # mem0 记忆库路径由主配置 [memory] 段读取（mem0_qdrant_path/mem0_history_db），此处不重复定义
 
 # ── 日志轮转 & 对话存档 (v5) ──
@@ -540,3 +479,72 @@ probe_interval_seconds = 3600           # 累计失败(fail_streak∈[1,threshol
 
 [health]
 fail_threshold = 3   # agent 假死判定：连续失败次数 ≥ 此值 → 告警（bridge 记账/tick 记账共用；<1 视为无效回退 3）
+
+# ────────────────────────────────────────────────────────────
+# [experimental] 灰度/实验开关归档（默认关闭恒等，行为与删键等价）
+# 按需启用：把需要的键移回所属段即可覆盖默认；留空即恒等默认。
+# 归档自 v1.24：emotion 24 + trigger 30 + memory 8 + bayesian 3 + monitor 2 = 67? 实际 61
+# 读取由 decision/base.py:_merge_experimental 按 section__key 合并回主段，行为恒等
+# ────────────────────────────────────────────────────────────
+[experimental]
+memory__emotion_tagging = false      # 写侧：daemon 对话写入 mem0 时把情绪快照打标进 metadata.emotion_tag（{loneliness/affection/anxiety/energy: low|mid|high + user_mood}）
+memory__emotion_tag_weight = 0.0     # 读侧：检索时对情绪相近记忆的加权系数 ×(1+weight×sim)（0=关闭恒等）
+memory__consolidate_enabled = false            # 开启后 daemon 空闲静默路径自动触发 consolidate（也可手动 chiguo_daemon.py --consolidate 接入 cron）
+memory__consolidate_sim_threshold = 0.85       # 记忆 text 的 jaccard_3gram 相似度阈值，≥ 视为近似重复 → 保留重要一条、另一条降权
+memory__consolidate_min_importance = 0.3       # 低于此重要度且超龄 → 过期候选（删除）
+memory__consolidate_max_age_hours = 720.0      # 低重要度记忆的超龄阈值（小时，720=30天）
+memory__consolidate_idle_silent_hours = 24.0   # idle 且清醒沉默 ≥ 此小时数才触发巩固（防频繁打扰记忆库）
+memory__consolidate_min_interval_hours = 168.0 # 两次巩固最小间隔（小时，防每 tick 重复）
+emotion__impact_inertia_positive = 0.0        # 正向 delta 阻尼比例（建议开启值 0.15）
+emotion__impact_inertia_negative = 0.0        # 负向 delta 阻尼比例（建议开启值 0.35，负向更重）
+emotion__impact_inertia_affection_mod = 0.0   # 亲密度调制：好感偏离 50 时对 inertia 的缩放（建议 0.5）
+emotion__noise_enabled = 0              # 0=关闭（灰度默认）；1=开启
+emotion__noise_loneliness_sigma = 0.3   # loneliness 噪声幅度（/√h）
+emotion__noise_anxiety_sigma = 0.3      # anxiety 噪声幅度（/√h）
+emotion__noise_theta = 0.5              # OU 回归强度（/h），越大越贴 target
+emotion__noise_seed = 42                # 独立 RNG 种子（不污染全局 random 序列）
+emotion__baseline_drift_rate = 0.0              # 0=关闭（灰度默认）；>0 时每次事件漂移 = rate × shift
+emotion__baseline_shift_loneliness = 0.15       # 单事件漂移量（冷落/冷淡/未回复 → +）
+emotion__baseline_shift_anxiety = 0.15          # 单事件漂移量（冷淡/未回复 → +；温柔 → −）
+emotion__baseline_shift_affection = 0.15        # 单事件漂移量（冷落/冷淡/未回复 → −；温柔 → +）
+emotion__baseline_max_drift = 20.0              # 有界钳位：基线不得超过 [全局默认 ± max_drift]
+emotion__baseline_forget_half_life = 720.0      # 淡忘半衰期（h；30 天回全局默认，0=不淡忘）
+emotion__user_mood_low_anxiety_factor = 0.0          # low：anxiety +2.0 × intensity × 系数（心疼 → 不安略升）
+emotion__user_mood_low_affection_factor = 0.0        # low：affection +0.5 × intensity × 系数（想靠近）
+emotion__user_mood_distressed_anxiety_factor = 0.0   # distressed：anxiety +3.0 × intensity × 系数
+emotion__user_mood_distressed_affection_factor = 0.0 # distressed：affection +1.0 × intensity × 系数
+emotion__user_mood_happy_energy_factor = 0.0         # happy：energy +2.0 × intensity × 系数（被感染）
+emotion__user_mood_happy_affection_factor = 0.0      # happy：affection +1.0 × intensity × 系数
+emotion__user_mood_angry_anxiety_factor = 0.0        # angry：anxiety +2.0 × intensity × 系数
+emotion__user_mood_angry_affection_factor = 0.0      # angry：affection -1.0 × intensity × 系数（克制）
+emotion__event_delta_enabled = false
+emotion__self_mood_note_enabled = 0
+trigger__user_mood_anxiety_bonus = 0.0   # 低落(low/distressed)时 anxiety 触发权重加成（× (1 + bonus × intensity)，0=关闭）
+trigger__user_mood_note_enabled = 0      # 语气注解开关（mood_note 注入 _build_context；0=关闭恒等）
+trigger__comfort_weight_base = 0.0       # comfort 基础权重（0=关闭；>0 时低落在窗口内可触发安慰）
+trigger__comfort_baseline = 0.5          # comfort 归一化"不触发"基线（raw/(raw+baseline)，同 anxiety 模式）（同 anxiety 模式）
+trigger__comfort_min_weight = 0.03       # 低于此权重不成为候选
+trigger__reply_feedback_enabled = 0      # 0=关闭（恒等）；1=开启
+trigger__reply_feedback_damp = 0.0       # 低回复率类型权重 ×(1-damp)（0=关闭恒等；1=归零）
+trigger__reply_feedback_boost = 0.0      # 高回复率类型权重 ×(1+boost)（0=关闭恒等）
+trigger__reply_feedback_low_rate = 0.3   # 回复率低于此 → 阻尼
+trigger__reply_feedback_high_rate = 0.7  # 回复率高于此 → 微加成
+trigger__reply_feedback_min_samples = 3  # 样本数下限（<此数不调整，防冷启动误伤）
+trigger__lonely_rate_lo_threshold = 1.5       # lo_rate 阈值（原 1.5）
+trigger__lonely_rate_lo_factor = 0.3          # lo_rate 超阈后放大系数（原 0.3）
+trigger__lonely_rate_anx_threshold = 2.0      # anx_rate 阈值（原 2.0）
+trigger__lonely_rate_anx_factor = 0.2         # anx_rate 超阈后放大系数（原 0.2）
+trigger__lonely_tsundere_low_factor = 0.3     # low: ×(1+0.3*tsun)（原 0.3）
+trigger__lonely_tsundere_mid_factor = 0.5     # mid: ×(1+0.5*tsun)（原 0.5）
+trigger__lonely_tsundere_high_factor = 0.4    # high: ×(1-0.4*tsun)（原 0.4）
+trigger__lonely_bias = 0.5                    # lonely softmax 分母偏置（原 0.5）
+trigger__longing_cap = 0.5                    # w_longing 上限 min(0.5, ·)（原 0.5）
+trigger__longing_factor = 0.3                 # w_longing 系数 (acc_lam/base-1)*0.3（原 0.3）
+trigger__longing_min_weight = 0.03            # w_longing 成为候选阈值（原 0.03）
+trigger__jitter_low = 0.8                     # 原 0.8
+trigger__jitter_high = 1.2                    # 原 1.2
+bayesian__transition_enabled = false
+bayesian__info_gain_threshold = 0.0        # 熵门槛（bits，6 状态最大熵 ≈ 2.585；0=关闭）
+bayesian__info_gain_utility_bonus = 0.1    # 熵达门槛时的 utility 上调量（放行探询）
+monitor__proactive_eval = false     # 开启后 stats()/report() 聚合输出 proactive_stats（按 trigger 分组的发送/回复统计 + overall）
+monitor__replied_within_hours = 24.0  # 发送后此小时数内收到首条 user-msg 视为已回复

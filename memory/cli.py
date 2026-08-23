@@ -23,7 +23,7 @@ def _default_bridge():
     try:
         with open(repo / "chiguo_proactive.toml", "rb") as f:
             cfg = tomllib.load(f)
-    except Exception:
+    except (ValueError, TypeError, OSError):
         cfg = {}
     return create_backend(cfg.get("memory", {}), base_dir=repo)
 

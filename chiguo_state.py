@@ -35,7 +35,7 @@ import chiguo_locks as locks
 from chiguo_atomic import atomic_write
 from trigger_types import TriggerType
 
-from chiguo_state_models import (  # noqa: F401 — re-export for compat
+from chiguo_state_models import (  # noqa: F401 — deprecated re-export (prefer chiguo_state_models directly)
     ChiguoEmotion,
     CooldownState,
     BASELINE_DEFAULTS,
@@ -465,7 +465,7 @@ class ChiguoState(ScheduleMixin, EmotionMixin, InteractionMixin):
         try:
             sch = self.schedule_status(now)
             in_class = bool(sch and sch.get("in_class"))
-        except Exception:
+        except (ValueError, TypeError, OSError):
             logging.debug("schedule_status 获取失败: %s", __import__('traceback').format_exc(), exc_info=False)
 
         observations = {
@@ -500,7 +500,7 @@ class ChiguoState(ScheduleMixin, EmotionMixin, InteractionMixin):
         if user_state is None:
             try:
                 user_state = self.infer_user_state(now)
-            except Exception:
+            except (ValueError, TypeError, OSError):
                 logging.debug("infer_user_state 失败: %s", __import__('traceback').format_exc(), exc_info=False)
 
         snap = {

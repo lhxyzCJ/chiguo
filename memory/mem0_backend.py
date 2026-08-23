@@ -585,7 +585,7 @@ class Mem0Backend(MemoryBackend):
             n = int(getattr(info, "points_count", -1))
             if n >= 0:
                 return n
-        except Exception:
+        except (ValueError, TypeError, OSError):
             pass
         return len(self._all_rows(min_importance=0.0))
 
