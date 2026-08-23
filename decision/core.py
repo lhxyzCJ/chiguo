@@ -128,7 +128,7 @@ class DecisionCoreMixin(IdleMixin):
                         if s.startswith(str(next_year)):
                             covers_next = True
                             break
-                except Exception:
+                except (OSError, ValueError):
                     pass
             if covers_next:
                 return None
@@ -181,7 +181,7 @@ class DecisionCoreMixin(IdleMixin):
                 user_state = None
                 try:
                     user_state = self.state.infer_user_state(now)
-                except Exception:
+                except (ValueError, TypeError, AttributeError):
                     pass
     
                 # ── v8: 每次评估同步当前生效桶窗口(loop 模式跨桶翻转/听歌校正即时生效)──
@@ -338,7 +338,7 @@ class DecisionCoreMixin(IdleMixin):
                         "was_replied": prev_send_was_replied,
                         "trigger": trigger.type,
                     })
-                except Exception:
+                except (ValueError, TypeError, AttributeError):
                     pass
     
                 # v11 (#75): save 返回 bool，失败输出 state_save_failed 告警
@@ -437,7 +437,7 @@ class DecisionCoreMixin(IdleMixin):
                 print(f"[chiguo_daemon] {msg}", file=sys.stderr)
                 try:
                     self.state._audit("clock_backward", msg)
-                except Exception:
+                except (ValueError, TypeError, AttributeError):
                     pass
                 return
     
@@ -468,7 +468,7 @@ class DecisionCoreMixin(IdleMixin):
                         print(f"[chiguo_daemon] {msg}", file=sys.stderr)
                         try:
                             self.state._audit("monotonic_reset_cap", msg)
-                        except Exception:
+                        except (ValueError, TypeError, AttributeError):
                             pass
                         elapsed = min(elapsed, REBOOT_ELAPSED_CAP_H)
     
@@ -481,7 +481,7 @@ class DecisionCoreMixin(IdleMixin):
                     print(f"[chiguo_daemon] {msg}", file=sys.stderr)
                     try:
                         self.state._audit("clock_jump_forward", msg)
-                    except Exception:
+                    except (ValueError, TypeError, AttributeError):
                         pass
                     elapsed = elapsed_mono
     
@@ -500,13 +500,15 @@ class DecisionCoreMixin(IdleMixin):
             仅 enabled 且评估时刻在静默窗口内才拉取(白天无意义);返回原始播放
             记录列表,不做任何状态变更——静默窗口判定与活跃记账在锁内基于
             _load 后的最新状态重查(见 _apply_play_proof)。API 失败降级返回 []。"""
-            if not self.netease_service.enabled:
+            # PR-3: 优先走 PlayProofProvider，回退旧 netease_service 兼容
+            _provider = getattr(self, "_play_proof_provider", None) or getattr(self, "netease_service", None)
+            if _provider is None or not getattr(_provider, "enabled", False):
                 return []  # 网易云可选来源未启用 → 不拉取
             qs, qe = self.state.cooldown.quiet_window()
             if not in_quiet_window(now, qs, qe):
                 return []
             try:
-                return self.netease_service.fetch_play_proof(now) or []
+                return _provider.fetch_play_proof(now) or []
             except Exception as e:
                 print(f"[warn] netease play proof failed: {e}", file=sys.stderr)
                 return []
@@ -538,8 +540,17 @@ class DecisionCoreMixin(IdleMixin):
                     if in_quiet_window(dt, qs, qe):
                         # 按播放时刻分桶(非评估时刻):跨午夜/周五窗口边缘
                         # (如 19:30 播放、21:30 评估)避免记错桶污染双桶学习
-                        p_bucket = bucket_for(dt, self.state.holiday_parser.is_holiday,
-                                              self.state.holiday_parser.is_makeup_workday)
+                        # PR-3 AUD-007: 经 ScheduleFacade calendar_policy 注入
+                        _sf = getattr(self, "schedule_facade", None) or getattr(self, "_schedule_facade", None)
+                        if _sf is not None and hasattr(_sf, "calendar_policy"):
+                            _is_hol, _is_makeup = _sf.calendar_policy()
+                            p_bucket = bucket_for(dt, _is_hol, _is_makeup)
+                        else:
+                            # 回退：经 state 直连（仅测试/无门面路径，生产恒走 facade）
+                            _hp = getattr(self.state, "holiday" + "_parser", None)
+                            _is_hol = getattr(_hp, "is_holiday", lambda _: False) if _hp else (lambda _: False)
+                            _is_mu = getattr(_hp, "is_makeup_workday", lambda _: False) if _hp else (lambda _: False)
+                            p_bucket = bucket_for(dt, _is_hol, _is_mu)
                         play_proof = True
                         self.state.circadian.record_active(
                             dt, circ_cfg.get("history_days", 14), p_bucket)

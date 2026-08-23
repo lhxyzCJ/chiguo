@@ -8,7 +8,7 @@
  * 确定性优先：检测保守（短消息 + 非问句），歧义消息放行给 agent 自然回复。
  *
  * 用法（供 bridge.mjs import）：
- *   detectSpecialCommand(text) → null | { action, daemon: [...argv], hint }
+ *   detectSpecialCommand(text) → null | { action, payload: {...}, daemon: [...argv], hint } (daemon kept for compat, payload is DTO)
  *   executeSpecialCommand(execFileP, spec, daemonPy, daemonScript) → { ok, reply }
  *   buildReply(action, result) → string（daemon JSON → 迟菓风确认文案）
  */
@@ -60,6 +60,7 @@ export function detectSpecialCommand(text) {
     if (name && !isAskOrNegate(name)) {
       return {
         action: 'anniversary_added',
+        payload: { kind: 'anniversary_add', date: `${mm}-${dd}`, name },
         daemon: ['--anniversary', `add anniversary ${mm}-${dd} ${name}`],
         hint: `记住了！${m[1]}月${m[2]}日——${name}。`,
       }
@@ -74,6 +75,7 @@ export function detectSpecialCommand(text) {
       const date = `${m[1]}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`
       return {
         action: 'reminder_added',
+        payload: { kind: 'reminder', date, label: name },
         daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date }, label: name })],
         hint: `嗯嗯，${name}（${date}）——我算着日子呢。`,
       }
@@ -87,6 +89,7 @@ export function detectSpecialCommand(text) {
       const date = `${year}-${String(Number(m[1])).padStart(2, '0')}-${String(Number(m[2])).padStart(2, '0')}`
       return {
         action: 'reminder_added',
+        payload: { kind: 'reminder', date, label: name },
         daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date }, label: name })],
         hint: `嗯嗯，${name}（${date}）——我算着日子呢。`,
       }
@@ -95,15 +98,15 @@ export function detectSpecialCommand(text) {
 
   // 3) 列表：有哪些纪念日 / 纪念日列表等（两分支均 ^ 锚定）
   if (/^(?:(?:有)?哪些纪念日|纪念日(?:列表|有哪些|查|看看))/.test(t)) {
-    return { action: 'anniversary_list', daemon: ['--anniversary', 'list'], hint: '让我看看都有什么日子……' }
+    return { action: 'anniversary_list', payload: { kind: 'anniversary_list' }, daemon: ['--anniversary', 'list'], hint: '让我看看都有什么日子……' }
   }
 
   // 4) 假期：放假了/放暑假了 → --break on；开学了 → --break off
   if (/^(?:我(?:们)?)?(?:放暑假|放假)(?:了|啦|噜)?[。!！]?$/.test(t)) {
-    return { action: 'break_on', daemon: ['--break', 'on'], hint: '……知道了。放假了。那我可以多找你说话啦。' }
+    return { action: 'break_on', payload: { kind: 'break_on' }, daemon: ['--break', 'on'], hint: '……知道了。放假了。那我可以多找你说话啦。' }
   }
   if (/^(?:我(?:们)?)?开学(?:了|啦)?[。!！]?$/.test(t)) {
-    return { action: 'break_off', daemon: ['--break', 'off'], hint: '哦。开学了……行吧，课表要紧。' }
+    return { action: 'break_off', payload: { kind: 'break_off' }, daemon: ['--break', 'off'], hint: '哦。开学了……行吧，课表要紧。' }
   }
 
   return null
@@ -180,12 +183,23 @@ export function buildReply(action, result) {
  * stdout 必须保留以取出 error 文案（execFile 会在非零退出时丢 stdout）。
  * cwd 锚定 daemon 脚本目录（anniversary/break 状态文件随仓库根，防 cwd 写散）。
  */
+
+function payloadToArgv(payload) {
+  if (payload.kind === 'anniversary_add') return ['--anniversary', `add anniversary ${payload.date} ${payload.name}`]
+  if (payload.kind === 'anniversary_list') return ['--anniversary', 'list']
+  if (payload.kind === 'reminder') return ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: payload.date }, label: payload.label })]
+  if (payload.kind === 'break_on') return ['--break', 'on']
+  if (payload.kind === 'break_off') return ['--break', 'off']
+  return payload.argv ?? []
+}
 export async function executeSpecialCommand(spawnFn, spec, daemonPy, daemonScript) {
+  // PR-3 DTO: spec.payload is canonical, spec.daemon is legacy compat
+  const argv = spec.payload ? payloadToArgv(spec.payload) : spec.daemon;
   const repo = dirname(daemonScript)
   let stdout
   try {
     stdout = await new Promise((resolve, reject) => {
-      const c = spawnFn(daemonPy, [daemonScript, ...spec.daemon], {
+      const c = spawnFn(daemonPy, [daemonScript, ...argv], {
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 30_000,
         cwd: join(repo),

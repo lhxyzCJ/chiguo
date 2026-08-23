@@ -190,13 +190,15 @@ class MessageComposer:
         # 接话茬应延续话题而非无指向开场。
     }
 
-    def __init__(self, state, config: dict = None):
+    def __init__(self, state, config: dict = None, schedule_facade=None):
         """
         Args:
             state: ChiguoState 实例
             config: [composer] 配置段
+            schedule_facade: 可选 ScheduleFacade，注入后 _select_vibe 走门面
         """
         self.state = state
+        self.schedule_facade = schedule_facade
         self.config = config or {}
 
         # combo 尺寸权重（选几层组合）— cfg_float clamp_min=0 单源，无 max(0,float) 毒化
@@ -451,21 +453,19 @@ class MessageComposer:
             elif "evening" in base or "night" in base:
                 base = "weekend_evening"
 
-        # 检查考试周(schedule-center 3c:守卫改走门面 exam_season_now;exam_ranges 属性已移除,
-        # 原 hasattr 守卫会静默吞掉 exam_season 情境,M18)
-        try:
-            sch = self.state.schedule_status(now)
-            if sch and self.state.exam_season_now(now):
-                base = "exam_season"
-        except (AttributeError, KeyError, TypeError):
-            pass
-
-        # 假日
-        try:
-            if self.state.holiday_parser.is_holiday(now):
-                base = "holiday"
-        except (AttributeError, KeyError, TypeError):
-            pass
+        # 检查考试周/假日经 ScheduleFacade（AUD-005/007），无门面则跳过
+        facade = getattr(self, "schedule_facade", None)
+        if facade is not None:
+            try:
+                if facade.is_exam_season(now):
+                    base = "exam_season"
+            except (AttributeError, KeyError, TypeError):
+                pass
+            try:
+                if facade.is_holiday(now):
+                    base = "holiday"
+            except (AttributeError, KeyError, TypeError):
+                pass
 
         return self.VIBES.get(base, base)
 
@@ -607,7 +607,7 @@ def _cli_main(argv=None) -> int:
         if not trigger_type:
             parser.error("需要 decision JSON 文件路径或 --trigger")
 
-    # 最小 state stub：无 personality/schedule_status 属性 → composer 内部
+    # 最小 state stub：无 personality 属性 → composer 内部
     # AttributeError 保护自动降级（cue 权重不调制 + 按当前时间选 vibe）。
     state_stub = SimpleNamespace()
     composer = MessageComposer(state_stub, config={})
