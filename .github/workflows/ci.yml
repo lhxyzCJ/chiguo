@@ -1,5 +1,11 @@
 name: ci
-on: [push, pull_request]
+on:
+  pull_request:
+  push:
+    branches: [main]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -11,12 +17,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Cache uv dependency cache
+      - name: Cache uv
         uses: actions/cache@v4
         with:
           path: /home/runner/.cache/uv
           key: uv-dep-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys:
-            uv-dep-${{ runner.os }}-
+          restore-keys: uv-dep-${{ runner.os }}-
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            wechat-bridge/node_modules
+            wechat-bridge/vendor/wechatbot/node_modules
+          key: node-${{ runner.os }}-${{ hashFiles('wechat-bridge/package.json', 'wechat-bridge/vendor/wechatbot/package.json', 'wechat-bridge/vendor/wechatbot/tsconfig.json') }}
+          restore-keys: node-${{ runner.os }}-
+      - name: Cache vendor dist
+        uses: actions/cache@v4
+        with:
+          path: wechat-bridge/vendor/wechatbot/dist
+          key: vendor-dist-${{ runner.os }}-${{ hashFiles('wechat-bridge/vendor/wechatbot/src/**', 'wechat-bridge/vendor/wechatbot/tsconfig.json', 'wechat-bridge/vendor/wechatbot/package.json') }}
       - run: uv sync --all-extras
       - run: bash scripts/ci-test.sh
