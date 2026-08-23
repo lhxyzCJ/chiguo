@@ -533,7 +533,7 @@ runner = "agent"
 [loop]
 # bridge 常驻服务（持 AgentRpc）：--loop send 分支经此处转发 /agent/prompt 与 /send
 bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 服务地址（含 /agent/prompt 与 /send 端点）
-bridge_token = ""                       # 与 bridge WECHAT_BRIDGE_TOKEN 同源；空=不带头（向后兼容）
+bridge_token = ""                       # 与 bridge WECHAT_BRIDGE_TOKEN 同源；空=不带头（向后兼容，AUD-018：历史空兼容窗口已被 bridge.mjs FATAL 堵死，生产经 wechat-bridge.sh openssl rand -hex 16 自动生成）
 agent_timeout_ms = 125000               # /agent/prompt 超时（agent 生成 LLM 往返兜底）
 retry_delay_seconds = 5                 # 生成失败后 sleep 此值再整链重试一次（抖动缓冲，重试成功不计 fail_streak）
 probe_interval_seconds = 3600           # 累计失败(fail_streak∈[1,threshold))时距上次尝试的最小间隔（降频探测）

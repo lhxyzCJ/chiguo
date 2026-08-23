@@ -207,14 +207,25 @@ class StatePersistence:
         return True
 
     def _backup_state(self, p: Path, bak_path: Path) -> None:
+        # Atomic 0600: copy via tmp with 0600 then replace, no chmod window.
         try:
-            shutil.copy2(str(p), str(bak_path))
+            data = p.read_bytes()
         except OSError:
-            pass
+            return
+        # Reuse atomic_write for 0600 tmp→replace semantics.
         try:
-            os.chmod(bak_path, 0o600)
+            from chiguo_atomic import atomic_write
+            atomic_write(bak_path, data, mode=0o600)
         except OSError:
-            pass
+            # Fallback: best-effort copy2 + chmod if atomic_write fails.
+            try:
+                shutil.copy2(str(p), str(bak_path))
+            except OSError:
+                pass
+            try:
+                os.chmod(bak_path, 0o600)
+            except OSError:
+                pass
 
     def _read_disk_owner(self, p: Path) -> str | None:
         try:

@@ -101,6 +101,10 @@ reasonix.toml
 # claude-mem SQLite 记忆库（运行态数据，不入库）
 .open-mem/
 
+# 通用临时/备份文件兜底（防隐私 .bak/.tmp 泄漏，AUD-019）
+*.bak
+*.tmp
+
 # OMC 运行态目录（会话/任务台账，不入库）
 .omc/
 

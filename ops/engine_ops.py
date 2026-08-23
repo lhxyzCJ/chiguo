@@ -320,12 +320,8 @@ class AccountingMixin(DecisionEngineBase):
                 if user_emotion_analysis:
                     record["user_emotion_analysis"] = user_emotion_analysis
             try:
-                with open(self.messages_log_path, "a") as f:
-                    try:
-                        os.chmod(self.messages_log_path, 0o600)  # 消息归档含明文对话 → 0600
-                    except OSError:
-                        pass
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                from chiguo_atomic import append_jsonl_0600
+                append_jsonl_0600(self.messages_log_path, record)
             except Exception as e:
                 print(f"[warn] 写入 {self.messages_log_path} 失败: {e}", file=sys.stderr)  # 消息归档失败不影响主流程
 
