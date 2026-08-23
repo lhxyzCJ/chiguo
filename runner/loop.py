@@ -12,13 +12,13 @@ import json
 import time
 import math
 import random
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
+from chiguo_time import CST
 
 from decision.base import DecisionEngineBase
 from chiguo_version import VERSION
 from chiguo_net import build_no_proxy_opener, is_local_host
 
-CST = timezone(timedelta(hours=8))
 
 class LoopSenderMixin(DecisionEngineBase):
         def _dynamic_sleep_interval(self, now, decision: dict) -> float:

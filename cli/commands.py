@@ -9,12 +9,12 @@
 import json as _json
 import sys
 import tomllib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from chiguo_time import CST
 from pathlib import Path
 
 from chiguo_paths import PROJECT_ROOT
 
-CST = timezone(timedelta(hours=8))
 
 
 def _load_light_config(config_path: str | None = None) -> dict:

@@ -7,7 +7,8 @@ import sys
 import json
 import os
 import fcntl
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from chiguo_time import CST
 from pathlib import Path
 
 from cli.parser import build_parser
@@ -19,7 +20,6 @@ from ops.bridge_ops import bridge_post, push_alerts_via_wechat  # noqa: F401
 # 兼容别名：历史名 _push_alerts_via_wechat 仍可从 cli.dispatch 导入
 _push_alerts_via_wechat = push_alerts_via_wechat
 
-CST = timezone(timedelta(hours=8))
 
 
 def parse_args(argv=None):

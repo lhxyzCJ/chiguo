@@ -4,13 +4,13 @@ import math
 import random
 import sys
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
+from chiguo_time import CST
 
 from decision.base import DecisionEngineBase
 from chiguo_math import in_quiet_window, longing_accumulate
 from chiguo_version import VERSION
 
-CST = timezone(timedelta(hours=8))
 
 
 class IdleMixin(DecisionEngineBase):

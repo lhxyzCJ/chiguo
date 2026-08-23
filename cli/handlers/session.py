@@ -1,10 +1,10 @@
 """cli.handlers.session — --status / --user-msg / --loop / 默认评估。"""
 import json
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from chiguo_time import CST
 from pathlib import Path
 
-CST = timezone(timedelta(hours=8))
 
 
 def handle_status(args, engine) -> bool:

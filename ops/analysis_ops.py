@@ -3,9 +3,9 @@
 import hashlib
 import json
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from chiguo_time import CST
 
-CST = timezone(timedelta(hours=8))
 
 _MEM0_AUTOWRITE_DEDUP_HOURS = 24.0
 

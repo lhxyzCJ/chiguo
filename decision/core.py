@@ -10,7 +10,8 @@ import time
 import math
 import random
 import uuid
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime
+from chiguo_time import CST
 
 from decision.base import DecisionEngineBase
 from decision.idle import IdleMixin
@@ -21,7 +22,6 @@ from chiguo_circadian import bucket_for
 from trigger_types import TriggerType  # T7·Q3 (#265) 移植：触发类型枚举单一事实源
 from decision_schema import with_contract, validate as validate_decision  # Q16 移植：决策 JSON schema 写前校验
 
-CST = timezone(timedelta(hours=8))
 
 # ── F-A16-02 (#335): 重启域情绪推进保守封顶上限（小时）──
 # 系统重启后 time.monotonic() 归零 < 持久化旧 mono_anchor（或异机迁移时钟域切换）

@@ -7,7 +7,8 @@ ops.engine_ops / runner.loop 四个 mixin，由 decision.engine 组合成完整 
 import os
 import sys
 import tomllib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from chiguo_time import CST
 from pathlib import Path
 
 from chiguo_state import ChiguoState
@@ -16,7 +17,6 @@ from chiguo_composer import MessageComposer
 from chiguo_paths import PROJECT_ROOT
 from schedule.facade import ScheduleFacade, PlayProofProvider
 
-CST = timezone(timedelta(hours=8))
 
 
 class DecisionEngineBase:
