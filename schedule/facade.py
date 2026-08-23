@@ -1,4 +1,5 @@
 # schedule/facade.py — 日程域唯一门面（PR-3 AUD-005/006/007/008）。
+import logging
 import sys
 from datetime import datetime, date as date_type
 from pathlib import Path
@@ -41,7 +42,8 @@ class ScheduleFacade:
             return False
         try:
             return bool(self.holiday.is_holiday(now))
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).debug("is_holiday fallback: %s", exc, exc_info=True)
             return False
 
     def is_makeup_workday(self, now: datetime) -> bool:
@@ -49,7 +51,8 @@ class ScheduleFacade:
             return False
         try:
             return bool(self.holiday.is_makeup_workday(now))
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).debug("is_makeup_workday fallback: %s", exc, exc_info=True)
             return False
 
     def holiday_query(self, now: datetime):
@@ -57,7 +60,8 @@ class ScheduleFacade:
             return None
         try:
             return self.holiday.query(now)
-        except Exception:
+        except Exception as exc:
+            logging.getLogger(__name__).debug("holiday_query fallback: %s", exc, exc_info=True)
             return None
 
     def is_exam_season(self, now) -> bool:
