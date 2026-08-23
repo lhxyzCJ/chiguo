@@ -11,7 +11,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 
 from chiguo_state import CST, ChiguoState
-from chiguo_math import cfg_float, weighted_trigger_choice, in_quiet_window, mood_fresh
+from chiguo_math import cfg_float, clamp01, clamp_int, weighted_trigger_choice, in_quiet_window, mood_fresh
 
 from trigger_types import TriggerType, EMOTION_TRIGGERS, RITUAL_TRIGGERS
 
@@ -31,25 +31,13 @@ class Trigger:
 
 
 def _clamp01(value, default: float) -> float:
-    """#79: 配置阈值解析——非数值回退默认，数值钳制到 [0,1]。"""
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return default
-    return max(0.0, min(1.0, v))
+    """薄包装：委托 chiguo_math.clamp01（单源，PR-4 AUD-026 收敛）。"""
+    return clamp01(value, default)
 
 
 def _clamp_int(value, default: int, max_value: int | None = None) -> int:
-    """#83: 退场阈值解析——非整数值（"3.5"/None 等）回退默认，负数钳制为 0（仿 _clamp01 惯例）。
-    可选 max_value 钳制上限（如 backoff 阈值过大 = 静默禁用退场，属配置事故）。"""
-    try:
-        v = int(value)
-    except (TypeError, ValueError):
-        return default
-    v = max(0, v)
-    if max_value is not None:
-        v = min(max_value, v)
-    return v
+    """薄包装：委托 chiguo_math.clamp_int（单源，PR-4 AUD-026 收敛）。"""
+    return clamp_int(value, default, max_value)
 
 
 def backoff_level(state: ChiguoState, now: datetime) -> int:
@@ -118,7 +106,7 @@ def _collect_ritual_candidates(state, now, trg_cfg, ritual_scale) -> list[dict]:
     try:
         anniv_today = state.anniversary_mgr.get_today(now.date())
         special_hit = any(a.type == "anniversary" for a in anniv_today)
-    except Exception:
+    except (ValueError, TypeError, OSError):
         special_hit = False
     if special_hit:
         cands.append({"trigger": Trigger(type=TriggerType.SPECIAL, intensity="soft"), "weight": ritual_special * ritual_scale})
@@ -303,7 +291,7 @@ def _apply_modifiers_and_select(state, now, trg_cfg, weighted_candidates, trigge
     # T08 隔离：用全局状态快照播种隔离实例 → 确定性跟随全局 seed 但不污染全局序列
     try:
         _jitter_rng.setstate(random.getstate())
-    except Exception:
+    except (ValueError, TypeError, OSError):
         pass
     jitter = _jitter_rng.uniform(jitter_low, jitter_high)
     for c in weighted_candidates:
@@ -391,7 +379,7 @@ def _schedule_multiplier(state: ChiguoState, now: datetime, free_mult: float) ->
         sch = state.schedule_status(now)
         if sch and sch.get("in_class"):
             return 0.3
-    except Exception:
+    except (ValueError, TypeError, OSError):
         logging.debug("free_mult 计算失败: %s", __import__('traceback').format_exc(), exc_info=False)
     if _is_free_time(state, now):
         return free_mult
@@ -498,7 +486,7 @@ def _is_free_time(state: ChiguoState, now: datetime) -> bool:
         sch = state.schedule_status(now)
         if sch and sch.get("in_class"):
             return False
-    except Exception:
+    except (ValueError, TypeError, OSError):
         pass
     return True
 

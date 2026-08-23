@@ -25,5 +25,5 @@ def is_local_url(url: str) -> bool:
         from urllib.parse import urlparse
 
         return urlparse(url).hostname in _LOCAL_HOSTS
-    except Exception:
+    except (ValueError, TypeError, OSError):
         return False

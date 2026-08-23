@@ -33,7 +33,7 @@ class EmotionMixin:
                     hl *= 1.8
                 elif sch and sch.get("class_load") == "heavy":
                     hl *= 1.4
-            except Exception:
+            except (ValueError, TypeError, OSError):
                 logging.debug("anxiety 半衰期调制失败: %s", __import__('traceback').format_exc(), exc_info=False)
         return elastic_recover(cur, self.emotion.baseline_anxiety, hours, hl, cfg.get("elastic_baseline", 100.0))
 

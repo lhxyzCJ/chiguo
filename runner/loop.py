@@ -94,7 +94,7 @@ class LoopSenderMixin(DecisionEngineBase):
                 data = json.loads(p.stdout or "{}")
                 if isinstance(data, dict):
                     return data
-            except Exception:  # noqa: BLE001 - 记账失败静默，不阻断发送
+            except (ValueError, TypeError, OSError):  # noqa: BLE001 - 记账失败静默，不阻断发送
                 pass
             return None
 
@@ -112,7 +112,7 @@ class LoopSenderMixin(DecisionEngineBase):
             try:
                 with open(state_path) as f:
                     data = json.load(f)
-            except Exception:  # noqa: BLE001 - 无状态文件/未记账 → 放行
+            except (ValueError, TypeError, OSError):  # noqa: BLE001 - 无状态文件/未记账 → 放行
                 return True
             if not isinstance(data, dict):
                 return True
@@ -134,7 +134,7 @@ class LoopSenderMixin(DecisionEngineBase):
                         last = datetime.fromisoformat(last_fail)
                         if (datetime.now(CST) - last).total_seconds() < probe_interval:
                             return False  # 未到降频探测节奏
-                except Exception:  # noqa: BLE001
+                except (ValueError, TypeError, OSError):  # noqa: BLE001
                     pass
             return True
 
@@ -239,7 +239,7 @@ class LoopSenderMixin(DecisionEngineBase):
                     if alert_to:
                         try:
                             _post("/send", {"to": alert_to, "text": message}, 10.0)
-                        except Exception:  # noqa: BLE001 - 告警失败不阻断主消息
+                        except (ValueError, TypeError, OSError):  # noqa: BLE001 - 告警失败不阻断主消息
                             pass
     
             if not text:
@@ -305,7 +305,7 @@ class LoopSenderMixin(DecisionEngineBase):
                 # 记账失败只告警 stderr，不影响 success 记账（下方 record_health success）。
                 try:
                     self.record_send_text(msg_id, text, trigger, intensity)
-                except Exception:  # noqa: BLE001 - 本地归档失败不影响主链路成功语义
+                except (ValueError, TypeError, OSError):  # noqa: BLE001 - 本地归档失败不影响主链路成功语义
                     print(f"[chiguo_daemon] record_send_text 失败 msg_id={msg_id}: "
                           f"消息已发送但本地 JSONL 归档未写（不影响健康记账）", file=sys.stderr)
                 # F-A6-2: 发送成功 —— 生成+发送双成功才算健康；记 success 清零 +

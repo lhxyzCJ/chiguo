@@ -182,7 +182,7 @@ class ScheduleMixin:
             return None
         try:
             return _json.loads(bp.read_text())
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return None
 
     def _in_break_range(self, today: date_type) -> bool:

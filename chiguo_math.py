@@ -31,6 +31,29 @@ def cfg_float(value, default: float, clamp_min: float | None = None) -> float:
     return fv
 
 
+# ── 配置阈值钳制（PR-4 收敛 _clamp01/_clamp_int 单源）─────────────
+
+def clamp01(value, default: float) -> float:
+    """配置阈值解析——非数值回退默认，数值钳制到 [0,1]。"""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, v))
+
+
+def clamp_int(value, default: int, max_value: int | None = None) -> int:
+    """退场阈值解析——非整数值回退默认，负数钳制为 0，可选 max_value 上限。"""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    v = max(0, v)
+    if max_value is not None:
+        v = min(max_value, v)
+    return v
+
+
 # ── Sigmoid（逻辑函数）────────────────────────────────────
 # 替代硬阈值：x 在 midpoint 附近柔和过渡，k 控制陡峭度
 # 默认参数 midpoint=50 / steepness=0.1 为 CONFIG fallback（[sigmoid]/poisson 等）——
