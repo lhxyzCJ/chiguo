@@ -93,13 +93,27 @@ def test_ntp_forward_min_elapsed_real():
 
 
 def test_wall_anchor_corrupt_no_cap():
-    """wall_anchor 损坏（非法 ISO）→ 视为无锚点，不加封顶（6h 全量）。"""
+    """wall_anchor 损坏（非法 ISO）→ 与重启封顶一致 cap 0.5h（P2-03）。"""
     with tempfile.TemporaryDirectory() as td:
         now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
         eng = _make_engine(td, now)
         hours = _capture_tick_hours(eng, now, monkey_mono=99999.0, wall_anchor="not-a-datetime", mono_anchor=100.0)
         assert hours is not None
-        assert abs(hours - 6.0) < 1e-9, f"损坏锚点应无 cap 6h, got {hours}"
+        assert abs(hours - REBOOT_CAP_H) < 1e-9, f"损坏锚点应 cap 0.5h, got {hours}"
+
+
+def test_wall_anchor_corrupted_audit_and_cap():
+    """损坏 wall_anchor 分支审计 wall_anchor_corrupted_fallback 且封顶 0.5h；elapsed<cap 不 cap。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        eng = _make_engine(td, now)
+        hours = _capture_tick_hours(eng, now, monkey_mono=99999.0, wall_anchor="bad-iso-!!!", mono_anchor=100.0)
+        assert abs(hours - REBOOT_CAP_H) < 1e-9
+        eng2 = _make_engine(td, now)
+        eng2.state.cooldown.last_message_at = (now - timedelta(minutes=12)).isoformat()
+        eng2.state.last_tick = (now - timedelta(minutes=12)).isoformat()
+        hours2 = _capture_tick_hours(eng2, now, monkey_mono=99999.0, wall_anchor="bad-iso-!!!", mono_anchor=100.0)
+        assert hours2 is not None and abs(hours2 - 0.2) < 0.01, f"小 elapsed 不应 cap, got {hours2}"
 
 
 def test_wall_anchor_none_no_cap():
