@@ -7,8 +7,8 @@ import re
 COURSE_PART_RE = re.compile(
     r'^(.+?)[- ]+([\u4e00-\u9fa5]{2,4})\s*【(.+?)】(.*)$'
 )
-# 旧正则（课程名-教师必须为横杠分隔）,仅作为回退
-LEGACY_COURSE_RE = re.compile(r'^(.+?)-(.+?)【(.+?)】(.*)$')
+# 宽松回退：教师非 2-4 汉字或含特殊字符时，由更宽的 (.+?) 兜底。
+_COURSE_FALLBACK_RE = re.compile(r'^(.+?)-(.+?)【(.+?)】(.*)$')
 # 合并单元格把多门课拼成一个 cell,课程间以 2+ 连续空白分隔
 CELL_SPLIT_RE = re.compile(r'\s{2,}')
 
@@ -30,7 +30,7 @@ def parse_cell(cell: str) -> list[dict]:
     for part in parts:
         c = parse_course_part(part)
         if not c:
-            c = parse_course_legacy(part)
+            c = parse_course_part(part)  # fallback handled inside
         if c:
             courses.append(c)
 
@@ -41,7 +41,7 @@ def parse_cell(cell: str) -> list[dict]:
     # 1) 最后一段解析成功 → 正常的多课程合并，全部保留
     last = parse_course_part(parts[-1])
     if not last:
-        last = parse_course_legacy(parts[-1])
+        last = parse_course_part(parts[-1])
     if last:
         return courses
 
@@ -53,21 +53,16 @@ def parse_cell(cell: str) -> list[dict]:
     #    回退为整 cell 解析（新正则优先，保留完整课程；location 略脏可接受）
     c = parse_course_part(cell)
     if not c:
-        c = parse_course_legacy(cell)
+        c = parse_course_part(cell)
     return [c] if c else courses
 
 
 def parse_course_part(part: str) -> dict | None:
-    """解析单段课程文本：课程名[- ]教师【周数】地点"""
+    """解析单段课程文本：课程名[- ]教师【周数】地点（主正则 2-4 汉字，宽松回退兜底）。"""
     match = COURSE_PART_RE.match(part)
-    if not match:
-        return None
-    return make_course(*match.groups())
-
-
-def parse_course_legacy(part: str) -> dict | None:
-    """旧格式回退：课程名-教师【周数】地点"""
-    match = LEGACY_COURSE_RE.match(part)
+    if match:
+        return make_course(*match.groups())
+    match = _COURSE_FALLBACK_RE.match(part)
     if not match:
         return None
     return make_course(*match.groups())

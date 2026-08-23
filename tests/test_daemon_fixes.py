@@ -359,7 +359,6 @@ _WORKER_SRC = r'''
 import json, os, sys, time
 from pathlib import Path
 ROOT = {root}
-os.chdir(ROOT)
 sys.path.insert(0, ROOT)
 from chiguo_daemon import DecisionEngine
 CFG, LOG, msg_id, marker_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]

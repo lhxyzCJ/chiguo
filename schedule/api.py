@@ -435,7 +435,7 @@ class ScheduleApi:
             if bp.exists():
                 try:
                     return json.loads(bp.read_text())
-                except Exception:
+                except (ValueError, TypeError, OSError):
                     pass
             return {"breaks": []}
 

@@ -97,7 +97,7 @@ class AccountingMixin(DecisionEngineBase):
                     self.state.audit("state_lock_degraded", "record_message")
                 try:
                     self.state._load()
-                except Exception:  # noqa: BLE001 - 重载失败维持现有内存状态
+                except (ValueError, TypeError, OSError):  # noqa: BLE001 - 重载失败维持现有内存状态
                     pass
                 # ── v9: recv 去重（升级语义）──────────────────────
                 # 同一条消息会被记录两次：bridge 先确定性 --user-msg（无分析），
@@ -164,7 +164,7 @@ class AccountingMixin(DecisionEngineBase):
                             "was_replied": True,
                             "trigger": "user_reply",
                         })
-                    except Exception:
+                    except (ValueError, TypeError, OSError):
                         pass
     
                 if not self.state.save():
@@ -233,7 +233,7 @@ class AccountingMixin(DecisionEngineBase):
                 if mem.add_messages(messages, metadata=metadata):
                     # F-A21-002: 写入成功才记 hash，供 24h 内同文本去重
                     _mem0_autowrite_record(self, text)
-            except Exception:
+            except (ValueError, TypeError, OSError):
                 pass  # 记忆写入失败不影响主流程
 
         def _log_message(self, msg_id: str, direction: str, text: str,
@@ -303,7 +303,7 @@ class AccountingMixin(DecisionEngineBase):
                         if not self.state.save():
                             print("[chiguo_daemon] state_save_failed: record_sent 未落盘"
                                   "（sent 计数丢失，下轮重试）", file=sys.stderr)
-                except Exception:
+                except (ValueError, TypeError, OSError):
                     pass  # 统计失败不影响发送记录主链路
             self._log_message(
                 msg_id=msg_id,
@@ -345,7 +345,7 @@ class AccountingMixin(DecisionEngineBase):
                 # _loop_send 在 evaluate 锁释放后才执行）。
                 try:
                     self.state._load()
-                except Exception:  # noqa: BLE001 - 重载失败维持现有内存状态
+                except (ValueError, TypeError, OSError):  # noqa: BLE001 - 重载失败维持现有内存状态
                     pass
                 already_reported = self._has_send_result(msg_id)
                 if status == "failed" and not already_reported:

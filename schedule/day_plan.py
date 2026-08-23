@@ -208,6 +208,6 @@ def bayesian_adjust(base: float, user_state: dict, emotion, config: dict) -> flo
             base = min(base * 1.2, 0.95)
         if emotion.anxiety > config.get("cooldown", {}).get("anxiety_block_threshold", 70.0):
             base *= 0.3
-    except Exception:
+    except (ValueError, TypeError, OSError):
         logging.debug("day_plan anxiety 调制失败", exc_info=True)
     return base

@@ -39,7 +39,7 @@ def _cmd_attention(config_path: str | None = None):
         try:
             st = _json.loads((Path(cfg["_base_dir"]) / "chiguo_state.json").read_text())
             emotion = st.get("emotion", {})
-        except Exception:
+        except (ValueError, TypeError, OSError):
             pass
         print(_json.dumps({"action": "attention", "ok": True, "attention": att,
                            "emotion": emotion, "week_num": att["week_num"],

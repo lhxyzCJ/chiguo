@@ -202,7 +202,7 @@ class TopicPicker:
                     self.netease_service.consume_fault_topic(now)
                 else:
                     self.netease_service.consume_music_topic(now)
-            except Exception:
+            except (ValueError, TypeError, OSError):
                 logging.debug("netease consume 失败: %s", __import__('traceback').format_exc(), exc_info=False)
         return topic
 
@@ -250,7 +250,7 @@ class TopicPicker:
                     self.netease_service.consume_fault_topic(now)
                 else:
                     self.netease_service.consume_music_topic(now)
-            except Exception:
+            except (ValueError, TypeError, OSError):
                 logging.debug("netease consume 失败: %s", __import__('traceback').format_exc(), exc_info=False)
         return topic
 
@@ -301,7 +301,7 @@ class TopicPicker:
                 "hint": "关心哥哥今天课多不多、累不累",
                 "tone": "caring",
             }
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return None  # #79: 课表数据异常 → 本来源静默跳过
 
     # ── 来源 2：mem0 记忆 ────────────────────────────────
@@ -473,7 +473,7 @@ class TopicPicker:
                 }
 
             return None
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return None  # #79: 纪念日数据异常 → 本来源静默跳过
 
     # ── 来源 7：偏好追问（mem0 preferences） ─────────────
@@ -516,12 +516,12 @@ class TopicPicker:
         try:
             sch = self.state.schedule_status(now)
             in_class = bool(sch and sch.get("in_class"))
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return None  # 门控信息不可得 → 不发音乐话题(fail-closed)
         try:
             qs, qe = self.state.cooldown.quiet_window()
             in_quiet = in_quiet_window(now, int(qs), int(qe))
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return None
         try:
             # F-RT-005 (#309): peek_music_topic 含网络拉取，加线程总预算
@@ -530,5 +530,5 @@ class TopicPicker:
                 lambda: self.netease_service.peek_music_topic(
                     now, in_class=in_class, in_quiet_window=in_quiet),
                 _NETEASE_TOPIC_TIMEOUT_S)
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return None  # 策略层异常 → 静默跳过(不阻塞话题选择)

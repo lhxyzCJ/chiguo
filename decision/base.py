@@ -28,6 +28,7 @@ class DecisionEngineBase:
             self.config_path = config_path
             with open(config_path, "rb") as f:
                 self.config = tomllib.load(f)
+            self._merge_experimental()
             # ── v6: 路径锚定。所有运行时文件基于 config 所在目录，
             # 不依赖 cwd（cron 工作目录漂移曾导致状态文件反复丢失重建）。
             self._inject_base_dir()
@@ -58,8 +59,20 @@ class DecisionEngineBase:
                     [str(self.log_path), str(self.messages_log_path)],
                     self.config_path,
                 )
-            except Exception:
+            except (ValueError, TypeError, OSError):
                 pass  # rotation failure never blocks daemon
+
+        def _merge_experimental(self):
+            exp = self.config.get("experimental")
+            if not isinstance(exp, dict) or not exp:
+                return
+            for k, v in list(exp.items()):
+                if "__" not in k:
+                    continue
+                sec, key = k.split("__", 1)
+                if not sec or not key:
+                    continue
+                self.config.setdefault(sec, {})[key] = v
 
         def _inject_base_dir(self):
             """config 中注入 _base_dir（ChiguoState 用它锚定运行时路径）。"""
@@ -81,6 +94,7 @@ class DecisionEngineBase:
                     print(f"[warn] 配置热重载失败，保留旧配置: {e}", file=sys.stderr)
                     return
                 self.config = new_config
+                self._merge_experimental()
                 self._inject_base_dir()
                 self._config_mtime = mtime
                 # ── Q19: 热重载重建集合补全。ChiguoState.reload_config() 替换 config 引用并

@@ -327,7 +327,7 @@ class InteractionMixin:
             obs = {"reply_latency": round(latency_h, 3) if latency_h else None, "msg_length": msg_length, "silence_hours": round(silence_h, 2)}
             actual = "chatting" if latency_h is not None and latency_h < 0.5 else None
             self.bayesian_estimator.record_observation(obs, actual_state=actual)
-        except Exception:
+        except (ValueError, TypeError, OSError):
             logging.debug("bayesian 记录失败: %s", __import__('traceback').format_exc(), exc_info=False)
 
     def on_user_message(self, now: datetime, msg_length: int = 10, analysis: dict | None = None):
@@ -668,7 +668,7 @@ class InteractionMixin:
             if not events:
                 print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
                 return False
-            legacy_events = all("msg_id" not in ev for ev in events)
+            all_legacy_batch = all("msg_id" not in ev for ev in events)
             matched = False
             for i, ev in enumerate(events):
                 if ev.get("msg_id") == msg_id:
@@ -676,13 +676,13 @@ class InteractionMixin:
                     del self.cooldown.event_timestamps[i]
                     matched = True
                     break
-            if not matched and not legacy_events:
+            if not matched and not all_legacy_batch:
                 print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
                 return False
             if not matched:
                 memory_marker = self.cooldown.event_timestamps[-1].get("memory_marker") \
                     if isinstance(self.cooldown.event_timestamps[-1], dict) else None
-                self.cooldown.event_timestamps.pop()  # legacy 事件：旧行为回退删除
+                self.cooldown.event_timestamps.pop()  # 无 msg_id 旧批次：回退删除最后一条
         elif self.cooldown.event_timestamps:
             memory_marker = self.cooldown.event_timestamps[-1].get("memory_marker") \
                 if isinstance(self.cooldown.event_timestamps[-1], dict) else None

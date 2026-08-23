@@ -105,7 +105,7 @@ class NeteaseBridge:
             if not raw:
                 return None
             return self._clean_cookie(raw)
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return None
 
     def _save_cookie(self, raw):
@@ -208,7 +208,7 @@ class NeteaseBridge:
 
         try:
             self._print_qr_terminal(unikey)
-        except Exception:
+        except (ValueError, TypeError, OSError):
             pass
 
         print(f"[3/3] 等待扫码... (打开网易云音乐 APP → 扫一扫)")
@@ -272,7 +272,7 @@ class NeteaseBridge:
             )
             if result.returncode == 0 and result.stdout:
                 print(result.stdout)
-        except Exception:
+        except (ValueError, TypeError, OSError):
             pass
 
     # ── Cache ────────────────────────────────────────────────
@@ -298,7 +298,7 @@ class NeteaseBridge:
                 except (ValueError, TypeError):
                     pass
             return data
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return None
 
     def _save_cache(self, songs):
@@ -462,7 +462,7 @@ class NeteaseBridge:
         try:
             with open(cache_file) as f:
                 data = json.load(f)
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return None
         if not isinstance(data, dict):
             return None

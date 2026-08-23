@@ -101,7 +101,7 @@ class NeteaseService:
                 else:
                     merged[k] = v
             return merged
-        except Exception:
+        except (ValueError, TypeError, OSError):
             return self._default_health()
 
     def _save_health(self):

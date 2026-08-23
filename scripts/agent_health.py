@@ -59,7 +59,7 @@ def _read_state(state_path):
         if not isinstance(data, dict):
             raise ValueError("state not a dict")
         return data
-    except Exception:
+    except (ValueError, TypeError, OSError):
         return {"state": "up", "fail_streak": 0}
 
 

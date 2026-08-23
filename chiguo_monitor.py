@@ -94,7 +94,7 @@ class ChiguoMonitor:
                 # [memory].backend 镜像（mem0 唯一后端）
                 defaults["backend"] = cfg.get("memory", {}).get("backend") or defaults["backend"]
                 break
-            except Exception:
+            except (ValueError, TypeError, OSError):
                 continue
         return defaults
 

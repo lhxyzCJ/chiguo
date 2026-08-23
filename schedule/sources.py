@@ -24,7 +24,7 @@ def _holidays_cover_next_year(base_dir, next_year):
         for r in data.get("holidays", {}).values():
             if str(r.get("start", "")).startswith(str(next_year)):
                 return True
-    except Exception:  # noqa: BLE001 - 读取失败按未覆盖处理
+    except (ValueError, TypeError, OSError):  # noqa: BLE001 - 读取失败按未覆盖处理
         return False
     return False
 
@@ -77,7 +77,7 @@ def load_sources(base_dir: str, config: dict, schedule_cache_dict: dict | None =
     base = Path(base_dir)
     try:
         holiday = HolidayParser(str(base / "holidays.json"))
-    except Exception:
+    except (ValueError, TypeError, OSError):
         # H-2 兜底:holidays.json override 意外异常 → 降级为仅内嵌节假日,不抛(replan 不被 traceback 中断)
         print(f"[schedule.sources] holidays.json 解析异常,降级仅用内嵌节假日", file=sys.stderr)
         holiday = HolidayParser()
@@ -88,7 +88,7 @@ def load_sources(base_dir: str, config: dict, schedule_cache_dict: dict | None =
             print(f"[schedule.sources] {_now.year} 年节假日数据即将过期：请运行 "
                   f"python3 update_holidays.py {_now.year + 1} 生成 {_now.year + 1} 年模板（国务院通知发布后填实际日期）",
                   file=sys.stderr)
-    except Exception:  # noqa: BLE001 - 提示不影响主流程
+    except (ValueError, TypeError, OSError):  # noqa: BLE001 - 提示不影响主流程
         pass
     anniversaries = AnniversaryManager(str(base))
     overrides = OverrideStore(str(base))

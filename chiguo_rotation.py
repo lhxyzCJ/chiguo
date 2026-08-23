@@ -147,7 +147,7 @@ def _load_config(config_path: str) -> dict:
         with open(config_path, "rb") as f:
             cfg = tomllib.load(f)
         return cfg.get("logging", {})
-    except Exception:
+    except (ValueError, TypeError, OSError):
         return {}
 
 

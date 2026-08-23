@@ -115,7 +115,7 @@ class StatePersistence:
                 data = json.loads(mp.read_text())
                 self.owner.memories = ([m for m in data if isinstance(m, dict)]
                                        if isinstance(data, list) else [])
-            except Exception:
+            except (ValueError, TypeError, OSError):
                 self.owner.memories = []
         else:
             self.owner.memories = []
@@ -130,7 +130,7 @@ class StatePersistence:
                 v = json.load(_f).get("tick_seq")
             if isinstance(v, int):
                 disk_seq = v
-        except Exception:
+        except (ValueError, TypeError, OSError):
             logging.debug("F-A16-01 disk_seq 读取失败: %s", __import__('traceback').format_exc(), exc_info=False)
         if self._lock_degraded and disk_seq is not None and disk_seq > o.tick_seq:
             print(f"[chiguo_state] save 放弃：state_lock 降级且磁盘已更新到 tick_seq={disk_seq}(内存={o.tick_seq})", file=sys.stderr)
@@ -168,7 +168,7 @@ class StatePersistence:
                 v = json.load(_f).get("owner")
             if isinstance(v, str) and v.strip():
                 return v.strip()
-        except Exception:
+        except (ValueError, TypeError, OSError):
             pass
         return None
 
@@ -188,7 +188,7 @@ class StatePersistence:
                         _disk = json.load(_f).get("tick_seq")
                     if isinstance(_disk, int) and _disk > self.owner.tick_seq:
                         self._audit("save_degraded_abort", f"early_abort disk_seq={_disk} in_mem_seq={self.owner.tick_seq}")
-                except Exception:
+                except (ValueError, TypeError, OSError):
                     pass
             return False
         try:
@@ -367,19 +367,19 @@ class StatePersistence:
                 migrated.append(d)
             setattr(o.circadian, key, migrated)
         try:
-            legacy_conf = float(o.circadian.confidence)
+            migrated_conf = float(o.circadian.confidence)
         except (ValueError, TypeError):
-            legacy_conf = 0.0
+            migrated_conf = 0.0
         if (o.circadian.weekday_quiet_start == 0
                 and o.circadian.weekday_quiet_end == 8
                 and o.circadian.weekday_confidence == 0.0
                 and o.circadian.weekend_quiet_start == 0
                 and o.circadian.weekend_quiet_end == 8
                 and o.circadian.weekend_confidence == 0.0
-                and legacy_conf > 0):
+                and migrated_conf > 0):
             o.circadian.weekday_quiet_start = o.circadian.quiet_start
             o.circadian.weekday_quiet_end = o.circadian.quiet_end
-            o.circadian.weekday_confidence = legacy_conf
+            o.circadian.weekday_confidence = migrated_conf
 
     def _audit(self, event: str, detail: str = ""):
         """v5: 状态损坏审计日志。追加到 chiguo_state_audit.jsonl。v6: 路径锚定。"""
@@ -392,7 +392,7 @@ class StatePersistence:
             }
             with open(audit_path, "a") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
+        except (ValueError, TypeError, OSError):
             pass  # audit 失败不影响主流程
 
     def audit(self, event: str, detail: str = ""):
