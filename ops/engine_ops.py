@@ -25,51 +25,19 @@ _MEM0_AUTOWRITE_DEDUP_HOURS = 24.0
 # setattr，SimpleNamespace 同样支持）。
 
 def _mem0_autowrite_hashes_dict(self) -> dict:
-    """进程内最近写入 hash 表 {sha256(text): iso_ts}。惰性初始化。"""
-    d = getattr(self, "_mem0_autowrite_hashes", None)
-    if d is None:
-        d = {}
-        self._mem0_autowrite_hashes = d
-    return d
+    """薄包装转发至 ops.analysis_ops（AUD-003 薄包装委托，保持兼容）。"""
+    from ops.analysis_ops import _mem0_autowrite_hashes_dict as _impl
+    return _impl(self)
 
 
 def _mem0_autowrite_deduped(self, text: str) -> bool:
-    """同文本 24h 内是否刚写过（去重窗口判定 + 过期清理）。
-
-    窗口内同 hash → True（跳过写入）；超窗 hash 顺带清理，窗口后同文本再次写入放行。
-    """
-    if not text.strip():
-        return False
-    h = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
-    now = datetime.now(CST)
-    d = _mem0_autowrite_hashes_dict(self)
-    stale = []
-    for k, iso in list(d.items()):
-        try:
-            ts = datetime.fromisoformat(iso)
-        except (TypeError, ValueError):
-            stale.append(k)
-            continue
-        if (now - ts).total_seconds() > _MEM0_AUTOWRITE_DEDUP_HOURS * 3600:
-            stale.append(k)
-    for k in stale:
-        d.pop(k, None)
-    prev = d.get(h)
-    if prev:
-        try:
-            return (now - datetime.fromisoformat(prev)).total_seconds() \
-                <= _MEM0_AUTOWRITE_DEDUP_HOURS * 3600
-        except (TypeError, ValueError):
-            return False
-    return False
+    from ops.analysis_ops import _mem0_autowrite_deduped as _impl
+    return _impl(self, text)
 
 
 def _mem0_autowrite_record(self, text: str):
-    """记录一次成功写入的文本 hash（供 24h 内去重）。"""
-    if not text.strip():
-        return
-    h = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
-    _mem0_autowrite_hashes_dict(self)[h] = datetime.now(CST).isoformat()
+    from ops.analysis_ops import _mem0_autowrite_record as _impl
+    return _impl(self, text)
 
 # F-A5-07 / F-RT-013 (#309): 锁内 IO 收口——consolidate 在 evaluate state_lock 临界区
 # 内执行（决策流程锁内），qdrant get_all/update/delete 若无上限会无限阻塞锁 → 并发
@@ -108,15 +76,8 @@ class AccountingMixin(DecisionEngineBase):
             （RECV_DEDUP_WINDOW_S 不变），行为向后兼容。recv_id 仅去重流，不进 agent prompt。"""
             now = datetime.now(CST)
             msg_id = self._make_msg_id()
-            analysis_dict = None
-            if analysis_json:
-                try:
-                    analysis_dict = json.loads(analysis_json)
-                    if not isinstance(analysis_dict, dict):
-                        raise ValueError("analysis is not a dict")
-                except (json.JSONDecodeError, TypeError, ValueError) as e:
-                    print(f"[warn] 分析JSON解析失败: {e}，降级为纯长度模式", file=sys.stderr)
-                    analysis_dict = None
+            from ops.analysis_ops import parse_analysis_json
+            analysis_dict = parse_analysis_json(analysis_json)
     
             # ── v11 (#75): RMW 临界区全程持跨进程锁，防并发丢更新。
             # v1.14 (#139): 锁内先重载磁盘最新状态再处理——构造加载（S0）与拿到锁
@@ -147,24 +108,9 @@ class AccountingMixin(DecisionEngineBase):
                 # 一律视为用户真实重发 → 走完整 on_user_message。
                 text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
                 dedup = self.state.cooldown.recv_dedup
-                is_upgrade = (
-                    analysis_dict is not None
-                    and bool(dedup)
-                    and not dedup.get("analysis")
-                )
-                if is_upgrade:
-                    # U5 (#233, D1): recv_id 精确匹配（同 id → 补报升级，免窗口判断）
-                    if recv_id and dedup.get("recv_id") == recv_id:
-                        is_upgrade = True
-                    # 无 recv_id（CLI 手动/测试/老调用）→ 回退 text_sha + 窗口逻辑（450s 不变）
-                    elif dedup.get("text_sha") == text_sha and dedup.get("at"):
-                        try:
-                            prev_at = datetime.fromisoformat(dedup["at"])
-                            is_upgrade = (now - prev_at).total_seconds() < self.RECV_DEDUP_WINDOW_S
-                        except (ValueError, TypeError):
-                            is_upgrade = False
-                    else:
-                        is_upgrade = False
+                from ops.analysis_ops import is_recv_upgrade
+                is_upgrade = is_recv_upgrade(
+                    analysis_dict, dedup, text_sha, recv_id, now, self.RECV_DEDUP_WINDOW_S)
     
                 if is_upgrade:
                     if analysis_dict:
