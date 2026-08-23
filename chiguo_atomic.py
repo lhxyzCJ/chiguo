@@ -74,3 +74,53 @@ def atomic_write(path, data, *, mode=None, fsync=False, verify=None,
             raise
 
     os.replace(tmp, path)
+
+
+def append_jsonl_0600(path, obj):
+    """Append one JSON object as a JSONL line with atomic 0600 creation (no chmod window).
+
+    Uses os.open(O_CREAT, 0o600) → fdopen → write to avoid the µs window of
+    open("a") → chmod 0600 → write where the file is briefly 0644. Subsequent
+    appends reuse the existing 0600 file without extra chmod calls. Ensures
+    parent directory exists.
+
+    Args:
+        path: JSONL file path (str or PathLike).
+        obj: JSON-serializable object to append as one line.
+    """
+    import json
+    p = Path(os.fspath(path))
+    # Ensure parent exists (no-op if already there).
+    p.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(obj, ensure_ascii=False) + "\n"
+    data = line.encode("utf-8")
+    # O_CREAT with 0o600 ensures first-create is already 0600 (umask-respected min).
+    # O_WRONLY | O_APPEND | O_CREAT: create if missing, append if exists.
+    fd = os.open(str(p), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        # Best-effort: ensure existing file is 0600 (covers pre-existing 0644 from old code).
+        try:
+            st = os.fstat(fd)
+            if (st.st_mode & 0o777) != 0o600:
+                try:
+                    os.fchmod(fd, 0o600)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        # 循环写完：os.write 可能部分写入（PIPE_BUF/信号中断），需补写剩余。
+        written = 0
+        while written < len(data):
+            n = os.write(fd, data[written:])
+            if n == 0:
+                raise OSError("os.write returned 0 bytes (append_jsonl_0600)")
+            written += n
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass

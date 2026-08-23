@@ -83,12 +83,8 @@ class DecisionCoreMixin(DecisionEngineBase):
             if errors:
                 raise ValueError("决策 JSON schema 校验失败: " + "; ".join(errors))
             try:
-                with open(self.log_path, "a") as f:
-                    try:
-                        os.chmod(self.log_path, 0o600)  # 决策日志含对话/状态隐私 → 0600
-                    except OSError:
-                        pass
-                    f.write(json.dumps(decision, ensure_ascii=False) + "\n")
+                from chiguo_atomic import append_jsonl_0600
+                append_jsonl_0600(self.log_path, decision)
             except (TypeError, ValueError) as e:
                 # F-A22-001 加固：决策含非 JSON 类型（如 set）时不再裸吞。
                 # 计数 + 明确 stderr + audit 事件（RF5 持久化，防进程重启归零/
@@ -103,9 +99,8 @@ class DecisionCoreMixin(DecisionEngineBase):
                     "decision_write_serialization_failed",
                     f"msg_id={decision.get('msg_id')}: {e}")
                 try:
-                    with open(self.log_path, "a") as f:
-                        f.write(json.dumps(decision, ensure_ascii=False,
-                                           default=json_default) + "\n")
+                    from chiguo_atomic import append_jsonl_0600
+                    append_jsonl_0600(self.log_path, json.loads(json.dumps(decision, ensure_ascii=False, default=json_default)))
                 except Exception as e2:
                     print(f"[warn] 写入 {self.log_path} 失败: {e2}", file=sys.stderr)
             except OSError as e:
