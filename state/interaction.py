@@ -1,4 +1,7 @@
-"""state.interaction — 交互/人格/情绪影响/发送反馈域（AUD-001）。"""
+"""state.interaction — 交互/人格/情绪影响/发送反馈域（AUD-001）。
+
+TODO(PR-4): 848 行仍偏大，后续可按 personality / bayesian / circadian 再拆 100-200 行子模块。
+"""
 
 import logging
 import random

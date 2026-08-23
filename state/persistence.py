@@ -14,16 +14,7 @@ from pathlib import Path
 
 import chiguo_locks as locks
 import chiguo_atomic as _chiguo_atomic
-def _get_atomic_write():
-    try:
-        import chiguo_state as _cs
-        aw = getattr(_cs, 'atomic_write', None)
-        # If test patched chiguo_state.atomic_write to a mock, use that mock
-        if aw is not None and aw is not _chiguo_atomic.atomic_write:
-            return aw
-    except Exception:
-        pass
-    return _chiguo_atomic.atomic_write
+
 atomic_write = _chiguo_atomic.atomic_write
 from chiguo_state_models import ChiguoEmotion, CooldownState, _coerce_dataclass_fields, _memory_dedup_key
 from chiguo_personality import personality_to_dict, personality_from_dict
@@ -223,7 +214,7 @@ class StatePersistence:
                 if not isinstance(_v, dict) or "_version" not in _v:
                     raise ValueError("tmp validation failed: not a dict or no _version")
             try:
-                _get_atomic_write()(p, data, mode=0o600, fsync=True, verify=_verify_tmp)
+                atomic_write(p, data, mode=0o600, fsync=True, verify=_verify_tmp)
             except (json.JSONDecodeError, ValueError) as e:
                 print(f"[chiguo_state] save skipped: tmp 校验失败，不替换好状态: {e}", file=sys.stderr)
                 return False
