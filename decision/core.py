@@ -13,9 +13,10 @@ import uuid
 from datetime import date, datetime, timezone, timedelta
 
 from decision.base import DecisionEngineBase
+from decision.idle import IdleMixin
 from chiguo_trigger import evaluate_triggers
 from chiguo_version import VERSION
-from chiguo_math import in_quiet_window, longing_accumulate
+from chiguo_math import in_quiet_window
 from chiguo_circadian import bucket_for
 from trigger_types import TriggerType  # T7·Q3 (#265) 移植：触发类型枚举单一事实源
 from decision_schema import with_contract, validate as validate_decision  # Q16 移植：决策 JSON schema 写前校验
@@ -63,7 +64,7 @@ def _is_reminder_trigger(trigger) -> bool:
             and (trigger.data.get("memory") or {}).get("type") == "reminder")
 
 
-class DecisionCoreMixin(DecisionEngineBase):
+class DecisionCoreMixin(IdleMixin):
         @staticmethod
         def _make_msg_id() -> str:
             """生成唯一消息ID（12位hex，~10^14空间，单用户系统足够）"""
@@ -494,11 +495,6 @@ class DecisionCoreMixin(DecisionEngineBase):
                 else:
                     self.state.tick(elapsed, now)
 
-        def _bayesian_block_confidence(self) -> float:
-            """Bayesian 阻塞置信度阈值（[bayesian] min_confidence_for_block，默认 0.5）。
-            evaluate 睡觉门控与 _idle_reason 共用同一来源；热重载后即时生效。"""
-            return self.config.get("bayesian", {}).get("min_confidence_for_block", 0.5)
-
         def _fetch_play_proof(self, now: datetime) -> list:
             """v8/v1.15(#163): 锁外拉取近期播放(纯网络 IO, 超时10s)。
             仅 enabled 且评估时刻在静默窗口内才拉取(白天无意义);返回原始播放
@@ -565,205 +561,3 @@ class DecisionCoreMixin(DecisionEngineBase):
             """
             plays = self._fetch_play_proof(now)
             return self._apply_play_proof(now, plays)
-
-        def _emit_idle(self, reason: str, now, user_state, data_warning: bool,
-                       save_failed: bool = False) -> dict:
-            """idle 决策统一出口：概率累积（no_trigger/user_busy）+ 落盘。
-
-            save_failed=True：调用方已确认本次 save 失败（R15 #334 send 阻断
-            路径），跳过 _maybe_consolidate 与出口内 save——避免在「应 send 但
-            save 失败」路径追加更多未落盘变更，也避免重复告警；仅保留
-            _monotonic_at_save 更新。
-            """
-            # C1: 空闲静默路径确定性记忆巩固（config 门控默认关闭；失败不阻断主链路）
-            if not save_failed:
-                self._maybe_consolidate(now)
-            if reason in ("no_trigger", "user_busy"):
-                self.state.cooldown.held_count += 1
-                cfg_cooldown = self.config.get("cooldown", {})
-                base_lambda = self.config.get("poisson", {}).get("base_lambda", 0.25)
-                current_lam = self.state.cooldown.accumulated_lambda or self.state.current_lambda(now)
-                new_lam, _ = longing_accumulate(
-                    current_lam, base_lambda,
-                    growth_factor=cfg_cooldown.get("longing_growth_factor", 0.08),
-                    anxiety=self.state.emotion.anxiety,
-                    anxiety_block_threshold=cfg_cooldown.get("anxiety_block_threshold", 70.0),
-                    held_count=self.state.cooldown.held_count,
-                    max_lambda_multiplier=cfg_cooldown.get("max_lambda_multiplier", 5.0),
-                )
-                self.state.cooldown.accumulated_lambda = new_lam
-    
-            # v11 (#75): save 返回 bool，失败输出 state_save_failed 告警。
-            # R15 (#334): send 阻断路径已在 evaluate 确认 save 失败（save_failed
-            # =True）→ 不再重复 save/告警；其余 idle 路径行为与现状一致。
-            if not save_failed and not self.state.save():
-                print("[chiguo_daemon] state_save_failed: 状态写盘失败", file=sys.stderr)
-            self._monotonic_at_save = time.monotonic()
-    
-            decision = {
-                "action": "idle",
-                "version": VERSION,
-                "reason": reason,
-                "state": self.state.snapshot(now, user_state),
-            }
-            nxt = self._estimate_next_check(now, reason)
-            if nxt:
-                decision["next_evaluation_at"] = nxt
-            if data_warning:
-                decision["data_warning"] = data_warning
-            if user_state:
-                decision["bayesian"] = {
-                    "most_likely": user_state["most_likely"],
-                    "confidence": user_state["confidence"],
-                    "utility": user_state["utility"],
-                }
-            self._log(decision)
-            return decision
-
-        def _idle_reason(self, now: datetime, user_state: dict = None,
-                         quiet_ok: bool = False) -> str:
-            # ── v6 修复: 先报具体门禁（确定性约束），再报 Bayesian 状态（概率推断）。
-            # 设计依据：① 门禁是"无论用户状态如何都会拦截"的确定性约束——当多个约束
-            # 同时生效时，门禁才是真正的 binding constraint，且其 next_evaluation_at
-            # 精确（min_interval → +32min / quiet_hours → quiet_end / daily_limit → 明早）；
-            # Bayesian 只能给 1-2h 猜测。② evaluate() 按 reason 决定是否累积 longing
-            # （user_busy 会累积）——若被 min_interval 挡住却误报 user_busy，会在冷却期
-            # 错误累积。③ 纯 Bayesian 阻塞场景不受影响：evaluate() 的 sleeping 门控只在
-            # 具体门禁放行（can_send=True）时才覆盖 can_send，此时走完门禁必然落到
-            # user_sleeping/user_busy。
-            # v1.15 (#162): 门禁顺序对齐 can_send（daily_limit→min_interval→energy 含
-            # rate_energy_override→quiet_hours→busy_suppressed）。busy_suppressed 从
-            # 最优先移到最后——与 can_send 判定一致，否则 can_send=False(busy) 时
-            # _idle_reason 却因顺序不同返回其它 reason，next_evaluation_at 估算失真。
-    
-            # daily limit: mirror can_send() logic — active vs silent
-            silent_h = self.state.cooldown.silent_hours(now)
-            daily_max = self.config.get("cooldown", {}).get(
-                "max_daily_active", 4) if silent_h < 8 else self.config.get("cooldown", {}).get("max_daily_silent", 2)
-            if self.state.cooldown.messages_today >= daily_max:
-                # L4 (#234, D4): 逃生阀放行 → 继续走后续门禁，不直接 return daily_limit。
-                # 与 can_send:2169-2172 的 longing 溢出逃生阀语义对齐——can_send 内部已含
-                # 逃生阀（is_longing_overflow + 冷却期）判定，若 it 放行则 daily_limit 不应
-                # 成为 binding constraint（否则 next_evaluation_at 估到明早、逃生消息被压）。
-                try:
-                    if not self.state.can_send(now, quiet_ok=quiet_ok):
-                        return "daily_limit"
-                except Exception:  # noqa: BLE001 - 逃生阀判定异常时保守按 daily_limit 拦截
-                    return "daily_limit"
-                # can_send 逃生阀放行 → 不 return daily_limit，落到后续门禁（min_interval 等）
-    
-            # 最小间隔
-            min_interval = self.config.get("cooldown", {}).get("min_interval_minutes", 30)
-            mins_since = self.state.cooldown.minutes_since_last_message(now)
-            # None = 时间戳解析失败（数据损坏）→ 与"从未发过"一致放行，不误判为过频
-            if mins_since is not None and mins_since < min_interval:
-                return "min_interval"
-    
-            # 元气检查（孤独暴涨时可覆盖，与 can_send 一致）
-            if self.state.emotion.energy < 12:
-                emo_cfg = self.config.get("emotion", {})
-                override_ok = (
-                    emo_cfg.get("rate_energy_override", False)
-                    and self.state.emotion.loneliness_rate > emo_cfg.get("rate_energy_threshold", 5.0)
-                    and self.state.emotion.energy >= emo_cfg.get("rate_energy_min", 5)
-                )
-                if not override_ok:
-                    return "low_energy"
-    
-            # 检查是否在静默时段（quiet_ok=播放反证成立时跳过，与 can_send 的
-            # `if not quiet_ok:` 判定对齐——否则播放反证成立但被其它 gate 拦下时
-            # reason 误报 quiet_hours，next_evaluation_at 失真）
-            if not quiet_ok:
-                qs, qe = self.state.cooldown.quiet_window()
-                if in_quiet_window(now, qs, qe):
-                    return "quiet_hours"
-    
-            # ── v7: 忙碌抑制期（用户说"别烦我"）→ 独立 reason，抑制期不累积 longing ──
-            if self.state.cooldown.is_busy_suppressed(now):
-                return "busy_suppressed"
-    
-            # 门禁全部放行后 → 报告 Bayesian 状态（v4: 概率推断的用户状态）
-            if user_state:
-                ml = user_state.get("most_likely", "")
-                conf = user_state.get("confidence", 0)
-                block_conf = self._bayesian_block_confidence()
-                if ml == "sleeping" and conf > block_conf:
-                    return "user_sleeping"
-                if ml == "busy" and conf > block_conf:
-                    return "user_busy"
-            return "no_trigger"
-
-        def _estimate_next_check(self, now: datetime, idle_reason: str) -> str | None:
-            """估算下次评估的最优时间。idle 决策时提供动态调度提示。
-            调度方（chiguo-tick.sh）可据此替代固定 cron 间隔。"""
-            cfg_emo = self.config.get("emotion", {})
-            cfg_cooldown = self.config.get("cooldown", {})
-    
-            if idle_reason == "min_interval":
-                min_int = cfg_cooldown.get("min_interval_minutes", 30)
-                if self.state.cooldown.last_message_at:
-                    try:
-                        last = datetime.fromisoformat(self.state.cooldown.last_message_at)
-                        if last.tzinfo is None:
-                            last = last.replace(tzinfo=CST)  # 与 _parse_tz 一致：naive → 补 CST
-                        nxt = last + timedelta(minutes=min_int + 2)
-                        if nxt > now:
-                            return nxt.isoformat()
-                    except (ValueError, TypeError):
-                        pass
-    
-            elif idle_reason == "low_energy":
-                e = self.state.emotion.energy
-                hl = cfg_emo.get("energy_regen_half_life", 8.0)
-                if e < 12:
-                    try:
-                        ratio = (100.0 - e) / 88.0
-                        h = hl * math.log2(max(ratio, 1.001))
-                        nxt = now + timedelta(hours=min(h, 4.0))
-                        return nxt.isoformat()
-                    except (ValueError, ZeroDivisionError):
-                        pass
-    
-            elif idle_reason == "quiet_hours":
-                qs, qe = self.state.cooldown.quiet_window()
-                if qe < qs and now.hour >= qs:
-                    tomorrow = now.date() + timedelta(days=1)
-                    nxt = datetime(tomorrow.year, tomorrow.month, tomorrow.day, qe,
-                                   2, tzinfo=CST)
-                else:
-                    nxt = datetime(now.year, now.month, now.day, qe, 2, tzinfo=CST)
-                if nxt > now:
-                    return nxt.isoformat()
-    
-            elif idle_reason == "daily_limit":
-                tomorrow = now.date() + timedelta(days=1)
-                nxt = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 8, 5, tzinfo=CST)
-                return nxt.isoformat()
-    
-            elif idle_reason == "no_trigger":
-                lam = self.state.current_lambda(now)
-                if lam > 0:
-                    h = min(math.log(2) / lam, 2.0)
-                    h = max(h, 5.0 / 60.0)
-                    return (now + timedelta(hours=h)).isoformat()
-    
-            elif idle_reason == "busy_suppressed":
-                if self.state.cooldown.busy_suppress_until:
-                    try:
-                        until = datetime.fromisoformat(self.state.cooldown.busy_suppress_until)
-                        if until > now:
-                            return until.isoformat()
-                    except (ValueError, TypeError):
-                        pass
-    
-            elif idle_reason in ("user_sleeping", "user_busy"):
-                # ── v6 修复: Bayesian 状态无精确恢复时间 → 估算 1-2h 后重评
-                # （与 _dynamic_sleep_interval 的 user_sleeping/user_busy 分支一致）──
-                return (now + timedelta(seconds=3600 + random.uniform(0, 3600))).isoformat()
-    
-            elif idle_reason == "sleeping_guard":
-                # v7: 逃生阀被睡觉高置信拦截 → 延后到下一次常规评估（30min cron 兜底）
-                return None
-    
-            return None
-
