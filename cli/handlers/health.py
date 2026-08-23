@@ -1,8 +1,8 @@
 """cli.handlers.health — --health 分支。"""
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from chiguo_time import CST
 
-CST = timezone(timedelta(hours=8))
 
 
 def handle_health(args) -> bool:

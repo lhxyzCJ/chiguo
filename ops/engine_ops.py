@@ -6,12 +6,12 @@ import json
 import time
 import threading
 import hashlib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from chiguo_time import CST
 
 from decision.base import DecisionEngineBase
 from chiguo_state import emotion_tag_snapshot
 
-CST = timezone(timedelta(hours=8))
 
 # F-A21-002 (#336): autowrite 同文本去重窗口（小时）。窗口内同文本二次写入跳过，
 # 防 bridge 补报/重发同条消息重复触发 LLM 事实提取 → messages 表无界增长。
