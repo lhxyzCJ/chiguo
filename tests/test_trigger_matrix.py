@@ -467,9 +467,11 @@ def test_a9_jaccard_isolation():
         picker2 = TopicPicker(s, cfg, recent_sent_texts=["今天天气很好，关心哥哥有没有注意保暖"])
         # 完全相同仍为 1.0 ≥0.99 → 仍 repeat；近似 0.8 相似则不 repeat
         assert picker2._is_repeat("今天天气很好，关心哥哥有没有注意保暖") is True
-        # consolidate 0.85 在 config [memory] 段
+        # consolidate 0.85 归档至 [experimental] memory__consolidate_sim_threshold，通过 state 配置侧已合并回 memory
         mem_cfg = s.config.get("memory", {})
-        assert mem_cfg.get("consolidate_sim_threshold") == 0.85
+        exp_cfg = s.config.get("experimental", {}) or {}
+        sim_val = mem_cfg.get("consolidate_sim_threshold", exp_cfg.get("memory__consolidate_sim_threshold"))
+        assert sim_val == 0.85, f"consolidate_sim_threshold=0.85, got {sim_val}"
     print("  OK test_a9_jaccard_isolation")
 
 

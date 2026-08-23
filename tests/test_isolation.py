@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENGINE_MODULES = ["chiguo_daemon.py", "chiguo_trigger.py", "chiguo_topics.py", "chiguo_composer.py",
-                  "decision/base.py", "decision/core.py", "decision/context.py",
+                  "decision/core.py", "decision/context.py",
                   "ops/engine_ops.py", "runner/loop.py",
                   "cli/commands.py", "cli/dispatch.py"]
 # daemon 惰性 import 合法例外(批 5 起):分支函数体内 import schedule 纯函数;
@@ -46,9 +46,10 @@ def test_engine_no_schedule_import():
 
 
 def test_state_is_only_bridge():
-    """chiguo_state.py 是引擎侧唯一允许 import schedule 的模块(门面)"""
-    tree = ast.parse(open(os.path.join(REPO, "chiguo_state.py"), encoding="utf-8").read())
-    imps = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
-    mods = [getattr(n, "module", "") for n in imps]
-    assert any(m and m.startswith("schedule") for m in mods), "chiguo_state 应经 schedule 纯函数"
+    """chiguo_state.py / schedule/facade.py 是引擎侧唯二允许 import schedule 的模块(门面)"""
+    for fname in ["chiguo_state.py", "schedule/facade.py"]:
+        tree = ast.parse(open(os.path.join(REPO, fname), encoding="utf-8").read())
+        imps = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
+        mods = [getattr(n, "module", "") for n in imps]
+        assert any(m and m.startswith("schedule") for m in mods), f"{fname} 应经 schedule 纯函数"
     print("  OK test_state_is_only_bridge")

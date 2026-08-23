@@ -353,89 +353,67 @@ def test_mem0_detection():
 
 
 def test_health_disk_ok():
-    """health() 应包含磁盘信息"""
+    """health() 应包含磁盘信息 — 显式路径，不依赖 os.chdir（AUD-028）。"""
     with tempfile.TemporaryDirectory() as td:
         log = Path(td) / "decisions.jsonl"
-        log.write_text("")  # 空日志
+        log.write_text("")
         state = Path(td) / "state.json"
         state.write_text(json.dumps({"_version": 1, "last_tick": datetime.now(CST).isoformat()}))
-
-        # 创建模拟配置
         cfg = Path(td) / "chiguo_proactive.toml"
         cfg.write_text("""
 [monitor]
 disk_warn_mb = 500
 disk_critical_mb = 100
 """)
-
-        cwd = os.getcwd()
-        os.chdir(td)
-        try:
-            mon = ChiguoMonitor("decisions.jsonl", "state.json", config_path="chiguo_proactive.toml")
-            h = mon.health()
-            assert "disk" in h, f"health() missing 'disk' key: {list(h.keys())}"
-            disk = h["disk"]
-            assert disk["free_mb"] is not None, "disk.free_mb should not be None"
-            assert disk["total_mb"] is not None, "disk.total_mb should not be None"
-            assert disk["free_mb"] > 0, f"disk free should be >0, got {disk['free_mb']}"
-        finally:
-            os.chdir(cwd)
+        mon = ChiguoMonitor(str(log), str(state), config_path=str(cfg))
+        h = mon.health()
+        assert "disk" in h, f"health() missing 'disk' key: {list(h.keys())}"
+        disk = h["disk"]
+        assert disk["free_mb"] is not None, "disk.free_mb should not be None"
+        assert disk["total_mb"] is not None, "disk.total_mb should not be None"
+        assert disk["free_mb"] > 0, f"disk free should be >0, got {disk['free_mb']}"
     print("  OK test_health_disk_ok")
 
 
 def test_health_memory_check():
-    """health() 应包含进程内存信息 (Linux)"""
+    """health() 应包含进程内存信息 (Linux) — 显式路径，不依赖 os.chdir。"""
     with tempfile.TemporaryDirectory() as td:
         log = Path(td) / "decisions.jsonl"
         log.write_text("")
         state = Path(td) / "state.json"
         state.write_text(json.dumps({"_version": 1, "last_tick": datetime.now(CST).isoformat()}))
-
         cfg = Path(td) / "chiguo_proactive.toml"
         cfg.write_text("""
 [monitor]
 memory_warn_mb = 500
 memory_critical_mb = 1000
 """)
-
-        cwd = os.getcwd()
-        os.chdir(td)
-        try:
-            mon = ChiguoMonitor("decisions.jsonl", "state.json", config_path="chiguo_proactive.toml")
-            h = mon.health()
-            assert "memory" in h, f"health() missing 'memory' key: {list(h.keys())}"
-            mem = h["memory"]
-            assert mem["rss_mb"] is not None, "memory.rss_mb should not be None on Linux"
-            assert mem["rss_mb"] > 0, f"rss_mb should be >0, got {mem['rss_mb']}"
-        finally:
-            os.chdir(cwd)
+        mon = ChiguoMonitor(str(log), str(state), config_path=str(cfg))
+        h = mon.health()
+        assert "memory" in h, f"health() missing 'memory' key: {list(h.keys())}"
+        mem = h["memory"]
+        assert mem["rss_mb"] is not None, "memory.rss_mb should not be None on Linux"
+        assert mem["rss_mb"] > 0, f"rss_mb should be >0, got {mem['rss_mb']}"
     print("  OK test_health_memory_check")
 
 
 def test_health_mem0_direct():
-    """health() mem0_direct：注入临时 toml 指向不存在 qdrant 目录 → 确定性 False。"""
+    """health() mem0_direct：注入临时 toml 指向不存在 qdrant 目录 → 确定性 False（显式路径）。"""
     import re as _re
     with tempfile.TemporaryDirectory() as td:
         log = Path(td) / "decisions.jsonl"
         log.write_text("")
         state = Path(td) / "state.json"
         state.write_text(json.dumps({"_version": 1, "last_tick": datetime.now(CST).isoformat()}))
-        # 复制真实 toml 并把 qdrant 路径指向临时不存在目录 → mem0_direct 确定性 False
         cfg = Path(td) / "chiguo_proactive.toml"
         src = Path("chiguo_proactive.toml").read_text()
         src = _re.sub(r'(?m)^mem0_qdrant_path\s*=.*$',
                       f'mem0_qdrant_path = "{Path(td) / "no_qdrant"}"', src)
         cfg.write_text(src)
-
-        cwd = os.getcwd()
-        os.chdir(td)
-        try:
-            mon = ChiguoMonitor("decisions.jsonl", "state.json")
-            h = mon.health()
-            assert "mem0_direct" in h, f"health() missing 'mem0_direct': {list(h.keys())}"
-            assert h["mem0_direct"] is False, f"qdrant 目录缺失 → mem0_direct 应为 False: {h['mem0_direct']}"
-        finally:
-            os.chdir(cwd)
+        mon = ChiguoMonitor(str(log), str(state), config_path=str(cfg))
+        h = mon.health()
+        assert "mem0_direct" in h, f"health() missing 'mem0_direct': {list(h.keys())}"
+        assert h["mem0_direct"] is False, f"qdrant 目录缺失 → mem0_direct 应为 False: {h['mem0_direct']}"
     print("  OK test_health_mem0_direct")
 
 

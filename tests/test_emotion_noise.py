@@ -166,16 +166,22 @@ def test_noise_loop_delta_increment_semantics():
 
     用 spy 捕获传给 noise_cap 的 raw 噪声值，断言 telescoping 恒等：
     Σ delta_i = x_final − x_0 = x_final（x_0=0），即每 tick 传的是
-    x_i − x_{i-1} 而非完整 x_i。bug 版 Σ raw = Σ x_i ≠ x_N → 本测试失败。"""
-    import chiguo_state as cs
-    orig = cs.noise_cap
+    x_i − x_{i-1} 而非完整 x_i。bug 版 Σ raw = Σ x_i ≠ x_N → 本测试失败。
+
+    PR-4 起 noise_enabled/seed 归档至 [experimental]，需进归档段；PR-2 起
+    噪声实现位于 state/emotion.EmotionMixin，spy 需同时覆盖 chiguo_math 与 state/emotion。"""
+    import chiguo_math as cm
+    import state.emotion as em_mod
+    orig_cm = cm.noise_cap
+    orig_em = em_mod.noise_cap
     calls = []
 
     def spy(step_magnitude, raw_noise):
         calls.append(raw_noise)
-        return orig(step_magnitude, raw_noise)
+        return orig_cm(step_magnitude, raw_noise)
 
-    cs.noise_cap = spy
+    cm.noise_cap = spy
+    em_mod.noise_cap = spy
     try:
         with tempfile.TemporaryDirectory() as td:
             st = _make_state(td)
@@ -201,7 +207,8 @@ def test_noise_loop_delta_increment_semantics():
             assert any(v < 0 for v in lo_raw), "loneliness 增量应为可正可负（均值回归）"
             assert any(v < 0 for v in anx_raw), "anxiety 增量应为可正可负（均值回归）"
     finally:
-        cs.noise_cap = orig
+        cm.noise_cap = orig_cm
+        em_mod.noise_cap = orig_em
 
 
 def test_noise_loop_total_does_not_scale_with_tick_count():
@@ -209,17 +216,20 @@ def test_noise_loop_total_does_not_scale_with_tick_count():
     （OU 平稳分布，σ=0.3 → 噪声量级 < 1），而非随 tick 数放大。
     固定 seed 下 N=100 与 N=400 的累积原始噪声都远小于 bug 版量级
     （bug 版 Σ完整 x_i ≈ 0.15×N：N=200 即 ~29 漂移；修复版 = x_N ≈ 0.3 级）。"""
-    import chiguo_state as cs
-    orig = cs.noise_cap
+    import chiguo_math as cm
+    import state.emotion as em_mod
+    orig_cm = cm.noise_cap
+    orig_em = em_mod.noise_cap
 
     def run(n_ticks):
         calls = []
 
         def spy(step_magnitude, raw_noise):
             calls.append(raw_noise)
-            return orig(step_magnitude, raw_noise)
+            return orig_cm(step_magnitude, raw_noise)
 
-        cs.noise_cap = spy
+        cm.noise_cap = spy
+        em_mod.noise_cap = spy
         try:
             with tempfile.TemporaryDirectory() as td:
                 st = _make_state(td)
@@ -232,7 +242,8 @@ def test_noise_loop_total_does_not_scale_with_tick_count():
                     st.tick(0.25, now + timedelta(minutes=15 * i))
                 return sum(calls[0::2])
         finally:
-            cs.noise_cap = orig
+            cm.noise_cap = orig_cm
+            em_mod.noise_cap = orig_em
 
     s100 = run(100)
     s400 = run(400)
