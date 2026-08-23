@@ -516,12 +516,12 @@ class TopicPicker:
         try:
             sch = self.state.schedule_status(now)
             in_class = bool(sch and sch.get("in_class"))
-        except (ValueError, TypeError, OSError):
-            return None  # 门控信息不可得 → 不发音乐话题(fail-closed)
+        except Exception:  # noqa: BLE001 — 门控信息不可得 → 不发音乐话题(fail-closed，含 RuntimeError 等)
+            return None
         try:
             qs, qe = self.state.cooldown.quiet_window()
             in_quiet = in_quiet_window(now, int(qs), int(qe))
-        except (ValueError, TypeError, OSError):
+        except Exception:  # noqa: BLE001 — quiet_window 异常 → fail-closed 不发
             return None
         try:
             # F-RT-005 (#309): peek_music_topic 含网络拉取，加线程总预算
@@ -530,5 +530,5 @@ class TopicPicker:
                 lambda: self.netease_service.peek_music_topic(
                     now, in_class=in_class, in_quiet_window=in_quiet),
                 _NETEASE_TOPIC_TIMEOUT_S)
-        except (ValueError, TypeError, OSError):
-            return None  # 策略层异常 → 静默跳过(不阻塞话题选择)
+        except Exception:  # noqa: BLE001 — 策略层异常 → 静默跳过(不阻塞话题选择，含 RuntimeError)
+            return None

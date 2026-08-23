@@ -136,11 +136,11 @@ def test_hot_reload_single_chain():
     check("base 34 含 _config_mtime", "_config_mtime" in base_text)
     check("base 69 含 _maybe_reload_config", "_maybe_reload_config" in base_text)
     check("base 72 含 getmtime/mtime", "getmtime" in base_text)
-    # 全仓库除 decision/base 外不应再有 getmtime 热重载逻辑（排除 tests/ 自身字面量）
+    # 全仓库除 decision/base 外不应再有 getmtime 热重载逻辑（排除 tests/ 自身字面量与 .venv）
     import subprocess
     r = subprocess.run(["grep", "-rn", "getmtime", "--include=*.py", "."],
                        capture_output=True, text=True, cwd=str(Path(".").resolve()))
-    lines = [l for l in r.stdout.splitlines() if "getmtime" in l and "/tests/" not in l]
+    lines = [l for l in r.stdout.splitlines() if "getmtime" in l and "/tests/" not in l and ".venv" not in l]
     allowed = [l for l in lines if "decision/base.py" in l]
     check("mtime 仅 decision/base", len(lines) == len(allowed), f"extra getmtime: {lines}")
     # reload_config 仅 chiguo_state 与 decision/base 链路上
@@ -165,8 +165,12 @@ def test_no_max_float_poison():
 
 
 def test_toml_22section_no_orphan():
-    """22 段 key 均有 cfg 读取，无孤儿 literal：抽查 trigger/sigmoid/poisson 等段关键键在代码中有引用"""
+    """22 段 key 均有 cfg 读取，无孤儿 literal：抽查 trigger/sigmoid/poisson 等段关键键在代码中有引用
+    PR-4 起 [experimental] 归档节计为第 23 段；本测试仅校验 22 主段，其余归档节经 _merge_experimental 合并。"""
     cfg = tomllib.loads(Path("chiguo_proactive.toml").read_text(encoding="utf-8"))
+    # 主段 22 节 + 归档节 experimental（61 键合并回主段，行为恒等）
+    for sec in ["experimental"]:
+        cfg.pop(sec, None)
     sections = ["wechat", "memory", "character", "emotion", "sigmoid", "trigger",
                 "poisson", "topic_picker", "schedule", "circadian", "netease",
                 "hawkes", "cooldown", "personality", "bayesian", "composer",
@@ -175,6 +179,7 @@ def test_toml_22section_no_orphan():
         check(f"段 {sec} 存在", sec in cfg)
     # 关键键在代码中被引用（防孤儿 literal）
     checks = [
+        # PR-4 起 sigmoid.loneliness_low_k 归档至 [experimental]，合并后仍被 state 侧引用（搜索范围扩大到 chiguo_state* 与 state/）
         ("sigmoid.loneliness_low_k", "chiguo_state", "loneliness_low_k"),
         ("trigger.free_multiplier", "chiguo_trigger", "free_multiplier"),
         ("poisson.base_lambda", "chiguo_trigger", "base_lambda"),
@@ -186,7 +191,6 @@ def test_toml_22section_no_orphan():
         ("health.fail_threshold", "scripts/agent_health", "fail_threshold"),
     ]
     for label, mod, key in checks:
-        # 简化：在对应文件文本中搜索 key
         mapping = {
             "chiguo_state": "chiguo_state.py",
             "chiguo_trigger": "chiguo_trigger.py",
@@ -197,4 +201,11 @@ def test_toml_22section_no_orphan():
         }
         p = Path(mapping[mod])
         text = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+        # chiguo_state 经 PR-2 拆至 state/ 子包，_loneliness_low_k 仍在 state/ 子模块中；回退搜索 state/
+        if key not in text and mod == "chiguo_state":
+            import glob as _glob
+            for sp in _glob.glob("state/*.py"):
+                if key in Path(sp).read_text(encoding="utf-8", errors="replace"):
+                    text += Path(sp).read_text(encoding="utf-8", errors="replace")
+                    break
         check(f"{label} 被 {mod} 引用", key in text, f"missing {key} in {mod}")

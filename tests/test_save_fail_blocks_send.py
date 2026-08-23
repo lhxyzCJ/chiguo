@@ -186,7 +186,10 @@ def test_tmp_validation_fail_warns(tmp_path, capsys):
     st.emotion.loneliness = 50.0
     assert st.save(), "初始 save 失败（前置条件）"
 
-    with mock.patch("chiguo_state.atomic_write",
+    # state.persistence 为真实写盘模块；chiguo_state 仅门面委托，需同时覆盖
+    with mock.patch("state.persistence.atomic_write",
+                    side_effect=ValueError("tmp validation failed: unreadable")), \
+         mock.patch("chiguo_state.atomic_write",
                     side_effect=ValueError("tmp validation failed: unreadable")):
         ok = st.save()
     assert ok is False, "tmp 校验失败时 save 必须返回 False（不替换好状态）"

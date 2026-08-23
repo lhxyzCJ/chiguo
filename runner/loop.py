@@ -305,9 +305,9 @@ class LoopSenderMixin(DecisionEngineBase):
                 # 记账失败只告警 stderr，不影响 success 记账（下方 record_health success）。
                 try:
                     self.record_send_text(msg_id, text, trigger, intensity)
-                except (ValueError, TypeError, OSError):  # noqa: BLE001 - 本地归档失败不影响主链路成功语义
-                    print(f"[chiguo_daemon] record_send_text 失败 msg_id={msg_id}: "
-                          f"消息已发送但本地 JSONL 归档未写（不影响健康记账）", file=sys.stderr)
+                except Exception as e:  # noqa: BLE001 - 本地归档失败不影响主链路成功语义（磁盘满等 RuntimeError 亦分流）
+                    print(f"[chiguo_daemon] record_send_text 失败 msg_id={msg_id}: {e}"
+                          f" 消息已发送但本地 JSONL 归档未写（不影响健康记账）", file=sys.stderr)
                 # F-A6-2: 发送成功 —— 生成+发送双成功才算健康；记 success 清零 +
                 # down→up 恢复 transition 经 /send 发恢复（对齐 tick.sh）
                 _send_transition_alert(self._record_health("success", "", loop_cfg))

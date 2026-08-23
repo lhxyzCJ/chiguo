@@ -26,12 +26,14 @@ SECTIONS = ["wechat", "memory", "character", "emotion", "sigmoid", "trigger",
 
 
 def test_section_inventory_complete():
-    """主 toml 22 节全部存在，且无多余节（架构契约，防节误删/误改名）"""
+    """主 toml 22 节全部存在；PR-4 起新增 [experimental] 归档节（61 键灰度归档），
+    验收时排除该节（行为恒等：decision/base._merge_experimental 合并回主段）。"""
     cfg = tomllib.loads((ROOT / "chiguo_proactive.toml").read_text(encoding="utf-8"))
     check("主 toml 22 节全部存在", set(SECTIONS) <= set(cfg.keys()),
           f"缺: {sorted(set(SECTIONS) - set(cfg.keys()))}")
-    check("主 toml 无多余节", set(cfg.keys()) <= set(SECTIONS),
-          f"多余: {sorted(set(cfg.keys()) - set(SECTIONS))}")
+    extra = set(cfg.keys()) - set(SECTIONS) - {"experimental"}
+    check("主 toml 无多余节（除 [experimental] 归档外）", not extra,
+          f"多余: {sorted(extra)}")
 
 
 # 2) 每节关键键存在（抽查核心配置，防误删）
@@ -84,8 +86,17 @@ KEY_CHECKS = {
 
 
 def test_section_key_checks_present():
-    """每节关键键存在（抽查核心配置键，防键误删）"""
+    """每节关键键存在（抽查核心配置键，防键误删）。
+    PR-4 起部分键归档至 [experimental]（section__key 形态），验收时经
+    decision/base._merge_experimental 合并语义回填后再检查。"""
     cfg = tomllib.loads((ROOT / "chiguo_proactive.toml").read_text(encoding="utf-8"))
+    # 模拟 _merge_experimental：把 experimental 的 section__key 合并回主段
+    exp = cfg.get("experimental", {}) or {}
+    for k, v in exp.items():
+        if "__" in k:
+            sec, key = k.split("__", 1)
+            if sec and key:
+                cfg.setdefault(sec, {})[key] = v
     for sec, keys in KEY_CHECKS.items():
         missing = [k for k in keys if k not in cfg.get(sec, {})]
         check(f"[{sec}] 关键键齐全", not missing, f"缺: {missing}")
@@ -98,7 +109,7 @@ REF_CHECKS = [
     ("[health].fail_threshold", "scripts/agent_health.py", "fail_threshold"),
     ("[wechat].wechat_recipient", "scripts/chiguo-tick.sh", "wechat_recipient"),
     ("[memory].mem0_qdrant_path", "memory/factory.py", "mem0_qdrant_path"),
-    ("[cooldown].longing_break_enabled", "chiguo_state.py", "longing_break_enabled"),
+    ("[cooldown].longing_break_enabled", "state/interaction.py", "longing_break_enabled"),
     ("[trigger].reply_feedback_enabled", "chiguo_trigger.py", "reply_feedback_enabled"),
     ("[trigger].ritual_special_weight", "chiguo_trigger.py", "ritual_special_weight"),
     ("[trigger].mem0_surface_probability", "chiguo_trigger.py", "mem0_surface_probability"),

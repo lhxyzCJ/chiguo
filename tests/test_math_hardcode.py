@@ -271,9 +271,15 @@ def test_jitter_uses_isolated_random_and_config():
 
 # ── 7. toml 缺失 key 已补齐且 cfg_float 读取 ─────────────────
 def test_toml_has_new_keys_and_trigger_uses_cfg_float():
-    """新增 CONFIG 键必须存在于 toml 且 trigger 用 cfg_float/_clamp01 读取"""
+    """新增 CONFIG 键必须存在于 toml（主段或 [experimental] 归档）且 trigger 用 cfg_float/_clamp01 读取"""
     cfg = tomllib.loads(Path("chiguo_proactive.toml").read_text(encoding="utf-8"))
-    trg = cfg.get("trigger", {})
+    # PR-4 起部分键归档至 [experimental] trigger__*，合并后再检查
+    exp = cfg.get("experimental", {}) or {}
+    merged_trg = dict(cfg.get("trigger", {}))
+    for k, v in exp.items():
+        if k.startswith("trigger__"):
+            merged_trg[k[len("trigger__"):]] = v
+    trg = merged_trg
     required = [
         "lonely_rate_lo_threshold", "lonely_rate_lo_factor",
         "lonely_rate_anx_threshold", "lonely_rate_anx_factor",
@@ -284,7 +290,7 @@ def test_toml_has_new_keys_and_trigger_uses_cfg_float():
         "jitter_low", "jitter_high",
     ]
     for k in required:
-        assert k in trg, f"toml 缺少 [trigger].{k}"
+        assert k in trg, f"toml 缺少 [trigger].{k}（含 experimental 归档）"
 
     trg_src = Path("chiguo_trigger.py").read_text()
     for k in required:
