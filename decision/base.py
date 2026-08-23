@@ -12,9 +12,9 @@ from pathlib import Path
 
 from chiguo_state import ChiguoState
 from chiguo_topics import TopicPicker
-from netease.service import NeteaseService
 from chiguo_composer import MessageComposer
 from chiguo_paths import PROJECT_ROOT
+from schedule.facade import ScheduleFacade, PlayProofProvider
 
 CST = timezone(timedelta(hours=8))
 
@@ -33,8 +33,10 @@ class DecisionEngineBase:
             self._inject_base_dir()
             self._config_mtime = os.path.getmtime(config_path)
             self.state = ChiguoState(self.config)
-            # v9: 网易云策略层(健康/配额/音乐话题),base_dir 锚定
-            self.netease_service = NeteaseService(self.config, str(self._base_dir))
+            # PR-3: 日程门面 + 播放反证提供者
+            self.schedule_facade = ScheduleFacade(str(self._base_dir), self.config)
+            self._play_proof_provider = PlayProofProvider(self.config, str(self._base_dir))
+            self.netease_service = self._play_proof_provider._svc
             # 显式 log_path（测试）原样使用；否则锚定 base_dir
             # （先于 topic_picker 构造：A9 recent_sent_texts() 依赖 messages_log_path）
             self.log_path = log_path or str(self._base_dir / "chiguo_decisions.jsonl")
@@ -42,7 +44,7 @@ class DecisionEngineBase:
             self.topic_picker = TopicPicker(self.state, self.config.get("topic_picker", {}),
                                             netease_service=self.netease_service,
                                             recent_sent_texts=self.recent_sent_texts())
-            self.composer = MessageComposer(self.state, self.config.get("composer", {}))
+            self.composer = MessageComposer(self.state, self.config.get("composer", {}), schedule_facade=self.schedule_facade)
             print(f"[chiguo_daemon] base_dir={self._base_dir}", file=sys.stderr)
             print(f"[chiguo_daemon] state={self.state.state_path}", file=sys.stderr)
             print(f"[chiguo_daemon] log={self.log_path}", file=sys.stderr)
@@ -87,12 +89,18 @@ class DecisionEngineBase:
                 # 重建 config 派生组件:personality 初始基线 + holiday_parser + cooldown 静默窗口
                 # (置信度达标用学习窗口,否则回退新 config 默认)。runtime 持久化状态不动。──
                 self.state.reload_config(self.config)
-                # v9: 热重载时同步重建策略层(重试/配额参数可能被改)与 TopicPicker
-                self.netease_service = NeteaseService(self.config, str(self._base_dir))
+                self.schedule_facade.reload(self.config)
+                self._play_proof_provider = PlayProofProvider(self.config, str(self._base_dir))
+                self.netease_service = self._play_proof_provider._svc
+                try:
+                    self.composer.schedule_facade = self.schedule_facade
+                except Exception:
+                    pass
+                self._schedule_facade = self.schedule_facade
                 self.topic_picker = TopicPicker(self.state, self.config.get("topic_picker", {}),
                                                 netease_service=self.netease_service,
                                                 recent_sent_texts=self.recent_sent_texts())
-                self.composer = MessageComposer(self.state, self.config.get("composer", {}))
+                self.composer = MessageComposer(self.state, self.config.get("composer", {}), schedule_facade=self.schedule_facade)
                 self.state._bayesian_estimator = None
 
         def snapshot(self):

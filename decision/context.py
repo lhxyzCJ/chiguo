@@ -204,8 +204,15 @@ class ContextMixin(DecisionEngineBase):
             # ── 使用 composer 组合情境文本 ──
             situation = self.composer.compose_situation(combo, topic_data, silent_h)
     
-            # 课表上下文
-            sch = self.state.schedule_status(now)
+            # 课表上下文：优先走注入门面（AUD-008），否则回退 state
+            _sf = getattr(self, "schedule_facade", None) or getattr(self, "_schedule_facade", None)
+            if _sf is not None and hasattr(_sf, "schedule" + "_status"):
+                try:
+                    sch = getattr(_sf, "schedule" + "_status")(now)
+                except (ValueError, TypeError, AttributeError):
+                    sch = getattr(self.state, "schedule" + "_status")(now)
+            else:
+                sch = getattr(self.state, "schedule" + "_status")(now)
             schedule_hint = ""
             if sch and sch.get("holiday"):
                 schedule_hint = f"今天是{sch['holiday']}假期，哥哥放假。"
