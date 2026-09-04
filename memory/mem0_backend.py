@@ -54,9 +54,14 @@ _MEM0_ADD_TIMEOUT = 30.0
 # 避免昂贵的 Memory() 构造因 ollama 不可达挂起。
 _OLLAMA_PROBE_TIMEOUT = 3.0
 
+# _call_with_timeout 超时哨兵：专用对象替代 None，避免与被包装函数的合法
+# None 返回值碰撞（#414-11：_persist_recall 等 mem0 update/get 返回 None）。
+_TIMEOUT_SENTINEL = object()
+
 
 def _call_with_timeout(fn, timeout: float):
-    """在 daemon 线程执行 fn;超时返回 None(调用方按失败降级),异常原样重抛。
+    """在 daemon 线程执行 fn;超时返回 _TIMEOUT_SENTINEL(调用方按失败降级),
+    异常原样重抛。哨兵专用对象：被包装函数返回 None 是合法成功，不算超时。
 
     不侵入 mem0 内部:仅把我们这一侧的 `self._m.*` 调用圈进超时预算。超时后
     放弃等待,遗留线程会在底层请求返回后自然结束(ollama 恢复即自愈);故障驱动
@@ -74,10 +79,10 @@ def _call_with_timeout(fn, timeout: float):
     t.start()
     t.join(timeout)
     if t.is_alive():
-        return None
+        return _TIMEOUT_SENTINEL
     if "e" in box:
         raise box["e"]
-    return box["v"]
+    return box.get("v")
 
 
 def _probe_ollama_tags(base_url: str, timeout: float) -> None:
@@ -266,7 +271,7 @@ class Mem0Backend(MemoryBackend):
             # get_all 只走 qdrant scroll 不触 embedder，ollama 故障探测不到）
             if _call_with_timeout(
                 lambda: self._m.search("probe", filters={"user_id": self.user_id}, top_k=1),
-                _MEM0_TIMEOUT) is None:
+                _MEM0_TIMEOUT) is _TIMEOUT_SENTINEL:
                 raise TimeoutError("mem0 探测超时")
             self._warn_missing_capabilities()  # D2: 探测成功时检查一次能力缺失，显式告警
             self._available = True
@@ -364,7 +369,7 @@ class Mem0Backend(MemoryBackend):
             r = _call_with_timeout(
                 lambda: self._m.search(query, filters=filters, top_k=max(limit, 20)),
                 _MEM0_TIMEOUT)
-            if r is None:
+            if r is _TIMEOUT_SENTINEL:
                 raise TimeoutError("mem0 search 超时")
             results = r.get("results", [])
         except Exception as e:
@@ -454,7 +459,7 @@ class Mem0Backend(MemoryBackend):
             r = _call_with_timeout(
                 lambda: self._m.add(messages, user_id=self.user_id, metadata=metadata),
                 _MEM0_ADD_TIMEOUT)
-            if r is None:
+            if r is _TIMEOUT_SENTINEL:
                 raise TimeoutError("mem0 add 超时")
             return True
         except TimeoutError as e:  # TimeoutError 先于 Exception（其子类）
@@ -528,7 +533,7 @@ class Mem0Backend(MemoryBackend):
                             r["id"], metadata={"importance": r["importance"],
                                                "consolidated_with": r.get("consolidated_with")}),
                         _MEM0_TIMEOUT)
-                    if rr is None:
+                    if rr is _TIMEOUT_SENTINEL:
                         raise TimeoutError("mem0 consolidate demote 超时")
                 except Exception as e:
                     import logging
@@ -541,7 +546,7 @@ class Mem0Backend(MemoryBackend):
                     rr = _call_with_timeout(
                         lambda r=r, dele=dele: dele(r["id"]),
                         _MEM0_TIMEOUT)
-                    if rr is None:
+                    if rr is _TIMEOUT_SENTINEL:
                         raise TimeoutError("mem0 consolidate expire 超时")
                 except Exception as e:
                     import logging
@@ -572,7 +577,7 @@ class Mem0Backend(MemoryBackend):
         rr = _call_with_timeout(
             lambda: upd(memory_id, metadata={"recall_count": count}),
             _MEM0_TIMEOUT)
-        if rr is None:
+        if rr is _TIMEOUT_SENTINEL:
             raise TimeoutError("mem0 _persist_recall 超时")
 
     def _load_recall_count(self, memory_id: str) -> int:
@@ -589,7 +594,7 @@ class Mem0Backend(MemoryBackend):
         try:
             # Task 8: 超时预算；超时返回 0 退化为进程内计数（与当前失败路径同语义）。
             rec = _call_with_timeout(lambda: getter(memory_id), _MEM0_TIMEOUT)
-            if rec is None:
+            if rec is _TIMEOUT_SENTINEL:
                 raise TimeoutError("mem0 get_recall_count 超时")
         except Exception as e:
             import logging
@@ -622,7 +627,7 @@ class Mem0Backend(MemoryBackend):
                 ),
                 _MEM0_TIMEOUT,
             )
-            if r is None:
+            if r is _TIMEOUT_SENTINEL:
                 raise TimeoutError("mem0 get_all 超时")
             results = r.get("results", [])
         except Exception as e:
@@ -653,7 +658,7 @@ class Mem0Backend(MemoryBackend):
                 raise AttributeError("no vector_store")
             # Task 8: 超时预算；超时 fall through 至 _all_rows fallback。
             info = _call_with_timeout(lambda: store.col_info(), _MEM0_TIMEOUT)
-            if info is None:
+            if info is _TIMEOUT_SENTINEL:
                 raise TimeoutError("_count_rows col_info 超时")
             n = int(getattr(info, "points_count", -1))
             if n >= 0:
