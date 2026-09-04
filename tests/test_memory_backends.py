@@ -67,6 +67,13 @@ def _fake_backend(results, tmp: Path = None) -> Mem0Backend:
 
 # ── 行契约 ────────────────────────────────────────────────
 
+def test_default_embedder_url_pinned():
+    """钉住 _DEFAULT_EMBEDDER_BASE_URL 值；意外修改会在测试中暴露回归。"""
+    from memory.mem0_backend import _DEFAULT_EMBEDDER_BASE_URL
+    assert _DEFAULT_EMBEDDER_BASE_URL == "http://localhost:11434"
+    print("  OK test_default_embedder_url_pinned")
+
+
 def test_row_contract():
     """mem0 result → 统一行契约 dict（消费方依赖的字段全在）。"""
     b = Mem0Backend()

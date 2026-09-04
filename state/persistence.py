@@ -255,6 +255,14 @@ class StatePersistence:
         }
         if dedup_payload:
             payload["memory_dedup"] = dedup_payload
+        # mem0 写链故障快照（F-RT-017）：daemon 侧 memory_bridge 持有 add_fail_count
+        # 与 last_error，每次 save 透传到 state 文件供 monitor health() 读取告警。
+        mem_bridge = getattr(o, "memory_bridge", None)
+        if mem_bridge is not None:
+            payload["mem0_write"] = {
+                "add_fail_count": getattr(mem_bridge, "add_fail_count", 0),
+                "last_error": getattr(mem_bridge, "_last_error", None),
+            }
         return payload
 
     def _hydrate_emotion(self, o, data: dict) -> None:

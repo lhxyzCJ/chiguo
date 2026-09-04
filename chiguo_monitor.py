@@ -1016,6 +1016,17 @@ class ChiguoMonitor:
             mem0_direct = False
             issues.append("mem0ai 未安装 → 记忆层缺失(唯一记忆后端)")
 
+        # 10. mem0 写链故障（F-RT-017）：state 文件的 mem0_write 快照由 daemon
+        # 每次 save 透传（见 state/persistence.py）。add_fail_count>0 即告警提示，
+        # 不置 healthy=False（写失败不影响主链路，daemon 侧静默即可）。
+        mem0_write = state.get("mem0_write") or {}
+        add_fail_count = mem0_write.get("add_fail_count", 0)
+        if isinstance(add_fail_count, int) and add_fail_count > 0:
+            last_err = mem0_write.get("last_error")
+            err_str = f" last_error={last_err}" if last_err else ""
+            issues.append(
+                f"mem0 写链累计失败 {add_fail_count} 次（LLM 事实提取端点可能故障）{err_str}")
+
         return {
             "healthy": healthy,
             "last_tick": last_tick,
@@ -1026,6 +1037,7 @@ class ChiguoMonitor:
             "disk": disk_info,
             "memory": {"rss_mb": rss_mb},
             "mem0_direct": mem0_direct,
+            "mem0_write": mem0_write,
             "issues": issues,
             "checked_at": now.isoformat(),
         }

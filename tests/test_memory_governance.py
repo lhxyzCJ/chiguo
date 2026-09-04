@@ -249,3 +249,34 @@ def test_add_success_does_not_increment_fail_count():
         assert b.add_fail_count == 0, \
             f"成功 add 不应计数, got add_fail_count={b.add_fail_count}"
     print("  OK test_add_success_does_not_increment_fail_count")
+
+
+def test_build_payload_includes_mem0_write():
+    """[F-RT-017 透传] _build_payload 含 mem0_write 快照（add_fail_count+last_error），
+    供 monitor health() 读取告警。无 memory_bridge 时不加键（形状兼容）。"""
+    import tomllib
+    from chiguo_state import ChiguoState
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "chiguo_proactive.toml"
+        cfg_path.write_text(Path("chiguo_proactive.toml").read_text())
+        with open(cfg_path, "rb") as f:
+            cfg = tomllib.load(f)
+        cfg["_base_dir"] = str(td)
+        cfg["memory"]["mem0_qdrant_path"] = str(Path(td) / "no_qdrant")
+        # 注意：CHIGUO_MEM0_DISABLED=1 会让 available 恒 False → add 直接短路不计数；
+        # 此处不设该变量，用 _fake_backend 的缓存探测隔离（_last_probe 未来时间戳）。
+        s = ChiguoState(cfg)
+        # fake 后端：注入失败计数 + last_error
+        b = _fake_backend([], Path(td), fail_add=True)
+        assert b.add_messages([{"role": "user", "content": "写链故障"}]) is False
+        assert b.add_fail_count == 1
+        s.memory_bridge = b
+        payload = s._persistence._build_payload()
+        assert "mem0_write" in payload, f"payload 缺 mem0_write: {sorted(payload)}"
+        assert payload["mem0_write"]["add_fail_count"] == 1, payload["mem0_write"]
+        assert payload["mem0_write"]["last_error"][1] == "add", payload["mem0_write"]
+        # 无后端 → 不加键（老 state 形状兼容）
+        s.memory_bridge = None
+        payload2 = s._persistence._build_payload()
+        assert "mem0_write" not in payload2
+    print("  OK test_build_payload_includes_mem0_write")
