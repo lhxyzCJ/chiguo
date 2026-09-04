@@ -20,6 +20,8 @@ def create_backend(config: dict | None = None, base_dir: str | Path | None = Non
     config: toml [memory] 段 dict（backend + mem0_* 键 +
             ebbinghaus_strength/ebbinghaus_min_weight）。
     base_dir: 相对路径锚定目录（daemon 的 _base_dir；缺省 cwd）。
+    严格规则: mem0_embedder_base_url 显式 null/空串（strip 后为空）直接抛错
+    （删 key 用默认，或填有效 URL）；缺 key 则传 None（走默认）。
     """
     cfg = config or {}
     backend = cfg.get("backend", "mem0")
@@ -28,6 +30,15 @@ def create_backend(config: dict | None = None, base_dir: str | Path | None = Non
     base = Path(base_dir) if base_dir else None
     strength = cfg.get("ebbinghaus_strength")
     min_weight = cfg.get("ebbinghaus_min_weight")
+
+    # 显式空 embedder URL 大声失败：删 key 用默认，或填有效 URL
+    if "mem0_embedder_base_url" in cfg:
+        _emb = cfg["mem0_embedder_base_url"]
+        if _emb is None or (isinstance(_emb, str) and not _emb.strip()):
+            raise ValueError(
+                "mem0_embedder_base_url 为空: 请删除该 key 以使用默认值，"
+                "或设置一个有效的 URL"
+            )
 
     # mem0 后端（唯一）；相对路径（qdrant_path/history_db）锚定 base_dir
     return Mem0Backend(

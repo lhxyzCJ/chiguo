@@ -26,6 +26,10 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
+# mem0 遥测必须在 import mem0 前关闭（mem0/memory/telemetry.py 在其 import 时
+# 读 MEM0_TELEMETRY；晚设静默无效）。setdefault 尊重运维显式 opt-in。
+os.environ.setdefault("MEM0_TELEMETRY", "false")
+
 
 _BASE_DIR = Path(__file__).resolve().parent
 
@@ -176,8 +180,29 @@ def check_agent(agent_bin: str = "pi", skip_agent: bool = False,
     return {"name": "agent", "ok": True, "severity": "ok", "detail": f"agent OK ({ver})"}
 
 
-def check_ollama(base_url: str = "http://localhost:11434") -> dict:
-    """ollama 服务可达 + qwen3-embedding 模型在册。任一缺失 → warn(记忆 embedding 降级)。"""
+def _resolve_ollama_url(config: dict = None) -> str:
+    """ollama URL 单源解析: OLLAMA_BASE 环境变量 > toml [memory].mem0_embedder_base_url
+    (strip 后非空) > memory.mem0_backend._DEFAULT_EMBEDDER_BASE_URL > localhost 回退。
+    config=None 时读模块目录默认 toml;lazy import + try/except 保 envcheck 轻量不崩。"""
+    env = os.environ.get("OLLAMA_BASE")
+    if env:
+        return env
+    cfg = config if config is not None else _load_config()
+    url = (cfg.get("memory") or {}).get("mem0_embedder_base_url") or ""
+    if url.strip():
+        return url.strip()
+    try:
+        from memory.mem0_backend import _DEFAULT_EMBEDDER_BASE_URL
+        return _DEFAULT_EMBEDDER_BASE_URL
+    except ImportError:
+        return "http://localhost:11434"
+
+
+def check_ollama(base_url: str = None) -> dict:
+    """ollama 服务可达 + qwen3-embedding 模型在册。任一缺失 → warn(记忆 embedding 降级)。
+    base_url=None 时走 _resolve_ollama_url() 单源解析。"""
+    if not base_url:
+        base_url = _resolve_ollama_url()
     try:
         req = urllib.request.Request(f"{base_url}/api/tags",
                                      headers={"User-Agent": "chiguo-envcheck"})
@@ -341,7 +366,7 @@ def run_checks(base_dir: Path = None, skip_agent: bool = False, home: Path = Non
     api_base = os.environ.get("NETEASE_API_BASE", "http://localhost:3000")
     home = home or Path.home()
     agent_auth = home / ".pi" / "agent" / "auth.json"
-    ollama_url = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
+    ollama_url = _resolve_ollama_url(cfg)
     provider = cfg.get("host", {}).get("provider") or "opencode-go"
     # agent 后端抽象（runner=agent 默认；command=自定义 CLI agent）
     runner = cfg.get("host", {}).get("runner") or "agent"

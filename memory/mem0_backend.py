@@ -45,6 +45,15 @@ _RETRY_SECONDS = 60.0  # available=False 后至少间隔这么久才重新探测
 # 加线程超时兜底,超时按失败降级(置不可用 + 60s 节流重探自愈)。
 _MEM0_TIMEOUT = 10.0
 
+# Task 7A: add_messages 写路径超时预算(秒)。写路径运行在 state_lock 外
+# (see ops/engine_ops.py _mem0_autowrite)，LLM 事实提取(推断)合法比读路径
+# 慢，故预算宽于 _MEM0_TIMEOUT。超时仅记 fault 不翻转 _available（读写故障隔离）。
+_MEM0_ADD_TIMEOUT = 30.0
+
+# Task 6B: ollama 快速探测超时(秒)。构造 mem0 Memory 前预检 ollama 可达性，
+# 避免昂贵的 Memory() 构造因 ollama 不可达挂起。
+_OLLAMA_PROBE_TIMEOUT = 3.0
+
 
 def _call_with_timeout(fn, timeout: float):
     """在 daemon 线程执行 fn;超时返回 None(调用方按失败降级),异常原样重抛。
@@ -69,6 +78,27 @@ def _call_with_timeout(fn, timeout: float):
     if "e" in box:
         raise box["e"]
     return box["v"]
+
+
+def _probe_ollama_tags(base_url: str, timeout: float) -> None:
+    """GET {base_url}/api/tags 探测 ollama 可达性；任何异常向上传播。
+
+    localhost 走直连 bypass 系统代理（防 MUSIC_U 随代理外泄），逻辑收敛
+    chiguo_net.build_no_proxy_opener/is_local_host。
+    """
+    import urllib.request
+    from urllib.parse import urlparse
+    url = base_url.rstrip("/") + "/api/tags"
+    req = urllib.request.Request(url, headers={"User-Agent": "chiguo/1.0"})
+    try:
+        from chiguo_net import build_no_proxy_opener, is_local_host
+        host = urlparse(url).hostname or ""
+        opener = build_no_proxy_opener() if is_local_host(host) else urllib.request.build_opener()
+    except ImportError:  # chiguo_net 不可用 → 回退 plain urlopen
+        opener = urllib.request.build_opener()
+    with opener.open(req, timeout=timeout) as resp:
+        resp.read(1)
+
 
 _DEFAULT_LLM_MODEL = "deepseek-v4-flash"
 _DEFAULT_LLM_BASE_URL = "https://opencode.ai/zen/go/v1"
@@ -223,6 +253,14 @@ class Mem0Backend(MemoryBackend):
         try:
             if not self._mem0_config():
                 raise RuntimeError("mem0: 无 LLM API key（~/.pi/agent/auth.json opencode-go 或配置 mem0_llm_api_key）")
+            if self._m is None:
+                # Task 6B: 构造前先快检 ollama 可达性，失败直接进 except
+                # （翻 _available=False + 60s 节流），跳过昂贵构造。
+                try:
+                    _probe_ollama_tags(self.embedder_base_url, _OLLAMA_PROBE_TIMEOUT)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"mem0: embedder 不可达（{self.embedder_base_url}）: {e}") from e
             self._ensure_mem0()
             # 连通性探测：search 一次（走 embedder，覆盖 ollama 依赖；
             # get_all 只走 qdrant scroll 不触 embedder，ollama 故障探测不到）
@@ -411,8 +449,20 @@ class Mem0Backend(MemoryBackend):
         if not self.available:
             return False
         try:
-            self._m.add(messages, user_id=self.user_id, metadata=metadata)
+            # Task 7A: 写路径 LLM 提取慢，用加长预算；超时仅记 fault，
+            # 不翻 _available（读写故障隔离：读可用不被写拖垮）。
+            r = _call_with_timeout(
+                lambda: self._m.add(messages, user_id=self.user_id, metadata=metadata),
+                _MEM0_ADD_TIMEOUT)
+            if r is None:
+                raise TimeoutError("mem0 add 超时")
             return True
+        except TimeoutError as e:  # TimeoutError 先于 Exception（其子类）
+            import logging
+            logging.warning("mem0 %s failed: %r", "add_timeout", e)
+            self._last_error = (_time_module.time(), "add_timeout", str(e))
+            self._add_fail_count += 1
+            return False
         except Exception as e:
             import logging
             logging.warning("mem0 %s failed: %r", "add", e)
@@ -471,8 +521,15 @@ class Mem0Backend(MemoryBackend):
                     upd = getattr(self._m, "update", None)
                     if upd is None:
                         continue  # mem0 无 update API → 仅报告降权计划
-                    upd(r["id"], metadata={"importance": r["importance"],
-                                           "consolidated_with": r.get("consolidated_with")})
+                    # Task 8: 逐条超时预算；超时仅告警跳过（report-only，
+                    # 绝不让单条挂起拖垮整个 consolidate 计划）。
+                    rr = _call_with_timeout(
+                        lambda r=r, upd=upd: upd(
+                            r["id"], metadata={"importance": r["importance"],
+                                               "consolidated_with": r.get("consolidated_with")}),
+                        _MEM0_TIMEOUT)
+                    if rr is None:
+                        raise TimeoutError("mem0 consolidate demote 超时")
                 except Exception as e:
                     import logging
                     logging.warning("mem0 consolidate demote failed: %r", e)
@@ -481,7 +538,11 @@ class Mem0Backend(MemoryBackend):
                     dele = getattr(self._m, "delete", None)
                     if dele is None:
                         continue  # mem0 无 delete API → 仅报告过期计划
-                    dele(r["id"])
+                    rr = _call_with_timeout(
+                        lambda r=r, dele=dele: dele(r["id"]),
+                        _MEM0_TIMEOUT)
+                    if rr is None:
+                        raise TimeoutError("mem0 consolidate expire 超时")
                 except Exception as e:
                     import logging
                     logging.warning("mem0 consolidate expire failed: %r", e)
@@ -506,7 +567,13 @@ class Mem0Backend(MemoryBackend):
         upd = getattr(self._m, "update", None)
         if upd is None:
             return
-        upd(memory_id, metadata={"recall_count": count})
+        # Task 8: 超时预算；超时 raise TimeoutError——调用方 base.note_recalled
+        # 已按条目 except Exception 捕获并记日志，此处超时即按失败降级同语义。
+        rr = _call_with_timeout(
+            lambda: upd(memory_id, metadata={"recall_count": count}),
+            _MEM0_TIMEOUT)
+        if rr is None:
+            raise TimeoutError("mem0 _persist_recall 超时")
 
     def _load_recall_count(self, memory_id: str) -> int:
         """读回 mem0 已持久化的 recall_count（A2 跨进程累积数据源）。
@@ -520,7 +587,10 @@ class Mem0Backend(MemoryBackend):
         if getter is None:
             return 0
         try:
-            rec = getter(memory_id)
+            # Task 8: 超时预算；超时返回 0 退化为进程内计数（与当前失败路径同语义）。
+            rec = _call_with_timeout(lambda: getter(memory_id), _MEM0_TIMEOUT)
+            if rec is None:
+                raise TimeoutError("mem0 get_recall_count 超时")
         except Exception as e:
             import logging
             logging.warning("mem0 %s failed: %r", "get_recall_count", e)
@@ -581,11 +651,14 @@ class Mem0Backend(MemoryBackend):
             store = getattr(self._m, "vector_store", None)
             if store is None:
                 raise AttributeError("no vector_store")
-            info = store.col_info()  # qdrant get_collection → CollectionInfo(points_count)
+            # Task 8: 超时预算；超时 fall through 至 _all_rows fallback。
+            info = _call_with_timeout(lambda: store.col_info(), _MEM0_TIMEOUT)
+            if info is None:
+                raise TimeoutError("_count_rows col_info 超时")
             n = int(getattr(info, "points_count", -1))
             if n >= 0:
                 return n
-        except (ValueError, TypeError, OSError, AttributeError):
+        except (ValueError, TypeError, OSError, AttributeError, TimeoutError):
             pass
         return len(self._all_rows(min_importance=0.0))
 

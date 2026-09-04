@@ -316,13 +316,17 @@ def test_disabled_env_forced_unavailable():
 
 def test_available_throttle_retry():
     """探测失败后 60s 节流：窗口内不重试，窗口外重新探测（自愈路径）。"""
+    import memory.mem0_backend as mb
     with tempfile.TemporaryDirectory() as td:
         b = _fake_backend([], Path(td))
         b._available = None  # 走真实探测路径
         b._m = None
         b.llm_api_key = "fake-key"  # 不依赖真实 auth.json，探测路径确定
         calls = []
+        probes = []
         orig_ensure = b._ensure_mem0
+        orig_probe = mb._probe_ollama_tags
+        mb._probe_ollama_tags = lambda url, timeout: probes.append(url)  # 快检打桩：不碰真实 ollama
         b._ensure_mem0 = lambda: calls.append(1) or (_ for _ in ()).throw(RuntimeError("boom"))
         try:
             assert not b.available, "首次探测失败 → False"
@@ -333,7 +337,50 @@ def test_available_throttle_retry():
             assert len(calls) == 2
         finally:
             b._ensure_mem0 = orig_ensure
+            mb._probe_ollama_tags = orig_probe
     print("  OK test_available_throttle_retry")
+
+
+def test_probe_fast_fail():
+    """6B: ollama 快检失败 → available False，昂贵的 _ensure_mem0 根本不执行。"""
+    import memory.mem0_backend as mb
+    with tempfile.TemporaryDirectory() as td:
+        b = _fake_backend([], Path(td))
+        b._available = None
+        b._m = None
+        b.llm_api_key = "fake-key"
+        orig_probe = mb._probe_ollama_tags
+        mb._probe_ollama_tags = lambda url, timeout: (_ for _ in ()).throw(
+            ConnectionRefusedError("ollama down"))
+        ensured = []
+        orig_ensure = b._ensure_mem0
+        b._ensure_mem0 = lambda: ensured.append(1)
+        try:
+            assert not b.available, "快检失败 → False"
+            assert not ensured, "_ensure_mem0 不应被调用"
+            assert b._last_error and "embedder" in b._last_error[2], b._last_error
+        finally:
+            mb._probe_ollama_tags = orig_probe
+            b._ensure_mem0 = orig_ensure
+    print("  OK test_probe_fast_fail")
+
+
+def test_add_timeout_isolated():
+    """7A: add 超时 → 返回 False + 计数，但不翻 _available（读写隔离）。"""
+    import memory.mem0_backend as mb
+    orig_timeout = mb._MEM0_ADD_TIMEOUT
+    mb._MEM0_ADD_TIMEOUT = 0.05
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            b = _fake_backend([], Path(td))
+            b._m.add = lambda *a, **k: time.sleep(30)  # 阻塞写（daemon 线程遗留，不阻塞退出）
+            assert b.add_messages("文本") is False
+            assert b._add_fail_count == 1
+            assert b._available is True, "add 超时不得翻 _available"
+            assert b._last_error and b._last_error[1] == "add_timeout", b._last_error
+    finally:
+        mb._MEM0_ADD_TIMEOUT = orig_timeout
+    print("  OK test_add_timeout_isolated")
 
 
 def test_capability_missing_warns_once():
