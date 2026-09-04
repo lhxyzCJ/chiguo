@@ -21,6 +21,10 @@ from pathlib import Path
 from chiguo_time import CST
 from chiguo_atomic import atomic_write
 
+# mem0 遥测必须在 import mem0 前关闭（mem0/memory/telemetry.py 在其 import 时
+# 读 MEM0_TELEMETRY；晚设静默无效）。setdefault 尊重运维显式 opt-in。
+os.environ.setdefault("MEM0_TELEMETRY", "false")
+
 try:
     import mem0  # noqa: F401
     _HAS_MEM0 = True
