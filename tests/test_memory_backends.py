@@ -390,6 +390,38 @@ def test_add_timeout_isolated():
     print("  OK test_add_timeout_isolated")
 
 
+def test_add_timeout_breaker():
+    """#419: add 连续 3 次超时 → _available=False 熔断（走 60s 节流自愈）；
+    成功 add 清零计数，单次/两次超时仍保持读写隔离。"""
+    import memory.mem0_backend as mb
+    orig_timeout = mb._MEM0_ADD_TIMEOUT
+    mb._MEM0_ADD_TIMEOUT = 0.05
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            b = _fake_backend([], Path(td))
+            b._m.add = lambda *a, **k: time.sleep(30)  # 阻塞写（daemon 线程遗留，不阻塞退出）
+            assert b.add_messages("一") is False
+            assert b._available is True, "第 1 次超时不熔断"
+            assert b.add_messages("二") is False
+            assert b._available is True, "第 2 次超时不熔断"
+            # 成功清零
+            b._m.add = lambda *a, **k: {"results": []}
+            assert b.add_messages("三") is True
+            assert b._add_timeout_streak == 0
+            # 重新连续 3 次超时 → 熔断
+            b._m.add = lambda *a, **k: time.sleep(30)
+            assert b.add_messages("四") is False
+            assert b.add_messages("五") is False
+            assert b._available is True, "清零后第 2 次超时仍不熔断"
+            assert b.add_messages("六") is False
+            assert b._available is False, "连续 3 次超时熔断翻 _available"
+            assert b._add_fail_count == 5
+            assert b._last_error and b._last_error[1] == "add_timeout", b._last_error
+    finally:
+        mb._MEM0_ADD_TIMEOUT = orig_timeout
+    print("  OK test_add_timeout_breaker")
+
+
 def test_capability_missing_warns_once():
     """update/delete/get 缺失 → stderr 告警一次（capability_warned 置位后不再重复）"""
     import io
