@@ -120,6 +120,3 @@ docs/
 
 # ULW 临时任务延续台账（本地，不入库）
 .omo/
-
-# 本地 backlog（不进 git）
-memory/待改进.md
