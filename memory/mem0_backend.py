@@ -57,6 +57,19 @@ _MEM0_ADD_TIMEOUT = 30.0
 # 熔断触发后可通过 mem0_write 快照链路观察（#417）。
 _MEM0_ADD_TIMEOUT_BREAKER = 3
 
+# #402: mem0 底层 HTTP 真实超时（daemon 遗留根治，与读侧 wrapper 预算对齐）：
+# - _OLLAMA_CLIENT_TIMEOUT=10.0 与读侧 _MEM0_TIMEOUT=10.0 同预算：embedder 每次
+#   调用 socket 层最多阻塞 10s，自灭，无永久遗留线程。
+# - _MEM0_LLM_CLIENT_TIMEOUT=60.0 > 写侧 _MEM0_ADD_TIMEOUT=30s wrapper：不管单次
+#   等待时长（30s wrapper 先放弃等待），只管收敛残留线程存活时长（底层 socket
+#   最晚 60s 自灭）。
+# - _MEM0_CONSTRUCT_TIMEOUT=60.0：available 探测里 _ensure_mem0 的构造预算（含
+#   list/pull，首次 pull 模型可能慢）；超时放弃走现有 except 降级，daemon 残留
+#   线程 60s 内自灭，无永久遗留。
+_OLLAMA_CLIENT_TIMEOUT = 10.0
+_MEM0_LLM_CLIENT_TIMEOUT = 60.0
+_MEM0_CONSTRUCT_TIMEOUT = 60.0
+
 # Task 6B: ollama 快速探测超时(秒)。构造 mem0 Memory 前预检 ollama 可达性，
 # 避免昂贵的 Memory() 构造因 ollama 不可达挂起。
 _OLLAMA_PROBE_TIMEOUT = 3.0
@@ -229,6 +242,40 @@ class Mem0Backend(MemoryBackend):
         if self._m is None:
             from mem0 import Memory  # 惰性导入：mem0ai 缺失时在此抛 ImportError
             self._m = Memory.from_config(self._mem0_config())
+            self._apply_client_timeouts()  # #402：底层 HTTP 真实超时，替代 daemon 遗留
+
+    def _apply_client_timeouts(self) -> None:
+        """#402: 给已构造的 mem0 Memory 底层 HTTP 客户端打真实超时。
+
+        - embedder（ollama）：type(emb.client).__module__ 以 'ollama' 开头才
+          动手，用 Client(host=self.embedder_base_url,
+          timeout=_OLLAMA_CLIENT_TIMEOUT) 整体替换 emb.client（public 构造，
+          不碰 _client 私有属性；Client 惰性 import，缺库就 warning+保持旧行为）。
+        - llm（openai 兼容）：type(client).__module__ 以 'openai' 开头则设
+          .timeout=_MEM0_LLM_CLIENT_TIMEOUT（public 属性）。
+        全程 try/except 降级：失败只记 warning，不断可用性。
+        """
+        import logging
+        try:
+            emb = getattr(self._m, "embedding_model", None)
+            client = getattr(emb, "client", None) if emb is not None else None
+            if client is not None and type(client).__module__.startswith("ollama"):
+                try:
+                    from ollama import Client as _OllamaClient
+                    emb.client = _OllamaClient(
+                        host=self.embedder_base_url, timeout=_OLLAMA_CLIENT_TIMEOUT)
+                except ImportError:
+                    logging.warning("mem0 %s failed: %r", "ollama_timeout",
+                                    ImportError("ollama 库缺失，保持旧行为"))
+        except Exception as e:  # noqa: BLE001 —— 超时装配失败不阻断可用性
+            logging.warning("mem0 %s failed: %r", "embedder_timeout", e)
+        try:
+            llm = getattr(self._m, "llm", None)
+            lclient = getattr(llm, "client", None) if llm is not None else None
+            if lclient is not None and type(lclient).__module__.startswith("openai"):
+                lclient.timeout = _MEM0_LLM_CLIENT_TIMEOUT
+        except Exception as e:  # noqa: BLE001 —— 同上
+            logging.warning("mem0 %s failed: %r", "llm_timeout", e)
 
     @property
     def available(self) -> bool:
@@ -254,7 +301,12 @@ class Mem0Backend(MemoryBackend):
                 except Exception as e:
                     raise RuntimeError(
                         f"mem0: embedder 不可达（{self.embedder_base_url}）: {e}") from e
-            self._ensure_mem0()
+            # #402：构造含 list/pull（首次 pull 可能慢），包构造超时预算；超时
+            # 放弃走现有 except 降级，daemon 残留线程 60s 内自灭，无永久遗留。
+            if call_with_timeout(
+                self._ensure_mem0,
+                _MEM0_CONSTRUCT_TIMEOUT, name="mem0-timeout") is TIMEOUT:
+                raise TimeoutError("mem0 构造超时")
             # 连通性探测：search 一次（走 embedder，覆盖 ollama 依赖；
             # get_all 只走 qdrant scroll 不触 embedder，ollama 故障探测不到）
             if call_with_timeout(
