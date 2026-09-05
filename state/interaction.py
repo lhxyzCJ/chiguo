@@ -318,7 +318,7 @@ class InteractionMixin:
             inter = {"type": "user_reply", "warmth": warmth, "latency_category": lat_cat, "msg_length": msg_length}
             self.adapt_personality(inter)
             self.update_emotion_baseline(inter)
-        except Exception as e:
+        except (TypeError, ValueError, AttributeError, KeyError) as e:
             self._audit("adapt_personality_error", repr(e))
 
     def _record_bayesian(self, now: datetime, latency_h: float | None, msg_length: int) -> None:
