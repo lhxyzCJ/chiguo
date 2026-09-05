@@ -42,47 +42,56 @@ def _parse(xp: Path) -> dict:
     try:
         import openpyxl
         wb = openpyxl.load_workbook(str(xp), read_only=True, data_only=True)
-        if not wb.sheetnames:
-            raise ValueError("xlsx has no sheets")
-        ws = wb[wb.sheetnames[0]]
     except Exception as e:
         print(f"[schedule_parser] xlsx parse failed ({e}), schedule=empty", file=sys.stderr)
         return {}
 
-    schedule: dict = {}
-    for row in ws.iter_rows(min_row=5, max_row=15, values_only=True):  # 第5行起是课表数据
-        if not row or not row[0]:
-            continue
-        try:
-            period = int(float(str(row[0])))
-        except (ValueError, TypeError):
-            continue
-        if period < 1 or period > 11:
-            continue
+    # Issue #403：read_only workbook 持有 fd + 临时解压目录，必须显式 close；
+    # try/finally 保证解析成功/失败/中途异常都不泄漏（此前靠 GC 回收）。
+    try:
+        if not wb.sheetnames:
+            raise ValueError("xlsx has no sheets")
+        ws = wb[wb.sheetnames[0]]
 
-        for col_idx in range(1, 8):  # 周一~周日
-            if col_idx >= len(row):
+        schedule: dict = {}
+        for row in ws.iter_rows(min_row=5, max_row=15, values_only=True):  # 第5行起是课表数据
+            if not row or not row[0]:
                 continue
-            cell = str(row[col_idx]).strip() if row[col_idx] else ""
-            if not cell or cell == "None":
+            try:
+                period = int(float(str(row[0])))
+            except (ValueError, TypeError):
                 continue
-
-            courses = parse_cell(cell)
-            if not courses:
+            if period < 1 or period > 11:
                 continue
 
-            weekday = col_idx - 1  # 0=Mon ... 6=Sun
-            if weekday not in schedule:
-                schedule[weekday] = {}
-            if len(courses) == 1:
-                schedule[weekday][period] = courses[0]
-            else:
-                # 合并单元格：同一时段多门课（周次互斥，如 2-17 与 19 周）。
-                # 主课程存原字段，其余存入 alternates
-                schedule[weekday][period] = {
-                    **courses[0], "alternates": courses[1:]
-                }
-    return schedule
+            for col_idx in range(1, 8):  # 周一~周日
+                if col_idx >= len(row):
+                    continue
+                cell = str(row[col_idx]).strip() if row[col_idx] else ""
+                if not cell or cell == "None":
+                    continue
+
+                courses = parse_cell(cell)
+                if not courses:
+                    continue
+
+                weekday = col_idx - 1  # 0=Mon ... 6=Sun
+                if weekday not in schedule:
+                    schedule[weekday] = {}
+                if len(courses) == 1:
+                    schedule[weekday][period] = courses[0]
+                else:
+                    # 合并单元格：同一时段多门课（周次互斥，如 2-17 与 19 周）。
+                    # 主课程存原字段，其余存入 alternates
+                    schedule[weekday][period] = {
+                        **courses[0], "alternates": courses[1:]
+                    }
+        return schedule
+    except Exception as e:
+        print(f"[schedule_parser] xlsx parse failed ({e}), schedule=empty", file=sys.stderr)
+        return {}
+    finally:
+        wb.close()
 
 
 def _save_cache(cp: Path, schedule: dict, parsed_at: float) -> None:

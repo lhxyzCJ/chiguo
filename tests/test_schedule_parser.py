@@ -195,3 +195,50 @@ def test_refresh_disabled():
         assert ok is False
         assert not cp.exists()
         print("  OK test_refresh_disabled")
+
+
+def test_parse_closes_workbook_no_fd_leak():
+    """Issue #403：_parse 成功路径必须 wb.close()，不泄漏 fd
+   （read_only 模式持 fd + 临时解压文件）。"""
+    from unittest import mock
+    from schedule import parser as parser_mod
+    with tempfile.TemporaryDirectory() as td:
+        xp = Path(td) / "xskb.xlsx"
+        _write_xlsx(xp, ROWS)
+        real_load = openpyxl.load_workbook
+        closed = []
+
+        def spy_load(*a, **k):
+            wb = real_load(*a, **k)
+            real_close = wb.close
+
+            def spy_close():
+                closed.append(True)
+                return real_close()
+
+            wb.close = spy_close
+            return wb
+
+        with mock.patch.object(openpyxl, "load_workbook", spy_load):
+            fd_dir = "/proc/self/fd"
+            before = len(os.listdir(fd_dir)) if os.path.isdir(fd_dir) else None
+            for _ in range(3):
+                assert parser_mod._parse(xp), "fixture 应解析出课表"
+            assert len(closed) == 3, f"每次解析都必须 wb.close()，实际 {len(closed)} 次"
+            if before is not None:
+                assert len(os.listdir(fd_dir)) == before, "重复解析后 fd 不应增长"
+        print("  OK test_parse_closes_workbook_no_fd_leak")
+
+
+def test_parse_failure_path_closes_workbook():
+    """Issue #403：失败路径（无 sheet → ValueError）同样必须 wb.close()。"""
+    from unittest import mock
+    from schedule import parser as parser_mod
+    closed = []
+    stub = mock.Mock()
+    stub.sheetnames = []
+    stub.close = lambda: closed.append(True)
+    with mock.patch.object(openpyxl, "load_workbook", return_value=stub):
+        assert parser_mod._parse(Path("/nonexistent/x.xlsx")) == {}
+    assert closed == [True], "失败路径也必须 wb.close()"
+    print("  OK test_parse_failure_path_closes_workbook")
