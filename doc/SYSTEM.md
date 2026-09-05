@@ -900,7 +900,7 @@ agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准（表�
 
 Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 层（Intent × Cue × Vibe）30%。
 
-**发送侧可靠性（U2/#227，替代 v1.10 A8 兜底）**：`chiguo_composer.py` 保留独立 `CLI`（传入 decision JSON 或 `--trigger`，从模板池直出可发送文本；cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败用 `_FALLBACK_LINES`）——但**发送链不再调用它兜底**。`scripts/chiguo-tick.sh` 与 `chiguo_daemon.py --loop` 的 `_loop_send` 统一：agent 生成失败 → sleep `[loop].retry_delay_seconds`(5) 整链重试一次（抖动缓冲，重试成功不计故障）→ 仍失败即**中止发送**并经 `agent_health.py record --outcome fail` 记账（fail_streak+1）；连续失败达 `[health].fail_threshold`(3) → 状态 down + transition 经微信发「后端异常」告警（仅翻转一次）→ 暂停探测（loop 跳过尝试；cron 读 down 态 exit 0 不发）。修复后重启 loop（重启后首次 probe 放行）或下个 cron probe 成功 → record success → state up + transition 发「已恢复」。两路径对 bridge `/send` 超时**统一 35s**（`_loop_send` 的 `_post("/send", …) 35.0` 与 tick.sh 主发送 `curl --max-time 35` 互引一致，见 #261/CR-2，改值须两端同步）。
+**发送侧可靠性（U2/#227，替代 v1.10 A8 兜底）**：`chiguo_composer.py` 保留独立 `CLI`（传入 decision JSON 或 `--trigger`，从模板池直出可发送文本；cue 台词模板 `personality/*.toml trigger_templates` 优先，无模板/失败用 `_FALLBACK_LINES`）——但**发送链不再调用它兜底**。`scripts/chiguo-tick.sh` 与 `chiguo_daemon.py --loop` 的 `_loop_send` 统一：agent 生成失败 → sleep `[loop].retry_delay_seconds`(5) 整链重试一次（抖动缓冲，重试成功不计故障）→ 仍失败即**中止发送**并经 `agent_health.py record --outcome fail` 记账（fail_streak+1）；连续失败达 `[health].fail_threshold`(3) → 状态 down + transition 经微信发「后端异常」告警（仅翻转一次）→ 暂停探测（loop 跳过尝试；cron 读 down 态 exit 0 不发）。修复后重启 loop（重启后首次 probe 放行）或下个 cron probe 成功 → record success → state up + transition 发「已恢复」。两路径对 bridge `/send` 超时**统一 35s**（`_loop_send` 经 `_send_via_bridge` 调 `bridge_post("/send", …) 35.0` 与 tick.sh 主发送 `curl --max-time 35` 互引一致，见 #261/CR-2，改值须两端同步）。
 
 **R7 发送链统一（F-RT-001/F-RT-003/F-A17-001/F-A17-002）**：
 - 抑制退款：loop `run_loop` 的 suppressed 分支（health down/降频区间判定 `_health_should_probe=False`）不再只跳过发送——对 evaluate 已记账的 send 决策调用 `record_send_result(msg_id, "failed", "suppressed")` 走退款闭环，回滚 energy/messages/Hawkes/**逃生阀 `last_longing_break_at`（3 天冷却不被白扣）**，对齐 cron 发送失败分支的 refund。
@@ -917,7 +917,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 - 文档与实现：改 bridge 超时值 / tick 与 loop 的 `/send` 超时必须两端同步（见 #261/CR-2）。
 
 **R10 /agent/prompt 超时链对齐（F-A17-004）——RPC 侧"要么 125s 内给结果、要么快速失败"**：
-- 问题链：发送侧 RPC 生成原本三层超时未对齐——tick `curl --max-time 125`（cron）| loop `_post(...) timeout=agent_timeout_ms(125000)` | bridge `/agent/prompt` `withTimeout(prompt, 180s)`（**排队不计入**）| `agent-rpc.mjs` prompt `AGENT_TIMEOUT(120s)`。前方慢回复 turn 占用共享 `TurnQueue` 时，排队 w + restart(≤3s) + ensureStarted + prompt 实际 > 125s → tick 的 curl 先超时 → **无条件回退 spawn → 与仍在执行的 RPC 并行（双 LLM）+ RPC 结果丢弃**（活跃时段 + 慢 LLM 回复时窗口真实）。
+- 问题链：发送侧 RPC 生成原本三层超时未对齐——tick `curl --max-time 125`（cron）| loop `_generate_with_retry` 经 `bridge_post(...) timeout=agent_timeout_ms(125000)` | bridge `/agent/prompt` `withTimeout(prompt, 180s)`（**排队不计入**）| `agent-rpc.mjs` prompt `AGENT_TIMEOUT(120s)`。前方慢回复 turn 占用共享 `TurnQueue` 时，排队 w + restart(≤3s) + ensureStarted + prompt 实际 > 125s → tick 的 curl 先超时 → **无条件回退 spawn → 与仍在执行的 RPC 并行（双 LLM）+ RPC 结果丢弃**（活跃时段 + 慢 LLM 回复时窗口真实）。
 - 修复（仅 `/agent/prompt` send 侧；回复侧 askAgent 排队语义不变）：
   - **总预算对齐**：bridge send 侧把「排队 + restart + 处理」全部计入一个总预算 `WECHAT_BRIDGE_SEND_PROMPT_TOTAL_MS`（默认 **110s < 125s**，给 curl 留网络余量）。处理步（`restart`/`ensureStarted`/`prompt`）用剩余预算包 `withTimeout`，超过 → 503 明确失败并杀 send 进程防孤儿。
   - **排队快速判败**：`TurnQueue.run(task, {deadline, waitMaxMs})` 新增可选预算版。前方 turn 占用队列时，`WECHAT_BRIDGE_SEND_PROMPT_QUEUE_WAIT_MS`（默认 30s）内未开始处理 → **快速判败 `queue_busy`**，且被取消的 turn 绝不执行（不留孤儿 LLM 卡队列）。无 opts 的回复侧调用逐字节不变。
