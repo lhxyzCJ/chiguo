@@ -724,7 +724,7 @@ schedule_overrides.json / break_state.json / holidays.json / schedule_plan.json�
      写入: daemon 对话后自动写入（_mem0_autowrite，短消息跳过）
            - **F-A21-002 去重（#336）**：同文本 24h 窗口内二次写入跳过（进程内最近写入 hash FIFO，`_mem0_autowrite_hashes`）——防 bridge 补报/重发同条消息重复触发 LLM 事实提取 → messages 表无界增长；不同文本/超窗后正常写入
      降级: mem0 不可用 → available=False → 自动跳过
-      - **F-RT-017 写链可感知（#336，#414-7A 读写隔离）**：`available` 探测只覆盖读链（embedder+qdrant），LLM 事实提取写链（opencode/model 端点）故障在 available 上不直接暴露；写异常会翻转 `_available` + 记 `_last_error(op=add)`，写超时（30s `_MEM0_ADD_TIMEOUT`）仅记 `_last_error(op=add_timeout)` 不翻 `_available`（读可用不被写拖垮）；均累计 `add_fail_count`（`stats()` 暴露；daemon 每次 save 经 `_build_payload` → `state.mem0_write` 快照透传，monitor `health()` 读取并在 `add_fail_count>0` 时 issues 告警，不置 healthy=False）
+      - **F-RT-017 写链可感知（#336，#414-7A 读写隔离）**：`available` 探测只覆盖读链（embedder+qdrant），LLM 事实提取写链（opencode/model 端点）故障在 available 上不直接暴露；写异常会翻转 `_available` + 记 `_last_error(op=add)`，单次写超时（30s `_MEM0_ADD_TIMEOUT`）仅记 `_last_error(op=add_timeout)` 不翻 `_available`（读可用不被写拖垮），但连续超时达 3 次（`_MEM0_ADD_TIMEOUT_BREAKER`，成功 add 清零）熔断翻转 `_available=False` 走 60s 节流自愈（#419；联动 #402 减少遗留线程产生速率）；均累计 `add_fail_count`（`stats()` 暴露；daemon 每次 save 经 `_build_payload` → `state.mem0_write` 快照透传，monitor `health()` 读取并在 `add_fail_count>0` 时 issues 告警，不置 healthy=False）
      - mem0 在 available 探测内**惰性导入**：未安装时 daemon 照常启动（import 失败也被 available=False 捕获）
      - 探测失败后按 60s 节流重试：`--loop` 长驻时故障恢复可自愈，不永久禁用
      - 结果行防御：importance 的 None/NaN 统一清洗为默认 0.5，行级异常整体降级为空列表；非字符串 created_at 转串解析、失败落 0.0（防 `_parse_iso_ts` 的 .replace AttributeError），单条脏行 try 隔离不拖垮整次检索（R14）
