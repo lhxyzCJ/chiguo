@@ -283,7 +283,7 @@ class Mem0Backend(MemoryBackend):
                 raise TimeoutError("mem0 探测超时")
             self._warn_missing_capabilities()  # D2: 探测成功时检查一次能力缺失，显式告警
             self._available = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 —— mem0 外部异常类型不稳定，降级+自愈
             import logging
             logging.warning("mem0 %s failed: %r", "available", e)
             self._last_error = (_time_module.time(), "available", str(e))
@@ -380,7 +380,7 @@ class Mem0Backend(MemoryBackend):
             if r is _TIMEOUT_SENTINEL:
                 raise TimeoutError("mem0 search 超时")
             results = r.get("results", [])
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 —— mem0 外部异常类型不稳定，降级+自愈
             import logging
             logging.warning("mem0 %s failed: %r", "search", e)
             self._last_error = (_time_module.time(), "search", str(e))
@@ -483,7 +483,7 @@ class Mem0Backend(MemoryBackend):
                 self._available = False
                 self._last_probe = _time_module.time()
             return False
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 —— mem0 外部异常类型不稳定，降级+自愈
             import logging
             logging.warning("mem0 %s failed: %r", "add", e)
             self._last_error = (_time_module.time(), "add", str(e))

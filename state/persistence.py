@@ -93,7 +93,7 @@ class StatePersistence:
                 data = json.loads(p.read_text())
                 self.apply_loaded_data(data)
                 restored = True
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 —— 损坏文件任意异常均回退 .bak
                 if bak.exists():
                     try:
                         data = json.loads(bak.read_text())
