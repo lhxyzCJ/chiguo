@@ -6,6 +6,7 @@
 import os
 import random
 import re
+from datetime import datetime
 
 from decision.base import DecisionEngineBase
 from chiguo_math import mood_fresh, user_mood_note, self_mood_note
