@@ -22,7 +22,9 @@ else
      || [ wechat-bridge/vendor/wechatbot/tsconfig.json -nt wechat-bridge/vendor/wechatbot/dist/index.js ] \
      || [ wechat-bridge/vendor/wechatbot/package.json -nt wechat-bridge/vendor/wechatbot/dist/index.js ]; then
     echo "[ci-test] vendor 源码已更新，重编 dist..."
-    ( cd wechat-bridge/vendor/wechatbot && npm run build )
+    # 缓存仅恢复 dist 不恢复 node_modules（防 arborist edgesOut），重编前须先 npm ci，
+    # 否则 tsc 缺 @types/node 报 TS2591（2026-09-05 main 全红根因）。
+    ( cd wechat-bridge/vendor/wechatbot && npm ci --no-fund --no-audit && npm run build )
   fi
 fi
 if [ ! -d wechat-bridge/node_modules/@wechatbot ]; then
