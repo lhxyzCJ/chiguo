@@ -54,13 +54,18 @@ class DecisionEngineBase:
             # ── v5: monotonic 锚点（不持久化，用于检测壁钟跳变）──
             self._monotonic_at_save: float = 0.0
     
-            # ── v5: 日志轮转（每次进程启动检查一次）──
+            # ── v5: 日志轮转（每次进程启动检查一次）。
+            # #390: 名单与 chiguo_rotation CLI 对齐（decisions/messages/state_audit/events），
+            # 否则 daemon 常驻运行时 audit/events 从不轮转、无界增长。──
+            _rotate_paths = [
+                str(self.log_path),
+                str(self.messages_log_path),
+                str(self._base_dir / "chiguo_state_audit.jsonl"),
+                str(PROJECT_ROOT / "chiguo_events.jsonl"),
+            ]
             try:
                 from chiguo_rotation import rotate_if_needed
-                rotate_if_needed(
-                    [str(self.log_path), str(self.messages_log_path)],
-                    self.config_path,
-                )
+                rotate_if_needed(_rotate_paths, self.config_path)
             except (ValueError, TypeError, OSError):
                 pass  # rotation failure never blocks daemon
 
