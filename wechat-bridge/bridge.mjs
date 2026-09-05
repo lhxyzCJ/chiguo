@@ -34,7 +34,7 @@ import { pathToFileURL } from 'node:url'
 import { existsSync, readFileSync, writeFileSync, chmodSync, renameSync, rmSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homeDir } from './home-dir.mjs'
-import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand, backupSessionFile } from './command-detect.mjs'
+import { detectSpecialCommand, executeSpecialCommand, payloadToArgv, detectScheduleIntent, detectSlashCommand, executeSlashCommand, backupSessionFile } from './command-detect.mjs'
 import { msToNextCheck, rotateIfDue, defaultRotatePaths, writeActivity, cstDateStr } from './session-rotate.mjs'
 // #99 A 路：askAgent（agent-run.mjs 统一入口）由阶段 4 集成接入；当前保留原 spawn 调用结构
 import { parseNdjson, extractAnalysis, resolveRepo, RUNNER, HOST } from '../scripts/agent-run.mjs'
@@ -827,7 +827,9 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     await queue.run(async () => {
       try {
         const r = await executeSpecialCommand(spawn, special, DAEMON_PY, DAEMON_SCRIPT)
-        console.log(`[special] ${special.daemon.join(' ')} → ok=${r.ok}`)
+        // DTO 单源：从 spec.payload 生成 argv 用于日志。
+        const argv = payloadToArgv(special.payload)
+        console.log(`[special] ${argv.join(' ')} → ok=${r.ok}`)
         await bot.reply(msg, r.reply)
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err)

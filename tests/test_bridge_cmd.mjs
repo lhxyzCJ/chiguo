@@ -4,7 +4,7 @@ import assert from 'node:assert'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { detectSpecialCommand, inferYear, buildReply, executeSpecialCommand, detectSlashCommand, executeSlashCommand, backupSessionFile, encodeSessionDir, detectScheduleIntent } from '../wechat-bridge/command-detect.mjs'
+import { detectSpecialCommand, inferYear, buildReply, executeSpecialCommand, payloadToArgv, detectSlashCommand, executeSlashCommand, backupSessionFile, encodeSessionDir, detectScheduleIntent } from '../wechat-bridge/command-detect.mjs'
 
 let passed = 0
 const tests = []
@@ -20,25 +20,25 @@ async function runAll() {
 t('detect: 记住X月X日是XX → anniversary add MM-DD', () => {
   const r = detectSpecialCommand('记住5月11日是迟菓生日')
   assert.strictEqual(r.action, 'anniversary_added')
-  assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 05-11 迟菓生日'])
+  assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '05-11', name: '迟菓生日' })
+  assert.deepStrictEqual(payloadToArgv(r.payload), ['--anniversary', 'add anniversary 05-11 迟菓生日'])
 })
 t('detect: 记住X月X日XX（无"是"）→ 同样命中', () => {
   const r = detectSpecialCommand('记住3月1日开学日')
-  assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 03-01 开学日'])
+  assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '03-01', name: '开学日' })
 })
 t('detect: 个位数月日补零', () => {
   const r = detectSpecialCommand('记住7月8日我们认识那天')
-  assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 07-08 我们认识那天'])
+  assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '07-08', name: '我们认识那天' })
 })
 t('detect: 尾标点剥离', () => {
   const r = detectSpecialCommand('记住11月3日主人生日！')
-  assert.ok(!r.daemon[1].includes('！'), '感叹号不应进命令')
-  assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 11-03 主人生日'])
+  assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '11-03', name: '主人生日' })
 })
 t('detect: 哥哥/主人 前缀兼容（哥哥记住X月X日是XX）', () => {
   const r = detectSpecialCommand('哥哥记住5月11日是迟菓生日')
   assert.strictEqual(r.action, 'anniversary_added')
-  assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 05-11 迟菓生日'])
+  assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '05-11', name: '迟菓生日' })
   assert.strictEqual(detectSpecialCommand('主人记住3月1日开学日').action, 'anniversary_added')
 })
 t('detect: 尾缀「了」不算名称（记住5月11日了 → 不拦截交 agent）', () => {
@@ -46,24 +46,24 @@ t('detect: 尾缀「了」不算名称（记住5月11日了 → 不拦截交 age
 })
 t('detect: 尾缀「了」剥离（记住5月11日是生日了 → 名称 生日）', () => {
   const r = detectSpecialCommand('记住5月11日是生日了')
-  assert.deepStrictEqual(r.daemon, ['--anniversary', 'add anniversary 05-11 生日'])
+  assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '05-11', name: '生日' })
 })
 
 // ── 检测：一次性提醒添加（6c:倒计时废弃 → reminder,经 --schedule-change）──
 t('detect: YYYY年M月D日要XX → reminder_added + --schedule-change', () => {
   const r = detectSpecialCommand('2026年12月25日要考试')
   assert.strictEqual(r.action, 'reminder_added')
-  assert.deepStrictEqual(r.daemon, ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-12-25' }, label: '考试' })])
+  assert.deepStrictEqual(r.payload, { kind: 'reminder', date: '2026-12-25', label: '考试' })
+  assert.deepStrictEqual(payloadToArgv(r.payload), ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-12-25' }, label: '考试' })])
 })
 t('detect: M月D日要XX（无年份）→ 推断年份（已过→明年）', () => {
   const now = new Date(Date.now() + 8 * 3600 * 1000)
   const y = now.getUTCFullYear()
   const r = detectSpecialCommand(`5月11日要过生日`)
   assert.strictEqual(r.action, 'reminder_added')
-  const item = JSON.parse(r.daemon[1])
-  assert.strictEqual(item.kind, 'reminder')
-  assert.strictEqual(item.label, '过生日')
-  const date = item.when.date
+  assert.strictEqual(r.payload.kind, 'reminder')
+  assert.strictEqual(r.payload.label, '过生日')
+  const date = r.payload.date
   const year = Number(date.slice(0, 4))
   assert.ok(year === y || year === y + 1, `年份应为 ${y} 或 ${y + 1}，实得 ${year}`)
   if (Date.UTC(y, 4, 11) < Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())) {
@@ -91,12 +91,12 @@ t('#130: 纪念日分支同样不误吞问句', () => {
 t('#130: 正例保持——"2026年12月25日要考试" 仍 reminder_added、label 含考试', () => {
   const r = detectSpecialCommand('2026年12月25日要考试')
   assert.strictEqual(r.action, 'reminder_added')
-  assert.ok(r.daemon[1].includes('考试'), r.daemon[1])
+  assert.ok(payloadToArgv(r.payload)[1].includes('考试'), JSON.stringify(r.payload))
 })
 t('#130: 正例保持——"8月11日要考试"（月日版本）仍 reminder_added、label 含考试', () => {
   const r = detectSpecialCommand('8月11日要考试')
   assert.strictEqual(r.action, 'reminder_added')
-  assert.ok(r.daemon[1].includes('考试'), r.daemon[1])
+  assert.ok(payloadToArgv(r.payload)[1].includes('考试'), JSON.stringify(r.payload))
 })
 
 t('inferYear: 边界——过去/未来日期', () => {
@@ -115,7 +115,7 @@ t('inferYear: 边界——过去/未来日期', () => {
 t('detect: 有哪些纪念日 → list', () => {
   const r = detectSpecialCommand('有哪些纪念日')
   assert.strictEqual(r.action, 'anniversary_list')
-  assert.deepStrictEqual(r.daemon, ['--anniversary', 'list'])
+  assert.deepStrictEqual(r.payload, { kind: 'anniversary_list' })
 })
 t('detect: 纪念日列表 → list', () => {
   assert.strictEqual(detectSpecialCommand('纪念日列表').action, 'anniversary_list')
@@ -127,7 +127,7 @@ t('detect: 列表两分支 ^ 锚定（"今天是纪念日列表"/"我们有哪�
 t('detect: 放假了 → break on', () => {
   const r = detectSpecialCommand('放假了')
   assert.strictEqual(r.action, 'break_on')
-  assert.deepStrictEqual(r.daemon, ['--break', 'on'])
+  assert.deepStrictEqual(r.payload, { kind: 'break_on' })
 })
 t('detect: 放暑假了/我放假了 → break on', () => {
   assert.strictEqual(detectSpecialCommand('放暑假了').action, 'break_on')
@@ -136,7 +136,7 @@ t('detect: 放暑假了/我放假了 → break on', () => {
 t('detect: 开学了 → break off', () => {
   const r = detectSpecialCommand('开学了')
   assert.strictEqual(r.action, 'break_off')
-  assert.deepStrictEqual(r.daemon, ['--break', 'off'])
+  assert.deepStrictEqual(r.payload, { kind: 'break_off' })
 })
 
 // ── 检测：不误伤（歧义/问句/长文/对话式）──
@@ -276,6 +276,24 @@ if (args[0] === '--break') {
 }
 `)
 import { spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+
+/** stub spawn：按预设 stdout/退出码回放，供 executeSpecialCommand 错误分支测试（不依赖 fake daemon 文件）。 */
+function stubSpawn(stdout, code = 0) {
+  return (cmd, args, opts) => {
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    child.stdout.setEncoding = () => {}
+    child.stderr.setEncoding = () => {}
+    child.kill = () => {}
+    setImmediate(() => {
+      if (stdout) child.stdout.emit('data', stdout)
+      child.emit('close', code)
+    })
+    return child
+  }
+}
 
 t('executeSpecialCommand: break on → ok + 迟菓确认', async () => {
   const spec = detectSpecialCommand('放假了')
@@ -310,8 +328,8 @@ t('executeSpecialCommand: break off（真实 shape）→ 开学确认', async ()
   assert.ok(r.reply.includes('开学了'), r.reply)
 })
 t('executeSpecialCommand: daemon 非零退出 + error JSON → ok:false + 处理失败', async () => {
-  const spec = { action: 'x', daemon: ['--bad'], hint: 'hint' }
-  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
+  const spec = { action: 'break_on', payload: { kind: 'break_on' }, hint: 'hint' }
+  const r = await executeSpecialCommand(stubSpawn(JSON.stringify({ ok: false, error: 'boom' }), 1), spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, false)
   assert.ok(r.reply.includes('处理失败：boom'))
 })
@@ -324,7 +342,7 @@ t('executeSpecialCommand: 脚本不存在 → ok:false（不抛未捕获异常�
 
 // ── A4 形状契约:--schedule-change(批次 6a bridge 消费侧;二十轮点名 shape 与 test_schedule_cli.py 同源)──
 t('executeSpecialCommand: --schedule-change 成功 shape(A4)→ ok:true(确认文案含星期+日期)', async () => {
-  const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-08-20' }, label: '交材料' })], hint: 'x' }
+  const spec = { action: 'schedule_change', payload: { kind: 'reminder', date: '2026-08-20', label: '交材料' }, hint: 'x' }
   const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, true)
 })
@@ -337,21 +355,25 @@ t('executeSpecialCommand: reminder_added past_date → ok:false + result.questio
   assert.ok(r.reply.includes('已经过去了'), r.reply)
 })
 t('executeSpecialCommand: --schedule-change 畸形 JSON 契约(A4 bad_json)→ ok:false + 处理失败兜底', async () => {
-  const spec = { action: 'schedule_change', daemon: ['--schedule-change', '{not json'], hint: 'x' }
-  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
+  // daemon 侧 bad_json 回放（stub spawn，不依赖 argv 畸形构造）。
+  const spec = { action: 'schedule_change', payload: { kind: 'reminder', date: '2026-08-01', label: '过去' }, hint: 'x' }
+  const r = await executeSpecialCommand(stubSpawn(JSON.stringify({ action: 'schedule_change', ok: false, reason: 'bad_json', question: '处理失败,再试一次?' }), 1), spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, false)
   assert.ok(r.reply.startsWith('处理失败'), r.reply)
 })
 t('executeSpecialCommand: --schedule-change ApiRejection shape(A4 reason+question+missing)→ ok:false', async () => {
-  const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: '2026-08-01' }, label: '过去' })], hint: 'x' }
+  const spec = { action: 'schedule_change', payload: { kind: 'reminder', date: '2026-08-01', label: '过去' }, hint: 'x' }
   const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, false)
 })
 t('executeSpecialCommand: --schedule-change remove 拒绝(not_found)→ ok:false 且失败 JSON 不丢 stdout', async () => {
-  const spec = { action: 'schedule_change', daemon: ['--schedule-change', JSON.stringify({ kind: 'remove', match: { date: '2026-08-20' } })], hint: 'x' }
-  const r = await executeSpecialCommand(spawn, spec, process.execPath, FAKE_DAEMON)
+  const spec = { action: 'schedule_change', payload: { kind: 'reminder', date: '2026-08-20', label: '交材料' }, hint: 'x' }
+  const r = await executeSpecialCommand(stubSpawn(JSON.stringify({ action: 'schedule_change', ok: false, reason: 'not_found', question: '没找到这条安排,哥哥再确认一下?', missing: ['period'] }), 1), spec, process.execPath, FAKE_DAEMON)
   assert.strictEqual(r.ok, false)
   assert.ok(r.reply.startsWith('处理失败'), r.reply)
+})
+t('payloadToArgv: 未知 kind 直接抛错（不保留兼容回退）', () => {
+  assert.throws(() => payloadToArgv({ kind: 'nope' }), /未知 payload kind/)
 })
 
 ;(async () => {

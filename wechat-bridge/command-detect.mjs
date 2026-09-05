@@ -8,7 +8,7 @@
  * 确定性优先：检测保守（短消息 + 非问句），歧义消息放行给 agent 自然回复。
  *
  * 用法（供 bridge.mjs import）：
- *   detectSpecialCommand(text) → null | { action, payload: {...}, daemon: [...argv], hint } (daemon kept for compat, payload is DTO)
+ *   detectSpecialCommand(text) → null | { action, payload: {...}, hint }（payload 为规范化 DTO 单一事实来源）
  *   executeSpecialCommand(execFileP, spec, daemonPy, daemonScript) → { ok, reply }
  *   buildReply(action, result) → string（daemon JSON → 迟菓风确认文案）
  */
@@ -41,8 +41,8 @@ function isValidMonthDay(month, day) {
 }
 
 /**
- * 检测特殊命令。返回 { action, daemon, hint }；非命令返回 null。
- * daemon: 拼好的 daemon argv（如 ['--anniversary', 'add anniversary 05-11 迟菓生日']）。
+ * 检测特殊命令。返回 { action, payload, hint }；非命令返回 null。
+ * payload: 规范化 DTO（单一事实来源），供 executeSpecialCommand 通过 payloadToArgv 转 argv。
  * hint: 无 daemon 输出可解析时的兜底确认文案。
  */
 export function detectSpecialCommand(text) {
@@ -61,7 +61,6 @@ export function detectSpecialCommand(text) {
       return {
         action: 'anniversary_added',
         payload: { kind: 'anniversary_add', date: `${mm}-${dd}`, name },
-        daemon: ['--anniversary', `add anniversary ${mm}-${dd} ${name}`],
         hint: `记住了！${m[1]}月${m[2]}日——${name}。`,
       }
     }
@@ -76,7 +75,6 @@ export function detectSpecialCommand(text) {
       return {
         action: 'reminder_added',
         payload: { kind: 'reminder', date, label: name },
-        daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date }, label: name })],
         hint: `嗯嗯，${name}（${date}）——我算着日子呢。`,
       }
     }
@@ -90,7 +88,6 @@ export function detectSpecialCommand(text) {
       return {
         action: 'reminder_added',
         payload: { kind: 'reminder', date, label: name },
-        daemon: ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date }, label: name })],
         hint: `嗯嗯，${name}（${date}）——我算着日子呢。`,
       }
     }
@@ -98,15 +95,15 @@ export function detectSpecialCommand(text) {
 
   // 3) 列表：有哪些纪念日 / 纪念日列表等（两分支均 ^ 锚定）
   if (/^(?:(?:有)?哪些纪念日|纪念日(?:列表|有哪些|查|看看))/.test(t)) {
-    return { action: 'anniversary_list', payload: { kind: 'anniversary_list' }, daemon: ['--anniversary', 'list'], hint: '让我看看都有什么日子……' }
+    return { action: 'anniversary_list', payload: { kind: 'anniversary_list' }, hint: '让我看看都有什么日子……' }
   }
 
   // 4) 假期：放假了/放暑假了 → --break on；开学了 → --break off
   if (/^(?:我(?:们)?)?(?:放暑假|放假)(?:了|啦|噜)?[。!！]?$/.test(t)) {
-    return { action: 'break_on', payload: { kind: 'break_on' }, daemon: ['--break', 'on'], hint: '……知道了。放假了。那我可以多找你说话啦。' }
+    return { action: 'break_on', payload: { kind: 'break_on' }, hint: '……知道了。放假了。那我可以多找你说话啦。' }
   }
   if (/^(?:我(?:们)?)?开学(?:了|啦)?[。!！]?$/.test(t)) {
-    return { action: 'break_off', payload: { kind: 'break_off' }, daemon: ['--break', 'off'], hint: '哦。开学了……行吧，课表要紧。' }
+    return { action: 'break_off', payload: { kind: 'break_off' }, hint: '哦。开学了……行吧，课表要紧。' }
   }
 
   return null
@@ -184,17 +181,17 @@ export function buildReply(action, result) {
  * cwd 锚定 daemon 脚本目录（anniversary/break 状态文件随仓库根，防 cwd 写散）。
  */
 
-function payloadToArgv(payload) {
+export function payloadToArgv(payload) {
   if (payload.kind === 'anniversary_add') return ['--anniversary', `add anniversary ${payload.date} ${payload.name}`]
   if (payload.kind === 'anniversary_list') return ['--anniversary', 'list']
   if (payload.kind === 'reminder') return ['--schedule-change', JSON.stringify({ kind: 'reminder', when: { date: payload.date }, label: payload.label })]
   if (payload.kind === 'break_on') return ['--break', 'on']
   if (payload.kind === 'break_off') return ['--break', 'off']
-  return payload.argv ?? []
+  throw new Error(`未知 payload kind：${payload.kind}`)
 }
 export async function executeSpecialCommand(spawnFn, spec, daemonPy, daemonScript) {
-  // PR-3 DTO: spec.payload is canonical, spec.daemon is legacy compat
-  const argv = spec.payload ? payloadToArgv(spec.payload) : spec.daemon;
+  // payload DTO 单一事实来源（legacy daemon 字段已删，不保留回退）。
+  const argv = payloadToArgv(spec.payload);
   const repo = dirname(daemonScript)
   let stdout
   try {
