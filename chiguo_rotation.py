@@ -48,7 +48,7 @@ def log_rotation_event(kind: str, filename: str):
     try:
         line = json.dumps({
             "event": "rotation",
-            "kind": kind,                       # monthly | force
+            "kind": kind,                       # monthly | size | force
             "file": filename,
             "at": datetime.now(CST).isoformat(),
         }, ensure_ascii=False) + "\n"
@@ -87,7 +87,7 @@ def rotate_if_needed(log_paths: list[str],
         # 规则 2: 大小轮转（优先，防止单文件无界增长）
         size_mb = p.stat().st_size / (1024 * 1024)
         if size_mb >= max_size_mb:
-            _rotate_one(p, archive_dir, now)
+            _rotate_one(p, archive_dir, now, kind="size")
             continue
 
         # 规则 1: 月轮转
@@ -131,8 +131,9 @@ def force_rotate(log_paths: list[str],
             print(f"rotation: 强制轮转 {p} 失败: {e}", file=sys.stderr)
 
 
-def _rotate_one(file_path: Path, archive_dir: str, mtime: datetime):
-    """轮转单个文件：move 到归档目录，创建空文件。"""
+def _rotate_one(file_path: Path, archive_dir: str, mtime: datetime,
+                kind: str = "monthly"):
+    """轮转单个文件：move 到归档目录，创建空文件。kind 记入轮转审计事件。"""
     archive_path = _anchor_archive_dir(archive_dir)
     archive_path.mkdir(parents=True, exist_ok=True)
     archive_name = archive_path / f"{mtime.strftime('%Y-%m')}-{file_path.name}"
@@ -146,7 +147,7 @@ def _rotate_one(file_path: Path, archive_dir: str, mtime: datetime):
     try:
         os.rename(str(file_path), str(archive_name))
         file_path.touch()
-        log_rotation_event("monthly", str(file_path))
+        log_rotation_event(kind, str(file_path))
     except OSError as e:
         print(f"rotation: 轮转 {file_path} 失败: {e}", file=sys.stderr)
 

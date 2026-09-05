@@ -196,10 +196,11 @@ class ChiguoMonitor:
             return
 
     def _read_tail_lines(self, max_lines: int) -> list[str]:
-        """读取文件最后 N 行（逆向高效实现）。
+        """读取文件最后 N 行（正向全文件读 + deque 有界缓冲）。
 
-        使用 deque 固定大小缓冲，避免一次性读全文件。
-        对于大文件，性能约为 O(N) 其中 N = max_lines。
+        实现：正向逐行读全文件，仅保留最后 max_lines 行（deque maxlen）。
+        内存 O(max_lines)，但 I/O 为 O(全文件)——非真正的逆向 seek 尾读，
+        大文件窗口查询仍有全文件读代价（后续可优化为块级逆向 seek）。
         """
         if not self.log_path.exists():
             return []
@@ -806,7 +807,7 @@ class ChiguoMonitor:
         if sends:
             recent_sends_24h = []
             for e in sends:
-                t = self._extract_time(e)
+                t = e["_cached_ts"] if "_cached_ts" in e else self._extract_time(e)
                 if t and (now - t).total_seconds() < 86400:
                     recent_sends_24h.append(e)
 
@@ -884,7 +885,7 @@ class ChiguoMonitor:
         # B6. 情绪快速攀升（24h 内 loneliness 涨 > 40）
         emotion_vals_24h = []
         for e in recent_entries:
-            ts = self._extract_time(e)
+            ts = e["_cached_ts"] if "_cached_ts" in e else self._extract_time(e)
             if ts and (now - ts).total_seconds() < 86400:
                 lo = e.get("state", {}).get("emotion", {}).get("loneliness", 0)
                 if isinstance(lo, (int, float)):
