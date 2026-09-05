@@ -7,6 +7,7 @@ ops.engine_ops / runner.loop 四个 mixin，由 decision.engine 组合成完整 
 import os
 import sys
 import tomllib
+from collections.abc import Callable
 from datetime import datetime
 from chiguo_time import CST
 from pathlib import Path
@@ -16,6 +17,61 @@ from chiguo_topics import TopicPicker
 from chiguo_composer import MessageComposer
 from chiguo_paths import PROJECT_ROOT
 from schedule.facade import ScheduleFacade, PlayProofProvider
+
+
+# ── P2-13 (#394): 热重载重建注册表。新增 config 派生组件只需 register()
+# 一个重建函数，_maybe_reload_config 遍历执行，不再逐项手写（曾分散手写
+# state.reload_config / schedule.reload / PlayProofProvider /
+# composer.schedule_facade / topic_picker / composer / bayesian 重置）。──
+Reloadable = Callable[["DecisionEngineBase"], None]
+RELOADABLE_COMPONENTS: list[Reloadable] = []
+
+
+def register_reloadable(rebuild: Reloadable) -> Reloadable:
+    """注册热重载重建函数（装饰器或直接调用均可），返回原函数。"""
+    RELOADABLE_COMPONENTS.append(rebuild)
+    return rebuild
+
+
+@register_reloadable
+def _reload_state(engine: "DecisionEngineBase") -> None:
+    # Q19: ChiguoState.reload_config() 替换 config 引用并重建 config 派生组件：
+    # personality 初始基线 + holiday_parser + cooldown 静默窗口。runtime 持久化状态不动。
+    engine.state.reload_config(engine.config)
+
+
+@register_reloadable
+def _reload_schedule(engine: "DecisionEngineBase") -> None:
+    engine.schedule_facade.reload(engine.config)
+    engine._schedule_facade = engine.schedule_facade
+
+
+@register_reloadable
+def _reload_play_proof(engine: "DecisionEngineBase") -> None:
+    engine._play_proof_provider = PlayProofProvider(engine.config, str(engine._base_dir))
+    engine.netease_service = engine._play_proof_provider._svc
+    try:
+        engine.composer.schedule_facade = engine.schedule_facade
+    except Exception:
+        pass
+
+
+@register_reloadable
+def _reload_topic_picker(engine: "DecisionEngineBase") -> None:
+    engine.topic_picker = TopicPicker(engine.state, engine.config.get("topic_picker", {}),
+                                      netease_service=engine.netease_service,
+                                      recent_sent_texts=engine.recent_sent_texts())
+
+
+@register_reloadable
+def _reload_composer(engine: "DecisionEngineBase") -> None:
+    engine.composer = MessageComposer(engine.state, engine.config.get("composer", {}),
+                                      schedule_facade=engine.schedule_facade)
+
+
+@register_reloadable
+def _reload_bayesian(engine: "DecisionEngineBase") -> None:
+    engine.state.reset_bayesian_estimator()
 
 
 
@@ -104,23 +160,10 @@ class DecisionEngineBase:
                 self._merge_experimental()
                 self._inject_base_dir()
                 self._config_mtime = mtime
-                # ── Q19: 热重载重建集合补全。ChiguoState.reload_config() 替换 config 引用并
-                # 重建 config 派生组件:personality 初始基线 + holiday_parser + cooldown 静默窗口
-                # (置信度达标用学习窗口,否则回退新 config 默认)。runtime 持久化状态不动。──
-                self.state.reload_config(self.config)
-                self.schedule_facade.reload(self.config)
-                self._play_proof_provider = PlayProofProvider(self.config, str(self._base_dir))
-                self.netease_service = self._play_proof_provider._svc
-                try:
-                    self.composer.schedule_facade = self.schedule_facade
-                except Exception:
-                    pass
-                self._schedule_facade = self.schedule_facade
-                self.topic_picker = TopicPicker(self.state, self.config.get("topic_picker", {}),
-                                                netease_service=self.netease_service,
-                                                recent_sent_texts=self.recent_sent_texts())
-                self.composer = MessageComposer(self.state, self.config.get("composer", {}), schedule_facade=self.schedule_facade)
-                self.state._bayesian_estimator = None
+                # P2-13 (#394): 遍历 RELOADABLE_COMPONENTS 注册表重建，
+                # 新增组件只需 register()，不再逐项手写。
+                for rebuild in RELOADABLE_COMPONENTS:
+                    rebuild(self)
 
         def snapshot(self):
             return self.state.snapshot(datetime.now(CST))
