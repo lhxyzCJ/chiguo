@@ -57,7 +57,7 @@ _script_fail=0
   node tests/test_home_dir.mjs && node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_sdk_vendor.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_auth.mjs
 ) & _pid_a=$!
 (
-  node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && node tests/test_bridge_send_timeout.mjs && node tests/test_bridge_rotate.mjs
+  node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && node tests/test_cli_dto.mjs && node tests/test_bridge_health.mjs && node tests/test_bridge_send_timeout.mjs && node tests/test_bridge_rotate.mjs
 ) & _pid_b=$!
 (
   _inner_fail=0
