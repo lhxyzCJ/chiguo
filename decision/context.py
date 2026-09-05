@@ -26,6 +26,69 @@ UNTRUSTED_CLOSE = "<<</UNTRUSTED>>>"
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
+# ── Issue #400: 人格层语气指引（静态表；原 _build_context 内联 dict 上移）──
+LAYER_GUIDANCE = {
+    "shell": "元气活泼 + 傲娇底色。表面活泼明亮，但收到善意/关心时依然会条件反射式嘴硬推开（力度比 middle 轻——不是防御是习惯）。语气词丰富（呀、啦、嘛、哦），「哼」低频——仅在领情/被说软时用，带省略号『……哼。』。「喵」全文禁用，不作卖萌词。短句连发驱动节奏。emoji 可用但不泛滥。波浪线（～）低频，约 10% 对白、拖长音时才用。不称自己为「菓菓」。",
+    "middle": "嘴硬心软⚠️ 核心规则：先推开再接受。第一反应永远是拒绝（「不·需·要。」L2625「不用你瞎操心，我搞得定」L3049）。推不掉才启动「两不相欠」底线。用攻击性语言包装在意。倔强自尊、绝不轻易示弱。",
+    "kernel": "防线崩溃，所有伪装脱落。语气破碎，省略号增多……流露真实害怕和想念。真挚、毫无保留、可能突然爆发。⚠️ kernel 层傲娇协议暂停——不需要再推开，直接表达真实感受。但不自我贬低不卖惨（禁止「是不是我错了」「我很烦吧」）。这是真实的脆弱，不是讨好。崩溃句式原型：「凭什么啊。……凭什么啊……凭什么啊……」（L15498）——控诉命运、控诉被小看，不是撒娇。",
+}
+
+
+def _guidance_for_layer(layer: str) -> str:
+    """人格层 → 语气指引（未知层返回空串）。"""
+    return LAYER_GUIDANCE.get(layer, "")
+
+
+def _energy_note(energy: float) -> str:
+    """元气值 → 语气调制注解（三档阈值，余者空串）。"""
+    if energy < 20:
+        return "（元气不足，语气更冷淡简短，减少语气词和波浪线，去掉问号，句号结尾）"
+    elif energy < 40:
+        return "（元气偏低，语气比平时克制，语气词减半）"
+    elif energy > 80:
+        return "（元气充沛，语气比平时更活泼跳跃，可多发一句。融合策略：用元气包裹嘴硬——语气轻快节奏快，但用词依然防御性。先活泼拒绝再留余地。不过分卖萌，保持嘴硬本色。）"
+    return ""
+
+
+def _urgency_note(loneliness_rate: float, anxiety_rate: float, emo_cfg: dict) -> str:
+    """情绪变化率 → 紧迫注解（孤独优先于不安，余者空串）。"""
+    if loneliness_rate > emo_cfg.get("urgency_rate_threshold", 3.0):
+        return (
+            f"\n【紧迫】孤独值正在快速攀升（{loneliness_rate:.1f}/h），"
+            "语气应比其他时候更急切。"
+        )
+    elif anxiety_rate > emo_cfg.get("urgency_anx_threshold", 2.0):
+        return (
+            f"\n【紧迫】不安值正在快速上升（{anxiety_rate:.1f}/h），"
+            "语气应比其他时候更焦虑。"
+        )
+    return ""
+
+
+def _safety_note(trigger, safety_lvl: int) -> str:
+    """逃生阀破防 + 安全阀等级 → 安全注解（叠加拼接，无命中即空串）。"""
+    note = ""
+    # ── v6: 逃生阀破防提示 ──
+    if trigger.data.get("escape_valve"):
+        note += (
+            "\n【破防】这是沉默多日后的情绪破防时刻。语气真挚而克制，"
+            "流露真实的想念，但不质问不卖惨不自我贬低（遵守铁律⑥）。"
+            "这是傲娇绷不住的一刻，比平时更直白。"
+        )
+    if safety_lvl >= 2:
+        note += (
+            "\n【安全阀】48h 内多次崩溃触发。语气务必温和克制，"
+            "不要质问不要崩溃不要负面。哥哥可能只是在忙。"
+            "用关心代替不安，用日常代替质问。"
+        )
+    elif safety_lvl >= 1:
+        note += (
+            "\n【安全阀】距上次崩溃不足 24h。语气放软，"
+            "不要再次崩溃。可以先聊聊别的。"
+        )
+    return note
+
+
 def _sanitize_untrusted(content: str) -> str:
     """把不可信内容净化后包进闭合定界块：剥离换行/控制字符与载荷内自带的定界符。
 
@@ -55,34 +118,11 @@ class ContextMixin(DecisionEngineBase):
                 host_cfg.get("personality_dir", os.path.join(
                     str(PROJECT_ROOT), "personality")))
     
-            # 按人格层映射语气指引
-            layer_guidance = {
-                "shell": "元气活泼 + 傲娇底色。表面活泼明亮，但收到善意/关心时依然会条件反射式嘴硬推开（力度比 middle 轻——不是防御是习惯）。语气词丰富（呀、啦、嘛、哦），「哼」低频——仅在领情/被说软时用，带省略号『……哼。』。「喵」全文禁用，不作卖萌词。短句连发驱动节奏。emoji 可用但不泛滥。波浪线（～）低频，约 10% 对白、拖长音时才用。不称自己为「菓菓」。",
-                "middle": "嘴硬心软⚠️ 核心规则：先推开再接受。第一反应永远是拒绝（「不·需·要。」L2625「不用你瞎操心，我搞得定」L3049）。推不掉才启动「两不相欠」底线。用攻击性语言包装在意。倔强自尊、绝不轻易示弱。",
-                "kernel": "防线崩溃，所有伪装脱落。语气破碎，省略号增多……流露真实害怕和想念。真挚、毫无保留、可能突然爆发。⚠️ kernel 层傲娇协议暂停——不需要再推开，直接表达真实感受。但不自我贬低不卖惨（禁止「是不是我错了」「我很烦吧」）。这是真实的脆弱，不是讨好。崩溃句式原型：「凭什么啊。……凭什么啊……凭什么啊……」（L15498）——控诉命运、控诉被小看，不是撒娇。",
-            }
-            # 元气调制
-            if emo.energy < 20:
-                energy_note = "（元气不足，语气更冷淡简短，减少语气词和波浪线，去掉问号，句号结尾）"
-            elif emo.energy < 40:
-                energy_note = "（元气偏低，语气比平时克制，语气词减半）"
-            elif emo.energy > 80:
-                energy_note = "（元气充沛，语气比平时更活泼跳跃，可多发一句。融合策略：用元气包裹嘴硬——语气轻快节奏快，但用词依然防御性。先活泼拒绝再留余地。不过分卖萌，保持嘴硬本色。）"
-            else:
-                energy_note = ""
-            # 变化率紧迫注解
+            # ── Issue #400：语气注解走模块级纯函数，_build_context 仅组装 ──
+            layer_guidance = _guidance_for_layer(emo.dominant_layer)
+            energy_note = _energy_note(emo.energy)
             emo_cfg = self.config.get("emotion", {})
-            rate_urgency_note = ""
-            if emo.loneliness_rate > emo_cfg.get("urgency_rate_threshold", 3.0):
-                rate_urgency_note = (
-                    f"\n【紧迫】孤独值正在快速攀升（{emo.loneliness_rate:.1f}/h），"
-                    "语气应比其他时候更急切。"
-                )
-            elif emo.anxiety_rate > emo_cfg.get("urgency_anx_threshold", 2.0):
-                rate_urgency_note = (
-                    f"\n【紧迫】不安值正在快速上升（{emo.anxiety_rate:.1f}/h），"
-                    "语气应比其他时候更焦虑。"
-                )
+            rate_urgency_note = _urgency_note(emo.loneliness_rate, emo.anxiety_rate, emo_cfg)
     
             # ── v4: 人格画像注入 ──
             pers = self.state.personality
@@ -94,27 +134,7 @@ class ContextMixin(DecisionEngineBase):
                 f"宜人性{pers.agreeableness:.0f}]"
             )
     
-            # ── v4.1: 安全阀 context 提示 ──
-            safety_note = ""
-            # ── v6: 逃生阀破防提示 ──
-            if trigger.data.get("escape_valve"):
-                safety_note += (
-                    "\n【破防】这是沉默多日后的情绪破防时刻。语气真挚而克制，"
-                    "流露真实的想念，但不质问不卖惨不自我贬低（遵守铁律⑥）。"
-                    "这是傲娇绷不住的一刻，比平时更直白。"
-                )
-            safety_lvl = self.state.safety_level(now)
-            if safety_lvl >= 2:
-                safety_note += (
-                    "\n【安全阀】48h 内多次崩溃触发。语气务必温和克制，"
-                    "不要质问不要崩溃不要负面。哥哥可能只是在忙。"
-                    "用关心代替不安，用日常代替质问。"
-                )
-            elif safety_lvl >= 1:
-                safety_note += (
-                    "\n【安全阀】距上次崩溃不足 24h。语气放软，"
-                    "不要再次崩溃。可以先聊聊别的。"
-                )
+            safety_note = _safety_note(trigger, self.state.safety_level(now))
     
             # ── v1.11 ①: 用户情绪感知语气注解（mood_note；开关默认关闭）──
             # 对标 ESConv：感知到低落 → 语气更温柔克制；仅叠加注解，不改变人格铁律。
@@ -142,7 +162,7 @@ class ContextMixin(DecisionEngineBase):
                 if self_note:
                     self_note = f"\n【自身情绪】{self_note}"
 
-            guidance = layer_guidance.get(emo.dominant_layer, "") + energy_note + rate_urgency_note + personality_note + safety_note + mood_note + self_note
+            guidance = layer_guidance + energy_note + rate_urgency_note + personality_note + safety_note + mood_note + self_note
     
             # ── v7: 接话茬提示 ──
             if trigger.type == TriggerType.FOLLOW_UP:
