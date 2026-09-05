@@ -801,6 +801,74 @@ def test_memory_fallback_probability_gate():
     print("  OK test_memory_fallback_probability_gate")
 
 
+class _HangingMemoryBridge:
+    """#401: 挂起的 memory_bridge（ollama 挂起模拟）——调用阻塞远超 10s"""
+    available = True
+
+    def random_memory(self, min_importance=0.4):
+        import time
+        time.sleep(60)
+        return {"text": "x"}
+
+    def user_relevant(self, limit=10, min_importance=0.4):
+        import time
+        time.sleep(60)
+        return [{"text": "x", "timestamp": 0}]
+
+
+def _audit_events(tmp: str) -> list:
+    """读审计日志 JSONL 的事件名列表。"""
+    import json
+    p = Path(tmp) / "chiguo_state_audit.jsonl"
+    if not p.exists():
+        return []
+    return [json.loads(line).get("event") for line in p.read_text().splitlines() if line.strip()]
+
+
+def test_trigger_random_memory_timeout_degrades():
+    """#401: random_memory 挂起 60s → 仪式分支 10s 内超时降级 + 审计。
+    pending 预置话题 → 兜底分支走快速循环（不调 user_relevant），隔离被测分支。"""
+    import time
+    from datetime import timedelta
+    from unittest import mock
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, energy=40)
+        s.add_pending_topic("隔离测试话题", now - timedelta(hours=4))
+        # 仪式浮现门控确定放行：沉默阈值归零（默认 silent≈6h 与 6.0 边界相等放行不了）
+        s.config.setdefault("trigger", {})["mem0_surface_min_silent_hours"] = 0.0
+        s.memory_bridge = _HangingMemoryBridge()
+        s.cooldown.messages_without_reply = 0  # backoff 0，不走 silent 提前返回
+        with mock.patch("chiguo_trigger.random.random", return_value=0.0):
+            t0 = time.monotonic()
+            evaluate_triggers(s, now)
+            dt = time.monotonic() - t0
+        assert dt < 20, f"evaluate 应在单分支超时预算内返回，实际 {dt:.1f}s"
+        assert "trigger_mem0_timeout" in _audit_events(td), "超时应落审计 trigger_mem0_timeout"
+    print("  OK test_trigger_random_memory_timeout_degrades")
+
+
+def test_trigger_user_relevant_timeout_degrades():
+    """#401: user_relevant 挂起 60s → 兜底分支 10s 内返回空候选 + 审计。
+    mem0_surface_probability=0 关闭仪式浮现分支（random 恒 0 也放行不了），隔离被测分支。"""
+    import time
+    from unittest import mock
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        s = _make_state(td, now, energy=40)
+        assert s.pending_topics == [], "前置：pending 为空才走记忆兜底"
+        s.config.setdefault("trigger", {})["mem0_surface_probability"] = 0.0
+        s.memory_bridge = _HangingMemoryBridge()
+        s.cooldown.messages_without_reply = 0
+        with mock.patch("chiguo_trigger.random.random", return_value=0.0):
+            t0 = time.monotonic()
+            evaluate_triggers(s, now)
+            dt = time.monotonic() - t0
+        assert dt < 20, f"evaluate 应在单分支超时预算内返回，实际 {dt:.1f}s"
+        assert "trigger_mem0_timeout" in _audit_events(td), "超时应落审计 trigger_mem0_timeout"
+    print("  OK test_trigger_user_relevant_timeout_degrades")
+
+
 # ═══════════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════════

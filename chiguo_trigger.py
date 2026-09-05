@@ -15,6 +15,14 @@ from chiguo_math import cfg_float, clamp01, clamp_int, weighted_trigger_choice, 
 
 from trigger_types import TriggerType, EMOTION_TRIGGERS, RITUAL_TRIGGERS
 
+from chiguo_concurrent import TIMEOUT, call_with_timeout
+
+# #401：trigger 侧 mem0 读调用超时预算（秒）。random_memory / user_relevant 是
+# evaluate 锁内唯一的无上限网络 I/O（ollama 挂起可致锁内无限阻塞，持锁超 5s
+# 触发 flock 降级阈值）；超时放弃等待走空候选 + 审计降级（与 mem0_backend 读侧
+# _MEM0_TIMEOUT=10s 同预算）。
+_TRIGGER_MEM0_TIMEOUT = 10.0
+
 # ── T08: jitter 隔离实例（不污染全局 random）──────────────────────
 _jitter_rng = random.Random()
 # 别名供测试探针（兼容 _rng / jitter_rng 命名）
@@ -123,7 +131,13 @@ def _collect_ritual_candidates(state, now, trg_cfg, ritual_scale) -> list[dict]:
             cands.append({"trigger": Trigger(type=TriggerType.MEMORY, intensity="soft", data={"memory": mem}), "weight": ritual_memory * ritual_scale})
     silent_h = state.cooldown.silent_hours(now)
     if silent_h > mem0_min_silent and random.random() < mem0_prob and state.memory_bridge.available:
-        mem0_mem = state.memory_bridge.random_memory(min_importance=0.4)
+        # #401：锁内 mem0 读加 10s 超时兜底；超时 → 空候选 + 审计降级。
+        mem0_mem = call_with_timeout(
+            lambda: state.memory_bridge.random_memory(min_importance=0.4),
+            _TRIGGER_MEM0_TIMEOUT, name="trigger-random-memory")
+        if mem0_mem is TIMEOUT:
+            state.audit("trigger_mem0_timeout", "random_memory 10s 超时，走空候选降级")
+            mem0_mem = None
         if mem0_mem:
             cands.append({"trigger": Trigger(type=TriggerType.MEMORY, intensity="soft", data={"mem0_memory": mem0_mem}), "weight": ritual_mem0 * ritual_scale})
     return cands
@@ -153,8 +167,15 @@ def _collect_followup_candidates(state, now, trg_cfg) -> list[dict]:
                 cands.append(cand)
     elif (not state.pending_topics and state.memory_bridge.available
           and random.random() < _clamp01(trg_cfg.get("followup_memory_probability", 0.5), 0.5)):
+        # #401：锁内 mem0 读加 10s 超时兜底；超时 → 空候选 + 审计降级。
+        mems = call_with_timeout(
+            lambda: list(state.memory_bridge.user_relevant(limit=10, min_importance=0.4)),
+            _TRIGGER_MEM0_TIMEOUT, name="trigger-user-relevant")
+        if mems is TIMEOUT:
+            state.audit("trigger_mem0_timeout", "user_relevant 10s 超时，走空候选降级")
+            mems = []
         now_ts = now.timestamp()
-        for mem in state.memory_bridge.user_relevant(limit=10, min_importance=0.4):
+        for mem in mems:
             ts = mem.get("timestamp") or 0
             if not ts or not isinstance(ts, (int, float)):
                 continue

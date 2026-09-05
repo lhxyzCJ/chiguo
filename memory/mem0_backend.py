@@ -15,7 +15,6 @@
 # ============================================================
 
 import json
-import math
 import os
 import random
 import sys
@@ -23,6 +22,7 @@ import time as _time_module
 from datetime import datetime
 
 from chiguo_concurrent import TIMEOUT, call_with_timeout
+from chiguo_math import cfg_float  # #406(b)：_finite_float 收敛至 chiguo_math 单源
 from chiguo_time import CST  # Q22: 共享时区常量
 
 from memory.base import (
@@ -110,14 +110,17 @@ def _finite_float(value, default: float) -> float:
 
     toml 手改事故（字符串阈值、NaN）会让 consolidate_plan 内 `sim >= sim_threshold`
     直接 TypeError 或静默禁掉去重；统一在这里兜底，CLI 与 idle 双入口共享。
+
+    #406(b)：收敛至 chiguo_math.cfg_float 单源。负值先行回退默认（cfg_float
+    的 clamp_min=0.0 会把负值钳为 0.0，而旧语义要求负输入 → 回退默认）；
+    余下非数值 / NaN / inf → 回退默认（cfg_float 语义与旧实现一致）。
     """
     try:
-        fv = float(value)
+        if float(value) < 0:
+            return default
     except (TypeError, ValueError, OverflowError):
         return default
-    if not math.isfinite(fv) or fv < 0:
-        return default
-    return fv
+    return cfg_float(value, default, clamp_min=0.0)
 
 
 class Mem0Backend(MemoryBackend):

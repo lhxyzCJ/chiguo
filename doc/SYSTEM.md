@@ -320,8 +320,8 @@ P(在 Δt 内至少一次触发) = 1 - e^(-λ_effective × Δt)
 | `morning` | weight=2.5 × 10%随机 | 8:00-10:00 早安窗口 |
 | `night` | weight=2.0 × 12%随机 | 20:00-21:00 晚安窗口 |
 | `meal` | weight=0.8 × 5%随机 | 饭点（上课时跳过） |
-| `memory` | weight=2.0（JSON 到期）/ 1.5 × 8%随机（mem0 浮现） | 单一触发类型、双数据源：手动记忆/习惯提醒到期（data/chiguo_memories.json）；mem0 沉默>6h 时随机浮现。reminder 触发窗口 = `trigger_at` 后 **30 分钟**（≥2×15min cron 节拍，保证任意 tick 命中；见 A4「reminder 高段豁免」） |
-| `follow_up` | `follow_up_weight` × 年龄钟形 exp(-((age-peak)/σ)²) | 接话茬：pending 话题年龄 [2h, 48h]（峰值 4h, σ=3h, 基础 0.35）+ 近期用户相关记忆兜底 |
+| `memory` | weight=2.0（JSON 到期）/ 1.5 × 8%随机（mem0 浮现） | 单一触发类型、双数据源：手动记忆/习惯提醒到期（data/chiguo_memories.json）；mem0 沉默>6h 时随机浮现（**#401**：锁内 `random_memory` 经 `chiguo_concurrent.call_with_timeout` 包 10s，超时走空候选 + `trigger_mem0_timeout` 审计降级，防 ollama 挂起致锁内无限阻塞）。reminder 触发窗口 = `trigger_at` 后 **30 分钟**（≥2×15min cron 节拍，保证任意 tick 命中；见 A4「reminder 高段豁免」） |
+| `follow_up` | `follow_up_weight` × 年龄钟形 exp(-((age-peak)/σ)²) | 接话茬：pending 话题年龄 [2h, 48h]（峰值 4h, σ=3h, 基础 0.35）+ 近期用户相关记忆兜底（**#401**：同上，`user_relevant` 10s 超时 → 空候选 + 审计降级） |
 
 **情绪类（8 种）**：
 
@@ -885,7 +885,7 @@ agent 分析 prompt（agent-run.mjs --analysis-mode）建议判断标准（表�
 每次互动微调人格（变化 < 0.2 每步，经数周/月才显著变化）：
 - 正面互动（收到回复、温暖回复）→ 外向性/宜人性微增，神经质微降
 - 负面互动（沉默期、冷淡回复）→ 外向性微降，神经质微增
-- `PersonalityDelta` 计算变化量；每次 `adapt_personality()` 末尾追加一条 `{ts, dims}`（8 维当前值）到 `personality_history`（上限 200 条滚动，超出丢最旧；持久化于 `chiguo_state.json`）供回溯
+- `PersonalityDelta` 计算变化量；每次 `adapt_personality()` 末尾追加一条 `{ts, dims}`（8 维当前值）到 `personality_history`（上限 200 条滚动，超出丢最旧；持久化于 `chiguo_state.json`）供回溯（**#406**：`_build_payload` 落盘前对 `personality_history` / `cooldown.event_timestamps` 再显式切片 `[-200:]`——内存侧已有上限，序列化加保险，防异常写入/旧状态超长致线性增长）
 - **基线回归（v10，防人格漂移）**：每次 evolve 后按 `v += (baseline - v) * regress_rate` 向初始基线软回归——基线 = 构造时实际传入的初始值（toml `[personality]` 或默认），随状态持久化（`personality_baseline`，旧状态无则回退 toml 初始值）。修复两类漂移：热情回复把傲娇 70→10 clamp 下限（2-4 个月变甜妹 dere_dere）、持续沉默把傲娇顶到 90 + 神经质追高（极端崩溃人格）。速率 `[personality] regress_rate`（默认 0.01，0 = 关闭回归）
 
 ### 5.7 消息组合系统（v4）
@@ -1364,6 +1364,9 @@ consolidate_enabled = false               # C1 空闲期确定性记忆巩固
 consolidate_sim_threshold = 0.85          # jaccard_3gram 相似度阈值
 consolidate_min_importance = 0.3          # 低重要度 + 超龄 → 过期候选
 consolidate_max_age_hours = 720.0         # 720=30天
+# 数值守卫（#406b）：上述三阈值 + embedder_dims/max_rows/limit/min_importance
+# 统一经 Mem0Backend._finite_float 兜底（字符串/NaN/inf/负数 → 回退默认）；
+# _finite_float 收敛至 chiguo_math.cfg_float 单源（负值先行回退默认，保持旧语义）
 consolidate_idle_silent_hours = 24.0      # 清醒沉默门槛
 consolidate_min_interval_hours = 168.0    # 两次巩固最小间隔
 reinforce_enabled = false                 # C2 Ebbinghaus 复习强化

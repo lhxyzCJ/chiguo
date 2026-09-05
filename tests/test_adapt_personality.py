@@ -183,6 +183,33 @@ def test_state_persists_baseline_and_history():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_save_caps_oversize_history():
+    """#406(a)：超长 history 落盘前显式 cap 200。内存侧直接塞 500 条
+    （绕过 adapt 入口模拟旧状态/异常写入），save 后磁盘 JSON 即 ≤200 且为最新 200 条。"""
+    import json
+    from chiguo_state import ChiguoState
+    s, tmp = _make_state()
+    try:
+        s.personality_history.extend(
+            {"ts": f"t{i}", "dims": {}} for i in range(500))
+        s.cooldown.event_timestamps.extend(
+            {"type": "x", "time": f"t{i}"} for i in range(500))
+        assert s.save(), "save 应成功"
+        data = json.loads((Path(tmp) / "chiguo_state.json").read_text())
+        assert len(data["personality_history"]) == 200, (
+            f"history 落盘应 cap 200，实际 {len(data['personality_history'])}")
+        assert data["personality_history"][0]["ts"] == "t300", "应保留最新 200 条"
+        assert len(data["cooldown"]["event_timestamps"]) == 200, (
+            f"event_timestamps 落盘应 cap 200，实际 {len(data['cooldown']['event_timestamps'])}")
+        # 加载往返仍一致（hydrate 不再膨胀）
+        s2 = ChiguoState(cfg_after_save(tmp))
+        assert len(s2.personality_history) == 200
+        assert len(s2.cooldown.event_timestamps) == 200
+        print("  OK test_save_caps_oversize_history")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def cfg_after_save(tmp: str) -> dict:
     return {"_base_dir": tmp, "personality": {}}
 

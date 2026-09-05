@@ -171,3 +171,22 @@ def test_recall_count_cross_process_persists():
         b2._m = fake
         b2.note_recalled(["m1"])
         assert fake.store["m1"]["metadata"]["recall_count"] == 4
+
+
+def test_finite_float_converges_to_cfg_float():
+    """#406(b)：_finite_float 收敛至 chiguo_math.cfg_float 单源——旧语义保持：
+    非数值/NaN/inf/负数 → 回退默认；合法正数 → 原值。"""
+    import math
+    from memory.mem0_backend import _finite_float
+    d = 7.5
+    assert _finite_float(3.25, d) == 3.25
+    assert _finite_float("2.5", d) == 2.5
+    assert _finite_float("bad", d) == d
+    assert _finite_float(None, d) == d
+    assert _finite_float(float("nan"), d) == d
+    assert _finite_float(float("inf"), d) == d
+    assert _finite_float(-1.0, d) == d
+    assert _finite_float("-3", d) == d
+    assert _finite_float(0.0, d) == 0.0, "0.0 是合法值（非负），不应回退默认"
+    assert _finite_float([1], d) == d
+    print("  OK test_finite_float_converges_to_cfg_float")
