@@ -62,11 +62,10 @@ def test_trigger_weights_clamped():
         cfg["memory"]["mem0_history_db"] = str(Path(td) / "no_history.db")
         os.environ["CHIGUO_MEM0_DISABLED"] = "1"
         # 注入非法阈值：负值 / nan / inf 均应被钳制或回退，不应产生负权重或 nan 权重
-        cfg["trigger"]["ritual_special_weight"] = -5.0
-        cfg["trigger"]["ritual_morning_weight"] = float("nan")
-        cfg["trigger"]["ritual_mem0_weight"] = float("inf")
-        cfg["trigger"]["playful_base_weight"] = -1.0
+        # #393 收敛：ritual_* 键已删（走 fallback 默认），毒化测试改用保留键
+        cfg["trigger"]["playful_base_weight"] = -5.0
         cfg["trigger"]["reflect_base_weight"] = float("nan")
+        cfg["trigger"]["habit_probability"] = float("inf")
         cfg["trigger"]["follow_up_weight"] = -0.5
         cfg["trigger"]["free_multiplier"] = -1.0
         cfg["trigger"]["reply_feedback_damp"] = float("nan")
