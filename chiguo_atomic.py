@@ -37,23 +37,44 @@ def atomic_write(path, data, *, mode=None, fsync=False, verify=None,
     path = os.fspath(path)
     tmp = os.fspath(tmp_path) if tmp_path is not None else (str(path) + ".tmp")
 
-    if mode is not None:
-        # 一步到位权限：os.open(O_CREAT) 以 mode 建 tmp（尊重 umask 的 min）。
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-        if isinstance(data, bytes):
-            with os.fdopen(fd, "wb") as f:
-                f.write(data)
+    # P2-08: 预建 symlink 拦截 —— tmp 绝不应是 symlink（否则 open 跟随链接
+    # 写任意文件）。fail closed：删链并 abort，由调用方决定告警。
+    if os.path.islink(tmp):
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise OSError(f"atomic_write refused: tmp is a symlink: {tmp}")
+
+    try:
+        if mode is not None:
+            # 一步到位权限：os.open(O_CREAT) 以 mode 建 tmp（尊重 umask 的 min）。
+            # O_NOFOLLOW 关闭 lstat 检查→open 之间的竞态窗口。
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, mode)
+            if isinstance(data, bytes):
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+            else:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                    f.write(data)
+            # os.fdopen 已接管 fd（异常时也会关闭）
         else:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-                f.write(data)
-        # os.fdopen 已接管 fd（异常时也会关闭）
-    else:
-        # 默认 umask（非隐私数据，如 holidays.json）
-        ptmp = Path(tmp)
-        if isinstance(data, bytes):
-            ptmp.write_bytes(data)
-        else:
-            ptmp.write_text(data)
+            # 默认 umask（非隐私数据，如 holidays.json）。原 Path.write_* 跟随
+            # symlink，改走 O_NOFOLLOW 的 os.open（0o666 & ~umask 与原来等价）。
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o666)
+            if isinstance(data, bytes):
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+            else:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                    f.write(data)
+    except OSError:
+        # R-02: 写失败 → 清理半截 tmp，避免被 load 恢复路径误扶正；再抛出。
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
     if fsync:
         try:

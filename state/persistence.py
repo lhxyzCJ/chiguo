@@ -68,10 +68,24 @@ class StatePersistence:
         tmp = Path(str(p) + ".tmp")
         bak = Path(str(p) + ".bak")
         if not p.exists() and tmp.exists():
-            try:
-                os.replace(tmp, p)
-            except OSError:
-                pass
+            # R-05: 扶正前校验 —— 半截/非法 tmp 不得覆盖成正式文件。
+            if os.path.islink(str(tmp)):
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            else:
+                try:
+                    _v = json.loads(tmp.read_text(encoding="utf-8"))
+                    if not isinstance(_v, dict) or "_version" not in _v:
+                        raise ValueError("tmp missing _version")
+                    os.replace(tmp, p)
+                except (ValueError, TypeError, OSError):
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
+                    self.audit("state_tmp_discarded", "corrupt tmp dropped instead of promote")
 
         restored = False
         if p.exists():
