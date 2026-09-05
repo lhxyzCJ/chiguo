@@ -157,6 +157,10 @@ class PlayProofProvider:
         from netease.service import NeteaseService
         self._svc = NeteaseService(config, str(base_dir))
     @property
+    def service(self):
+        """持有的 NeteaseService 实例（替代外部直接访问 _svc）。"""
+        return self._svc
+    @property
     def enabled(self) -> bool:
         return bool(getattr(self._svc, "enabled", False))
     def fetch_play_proof(self, now: datetime):

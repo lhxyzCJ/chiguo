@@ -37,7 +37,7 @@ class DecisionEngineBase:
             # PR-3: 日程门面 + 播放反证提供者
             self.schedule_facade = ScheduleFacade(str(self._base_dir), self.config)
             self._play_proof_provider = PlayProofProvider(self.config, str(self._base_dir))
-            self.netease_service = self._play_proof_provider._svc
+            self.netease_service = self._play_proof_provider.service
             # 显式 log_path（测试）原样使用；否则锚定 base_dir
             # （先于 topic_picker 构造：A9 recent_sent_texts() 依赖 messages_log_path）
             self.log_path = log_path or str(self._base_dir / "chiguo_decisions.jsonl")
@@ -110,7 +110,7 @@ class DecisionEngineBase:
                 self.state.reload_config(self.config)
                 self.schedule_facade.reload(self.config)
                 self._play_proof_provider = PlayProofProvider(self.config, str(self._base_dir))
-                self.netease_service = self._play_proof_provider._svc
+                self.netease_service = self._play_proof_provider.service
                 try:
                     self.composer.schedule_facade = self.schedule_facade
                 except Exception:
