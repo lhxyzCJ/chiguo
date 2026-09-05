@@ -12,7 +12,6 @@ from chiguo_math import in_quiet_window, longing_accumulate
 from chiguo_version import VERSION
 
 
-
 class IdleMixin(DecisionEngineBase):
     def _bayesian_block_confidence(self) -> float:
         return self.config.get("bayesian", {}).get("min_confidence_for_block", 0.5)
@@ -98,61 +97,89 @@ class IdleMixin(DecisionEngineBase):
                 return "user_busy"
         return "no_trigger"
 
-    def _estimate_next_check(self, now: datetime, idle_reason: str) -> str | None:
-        cfg_emo = self.config.get("emotion", {})
-        cfg_cooldown = self.config.get("cooldown", {})
-        if idle_reason == "min_interval":
-            min_int = cfg_cooldown.get("min_interval_minutes", 30)
-            if self.state.cooldown.last_message_at:
-                try:
-                    last = datetime.fromisoformat(self.state.cooldown.last_message_at)
-                    if last.tzinfo is None:
-                        last = last.replace(tzinfo=CST)
-                    nxt = last + timedelta(minutes=min_int + 2)
-                    if nxt > now:
-                        return nxt.isoformat()
-                except (ValueError, TypeError):
-                    pass
-        elif idle_reason == "low_energy":
-            e = self.state.emotion.energy
-            hl = cfg_emo.get("energy_regen_half_life", 8.0)
-            if e < 12:
-                try:
-                    ratio = (100.0 - e) / 88.0
-                    h = hl * math.log2(max(ratio, 1.001))
-                    nxt = now + timedelta(hours=min(h, 4.0))
-                    return nxt.isoformat()
-                except (ValueError, ZeroDivisionError):
-                    pass
-        elif idle_reason == "quiet_hours":
-            qs, qe = self.state.cooldown.quiet_window()
-            if qe < qs and now.hour >= qs:
-                tomorrow = now.date() + timedelta(days=1)
-                nxt = datetime(tomorrow.year, tomorrow.month, tomorrow.day, qe, 2, tzinfo=CST)
-            else:
-                nxt = datetime(now.year, now.month, now.day, qe, 2, tzinfo=CST)
+    # ── next-check 估计表（#396）：reason → estimator ──
+    # estimator 签名：(self, now) -> str | None。
+    # 未入表的 reason（含 sleeping_guard）直接得 None。
+    def _est_min_interval(self, now: datetime) -> str | None:
+        min_int = self.config.get("cooldown", {}).get("min_interval_minutes", 30)
+        last_msg = self.state.cooldown.last_message_at
+        if not last_msg:
+            return None
+        try:
+            last = datetime.fromisoformat(last_msg)
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=CST)
+            nxt = last + timedelta(minutes=min_int + 2)
             if nxt > now:
                 return nxt.isoformat()
-        elif idle_reason == "daily_limit":
-            tomorrow = now.date() + timedelta(days=1)
-            nxt = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 8, 5, tzinfo=CST)
-            return nxt.isoformat()
-        elif idle_reason == "no_trigger":
-            lam = self.state.current_lambda(now)
-            if lam > 0:
-                h = min(math.log(2) / lam, 2.0)
-                h = max(h, 5.0 / 60.0)
-                return (now + timedelta(hours=h)).isoformat()
-        elif idle_reason == "busy_suppressed":
-            if self.state.cooldown.busy_suppress_until:
-                try:
-                    until = datetime.fromisoformat(self.state.cooldown.busy_suppress_until)
-                    if until > now:
-                        return until.isoformat()
-                except (ValueError, TypeError):
-                    pass
-        elif idle_reason in ("user_sleeping", "user_busy"):
-            return (now + timedelta(seconds=3600 + random.uniform(0, 3600))).isoformat()
-        elif idle_reason == "sleeping_guard":
-            return None
+        except (ValueError, TypeError):
+            pass
         return None
+
+    def _est_low_energy(self, now: datetime) -> str | None:
+        e = self.state.emotion.energy
+        hl = self.config.get("emotion", {}).get("energy_regen_half_life", 8.0)
+        if e >= 12:
+            return None
+        try:
+            ratio = (100.0 - e) / 88.0
+            h = hl * math.log2(max(ratio, 1.001))
+            nxt = now + timedelta(hours=min(h, 4.0))
+            return nxt.isoformat()
+        except (ValueError, ZeroDivisionError):
+            pass
+        return None
+
+    def _est_quiet_hours(self, now: datetime) -> str | None:
+        qs, qe = self.state.cooldown.quiet_window()
+        if qe < qs and now.hour >= qs:
+            tomorrow = now.date() + timedelta(days=1)
+            nxt = datetime(tomorrow.year, tomorrow.month, tomorrow.day, qe, 2, tzinfo=CST)
+        else:
+            nxt = datetime(now.year, now.month, now.day, qe, 2, tzinfo=CST)
+        if nxt > now:
+            return nxt.isoformat()
+        return None
+
+    def _est_daily_limit(self, now: datetime) -> str | None:
+        tomorrow = now.date() + timedelta(days=1)
+        nxt = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 8, 5, tzinfo=CST)
+        return nxt.isoformat()
+
+    def _est_no_trigger(self, now: datetime) -> str | None:
+        lam = self.state.current_lambda(now)
+        if lam <= 0:
+            return None
+        h = min(math.log(2) / lam, 2.0)
+        h = max(h, 5.0 / 60.0)
+        return (now + timedelta(hours=h)).isoformat()
+
+    def _est_busy_suppressed(self, now: datetime) -> str | None:
+        until_str = self.state.cooldown.busy_suppress_until
+        if not until_str:
+            return None
+        try:
+            until = datetime.fromisoformat(until_str)
+            if until > now:
+                return until.isoformat()
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    def _est_user_sleeping_or_busy(self, now: datetime) -> str | None:
+        return (now + timedelta(seconds=3600 + random.uniform(0, 3600))).isoformat()
+
+    ESTIMATORS = {
+        "min_interval": _est_min_interval,
+        "low_energy": _est_low_energy,
+        "quiet_hours": _est_quiet_hours,
+        "daily_limit": _est_daily_limit,
+        "no_trigger": _est_no_trigger,
+        "busy_suppressed": _est_busy_suppressed,
+        "user_sleeping": _est_user_sleeping_or_busy,
+        "user_busy": _est_user_sleeping_or_busy,
+    }
+
+    def _estimate_next_check(self, now: datetime, idle_reason: str) -> str | None:
+        fn = self.ESTIMATORS.get(idle_reason)
+        return fn(self, now) if fn else None
