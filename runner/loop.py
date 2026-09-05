@@ -1,8 +1,11 @@
 """runner.loop — DecisionEngine loop/cron 发送形态。
 
 拆自 chiguo_daemon.py：
-  - LoopSenderMixin：loop 发送侧内聚（_loop_send 生成→发送→记账 + U2 健康记账）
+  - LoopSenderMixin：loop 发送侧内聚（_loop_send 仅保留管道编排 ~30L +
+                  _generate_with_retry 生成 / _send_via_bridge 发送记账 /
+                  _record_health_transition 健康记账告警 + U2 健康记账门控）
                   + _dynamic_sleep_interval 动态休眠调度。
+  - _sleep_with_jitter：统一休眠入口（run_loop 主循环 / 生成重试共用）。
   - run_loop()：--loop 常驻循环编排（PID 锁 + 动态休眠 while 主循环）。
 cron 形态（chiguo-tick.sh 每 15 分钟单次 spawn）的任务交给 cli/dispatch 默认分支。
 """
@@ -17,7 +20,15 @@ from chiguo_time import CST
 
 from decision.base import DecisionEngineBase
 from chiguo_version import VERSION
-from chiguo_net import build_no_proxy_opener, is_local_host
+from ops.bridge_ops import bridge_post
+
+
+def _sleep_with_jitter(seconds: float, jitter_seconds: float = 0.0) -> None:
+    """统一休眠入口：seconds 基础时长 + [0, jitter_seconds) 均匀抖动（默认 0 即原 time.sleep 语义）。
+    loop 主循环与生成重试共用。经模块属性调 time.sleep，便于测试 patch 中断 run_loop。"""
+    if jitter_seconds > 0:
+        seconds += random.uniform(0, jitter_seconds)
+    time.sleep(seconds)
 
 
 class LoopSenderMixin(DecisionEngineBase):
@@ -28,12 +39,12 @@ class LoopSenderMixin(DecisionEngineBase):
             """
             reason = decision.get("reason", "")
             cfg_cooldown = self.config.get("cooldown", {})
-    
+
             # 1. 若上次决策是 send → sleep min_interval + 缓冲
             if decision.get("action") == "send":
                 min_int = cfg_cooldown.get("min_interval_minutes", 30)
                 return (min_int + 5) * 60
-    
+
             # 2. quiet_hours → sleep 到 quiet_end
             if reason == "quiet_hours":
                 qs, qe = self.state.cooldown.quiet_window()
@@ -44,13 +55,13 @@ class LoopSenderMixin(DecisionEngineBase):
                 else:
                     nxt = datetime(now.year, now.month, now.day, qe, 2, tzinfo=CST)
                 return max(60, (nxt - now).total_seconds())
-    
+
             # 3. daily_limit → sleep 到明天 8:00
             if reason == "daily_limit":
                 tomorrow = now.date() + timedelta(days=1)
                 nxt = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 8, 5, tzinfo=CST)
                 return max(60, (nxt - now).total_seconds())
-    
+
             # 4. low_energy → sleep 到能量恢复
             if reason == "low_energy":
                 nxt_iso = decision.get("next_evaluation_at")
@@ -60,19 +71,19 @@ class LoopSenderMixin(DecisionEngineBase):
                         return max(60, (nxt - now).total_seconds())
                     except (ValueError, TypeError):
                         pass
-    
+
             # 5. Bayesian sleeping/busy → sleep 到状态可能改变
             if reason in ("user_sleeping", "user_busy"):
                 # 等 1-2 小时
                 return 3600 + random.uniform(0, 3600)
-    
+
             # 6. no_trigger → 基于 λ 算期望等待时间
             if reason == "no_trigger":
                 lam = self.state.current_lambda(now)
                 if lam > 0.001:
                     expected_wait_h = min(math.log(2) / lam, 2.0)
                     return max(300, expected_wait_h * 3600)
-    
+
             # 7. 默认 fallback
             return 900  # 15 分钟
 
@@ -138,57 +149,20 @@ class LoopSenderMixin(DecisionEngineBase):
                     pass
             return True
 
-        def _loop_send(self, decision: dict, loop_cfg: dict) -> dict:
-            """v1.11 C: --loop 常驻的发送侧内聚（替代 cron tick.sh 的 send 动作）。
-            U2/v1.16 (#227): 生成失败不再 composer 兜底——sleep retry_delay 后整链重试一次
-            （抖动缓冲，重试成功不计 fail_streak）；仍失败 → agent_health record fail（fail_streak+1，
-            达 threshold 状态 down + transition 告警）并返回 generated=false。生成成功 → record success +
-            transition（down→up 恢复）经 /send 发告警/恢复。发送段仍走 record_send_result 退款闭环。
-            异常全部捕获返回结果 dict，不抛出（loop 循环不中断）。"""
-    
-            import urllib.request
-    
-            out: dict = {"generated": False, "sent": False}
-            bridge_url = str(loop_cfg.get("bridge_url", "http://127.0.0.1:18790")).rstrip("/")
-            # token：env 优先（wechat-bridge.sh 生成，不进 git），回退 toml [loop]（向后兼容）
-            token = os.environ.get("WECHAT_BRIDGE_TOKEN") or str(loop_cfg.get("bridge_token", "") or "")
-            # M-2: token 缺失时 /send 会 403 → 每轮显式告警（不改变发送行为，仅告知运维）
-            if not token:
-                print("[warn] _loop_send: 未配置 WECHAT_BRIDGE_TOKEN/[loop].bridge_token → bridge /send 将 403，"
-                      "请先装 bridge 或配置 token", file=sys.stderr)
-            try:
-                timeout = max(10.0, float(loop_cfg.get("agent_timeout_ms", 125000)) / 1000.0)
-            except (TypeError, ValueError):
-                timeout = 125.0
-            msg_id = decision.get("msg_id", "")
-            trigger = decision.get("trigger")
-            intensity = decision.get("intensity")
-    
-            def _post(path: str, body: dict, t: float) -> dict:
-                data = json.dumps(body).encode("utf-8")
-                req = urllib.request.Request(
-                    f"{bridge_url}{path}", data=data,
-                    headers={"Content-Type": "application/json"})
-                if token:
-                    req.add_header("X-Bridge-Token", token)
-                # B5: 回环 bridge 调用绕系统代理（同 chiguo_envcheck._urlopen）
-                host = urllib.request.urlsplit(req.full_url).hostname or ""
-                if is_local_host(host):
-                    resp = build_no_proxy_opener().open(req, timeout=t)
-                else:
-                    resp = urllib.request.urlopen(req, timeout=t)
-                with resp:
-                    return json.loads(resp.read().decode("utf-8"))
-    
-            def _try_generate() -> tuple:
-                """完整生成链（RPC 优先 → spawn 回退）。返回 (text, err)。"""
+        def _generate_with_retry(self, decision: dict, loop_cfg: dict,
+                                 bridge_url: str, token: str, timeout: float) -> tuple:
+            """生成段：完整生成链（RPC 优先 → spawn 回退）；失败 → 休眠 retry_delay 后整链重试一次。
+            重试成功不计 fail_streak。返回 (text, err)。U2/v1.16 (#227)：无 composer 兜底。"""
+
+            def _attempt() -> tuple:
+                """单次完整生成链（RPC 优先 → spawn 回退）。返回 (text, err)。"""
                 import subprocess
                 text: str | None = None
                 gen_err = ""
                 try:
-                    r = _post("/agent/prompt",
-                              {"text": json.dumps(decision, ensure_ascii=False), "mode": "send"},
-                              timeout)
+                    r = bridge_post(bridge_url, token, "/agent/prompt",
+                                    {"text": json.dumps(decision, ensure_ascii=False), "mode": "send"},
+                                    timeout)
                     if r.get("ok") and r.get("text"):
                         text = r["text"]
                     else:
@@ -220,32 +194,63 @@ class LoopSenderMixin(DecisionEngineBase):
                     except Exception as e:  # noqa: BLE001
                         gen_err = f"{gen_err}; spawn: {e}"
                 return text, gen_err
-    
-            # ── ① 生成（完整链；失败 sleep retry_delay → 整链重试一次，抖动缓冲不计 fail）──
-            text, gen_err = _try_generate()
+
+            # ── 生成失败 sleep retry_delay 后整链重试一次（抖动缓冲，重试成功不计 fail）──
+            text, gen_err = _attempt()
             if not text:
                 retry_delay = float(loop_cfg.get("retry_delay_seconds", 5) or 0)
                 if retry_delay > 0:
-                    time.sleep(retry_delay)
-                text, gen_err = _try_generate()
-            def _send_transition_alert(rec):
-                """transition（up/down）发生时经 /send 发告警/恢复（对齐 tick.sh record_health；仅翻转各一次）。"""
-                if not rec:
-                    return
-                transition = rec.get("transition")
-                message = rec.get("message")
-                if transition in ("up", "down") and message:
-                    alert_to = (self.config.get("wechat", {}) or {}).get("wechat_recipient", "")
-                    if alert_to:
-                        try:
-                            _post("/send", {"to": alert_to, "text": message}, 10.0)
-                        except (ValueError, TypeError, OSError):  # noqa: BLE001 - 告警失败不阻断主消息
-                            pass
-    
+                    _sleep_with_jitter(retry_delay)
+                text, gen_err = _attempt()
+            return text, gen_err
+
+        def _record_health_transition(self, outcome: str, reason: str, loop_cfg: dict,
+                                      bridge_url: str, token: str) -> dict | None:
+            """健康记账 + transition 告警：record_health 记账后，transition（up/down）发生时经 /send
+            发告警/恢复（对齐 tick.sh record_health；仅翻转各一次）。返回 record dict；失败静默返回 None。"""
+            rec = self._record_health(outcome, reason, loop_cfg)
+            if not rec:
+                return None
+            transition = rec.get("transition")
+            message = rec.get("message")
+            if transition in ("up", "down") and message:
+                alert_to = (self.config.get("wechat", {}) or {}).get("wechat_recipient", "")
+                if alert_to:
+                    try:
+                        bridge_post(bridge_url, token, "/send", {"to": alert_to, "text": message}, 10.0)
+                    except (ValueError, TypeError, OSError):  # noqa: BLE001 - 告警失败不阻断主消息
+                        pass
+            return rec
+
+        def _loop_send(self, decision: dict, loop_cfg: dict) -> dict:
+            """v1.11 C: --loop 常驻的发送侧内聚（替代 cron tick.sh 的 send 动作）。
+            U2/v1.16 (#227): 生成失败不再 composer 兜底——sleep retry_delay 后整链重试一次
+            （抖动缓冲，重试成功不计 fail_streak）；仍失败 → agent_health record fail（fail_streak+1，
+            达 threshold 状态 down + transition 告警）并返回 generated=false。生成成功 → record success +
+            transition（down→up 恢复）经 /send 发告警/恢复。发送段仍走 record_send_result 退款闭环。
+            异常全部捕获返回结果 dict，不抛出（loop 循环不中断）。
+            管道编排：_generate_with_retry 生成 → 收件人门控 → _send_via_bridge 发送记账；
+            健康记账/告警统一经 _record_health_transition。"""
+            out: dict = {"generated": False, "sent": False}
+            bridge_url = str(loop_cfg.get("bridge_url", "http://127.0.0.1:18790")).rstrip("/")
+            # token：env 优先（wechat-bridge.sh 生成，不进 git），回退 toml [loop]（向后兼容）
+            token = os.environ.get("WECHAT_BRIDGE_TOKEN") or str(loop_cfg.get("bridge_token", "") or "")
+            # M-2: token 缺失时 /send 会 403 → 每轮显式告警（不改变发送行为，仅告知运维）
+            if not token:
+                print("[warn] _loop_send: 未配置 WECHAT_BRIDGE_TOKEN/[loop].bridge_token → bridge /send 将 403，"
+                      "请先装 bridge 或配置 token", file=sys.stderr)
+            try:
+                timeout = max(10.0, float(loop_cfg.get("agent_timeout_ms", 125000)) / 1000.0)
+            except (TypeError, ValueError):
+                timeout = 125.0
+            msg_id = decision.get("msg_id", "")
+
+            # ── ① 生成（完整链；失败 sleep retry_delay → 整链重试一次，抖动缓冲不计 fail）──
+            text, gen_err = self._generate_with_retry(decision, loop_cfg, bridge_url, token, timeout)
             if not text:
                 out["error"] = gen_err
                 # U2 (#227): 无 composer 兜底——记录 health fail（达 threshold → state down + transition 告警）
-                _send_transition_alert(self._record_health("fail", gen_err, loop_cfg))
+                self._record_health_transition("fail", gen_err, loop_cfg, bridge_url, token)
                 # RF9 (F-RTS-001): 生成失败必须退款——evaluate 已对该 send 决策记账
                 # （energy/quota/messages_without_reply+1/Hawkes/逃生阀冷却），只 record_health
                 # fail 不退款会让未回复计数残留，连续失败 → silent 禁发链（backoff_level==2 →
@@ -258,7 +263,7 @@ class LoopSenderMixin(DecisionEngineBase):
             out["generated"] = True
             # F-A6-2: 不再生成即记 success——成功必须是生成+发送都 OK，success 移到发送
             # 成功分支（避免发送前清零导致发送失败 send_fail 永不累积、health 恒 up）。
-            # ② 发送 + ③ 记账
+            # ② 收件人门控 + ③ 发送记账（_send_via_bridge）
             to = (self.config.get("wechat", {}) or {}).get("wechat_recipient", "")
             if not to:
                 # ── v12: 收件人未配置 → 消息并未发出。不能走 record_send_text
@@ -273,13 +278,22 @@ class LoopSenderMixin(DecisionEngineBase):
                 if msg_id:
                     self.record_send_result(msg_id, "failed", err)
                 return out
+            return self._send_via_bridge(bridge_url, token, to, text, decision, loop_cfg, out)
+
+        def _send_via_bridge(self, bridge_url: str, token: str, to: str, text: str,
+                             decision: dict, loop_cfg: dict, out: dict) -> dict:
+            """发送段 + 记账：bridge /send 35s → 超时不确定分流 / ok=false 失败 / 成功记账。
+            改写并返回传入的 out。"""
+            msg_id = decision.get("msg_id", "")
+            trigger = decision.get("trigger")
+            intensity = decision.get("intensity")
             try:
                 # ── v1.15 (#164): /send 超时 10s→35s（微信 bridge 网络抖动下
                 # 10s 易误判失败退款）；并校验返回体 ok 字段——bridge 返回
                 # ok=false 视为发送失败走退款闭环，不再假记账 sent+1。
                 # 35s 与 scripts/chiguo-tick.sh 主消息发送 curl --max-time 35 保持一致
                 # （#261/CR-2: 对齐 cron / loop 双路径超时；改此值须同步改 tick.sh）。
-                resp = _post("/send", {"to": to, "text": text}, 35.0)
+                resp = bridge_post(bridge_url, token, "/send", {"to": to, "text": text}, 35.0)
                 # R8 (F-A17-003): bridge /send 超时不确定（timeout_uncertain）——bot.send
                 # 不可取消，超时不代表未送达。若按失败退款会恢复额度清冷却，制造下次 tick
                 # 重发窗口 → 用户可能收到两条。故不退款、不记 send_fail、不重发（本 tick
@@ -310,7 +324,7 @@ class LoopSenderMixin(DecisionEngineBase):
                           f" 消息已发送但本地 JSONL 归档未写（不影响健康记账）", file=sys.stderr)
                 # F-A6-2: 发送成功 —— 生成+发送双成功才算健康；记 success 清零 +
                 # down→up 恢复 transition 经 /send 发恢复（对齐 tick.sh）
-                _send_transition_alert(self._record_health("success", "", loop_cfg))
+                self._record_health_transition("success", "", loop_cfg, bridge_url, token)
             except Exception as e:  # noqa: BLE001
                 out["send_error"] = str(e)
                 if msg_id:
@@ -318,7 +332,8 @@ class LoopSenderMixin(DecisionEngineBase):
                 # F-A6-2: 发送失败也记 health——生成已 OK 但 bridge /send 失败的轮次视为一次
                 # 失败，记 send_fail 推进 fail_streak；连续 3 次发送失败 → down + transition 告警
                 # + 暂停（对齐 tick.sh 发送失败分支；transition 告警经 /send，失败静默）。
-                _send_transition_alert(self._record_health("send_fail", f"bridge send failed: {e}", loop_cfg))
+                self._record_health_transition("send_fail", f"bridge send failed: {e}", loop_cfg,
+                                               bridge_url, token)
             return out
 
 
@@ -338,8 +353,8 @@ def run_loop(engine, max_interval: int, compact: bool):
                 else:
                     # R7 (F-RT-001): 抑制发送（health down/降频区间）不能只 print+return——
                     # evaluate() 已对该 send 决策记账（energy/messages/Hawkes/逃生阀
-                    # last_longing_break_at）。走 failed 退款闭环回滚，复用收件人缺失
-                    # 分支（_loop_send L254-259）同款 record_send_result，避免幻影记账
+                    # last_longing_break_at）。走 failed 退款闭环回滚，复用 _loop_send
+                    # 收件人缺失分支同款 record_send_result，避免幻影记账
                     # 与逃生阀冷却被白扣。msg_id 从 decision 取。
                     decision["_loop"] = {"generated": False, "sent": False,
                                          "suppressed": True}
@@ -391,7 +406,7 @@ def run_loop(engine, max_interval: int, compact: bool):
             dynamic_sec = engine._dynamic_sleep_interval(now, decision)
             sleep_sec = min(dynamic_sec, max_interval)
             sleep_sec = max(60, sleep_sec)
-            time.sleep(sleep_sec)
+            _sleep_with_jitter(sleep_sec)
             decision = run()
     except KeyboardInterrupt:
         print("\n💤 已停止", file=sys.stderr)
