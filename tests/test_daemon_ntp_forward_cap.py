@@ -149,6 +149,29 @@ def test_damp_over_24h():
         assert abs(captured["hours"] - 27.0) < 1e-9, f"damp 30h→27h, got {captured['hours']}"
 
 
+def test_damp_7day_168h_to_96h():
+    """elapsed 168h (7天) → dampened = 24 + (168-24)*0.5 = 96h。"""
+    with tempfile.TemporaryDirectory() as td:
+        now = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
+        eng = _make_engine(td, now)
+        eng.state.cooldown.last_message_at = (now - timedelta(hours=168)).isoformat()
+        eng.state.last_tick = (now - timedelta(hours=168)).isoformat()
+        eng.state.mono_anchor = None
+        eng.state.wall_anchor = None
+        captured = {}
+
+        def _cap(hours, tick_now):
+            captured["hours"] = hours
+
+        orig = eng.state.tick
+        eng.state.tick = _cap
+        eng._monotonic_at_save = 0.0
+        with mock.patch.object(time, "monotonic", return_value=99999.0):
+            eng._tick(now)
+        eng.state.tick = orig
+        assert abs(captured["hours"] - 96.0) < 1e-9, f"damp 168h→96h, got {captured['hours']}"
+
+
 def test_clock_backward_no_tick():
     """elapsed <0（last_time 在 now 之后）→ 不推进 tick。"""
     with tempfile.TemporaryDirectory() as td:
