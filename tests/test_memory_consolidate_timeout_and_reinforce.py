@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """test_memory_consolidate_timeout_and_reinforce.py — 盲区6 memory 串联（AUD-031）
 
-Given: ops/engine_ops._maybe_consolidate / _call_with_timeout / mem0_backend consolidate / note_recalled
+Given: ops/engine_ops._maybe_consolidate / chiguo_concurrent.call_with_timeout / mem0_backend consolidate / note_recalled
 When:  consolidate 超时 / hot-loop 推进 consolidate_last_at / recall_count 跨进程持久化
 Then:  相对应分支均被覆盖
 """
@@ -34,9 +34,9 @@ def test_consolidate_timeout_sets_last_at():
             time.sleep(5)
             return {"ok": True}
 
-    # 缩短超时以便测试：直接测 _call_with_timeout
-    ok, _ = eng_mod._call_with_timeout(lambda: time.sleep(0.5), timeout=0.05)
-    assert ok is False, "超时应返回 False"
+    # 缩短超时以便测试：直接测共享助手 call_with_timeout（#397 收敛单源）
+    from chiguo_concurrent import TIMEOUT, call_with_timeout
+    assert call_with_timeout(lambda: time.sleep(0.5), timeout=0.05) is TIMEOUT, "超时应返回 TIMEOUT"
 
     # 真实 _maybe_consolidate 路径：slow bridge + 门控全开 → finally 推进 last_at
     with tempfile.TemporaryDirectory() as td:
@@ -107,16 +107,24 @@ def test_consolidate_last_at_persists_even_on_failure():
 
 
 def test_call_with_timeout_success():
-    ok, val = eng_mod._call_with_timeout(lambda: 42, timeout=1.0)
-    assert ok is True and val == 42
+    from chiguo_concurrent import call_with_timeout
+    assert call_with_timeout(lambda: 42, timeout=1.0) == 42
 
 
 def test_call_with_timeout_exception_propagates():
+    from chiguo_concurrent import call_with_timeout
     try:
-        eng_mod._call_with_timeout(lambda: (_ for _ in ()).throw(RuntimeError("boom")), timeout=1.0)
+        call_with_timeout(lambda: (_ for _ in ()).throw(RuntimeError("boom")), timeout=1.0)
         assert False, "应抛异常"
     except RuntimeError as e:
         assert "boom" in str(e)
+
+
+def test_call_with_timeout_none_is_not_timeout():
+    """被包装函数合法返回 None ≠ 超时（哨兵语义，#414-11 回归）。"""
+    from chiguo_concurrent import TIMEOUT, call_with_timeout
+    assert call_with_timeout(lambda: None, timeout=1.0) is not TIMEOUT
+    assert call_with_timeout(lambda: None, timeout=1.0) is None
 
 
 def test_recall_count_cross_process_persists():

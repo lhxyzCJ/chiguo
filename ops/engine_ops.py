@@ -4,9 +4,9 @@ import sys
 import os
 import json
 import time
-import threading
 import hashlib
 from datetime import datetime
+from chiguo_concurrent import TIMEOUT, call_with_timeout
 from chiguo_time import CST
 
 from decision.base import DecisionEngineBase
@@ -42,28 +42,9 @@ def _mem0_autowrite_record(self, text: str):
 # F-A5-07 / F-RT-013 (#309): 锁内 IO 收口——consolidate 在 evaluate state_lock 临界区
 # 内执行（决策流程锁内），qdrant get_all/update/delete 若无上限会无限阻塞锁 → 并发
 # 进程 5s 拿不到锁降级无锁 → lost update 前置。给该调用加线程超时预算，超时按失败
-# 降级（残留线程在底层返回后自然结束，与 mem0_backend._call_with_timeout 同语义）。
+# 降级（残留线程在底层返回后自然结束，与 chiguo_concurrent.call_with_timeout 同语义）。
 _CONSOLIDATE_TIMEOUT_S = 30.0
 
-
-def _call_with_timeout(fn, timeout):
-    """在守护线程执行 fn；超时返回 (False, None)；正常返回 (True, 结果)；异常重抛。"""
-    box = {}
-
-    def runner():
-        try:
-            box["v"] = fn()
-        except Exception as e:  # noqa: BLE001 — 跨线程重抛，保持调用方异常语义
-            box["e"] = e
-
-    t = threading.Thread(target=runner, daemon=True, name="consolidate-timeout")
-    t.start()
-    t.join(timeout)
-    if t.is_alive():
-        return False, None
-    if "e" in box:
-        raise box["e"]
-    return True, box.get("v")
 
 class AccountingMixin(DecisionEngineBase):
         def record_user_message(self, text: str, analysis_json: str | None = None,
@@ -503,9 +484,10 @@ class AccountingMixin(DecisionEngineBase):
                 # F-RT-013 (#309): consolidate 在 state_lock 锁内执行，用线程超时
                 # 预算封顶持锁时长（qdrant 挂起不再无限阻塞锁）。超时按失败降级 →
                 # 下方 except 打 stderr；finally 仍推进 consolidate_last_at 防 hot-loop。
-                _ok, report = _call_with_timeout(
-                    bridge.consolidate, _CONSOLIDATE_TIMEOUT_S)
-                if not _ok:
+                report = call_with_timeout(
+                    bridge.consolidate, _CONSOLIDATE_TIMEOUT_S,
+                    name="consolidate-timeout")
+                if report is TIMEOUT:
                     raise TimeoutError(
                         f"mem0 consolidate 超时（>{_CONSOLIDATE_TIMEOUT_S}s）")
                 n_demoted = len((report or {}).get("demoted", []))
