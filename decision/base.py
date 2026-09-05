@@ -49,7 +49,7 @@ def _reload_schedule(engine: "DecisionEngineBase") -> None:
 @register_reloadable
 def _reload_play_proof(engine: "DecisionEngineBase") -> None:
     engine._play_proof_provider = PlayProofProvider(engine.config, str(engine._base_dir))
-    engine.netease_service = engine._play_proof_provider._svc
+    engine.netease_service = engine._play_proof_provider.service
     try:
         engine.composer.schedule_facade = engine.schedule_facade
     except Exception:
@@ -93,7 +93,7 @@ class DecisionEngineBase:
             # PR-3: 日程门面 + 播放反证提供者
             self.schedule_facade = ScheduleFacade(str(self._base_dir), self.config)
             self._play_proof_provider = PlayProofProvider(self.config, str(self._base_dir))
-            self.netease_service = self._play_proof_provider._svc
+            self.netease_service = self._play_proof_provider.service
             # 显式 log_path（测试）原样使用；否则锚定 base_dir
             # （先于 topic_picker 构造：A9 recent_sent_texts() 依赖 messages_log_path）
             self.log_path = log_path or str(self._base_dir / "chiguo_decisions.jsonl")

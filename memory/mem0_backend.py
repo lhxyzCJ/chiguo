@@ -47,8 +47,15 @@ _MEM0_TIMEOUT = 10.0
 
 # Task 7A: add_messages 写路径超时预算(秒)。写路径运行在 state_lock 外
 # (see ops/engine_ops.py _mem0_autowrite)，LLM 事实提取(推断)合法比读路径
-# 慢，故预算宽于 _MEM0_TIMEOUT。超时仅记 fault 不翻转 _available（读写故障隔离）。
+# 慢，故预算宽于 _MEM0_TIMEOUT。单次超时仅记 fault 不翻转 _available
+# （读写故障隔离）；连续超时达 _MEM0_ADD_TIMEOUT_BREAKER 次熔断翻转（#419）。
 _MEM0_ADD_TIMEOUT = 30.0
+
+# #419: add 连续超时熔断阈值（次）。LLM 端点永久不可达时每次写仍阻塞
+# _MEM0_ADD_TIMEOUT 无上限；连续超时达阈值翻 _available=False，走现有 60s
+# 节流自愈（联动 #402 减少遗留线程产生速率）。阈值常量起步，不加 toml 配置；
+# 熔断触发后可通过 mem0_write 快照链路观察（#417）。
+_MEM0_ADD_TIMEOUT_BREAKER = 3
 
 # Task 6B: ollama 快速探测超时(秒)。构造 mem0 Memory 前预检 ollama 可达性，
 # 避免昂贵的 Memory() 构造因 ollama 不可达挂起。
@@ -199,6 +206,7 @@ class Mem0Backend(MemoryBackend):
         # 不触发 LLM 事实提取写链；_add_fail_count 累计 add_messages 失败次数，暴露进
         # stats() 供 monitor 感知写链故障（写失败本身已会翻转 _available + 记 _last_error）。
         self._add_fail_count = 0
+        self._add_timeout_streak = 0  # #419: add 连续超时计数（成功清零，熔断达阈值翻 _available）
         self._capability_warned = False  # D2: 能力缺失告警只打一次，不重复刷屏
 
     # ── mem0 初始化 ───────────────────────────────────────
@@ -461,18 +469,26 @@ class Mem0Backend(MemoryBackend):
                 _MEM0_ADD_TIMEOUT)
             if r is _TIMEOUT_SENTINEL:
                 raise TimeoutError("mem0 add 超时")
+            self._add_timeout_streak = 0  # #419: 成功清零
             return True
         except TimeoutError as e:  # TimeoutError 先于 Exception（其子类）
             import logging
             logging.warning("mem0 %s failed: %r", "add_timeout", e)
             self._last_error = (_time_module.time(), "add_timeout", str(e))
             self._add_fail_count += 1
+            # #419: 连续超时熔断——达阈值翻 _available=False，走现有 60s 节流自愈
+            # （60s 窗口内不重试，联动 #402 减少遗留线程产生速率）
+            self._add_timeout_streak += 1
+            if self._add_timeout_streak >= _MEM0_ADD_TIMEOUT_BREAKER:
+                self._available = False
+                self._last_probe = _time_module.time()
             return False
         except Exception as e:
             import logging
             logging.warning("mem0 %s failed: %r", "add", e)
             self._last_error = (_time_module.time(), "add", str(e))
             self._add_fail_count += 1  # F-RT-017: 写链失败计数（stats() 暴露供 monitor）
+            self._add_timeout_streak = 0  # #419: 写异常已有翻转语义，不并入连续超时计数
             # 故障驱动自愈：置不可用并刷新探测节流，60s 后重探
             self._available = False
             self._last_probe = _time_module.time()

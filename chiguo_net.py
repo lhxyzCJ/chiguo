@@ -4,14 +4,20 @@
 # localhost 判定 + ProxyHandler({}) 回环直连逻辑
 # ============================================================
 
+import ipaddress
 import urllib.request
-
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def is_local_host(host: str) -> bool:
-    """判断 host 是否为本地回环（等价 --noproxy '*'）。"""
-    return host in _LOCAL_HOSTS
+    """判断 host 是否为本地回环（等价 --noproxy '*'）。
+    P2-07: ipaddress.is_loopback 覆盖 127.0.0.0/8 全段与 ::ffff:127.0.0.1 等
+    IPv4 映射变体；纯白名单集合漏 127.0.0.2/8、::ffff 变体。"""
+    try:
+        if (host or "").lower() == "localhost":
+            return True
+        return ipaddress.ip_address(host).is_loopback
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 def build_no_proxy_opener():
@@ -24,6 +30,6 @@ def is_local_url(url: str) -> bool:
     try:
         from urllib.parse import urlparse
 
-        return urlparse(url).hostname in _LOCAL_HOSTS
+        return is_local_host(urlparse(url).hostname or "")
     except (ValueError, TypeError, OSError):
         return False

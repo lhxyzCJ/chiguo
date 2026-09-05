@@ -208,8 +208,9 @@ t('recall 无匹配 → --facts 空数组、prompt 保留原文(事实只走 --f
 })
 t('--attention 回复侧注入:取数失败跳过注入继续 askAgent(降级)', async () => {
   // daemon --attention 返回 ok:false → askAgent 仍执行(无 attention 块);runOverride 契约含 memories
+  // #391: query 经 cli-dto 非空校验，null 不再进 daemon（旧行为是必败的 spawn），故传真实查询串
   let overrideArgs = null
-  const got = await runWithAttention(null, async (args) => { overrideArgs = args; return { text: '自然回复' } })   // 注入失败
+  const got = await runWithAttention('测试查询', async (args) => { overrideArgs = args; return { text: '自然回复' } })   // 注入失败
   assert.ok(got.includes('自然回复'), '降级为现状行为')
   assert.ok(overrideArgs && 'memories' in overrideArgs,
     `runOverride 契约应含 memories: ${JSON.stringify(overrideArgs)}`)
