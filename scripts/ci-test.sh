@@ -12,11 +12,11 @@ total_count=$((py_count + script_count))
 echo "[ci-test] 磁盘测试文件 ${total_count} 个（${py_count} py + ${script_count} script）"
 
 # wechat-bridge 的 @wechatbot/wechatbot 依赖随仓库 vendor（wechat-bridge/vendor/wechatbot，MIT，含 LICENSE）。
-# 干净 checkout 无已构建产物 → 构建真实 SDK（npm install 依赖 + tsc build），再从桥目录 npm install 建立 file: 链接。
-# CI 已缓存 dist/node_modules 时增量复用（源码变更才重编），无缓存时全量构建。
+# 干净 checkout 无已构建产物 → 构建真实 SDK（npm ci 确定性安装 + tsc build），再从桥目录 npm ci 建立 file: 链接。
+# package-lock.json 已跟踪入库，npm ci 可用；CI 只缓存 ~/.npm + dist，不缓存 node_modules（防陈旧树触发 arborist edgesOut）。
 if [ ! -f wechat-bridge/vendor/wechatbot/dist/index.js ]; then
   echo "[ci-test] 构建 vendor SDK（wechat-bridge/vendor/wechatbot）..."
-  ( cd wechat-bridge/vendor/wechatbot && npm install --no-fund --no-audit && npm run build )
+  ( cd wechat-bridge/vendor/wechatbot && npm ci --no-fund --no-audit && npm run build )
 else
   if [ -n "$(find wechat-bridge/vendor/wechatbot/src -newer wechat-bridge/vendor/wechatbot/dist/index.js 2>/dev/null | head -n 1)" ] \
      || [ wechat-bridge/vendor/wechatbot/tsconfig.json -nt wechat-bridge/vendor/wechatbot/dist/index.js ] \
@@ -26,10 +26,10 @@ else
   fi
 fi
 if [ ! -d wechat-bridge/node_modules/@wechatbot ]; then
-  echo "[ci-test] 安装桥依赖（npm install file:./vendor/wechatbot）..."
-  ( cd wechat-bridge && npm install --no-fund --no-audit )
+  echo "[ci-test] 安装桥依赖（npm ci，解析 package.json 内 file: 依赖）..."
+  ( cd wechat-bridge && npm ci --no-fund --no-audit )
 fi
-# B1（#313）：npm install file:./vendor/wechatbot 会把 node_modules/@wechatbot/wechatbot 建成
+# B1（#313）：npm ci file:./vendor/wechatbot 会把 node_modules/@wechatbot/wechatbot 建成
 # 指向 vendor/wechatbot 的软链。tests/test_bridge_auth.mjs 的 ensureStub() 会写该路径——
 # 经软链穿透到 git 跟踪的 vendor 源（覆写 package.json + 新增 index.mjs），每次 ci-test 后
 # 都需手动 `git checkout -- vendor/wechatbot/package.json && rm vendor/wechatbot/index.mjs`。

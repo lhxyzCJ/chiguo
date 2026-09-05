@@ -1016,7 +1016,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `agent-rpc.mjs` | 常驻 agent RPC（analysis chiguo-main / send chiguo-send 双会话） |
 | `session-rotate.mjs` | 主会话每日轮换（每小时检查 + 空闲保护 + 幂等标记 + RPC 先杀进程） |
 | `package.json` | file: 本地依赖 @wechatbot/wechatbot（`file:./vendor/wechatbot`，真实 SDK） |
-| `vendor/wechatbot/` | vendor 入库的 wechatbot 真实 SDK（实测链 lhxyzCJ → corespeed-io，MIT，含 LICENSE；CI 从这里 npm install + tsc 构建） |
+| `vendor/wechatbot/` | vendor 入库的 wechatbot 真实 SDK（实测链 lhxyzCJ → corespeed-io，MIT，含 LICENSE；CI 从这里 npm ci + tsc 构建；package-lock.json 跟踪入库，npm ci 确定性安装） |
 
 ### 6.7 `personality/`（人格文件）
 

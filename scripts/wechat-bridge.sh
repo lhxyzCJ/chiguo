@@ -99,9 +99,11 @@ do_update_vendor_from_upstream() {
     # nodejs/ 整目录拷贝（含 src/tests/examples/config），并在 vendor 中放置 fork 根 LICENSE（MIT 合规）
     cp -r "$WECHATBOT_DIR/nodejs/." "$VENDOR_DIR/"
     cp -f "$WECHATBOT_DIR/LICENSE" "$VENDOR_DIR/LICENSE"
-    # 清掉更新产生的构建/锁产物（vendor 只跟踪源码）
-    rm -rf "$VENDOR_DIR/dist" "$VENDOR_DIR/node_modules" "$VENDOR_DIR/package-lock.json"
+    # 清掉更新产生的构建产物；package-lock.json 已跟踪入库，更新后须刷新两处锁并一并提交
+    # （刷新锁必须用 npm install——npm ci 只读锁不写锁；桥经 file: 依赖 vendor，vendor 变化会连带桥锁失效）
+    rm -rf "$VENDOR_DIR/dist" "$VENDOR_DIR/node_modules"
     say "vendor SDK 已从上游刷新（src 已覆盖；LICENSE 随 vendor 保留）"
+    say "后续手工刷新锁后提交：cd wechat-bridge/vendor/wechatbot && npm install --no-fund --no-audit && cd ../.. && npm install --no-fund --no-audit && git add wechat-bridge/package-lock.json wechat-bridge/vendor/wechatbot/package-lock.json"
 }
 
 do_install() {
@@ -109,18 +111,18 @@ do_install() {
     [ -x "$PROJECT_DIR/.venv/bin/python" ] || fail "chiguo .venv 不存在，请先跑 deploy.sh"
     mkdir -p "$WX_STORAGE" && chmod 700 "$AUTH_DIR" "$WX_STORAGE" 2>/dev/null || true
     [ -f "$VENDOR_DIR/src/index.ts" ] || fail "vendor SDK 缺失（$VENDOR_DIR/src/index.ts）——不应删除仓库内 vendor 源码"
-    # SDK 是 TS 源码：dist 被忽略不入库 → 缺 dist/index.js 时先 npm install 依赖 + tsc 构建（与 install_agent.sh 幂等）
+    # SDK 是 TS 源码：dist 被忽略不入库 → 缺 dist/index.js 时先 npm ci 确定性安装 + tsc 构建（与 install_agent.sh 幂等）
     if [ ! -f "$VENDOR_DIR/dist/index.js" ]; then
-        say "构建 vendor SDK（dist 缺失，npm install + npm run build）..."
-        ( cd "$VENDOR_DIR" && npm install --no-fund --no-audit >/dev/null 2>&1 \
+        say "构建 vendor SDK（dist 缺失，npm ci + npm run build）..."
+        ( cd "$VENDOR_DIR" && npm ci --no-fund --no-audit >/dev/null 2>&1 \
             && npm run build >/dev/null 2>&1 ) \
-            || fail "vendor SDK 构建失败（手工: cd $VENDOR_DIR && npm install && npm run build）"
+            || fail "vendor SDK 构建失败（手工: cd $VENDOR_DIR && npm ci && npm run build）"
     else
         say "vendor SDK 已构建（dist 存在，跳过 build）"
     fi
     say "安装 npm 依赖（@wechatbot/wechatbot <- ./vendor/wechatbot）..."
-    ( cd "$BRIDGE_DIR" && npm install --no-fund --no-audit >/dev/null ) \
-        || fail "npm install 失败"
+    ( cd "$BRIDGE_DIR" && npm ci --no-fund --no-audit >/dev/null ) \
+        || fail "npm ci 失败"
     write_env
     say "install 完成（.env 已生成；登录态目录: $WX_STORAGE（集中认证，可随 ~/.chiguo/auth/ 迁移））"
     if has_credentials; then

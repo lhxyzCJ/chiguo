@@ -66,7 +66,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 `bash scripts/ci-test.sh`：全量测试链（py 走 pytest 收集 + mjs/sh 脚本链；计数以 `scripts/ci-test.sh` 为准、动态化），任一失败即中止。验证：看输出「ALL TESTS PASSED（pytest N py + M mjs + K sh）」。
 
-该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot`（`ci-test.sh` 从 **vendor 真实 SDK**（`wechat-bridge/vendor/wechatbot/`）执行 npm install + tsc 构建，干净 checkout 即可跑）与 `data/xskb.xlsx`（课表 fixture 由 test_7/test_trigger 测试内自包含生成），因此本地与 CI 结果一致。
+该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot`（`ci-test.sh` 从 **vendor 真实 SDK**（`wechat-bridge/vendor/wechatbot/`）执行 npm ci + tsc 构建，干净 checkout 即可跑；两处 package-lock.json 已跟踪入库，CI 只缓存 ~/.npm 不缓存 node_modules，npm 升到 11 防 arborist edgesOut）与 `data/xskb.xlsx`（课表 fixture 由 test_7/test_trigger 测试内自包含生成），因此本地与 CI 结果一致。
 
 ### 4. 环境检查
 

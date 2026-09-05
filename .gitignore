@@ -35,15 +35,16 @@ netease/recent_play_cache.json.bak
 .claude/settings.json.bak.*
 
 # wechat-bridge — 依赖/本地配置忽略；登录态 credentials/ 目录仅本地保留（隐私，历史已重写清除）
+# package-lock.json 例外跟踪（CI 确定性安装防 arborist edgesOut，见 ci.yml）：node_modules 仍忽略
 wechat-bridge/node_modules/
 wechat-bridge/.env
-wechat-bridge/package-lock.json
+!wechat-bridge/package-lock.json
 wechat-bridge/npm-debug.log*
-# wechat-bridge vendor SDK — 源码随仓库入库；构建产物忽略
+# wechat-bridge vendor SDK — 源码随仓库入库；构建产物忽略（package-lock.json 同上例外跟踪）
 wechat-bridge/vendor/wechatbot/node_modules/
 wechat-bridge/vendor/wechatbot/dist/
 wechat-bridge/vendor/wechatbot/*.tsbuildinfo
-wechat-bridge/vendor/wechatbot/package-lock.json
+!wechat-bridge/vendor/wechatbot/package-lock.json
 
 # tick cron 运行日志（运行时产物，不跟踪）
 logs/

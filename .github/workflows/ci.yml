@@ -23,18 +23,17 @@ jobs:
           path: /home/runner/.cache/uv
           key: uv-dep-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: uv-dep-${{ runner.os }}-
-      - name: Cache node_modules
+      - name: Cache npm
         uses: actions/cache@v4
         with:
-          path: |
-            wechat-bridge/node_modules
-            wechat-bridge/vendor/wechatbot/node_modules
-          key: node-${{ runner.os }}-${{ hashFiles('wechat-bridge/package.json', 'wechat-bridge/vendor/wechatbot/package.json', 'wechat-bridge/vendor/wechatbot/tsconfig.json') }}
-          restore-keys: node-${{ runner.os }}-
+          path: /home/runner/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('wechat-bridge/package-lock.json', 'wechat-bridge/vendor/wechatbot/package-lock.json') }}
       - name: Cache vendor dist
         uses: actions/cache@v4
         with:
           path: wechat-bridge/vendor/wechatbot/dist
           key: vendor-dist-${{ runner.os }}-${{ hashFiles('wechat-bridge/vendor/wechatbot/src/**', 'wechat-bridge/vendor/wechatbot/tsconfig.json', 'wechat-bridge/vendor/wechatbot/package.json') }}
+      - name: Upgrade npm (arborist #loadPeerSet edgesOut 影响 npm 10.x，>=11.6.0 含修复 #8448)
+        run: npm install -g npm@11
       - run: uv sync --all-extras
       - run: bash scripts/ci-test.sh

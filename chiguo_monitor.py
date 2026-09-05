@@ -1020,6 +1020,8 @@ class ChiguoMonitor:
         # 每次 save 透传（见 state/persistence.py）。add_fail_count>0 即告警提示，
         # 不置 healthy=False（写失败不影响主链路，daemon 侧静默即可）。
         mem0_write = state.get("mem0_write") or {}
+        if not isinstance(mem0_write, dict):  # state 被手改/损坏成非 dict 真值 → 回退空
+            mem0_write = {}
         add_fail_count = mem0_write.get("add_fail_count", 0)
         if isinstance(add_fail_count, int) and add_fail_count > 0:
             last_err = mem0_write.get("last_error")

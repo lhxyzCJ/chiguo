@@ -62,20 +62,20 @@ set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
 mkdir -p "$TMP/repo/.venv/bin" && # venv python 桩：write_env 现用仓库 venv python 解析 auth.json（H-1），须是真实可执行解释器
 ln -sf "$(command -v python3)" "$TMP/repo/.venv/bin/python"
 
-# ── 用例 2: 首次 install → vendor SDK 构建（npm install + npm run build）+ 桥 npm install + .env，且默认不 clone ──
+# ── 用例 2: 首次 install → vendor SDK 构建（npm ci + npm run build）+ 桥 npm ci + .env，且默认不 clone ──
 set +e; bash scripts/wechat-bridge.sh install >/dev/null 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "install 期望 0 实得 $RC"
 grep -q "git clone" "$GIT_LOG" && fail "vendor 优先 install 不应默认 clone 上游" || true
 # npm run build 必须发生在 vendor 目录（真实 SDK）而非外部 clone
 grep -q "npm run build" "$NPM_LOG" || fail "vendor SDK 首次安装未构建（dist 缺失应 npm run build）"
-grep -q "npm install" "$NPM_LOG" || fail "桥 npm install 未执行"
-# 桥依赖走文件：package.json 里 file:./vendor/wechatbot —— 由 npm install 解析，无显式 file: 参数
-grep -q "npm install @wechatbot/wechatbot@file" "$NPM_LOG" && fail "不应显式传 file: 参数（应走 package.json 依赖）" || true
+grep -q "npm ci" "$NPM_LOG" || fail "桥 npm ci 未执行"
+# 桥依赖走文件：package.json 里 file:./vendor/wechatbot —— 由 npm ci 解析，无显式 file: 参数
+grep -q "npm ci @wechatbot/wechatbot@file" "$NPM_LOG" && fail "不应显式传 file: 参数（应走 package.json 依赖）" || true
 [ -f "$TMP/repo/wechat-bridge/vendor/wechatbot/dist/index.js" ] || fail "vendor SDK dist 未构建"
 [ -d "$TMP/repo/wechat-bridge/node_modules/@wechatbot" ] || fail "node_modules 未生成"
 grep -q "WECHAT_BRIDGE_OWNER=owner_test@im.wechat" "$TMP/repo/wechat-bridge/.env" || fail ".env 未从 toml 读 OWNER"
 grep -q "WECHAT_BRIDGE_STORAGE=$TMP/home/.chiguo/auth/wechat" "$TMP/repo/wechat-bridge/.env" || fail ".env STORAGE 路径不对（应指向集中认证目录）"
-pass "首次 install：vendor 构建 + npm install + .env 生成（不 clone）"
+pass "首次 install：vendor 构建 + npm ci + .env 生成（不 clone）"
 
 # ── 用例 3: 重跑 install 幂等 → dist 存在不重复构建、不 clone ──
 : > "$GIT_LOG"; : > "$NPM_LOG"
