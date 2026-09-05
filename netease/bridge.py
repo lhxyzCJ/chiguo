@@ -50,7 +50,17 @@ class NeteaseBridge:
         self.cache_file = self.data_dir / "netease_cache.json"
         self.recent_play_cache_file = self.data_dir / "recent_play_cache.json"
         self.qr_path = self.data_dir / "netease_qr.png"
-        self.api_base = api_base or os.environ.get("NETEASE_API_BASE", "http://localhost:3000")
+        fallback = "http://localhost:3000"
+        candidate = api_base or os.environ.get("NETEASE_API_BASE", fallback)
+        from chiguo_net import is_local_url
+
+        # P2-07: api_base 携带 MUSIC_U/__csrf 凭据外发——env 污染指向任意 host
+        # 即致凭据外泄。非回环一律拒绝并回退默认（audit：stderr 留痕）。
+        if not is_local_url(candidate):
+            print(f"[warn] NETEASE_API_BASE 非回环已拦截并回退默认: {candidate!r} → {fallback}",
+                  file=sys.stderr)
+            candidate = fallback
+        self.api_base = candidate
         self.retry_count = max(0, int(retry_count))      # 钳制非负
         self.retry_backoff = max(0.0, float(retry_backoff))
 
