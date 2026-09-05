@@ -240,18 +240,28 @@ class StatePersistence:
                 self._lock_release(lock_path)
         return True
 
+    # #406(a)：落盘显式 cap（内存侧已有上限，序列化再保险——防未经 adapt/
+    # 正常入口的写入与旧状态超长导致的线性增长）。
+    _HISTORY_CAP = 200
+
     def _build_payload(self) -> dict:
         """从 owner 各可变子对象组装序列化载荷（不含 _checksum）。"""
         o = self.owner
+        hist = o.personality_history
+        hist = hist[-self._HISTORY_CAP:] if isinstance(hist, list) else hist
+        cd = asdict(o.cooldown)
+        evts = cd.get("event_timestamps")
+        if isinstance(evts, list):
+            cd["event_timestamps"] = evts[-self._HISTORY_CAP:]
         payload = {
             "_version": self.STATE_VERSION,
             "emotion": asdict(o.emotion),
-            "cooldown": asdict(o.cooldown),
+            "cooldown": cd,
             "circadian": asdict(o.circadian),
             "pending_topics": o.pending_topics,
             "personality": personality_to_dict(o.personality),
             "personality_baseline": dict(o.personality._baseline),
-            "personality_history": o.personality_history,
+            "personality_history": hist,
             "last_tick": datetime.now(CST).isoformat(),
             "mono_anchor": time_module.monotonic(),
             "wall_anchor": datetime.now(CST).isoformat(),
