@@ -349,9 +349,52 @@ class MessageComposer:
             "combo_string": combo_string,
         }
 
+    # ── Issue #400：人格特质调制规则表 ——
+    # (特质属性名, 默认值, 高阈值, 高档调制, 低阈值, 低档调制)
+    TRAIT_RULES = [
+        ("tsundere_intensity", 75.0, 65,
+         {"tsundere_classic": 1.5, "tsundere_soft": 1.2, "dere_dere": 0.5}, 40,
+         {"tsundere_classic": 0.4, "tsundere_soft": 0.6, "dere_dere": 2.0}),
+        ("extraversion", 60.0, 60,
+         {"playful_bubbly": 1.5}, 35,
+         {"playful_bubbly": 0.5}),
+        ("neuroticism", 60.0, 65,
+         {"anxious_clingy": 1.8}, 40,
+         {"anxious_clingy": 0.4}),
+        ("agreeableness", 65.0, 65,
+         {"caring_gentle": 1.3}, 40,
+         {"caring_gentle": 0.4}),
+    ]
+
+    # ── Issue #400：触发类型调制规则表（键为 TriggerType；str 传入亦可匹配）──
+    TRIGGER_RULES = {
+        TriggerType.LONELY_HIGH: {
+            # 崩溃时不太可能嘴硬
+            "tsundere_classic": 0.2, "anxious_clingy": 2.0, "dere_dere": 1.5,
+        },
+        TriggerType.LONELY_LOW: {"playful_bubbly": 1.3, "tsundere_soft": 1.2},
+        TriggerType.ANXIETY: {"anxious_clingy": 2.5, "tsundere_classic": 0.3},
+        TriggerType.PLAYFUL: {"playful_bubbly": 3.0, "caring_gentle": 0.5},
+        TriggerType.MORNING: {"playful_bubbly": 1.2},
+        TriggerType.MEAL: {"playful_bubbly": 1.2},
+        TriggerType.NIGHT: {"tsundere_soft": 1.2},
+        # 安慰语境 → 安抚系 cue 占优，压嘴硬/玩闹（review R8：勿用试探傲娇语气安慰）
+        TriggerType.COMFORT: {
+            "caring_gentle": 1.8, "dere_dere": 1.3,
+            "tsundere_classic": 0.3, "playful_bubbly": 0.5,
+        },
+        # 接话茬 → 自然延续，轻快系微升
+        TriggerType.FOLLOW_UP: {"playful_bubbly": 1.2, "tsundere_soft": 1.2},
+    }
+
+    @staticmethod
+    def _apply_mods(weights: dict[str, float], mods: dict[str, float]) -> None:
+        for name, factor in mods.items():
+            weights[name] *= factor
+
     def _modulate_cue_weights(self, trigger_type: str) -> dict[str, float]:
         """
-        根据 personality 和 trigger_type 调制 Cue 权重。
+        根据 personality 和 trigger_type 调制 Cue 权重（表驱动：TRAIT_RULES + TRIGGER_RULES）。
         """
         weights = dict(self.cue_weights)
 
@@ -361,97 +404,54 @@ class MessageComposer:
         except AttributeError:
             return weights
 
-        tsundere = getattr(personality, 'tsundere_intensity', 75.0)
-        extraversion = getattr(personality, 'extraversion', 60.0)
-        neuroticism = getattr(personality, 'neuroticism', 60.0)
-        agreeableness = getattr(personality, 'agreeableness', 65.0)
+        for attr, default, hi, hi_mods, lo, lo_mods in self.TRAIT_RULES:
+            value = getattr(personality, attr, default)
+            if value > hi:
+                self._apply_mods(weights, hi_mods)
+            elif value < lo:
+                self._apply_mods(weights, lo_mods)
 
-        # tsundere 强度 → 调制傲娇系 vs dere 系权重
-        if tsundere > 65:
-            weights["tsundere_classic"] *= 1.5
-            weights["tsundere_soft"] *= 1.2
-            weights["dere_dere"] *= 0.5
-        elif tsundere < 40:
-            weights["tsundere_classic"] *= 0.4
-            weights["tsundere_soft"] *= 0.6
-            weights["dere_dere"] *= 2.0
-
-        # extraversion → 调制 playful
-        if extraversion > 60:
-            weights["playful_bubbly"] *= 1.5
-        elif extraversion < 35:
-            weights["playful_bubbly"] *= 0.5
-
-        # neuroticism → 调制 anxious
-        if neuroticism > 65:
-            weights["anxious_clingy"] *= 1.8
-        elif neuroticism < 40:
-            weights["anxious_clingy"] *= 0.4
-
-        # agreeableness → 调制 caring vs cool
-        if agreeableness > 65:
-            weights["caring_gentle"] *= 1.3
-        elif agreeableness < 40:
-            weights["caring_gentle"] *= 0.4
-
-        # trigger_type 调制
-        if trigger_type == TriggerType.LONELY_HIGH:
-            weights["tsundere_classic"] *= 0.2  # 崩溃时不太可能嘴硬
-            weights["anxious_clingy"] *= 2.0
-            weights["dere_dere"] *= 1.5
-        elif trigger_type == TriggerType.LONELY_LOW:
-            weights["playful_bubbly"] *= 1.3
-            weights["tsundere_soft"] *= 1.2
-        elif trigger_type == TriggerType.ANXIETY:
-            weights["anxious_clingy"] *= 2.5
-            weights["tsundere_classic"] *= 0.3
-        elif trigger_type == TriggerType.PLAYFUL:
-            weights["playful_bubbly"] *= 3.0
-            weights["caring_gentle"] *= 0.5
-        elif trigger_type in (TriggerType.MORNING, TriggerType.MEAL):
-            weights["playful_bubbly"] *= 1.2
-        elif trigger_type == TriggerType.NIGHT:
-            weights["tsundere_soft"] *= 1.2
-        elif trigger_type == TriggerType.COMFORT:
-            # 安慰语境 → 安抚系 cue 占优，压嘴硬/玩闹（review R8：勿用试探傲娇语气安慰）
-            weights["caring_gentle"] *= 1.8
-            weights["dere_dere"] *= 1.3
-            weights["tsundere_classic"] *= 0.3
-            weights["playful_bubbly"] *= 0.5
-        elif trigger_type == TriggerType.FOLLOW_UP:
-            # 接话茬 → 自然延续，轻快系微升
-            weights["playful_bubbly"] *= 1.2
-            weights["tsundere_soft"] *= 1.2
+        mods = self.TRIGGER_RULES.get(trigger_type)
+        if mods:
+            self._apply_mods(weights, mods)
 
         return weights
 
+    # ── Issue #400：小时 → 基础 vibe 规则表（区间互斥；区间外兜底 late_night）──
+    VIBE_HOURS = [
+        (6, 9, "early_morning"),
+        (9, 12, "morning"),
+        (12, 14, "noon"),
+        (14, 18, "afternoon"),
+        (18, 21, "evening"),
+        (21, 23, "night"),
+    ]
+
+    # ── Issue #400：周末调制规则表（子串匹配，morning 优先）──
+    WEEKEND_VIBE_RULES = [
+        ("morning", "weekend_morning"),
+        ("evening", "weekend_evening"),
+        ("night", "weekend_evening"),
+    ]
+
     def _select_vibe(self, now: datetime) -> str | None:
-        """根据时间/环境选择 Vibe。"""
+        """根据时间/环境选择 Vibe（表驱动：VIBE_HOURS + WEEKEND_VIBE_RULES）。"""
         h = now.hour
         wd = now.weekday()
 
         # 时间基本 vibe
-        if 6 <= h < 9:
-            base = "early_morning"
-        elif 9 <= h < 12:
-            base = "morning"
-        elif 12 <= h < 14:
-            base = "noon"
-        elif 14 <= h < 18:
-            base = "afternoon"
-        elif 18 <= h < 21:
-            base = "evening"
-        elif 21 <= h < 23:
-            base = "night"
-        else:
-            base = "late_night"
+        base = "late_night"
+        for lower, upper, name in self.VIBE_HOURS:
+            if lower <= h < upper:
+                base = name
+                break
 
         # 周末调制
         if wd >= 5:
-            if "morning" in base:
-                base = "weekend_morning"
-            elif "evening" in base or "night" in base:
-                base = "weekend_evening"
+            for needle, weekend_name in self.WEEKEND_VIBE_RULES:
+                if needle in base:
+                    base = weekend_name
+                    break
 
         # 检查考试周/假日经 ScheduleFacade（AUD-005/007），无门面则跳过
         facade = getattr(self, "schedule_facade", None)
