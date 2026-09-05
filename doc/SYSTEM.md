@@ -727,6 +727,7 @@ schedule_overrides.json / break_state.json / holidays.json / schedule_plan.json�
       - **F-RT-017 写链可感知（#336，#414-7A 读写隔离）**：`available` 探测只覆盖读链（embedder+qdrant），LLM 事实提取写链（opencode/model 端点）故障在 available 上不直接暴露；写异常会翻转 `_available` + 记 `_last_error(op=add)`，单次写超时（30s `_MEM0_ADD_TIMEOUT`）仅记 `_last_error(op=add_timeout)` 不翻 `_available`（读可用不被写拖垮），但连续超时达 3 次（`_MEM0_ADD_TIMEOUT_BREAKER`，成功 add 清零）熔断翻转 `_available=False` 走 60s 节流自愈（#419；联动 #402 减少遗留线程产生速率）；均累计 `add_fail_count`（`stats()` 暴露；daemon 每次 save 经 `_build_payload` → `state.mem0_write` 快照透传，monitor `health()` 读取并在 `add_fail_count>0` 时 issues 告警，不置 healthy=False）
      - mem0 在 available 探测内**惰性导入**：未安装时 daemon 照常启动（import 失败也被 available=False 捕获）
      - 探测失败后按 60s 节流重试：`--loop` 长驻时故障恢复可自愈，不永久禁用
+     - **底层 HTTP 真实超时（#402 根治 daemon 线程遗留）**：`_ensure_mem0` 构造成功后 `_apply_client_timeouts()` 给底层客户端打真实超时——embedder 的 ollama `Client` 整体替换为 `timeout=10.0`（`_OLLAMA_CLIENT_TIMEOUT`，与读侧 `_MEM0_TIMEOUT=10.0` 同预算），LLM 的 openai 兼容 client 置 `.timeout=60.0`（`_MEM0_LLM_CLIENT_TIMEOUT`，> 写侧 30s wrapper，只收敛残留线程存活时长）；available 探测里 `_ensure_mem0` 另包 `_MEM0_CONSTRUCT_TIMEOUT=60.0` 构造预算（含 list/pull），超时放弃走现有 except 降级，残留线程 60s 内自灭，无永久遗留（不再依赖 `call_with_timeout` daemon 放弃等待，wrapper 保留做第二道兜底）
      - 结果行防御：importance 的 None/NaN 统一清洗为默认 0.5，行级异常整体降级为空列表；非字符串 created_at 转串解析、失败落 0.0（防 `_parse_iso_ts` 的 .replace AttributeError），单条脏行 try 隔离不拖垮整次检索（R14）
 
   ③ Ebbinghaus 遗忘曲线（v4）
