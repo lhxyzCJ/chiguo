@@ -69,12 +69,12 @@ class ScheduleApi:
             pass
         return ss, se
 
-    def apply_override(self, item: dict, _from_migration: bool = False) -> dict:
-        """协议形态 item → resolve_when 全令牌换算 → 形态约束 → 学期边界 → 分端点过去校验
-        → to_date 五态 → move 源槽/快照 → 幂等写 → 写后清理 → 确认文案。
-        兼容批 2b 旧协议显式 date/end_date(顶层或 when 两键),Task 6 七形态全收。"""
-        if not isinstance(item, dict):
-            raise ApiRejection("invalid_value", "item 非 dict")
+    # ── apply_override 流水(#377):validate → normalize → check → materialize → persist ──
+    # to_date 拒绝形态:week_offset 单键 / start-end 双键 / 空 dict 一律 shape_mismatch。
+    _TO_DATE_REJECTED = ({"week_offset"}, {"start", "end"}, set())
+
+    def _validate_kind(self, item: dict) -> tuple[str, dict]:
+        """校验 kind/未知字段 → (kind, entry 基底)。"""
         kind = item.get("kind")
         if kind == "remove":
             raise ApiRejection("invalid_value", "apply_override 拒绝 kind=remove(路由 remove_override)")
@@ -84,109 +84,123 @@ class ScheduleApi:
                                "to_date", "course", "label", "note"}
         if unknown:
             raise ApiRejection("invalid_value", f"未知字段: {sorted(unknown)}")
-        if not _from_migration:
-            self._guard()
-        today = self.today
-        semester_start, semester_end = self._semester_dates()
+        return kind, {k: v for k, v in item.items() if k not in ("when",) and v is not None}
+
+    @staticmethod
+    def _normalize_legacy_when(item: dict):
+        """旧协议归一(批 2b deprecation):when 缺失 → 顶层 date 归一进 when 管线;缺 date → 歧义拒绝。"""
         when = item.get("when")
-        entry = {k: v for k, v in item.items() if k not in ("when",) and v is not None}
         if when is None:
             if "date" not in item:
                 raise ApiRejection("ambiguous", "when/date 缺失 → 歧义拒绝")
-            when = {"date": item["date"]}   # 批 2b 旧协议顶层 date 形态 → 归一进 when 管线(start/end/过去校验全走)
-        if when is not None:
-            if not isinstance(when, dict):
-                raise ApiRejection("invalid_value", "when 非 dict")
+            when = {"date": item["date"]}   # 顶层 date 形态 → 归一(start/end/过去校验全走)
+        if not isinstance(when, dict):
+            raise ApiRejection("invalid_value", "when 非 dict")
+        return when
+
+    def _resolve_entry_when(self, kind: str, when: dict, entry: dict,
+                            today: date, semester_start, semester_end,
+                            check_past: bool = True) -> date:
+        """when 全令牌换算 → 形态约束 → 学期边界 → 字段落点 → 区间不变量 → 分端点过去校验。
+        直接在 entry 上落 date/end_date；返回 start。check_past=False = 迁移写豁免。"""
+        try:
+            if set(when) == {"date", "end_date"}:
+                start, _ = resolve_when({"date": when["date"]}, today, semester_start)
+                end, _ = resolve_when({"date": when["end_date"]}, today, semester_start)
+                if (end - start).days > 60:
+                    # A20-05 (R11): {date,end_date} 批 2b 路径并入统一跨度检查(与 {start,end} 一致),
+                    # 修复前 78 天区间绕过落盘。
+                    raise ApiRejection("invalid_value", "跨度 > 60 天")
+                entry["end_date"] = end.isoformat()   # 归一(MM-DD → ISO),修 A20-05 格式不一致拒绝
+                is_interval = True
+            else:
+                start, end = resolve_when(when, today, semester_start)
+                is_interval = ("week_offset" in when and "weekday" not in when) \
+                    or set(when) == {"start", "end"}
+        except ResolveReject as e:
+            raise ApiRejection(e.category, str(e))
+        # ── 形态约束(§4.2 C3/F1/F-C)──
+        if kind in ("reminder", "move") and is_interval:
+            raise ApiRejection("shape_mismatch", f"{kind} 不收区间形态(单日 kind)")
+        # ── 学期边界(二十轮对称化):week_offset 非 cancel 类 → 学期前/目标周超学期周数拒绝 ──
+        if "week_offset" in when and kind in ("reminder", "add", "exam_week", "move"):
+            if today < semester_start:
+                raise ApiRejection("before_semester", "学期前 week_offset 语义失效")
+            if semester_end and week_number(start, semester_start) > \
+                    week_number(semester_end, semester_start):
+                raise ApiRejection("after_semester", "目标周超出学期周数")
+        # ── 字段落点(§4.2 F-B):(start,end) 落 date/end_date,不落 to_date ──
+        if kind in ("cancel", "add"):
+            entry["date"] = start.isoformat()
+            if is_interval and entry.get("end_date") is None:
+                entry["end_date"] = end.isoformat()
+        elif kind == "exam_week":
+            entry["date"] = start.isoformat()
+            if entry.get("end_date") is None:
+                entry["end_date"] = end.isoformat()   # 单日 → 退化 date=end_date(F-D)
+        else:  # reminder / move
+            entry["date"] = start.isoformat()
+        # ── 区间顺序不变量(R11):entry 同含 date/end_date → end_date 不得早于 date ──
+        # 统一兜底 when={"date","end_date"} 与顶层 end_date 双路径,防死 override 落盘;
+        # 经 resolve_when 解析(兼容 ISO/MM-DD 双格式,与 date 解析一致)
+        if entry.get("end_date") is not None:
             try:
-                if set(when) == {"date", "end_date"}:
-                    start, _ = resolve_when({"date": when["date"]}, today, semester_start)
-                    end, _ = resolve_when({"date": when["end_date"]}, today, semester_start)
-                    if (end - start).days > 60:
-                        # A20-05 (R11): {date,end_date} 批 2b 路径并入统一跨度检查(与 {start,end} 一致),
-                        # 修复前 78 天区间绕过落盘。
-                        raise ApiRejection("invalid_value", "跨度 > 60 天")
-                    entry["end_date"] = end.isoformat()   # 归一(MM-DD → ISO),修 A20-05 格式不一致拒绝
-                    is_interval = True
-                else:
-                    start, end = resolve_when(when, today, semester_start)
-                    is_interval = ("week_offset" in when and "weekday" not in when) \
-                        or set(when) == {"start", "end"}
+                _d1, _ = resolve_when({"date": entry["end_date"]}, today, semester_start)
             except ResolveReject as e:
                 raise ApiRejection(e.category, str(e))
-            # ── 形态约束(§4.2 C3/F1/F-C)──
-            if kind in ("reminder", "move") and is_interval:
-                raise ApiRejection("shape_mismatch", f"{kind} 不收区间形态(单日 kind)")
-            # ── 学期边界(二十轮对称化):week_offset 非 cancel 类 → 学期前/目标周超学期周数拒绝 ──
-            if "week_offset" in when and kind in ("reminder", "add", "exam_week", "move"):
-                if today < semester_start:
-                    raise ApiRejection("before_semester", "学期前 week_offset 语义失效")
-                if semester_end and week_number(start, semester_start) > week_number(semester_end, semester_start):
-                    raise ApiRejection("after_semester", "目标周超出学期周数")
-            # ── 字段落点(§4.2 F-B):(start,end) 落 date/end_date,不落 to_date ──
-            if kind in ("cancel", "add"):
-                entry["date"] = start.isoformat()
-                if is_interval and entry.get("end_date") is None:
-                    entry["end_date"] = end.isoformat()
-            elif kind == "exam_week":
-                entry["date"] = start.isoformat()
-                if entry.get("end_date") is None:
-                    entry["end_date"] = end.isoformat()   # 单日 → 退化 date=end_date(F-D)
-            else:  # reminder / move
-                entry["date"] = start.isoformat()
-            # ── 区间顺序不变量(R11):entry 同含 date/end_date → end_date 不得早于 date ──
-            # 统一兜底 when={"date","end_date"} 与顶层 end_date 双路径,防死 override 落盘;
-            # 经 resolve_when 解析(兼容 ISO/MM-DD 双格式,与 date 解析一致)
-            if entry.get("end_date") is not None:
-                try:
-                    _d1, _ = resolve_when({"date": entry["end_date"]}, today, semester_start)
-                except ResolveReject as e:
-                    raise ApiRejection(e.category, str(e))
-                if _d1 < start:
-                    raise ApiRejection("invalid_value", "区间 end_date 早于 date,死区间拒绝")
-                if (_d1 - start).days > 60:
-                    raise ApiRejection("invalid_value", "跨度 > 60 天")   # A20-05:顶层 end_date 路径统一跨度检查
-                entry["end_date"] = _d1.isoformat()   # A20-05:归一顶层 end_date(MM-DD → ISO),不再格式不一致拒绝
-            # ── 过去日期分端点校验(L2/C3/F1):课程例外与区间事实查 end;单日查 date ──
-            # 迁移写(_from_migration)豁免:一次性迁移含历史条目(如已结束学期的考试周),
-            # 校验/清理在迁移后的常规写调用点照常执行
-            if not _from_migration and kind in ("cancel", "add", "exam_week"):
-                try:
-                    check = date.fromisoformat(entry.get("end_date") or end.isoformat())
-                except ValueError:
-                    raise ApiRejection("invalid_value", f"end_date 非法: {entry.get('end_date')!r}")
-                if check < today:
-                    raise ApiRejection("past_date", f"结果 {check} < today")
-            elif not _from_migration and kind == "reminder":
-                if start < today:
-                    raise ApiRejection("past_date", f"结果 {start} < today")
-            elif not _from_migration and kind == "move" and not entry.get("to_date"):
-                # move 无 to_date = 单日条目 → 查 date;有 to_date 由下方 to_date 检查约束
-                if start < today:
-                    raise ApiRejection("past_date", f"结果 {start} < today")
-        # ── to_date(move 独立字段;五态单日形态,不收 week_offset 单/start-end,C2/M4)──
-        if item.get("to_date") is not None:
-            if kind != "move":
-                raise ApiRejection("shape_mismatch", "to_date 仅 move 可用")
-            td = item["to_date"]
-            if isinstance(td, dict):
-                if set(td) == {"week_offset"} or set(td) == {"start", "end"} or not td:
-                    raise ApiRejection("shape_mismatch", "to_date 不收 week_offset 单/start-end")
-                try:
-                    ts, te = resolve_when(td, today, semester_start)
-                except ResolveReject as e:
-                    raise ApiRejection(e.category, str(e))
-                if ts != te:
-                    raise ApiRejection("shape_mismatch", "to_date 必须为单日")
-            else:
-                try:
-                    ts = te = date.fromisoformat(str(td))
-                except ValueError:
-                    raise ApiRejection("invalid_value", f"to_date 非法: {td!r}")
-            if ts < today:
-                raise ApiRejection("past_date", "to_date 已过去(查 date 语义)")
-            if ts < date.fromisoformat(entry["date"]):
-                raise ApiRejection("shape_mismatch", "to_date < date(倒序调课)")
-            entry["to_date"] = ts.isoformat()
+            if _d1 < start:
+                raise ApiRejection("invalid_value", "区间 end_date 早于 date,死区间拒绝")
+            if (_d1 - start).days > 60:
+                raise ApiRejection("invalid_value", "跨度 > 60 天")   # A20-05:顶层 end_date 路径统一跨度检查
+            entry["end_date"] = _d1.isoformat()   # A20-05:归一顶层 end_date(MM-DD → ISO),不再格式不一致拒绝
+        # ── 过去日期分端点校验(L2/C3/F1):课程例外与区间事实查 end;单日查 date ──
+        if check_past and kind in ("cancel", "add", "exam_week"):
+            try:
+                check = date.fromisoformat(entry.get("end_date") or end.isoformat())
+            except ValueError:
+                raise ApiRejection("invalid_value", f"end_date 非法: {entry.get('end_date')!r}")
+            if check < today:
+                raise ApiRejection("past_date", f"结果 {check} < today")
+        elif check_past and kind == "reminder":
+            if start < today:
+                raise ApiRejection("past_date", f"结果 {start} < today")
+        elif check_past and kind == "move" and not entry.get("to_date"):
+            # move 无 to_date = 单日条目 → 查 date;有 to_date 由下方 to_date 检查约束
+            if start < today:
+                raise ApiRejection("past_date", f"结果 {start} < today")
+        return start
+
+    def _resolve_to_date(self, kind: str, item: dict, entry: dict,
+                         today: date, semester_start) -> None:
+        """to_date(move 独立字段;五态单日形态,不收 week_offset 单/start-end,C2/M4)。直接落 entry。"""
+        if item.get("to_date") is None:
+            return
+        if kind != "move":
+            raise ApiRejection("shape_mismatch", "to_date 仅 move 可用")
+        td = item["to_date"]
+        if isinstance(td, dict):
+            if set(td) in self._TO_DATE_REJECTED:
+                raise ApiRejection("shape_mismatch", "to_date 不收 week_offset 单/start-end")
+            try:
+                ts, te = resolve_when(td, today, semester_start)
+            except ResolveReject as e:
+                raise ApiRejection(e.category, str(e))
+            if ts != te:
+                raise ApiRejection("shape_mismatch", "to_date 必须为单日")
+        else:
+            try:
+                ts = te = date.fromisoformat(str(td))
+            except ValueError:
+                raise ApiRejection("invalid_value", f"to_date 非法: {td!r}")
+        if ts < today:
+            raise ApiRejection("past_date", "to_date 已过去(查 date 语义)")
+        if ts < date.fromisoformat(entry["date"]):
+            raise ApiRejection("shape_mismatch", "to_date < date(倒序调课)")
+        entry["to_date"] = ts.isoformat()
+
+    def _materialize_move(self, kind: str, entry: dict, item: dict,
+                          semester_start) -> None:
+        """move 源槽检查 + 课程快照 weeks 派生(M7)。直接改 entry。"""
         if kind == "move":
             if (entry.get("to_date") == entry.get("date")
                     and item.get("to_period") == item.get("period")):
@@ -218,6 +232,26 @@ class ScheduleApi:
                 alts.append(a)
             c["alternates"] = alts
             entry["course"] = c
+
+    def apply_override(self, item: dict, _from_migration: bool = False) -> dict:
+        """协议形态 item → resolve_when 全令牌换算 → 形态约束 → 学期边界 → 分端点过去校验
+        → to_date 五态 → move 源槽/快照 → 幂等写 → 写后清理 → 确认文案。
+        兼容批 2b 旧协议显式 date/end_date(顶层或 when 两键),Task 6 七形态全收。
+        本体仅编排:validate → normalize → check → materialize → persist。"""
+        if not isinstance(item, dict):
+            raise ApiRejection("invalid_value", "item 非 dict")
+        kind, entry = self._validate_kind(item)
+        if not _from_migration:
+            self._guard()
+        today = self.today
+        semester_start, semester_end = self._semester_dates()
+        # 迁移写豁免过去校验:一次性迁移含历史条目(如已结束学期的考试周),
+        # 校验/清理在迁移后的常规写调用点照常执行
+        when = self._normalize_legacy_when(item)
+        self._resolve_entry_when(kind, when, entry, today, semester_start,
+                                 semester_end, check_past=not _from_migration)
+        self._resolve_to_date(kind, item, entry, today, semester_start)
+        self._materialize_move(kind, entry, item, semester_start)
         try:
             e2, replaced = self.overrides.add(entry, datetime.now(CST))
         except OverrideError as ex:
