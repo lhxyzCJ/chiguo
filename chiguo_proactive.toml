@@ -4,6 +4,16 @@
 # ============================================================
 
 # ────────────────────────────────────────────────────────────
+# 参数分级表（#393 E1：新人先看这里）
+#   必改   ：[wechat].wechat_recipient（占位符须替换）、[host].provider/model、
+#            [schedule].semester_start（学期边界）、[memory] mem0 路径与 key
+#   可选   ：[emotion]/[trigger]/[composer] 等数值权重与阈值（缺省走代码
+#            fallback，与出厂值一致，不改即行为恒等；灰度时再显式覆盖）
+#   实验性 ：[experimental] 全段（默认关闭恒等；decision/base._merge_experimental
+#            按 section__key 形态合并回主段覆盖）
+# ────────────────────────────────────────────────────────────
+
+# ────────────────────────────────────────────────────────────
 # [wechat] 微信发送目标
 # 本段仅保留 wechat_recipient（chiguo-tick.sh / wechat-bridge.sh 按 key 名读取发送目标）
 # ────────────────────────────────────────────────────────────
@@ -206,25 +216,11 @@ user_mood_ttl_minutes = 360.0   # user_mood 感知有效窗口（6h，过期不�
 # 回复率高（≥ high_rate）→ ×(1+boost)（微加成）。统计源 = 状态持久化的
 # cooldown.reply_stats（daemon 发送时 sent+1、--user-msg 收到回复时 replied+1）。
 
-# ── Q10: 触发离散概率/魔法权重配置化（默认 = 现值，行为不变；审计 #276）──
-# 仪式类基础权重（乘 [cooldown].ritual_weight_scale，ritual_weight_scale 默认 1.0）。
-# 把原先硬编码在 chiguo_trigger.py 的 3.0/2.5/2.0/0.8/2.0/1.5 提到 toml，可安全灰度。
-ritual_special_weight = 3.0      # special（特殊日期）基础权重
-ritual_morning_weight = 2.5      # morning（早安窗口）基础权重
-ritual_night_weight = 2.0        # night（晚安窗口）基础权重
-ritual_meal_weight = 0.8         # meal（饭点）基础权重
-ritual_memory_weight = 2.0       # memory（JSON 手动记忆/习惯提醒到期）基础权重
-ritual_mem0_weight = 1.5         # memory（mem0 随机浮现）基础权重
-
-# 时间窗口触发概率（窗口内每分钟命中概率）
-morning_probability = 0.10       # 早安窗口触发概率
-night_probability = 0.12         # 晚安窗口触发概率
-meal_probability = 0.05          # 饭点触发概率
-
-# mem0 随机浮现（仅主人沉默超阈值时参与）
-mem0_surface_min_silent_hours = 6.0  # 沉默超此小时数才参与 mem0 浮现
-mem0_surface_probability = 0.08      # mem0 随机浮现概率
-
+# ── Q10: 触发离散概率/魔法权重配置化（#276；#393 收敛：以下 11 键已删，
+# 缺省走 chiguo_trigger.py fallback 默认 = 原现值，行为恒等；需灰度再显式加回）──
+# 仪式类基础权重 special 3.0 / morning 2.5 / night 2.0 / meal 0.8 / memory 2.0 /
+# mem0 1.5（乘 [cooldown].ritual_weight_scale）；时间窗口概率 morning 0.10 /
+# night 0.12 / meal 0.05；mem0 浮现 silent 6.0h / 概率 0.08。
 # 接话茬记忆兜底（pending_topics 为空时，近 48h 用户相关记忆搜索的概率门控）
 followup_memory_probability = 0.5
 

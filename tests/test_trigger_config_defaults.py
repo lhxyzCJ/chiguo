@@ -46,27 +46,29 @@ def _make_state(tmp: str, src_toml_text: str, now: datetime, **overrides) -> Chi
     return s
 
 
-# Q10 在 [trigger] 中新增的全部配置键（TOML 隔离部分）
+# Q10 在 [trigger] 中新增的配置键（TOML 隔离部分）。
+# #393 收敛后仅剩 5 键在 toml；另 11 键已删（走代码 fallback，见 P393_REMOVED_KEYS）。
 Q10_KEYS = [
-    "ritual_special_weight", "ritual_morning_weight", "ritual_night_weight",
-    "ritual_meal_weight", "ritual_memory_weight", "ritual_mem0_weight",
-    "morning_probability", "night_probability", "meal_probability",
-    "mem0_surface_min_silent_hours", "mem0_surface_probability",
     "followup_memory_probability", "habit_probability",
     "playful_base_weight", "reflect_base_weight", "reflect_probability",
 ]
 
 # 每个键的代码 fallback 默认值（必须 == toml 现值 = 原硬编码值）
 EXPECTED_DEFAULTS = {
+    "followup_memory_probability": 0.5, "habit_probability": 0.06,
+    "playful_base_weight": 0.15, "reflect_base_weight": 0.08,
+    "reflect_probability": 0.08,
+}
+
+# #393 收敛删去的 11 键：ritual 权重 6 + 时间窗口概率 3 + mem0 浮现 2。
+# fallback 默认值 = 原 toml 现值 = 原硬编码值，删键行为恒等。
+P393_REMOVED_KEYS = {
     "ritual_special_weight": 3.0, "ritual_morning_weight": 2.5,
     "ritual_night_weight": 2.0, "ritual_meal_weight": 0.8,
     "ritual_memory_weight": 2.0, "ritual_mem0_weight": 1.5,
     "morning_probability": 0.10, "night_probability": 0.12,
     "meal_probability": 0.05,
     "mem0_surface_min_silent_hours": 6.0, "mem0_surface_probability": 0.08,
-    "followup_memory_probability": 0.5, "habit_probability": 0.06,
-    "playful_base_weight": 0.15, "reflect_base_weight": 0.08,
-    "reflect_probability": 0.08,
 }
 
 
@@ -117,9 +119,30 @@ def test_q10_missing_keys_identical_to_present():
     print("  OK test_q10_missing_keys_identical_to_present")
 
 
+def test_p393_removed_keys_absent_and_fallback_identical():
+    """#393：11 键已从 toml 删除；fallback 默认 = 原现值（删键行为恒等）。
+
+    两重守护：① toml [trigger] 无此 11 键；② 代码 fallback 默认值与原现值一致
+    （读 chiguo_trigger.py 的 .get("<key>", <default>) 默认参数）。"""
+    import re
+    cfg = tomllib.loads(Path("chiguo_proactive.toml").read_text(encoding="utf-8"))
+    trg = cfg.get("trigger", {})
+    for key in P393_REMOVED_KEYS:
+        assert key not in trg, f"[trigger].{key} 应已删除"
+    trg_src = Path("chiguo_trigger.py").read_text(encoding="utf-8")
+    for key, expected in P393_REMOVED_KEYS.items():
+        m = re.search(r'\.get\("%s",\s*([^)]+)\)' % re.escape(key), trg_src)
+        assert m, f"chiguo_trigger.py 缺 {key} 的 fallback 读取"
+        actual = float(m.group(1))
+        assert actual == expected, \
+            f"{key} fallback({actual}) != 原现值({expected})，删键不等价"
+    print("  OK test_p393_removed_keys_absent_and_fallback_identical")
+
+
 if __name__ == "__main__":
     print("test_trigger_config_defaults.py\n")
-    tests = [test_q10_toml_values_equal_fallbacks, test_q10_missing_keys_identical_to_present]
+    tests = [test_q10_toml_values_equal_fallbacks, test_q10_missing_keys_identical_to_present,
+             test_p393_removed_keys_absent_and_fallback_identical]
     _prev = os.environ.get("CHIGUO_MEM0_DISABLED")
     os.environ["CHIGUO_MEM0_DISABLED"] = "1"
     failed = 0
