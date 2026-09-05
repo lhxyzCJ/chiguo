@@ -36,6 +36,7 @@ import { dirname, join } from 'node:path'
 import { homeDir } from './home-dir.mjs'
 import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand, backupSessionFile } from './command-detect.mjs'
 import { msToNextCheck, rotateIfDue, defaultRotatePaths, writeActivity, cstDateStr } from './session-rotate.mjs'
+import { agentAnalysisArgs, agentRecallArgs, agentExtractArgs, agentVerifyArgs, daemonMemorySearchArgs, daemonRecallArgs, daemonUserMsgArgs, daemonAnalysisArgs, daemonScheduleChangeArgs, healthRecordArgs } from './cli-dto.mjs'
 // #99 A 路：askAgent（agent-run.mjs 统一入口）由阶段 4 集成接入；当前保留原 spawn 调用结构
 import { parseNdjson, extractAnalysis, resolveRepo, RUNNER, HOST } from '../scripts/agent-run.mjs'
 
@@ -212,7 +213,7 @@ export async function askAgent(text) {
       console.error('[agent-rpc] 失败,回退 spawn:', err instanceof Error ? err.message : String(err))
     }
   }
-  const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, '--prompt', text, '--analysis-mode'], {
+  const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, ...agentAnalysisArgs(text)], {
     timeout: 180_000,
     maxBuffer: 16 * 1024 * 1024,
   })
@@ -248,7 +249,7 @@ async function getAttention() {
 /** --memory-search 轻量读(回复侧 mem0 记忆检索):失败/畸形 → null(跳过注入继续 askAgent,不阻塞回复流)。 */
 async function getMemories(query) {
   try {
-    const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--memory-search', query], {
+    const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, ...daemonMemorySearchArgs(query)], {
       timeout: 30_000,
       maxBuffer: 4 * 1024 * 1024,
     })
@@ -308,7 +309,7 @@ async function askAgentWithAttention(text, att, mem) {
 async function firstAnalysis(text, runOverride) {
   if (typeof runOverride === 'function') return runOverride(text)
   const { stdout } = await runOverride.exec('node',
-    [AGENT_RUN_SCRIPT, '--prompt', text, '--analysis-mode'], { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
+    [AGENT_RUN_SCRIPT, ...agentAnalysisArgs(text)], { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
   const { analysis, reply } = extractAnalysis(parseNdjson(stdout))
   return { text: reply, analysis }
 }
@@ -317,7 +318,7 @@ async function firstAnalysis(text, runOverride) {
  * prompt 只放用户问题(#84 单通道,防 facts='[]' 覆盖真实事实)。
  * 返回 { text } 或 null(失败/漏检 → 调用方按普通回复,零额外调用)。 */
 async function runAgentRun({ mode, prompt, facts }, runOverride = null) {
-  const args = ['--prompt', prompt, '--schedule-recall', '--facts', facts]
+  const args = agentRecallArgs(prompt, facts)
   if (runOverride && typeof runOverride.exec === 'function') {
     const { stdout } = await runOverride.exec('node', [AGENT_RUN_SCRIPT, ...args],
       { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
@@ -351,7 +352,14 @@ export async function runWithRecall(text, runOverride = askAgent, existingAnalys
     ? { analysis: existingAnalysis }
     : await firstAnalysis(text, runOverride)
   if (first?.analysis?.recall) {
-    const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--schedule-recall', first.analysis.recall], {
+    // #391: recall 来自 LLM 产出，非干净字符串 → 视为无信号（null），不进 daemon
+    let recallArgs
+    try {
+      recallArgs = daemonRecallArgs(first.analysis.recall)
+    } catch {
+      return null
+    }
+    const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, ...recallArgs], {
       timeout: 30_000,
       maxBuffer: 4 * 1024 * 1024,
     })
@@ -380,9 +388,9 @@ export async function runWithAttention(text, runOverride = null) {
  *  U5 (#233, D1): recvId 为 handleMessage 对该条消息本地生成的 uuid，与 upgradeAnalysis 同传
  *  → daemon recv_dedup 按 id 精确判定补报升级（免 450s 窗口）；无则回退 text_sha+窗口逻辑。 */
 export async function recordUserMsg(text, recvId) {
-  const args = [DAEMON_SCRIPT, '--user-msg', text]
-  if (recvId) args.push('--recv-id', recvId)
   try {
+    // #391: argv 经 cli-dto 校验组装；非法入参 → 记错日志，不阻塞回复流
+    const args = [DAEMON_SCRIPT, ...daemonUserMsgArgs(text, recvId)]
     await execFileP(DAEMON_PY, args, {
       timeout: 30_000,
       maxBuffer: 4 * 1024 * 1024,
@@ -398,10 +406,9 @@ export async function recordUserMsg(text, recvId) {
  * 只补分析微调，不重复记账。失败不阻塞回复流。 */
 export async function upgradeAnalysis(text, analysis, recvId) {
   if (!analysis) return
-  const analysisJson = typeof analysis === 'string' ? analysis : JSON.stringify(analysis)
-  const args = [DAEMON_SCRIPT, '--user-msg', text, '--analysis', analysisJson]
-  if (recvId) args.push('--recv-id', recvId)
   try {
+    // #391: argv 经 cli-dto 校验组装；非法入参 → 记错日志，不阻塞回复流
+    const args = [DAEMON_SCRIPT, ...daemonAnalysisArgs(text, analysis, recvId)]
     await execFileP(DAEMON_PY, args, {
       timeout: 30_000,
       maxBuffer: 4 * 1024 * 1024,
@@ -416,8 +423,8 @@ export async function upgradeAnalysis(text, analysis, recvId) {
  * transition=down/up 时向 OWNER_ID 发告警/恢复消息。整体绝不抛错、绝不影响回复流。 */
 export async function recordAgentHealth(bot, outcome, reason = null) {
   try {
-    const args = [AGENT_HEALTH_SCRIPT, 'record', '--outcome', outcome]
-    if (reason) args.push('--reason', String(reason).slice(0, 100))
+    // #391: outcome 白名单校验（fail/send_fail/success），非法 → 记错日志返回 null
+    const args = [AGENT_HEALTH_SCRIPT, ...healthRecordArgs(outcome, reason)]
     const { stdout } = await execFileP(AGENT_HEALTH_PY, args, {
       timeout: 30_000,
       maxBuffer: 4 * 1024 * 1024,
@@ -651,19 +658,18 @@ function makeScheduleDeps(repoRoot) {
       const att = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--attention'], { timeout: 30_000 }).catch(() => ({ stdout: '{}' }))
       let attention = {}
       try { attention = JSON.parse(att.stdout) } catch {}
-      const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, '--prompt', original,
-        '--schedule-extract', '--attention', JSON.stringify(attention), '--week-num', String(attention.week_num ?? 1)],
+      const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, ...agentExtractArgs(original, attention)],
         { timeout: 180_000 })
       const res = JSON.parse(stdout)
       return res.parsed ?? { ok: false, error: 'no block' }
     },
     async verifyAgent(item, original) {
-      const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, '--prompt', original,
-        '--schedule-verify', '--item', JSON.stringify(item)], { timeout: 180_000 })
+      const { stdout } = await execFileP('node', [AGENT_RUN_SCRIPT, ...agentVerifyArgs(original, item)],
+        { timeout: 180_000 })
       return JSON.parse(stdout).parsed ?? { ok: false }
     },
     async runDaemon(item) {
-      const { stdout } = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--schedule-change', JSON.stringify(item)],
+      const { stdout } = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, ...daemonScheduleChangeArgs(item)],
         { timeout: 30_000 })
       return JSON.parse(stdout)
     },
@@ -827,7 +833,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     await queue.run(async () => {
       try {
         const r = await executeSpecialCommand(spawn, special, DAEMON_PY, DAEMON_SCRIPT)
-        console.log(`[special] ${special.daemon.join(' ')} → ok=${r.ok}`)
+        console.log(`[special] ${special.action} → ok=${r.ok}`)
         await bot.reply(msg, r.reply)
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err)
