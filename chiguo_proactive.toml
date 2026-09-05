@@ -421,6 +421,7 @@ memory_critical_mb = 1000  # 进程 RSS 大于此值 → critical
 [logging]
 retention_months = 12        # 归档保留月数（0 = 永不删除）
 archive_dir = "archive"      # 归档目录（相对于 daemon 工作目录）
+max_size_mb = 50             # 单文件最大 MB，达到即轮转（防止无界增长）
 
 # ────────────────────────────────────────────────────────────
 # [host] 主机/用户（哥哥）运维约束 + agent 调用配置（Phase 4 起由 scripts/agent-run.mjs 读取）

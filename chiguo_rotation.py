@@ -60,9 +60,11 @@ def log_rotation_event(kind: str, filename: str):
 
 def rotate_if_needed(log_paths: list[str],
                      config_path: str = "chiguo_proactive.toml"):
-    """检测每个日志文件是否需要按月轮转。
+    """检测每个日志文件是否需要按月或按大小轮转。
 
-    规则：文件 mtime 的月份 != 当前月份 → 移到 archive/ 目录。
+    规则：
+    1. 文件 mtime 的月份 != 当前月份 → 移到 archive/ 目录（月轮转）
+    2. 文件大小 >= max_size_mb → 立即轮转（大小轮转，防止单文件无界增长）
     同时清理超过保留期限的归档文件。
 
     Args:
@@ -72,6 +74,7 @@ def rotate_if_needed(log_paths: list[str],
     config = _load_config(config_path)
     retention = config.get("retention_months", 12)
     archive_dir = _anchor_archive_dir(config.get("archive_dir", "archive"))
+    max_size_mb = int(config.get("max_size_mb", 50))
 
     now = datetime.now(CST)
     current_month = now.strftime("%Y-%m")
@@ -81,6 +84,13 @@ def rotate_if_needed(log_paths: list[str],
         if not p.exists() or p.stat().st_size == 0:
             continue
 
+        # 规则 2: 大小轮转（优先，防止单文件无界增长）
+        size_mb = p.stat().st_size / (1024 * 1024)
+        if size_mb >= max_size_mb:
+            _rotate_one(p, archive_dir, now)
+            continue
+
+        # 规则 1: 月轮转
         mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=CST)
         if mtime.strftime("%Y-%m") == current_month:
             continue  # 当月，不轮转
@@ -189,14 +199,16 @@ if __name__ == "__main__":
     p.add_argument("--dry-run", action="store_true", help="仅显示将要轮转的文件")
     args = p.parse_args()
 
-    # Q24 (#275): 轮转名单含对话日志 + 审计日志（chiguo_state_audit.jsonl）。
+    # Q24 (#275): 轮转名单含对话日志 + 审计日志 + 事件审计（chiguo_events.jsonl）。
     # 审计日志不再被明确排除——状态损坏/恢复事件的时间记也要按同一保留策略归档，
     # 保证排查可追溯、不无限增长。轮转事件本身（月轮转/强制轮转）落 chiguo_events.jsonl
     # 供 monitor 时序指标统计（复用 proactive_stats 的每日事件计数）。
+    # chiguo_events.jsonl 自身也纳入轮转，防止无界增长（按月/按大小 50MB）。
     log_files = [
         "chiguo_decisions.jsonl",
         "chiguo_messages.jsonl",
         "chiguo_state_audit.jsonl",
+        "chiguo_events.jsonl",
     ]
 
     if args.force:

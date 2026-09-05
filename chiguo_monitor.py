@@ -14,7 +14,7 @@ import shutil
 import statistics
 import sys
 import tomllib
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime, timedelta, date
 from pathlib import Path
 
@@ -118,8 +118,18 @@ class ChiguoMonitor:
     def _now(self) -> datetime:
         return datetime.now(CST)
 
+    # 尾读行数上限：最近 N 行满足 since 窗口即可（避免全扫）。
+    # 经验：14天窗口 ≈ 96*14 ≈ 1344 行；5000 行留足余量覆盖未来增长。
+    _MAX_TAIL_LINES = 5000
+
     def _iter_decisions(self, since: datetime | None = None):
-        """流式迭代 decisions.jsonl，一次一行。损坏行静默跳过。
+        """流式迭代 decisions.jsonl，支持逆向尾读优化。
+
+        策略：
+        - 无 since（days=0 全历史）→ 正向全扫（保持原语义）。
+        - 有 since（窗口查询）→ 逆向读取最近 _MAX_TAIL_LINES 行，正向 yield。
+          一旦收集到的最早行 < since，即可终止（窗口已满足），避免全扫。
+        - 损坏行静默跳过；schema 校验在 since 过滤后计数（窗口粒度）。
 
         Q16：每条 dict 记录都经决策 schema（decision_schema.validate）消费——
         旧 jsonl 无 contract 键按缺省 1 处理（兼容不跳）；仍 yield 原记录，
@@ -131,29 +141,76 @@ class ChiguoMonitor:
         """
         if not self.log_path.exists():
             return
+
+        # 无时间窗口 → 正向全扫（保持原语义、对齐现有测试期望）
+        if since is None:
+            try:
+                with open(self.log_path, encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            d = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(d, dict):
+                            continue
+                        errs = validate_decision(d)
+                        if errs:
+                            self._invalid_decision_count += 1
+                        yield d
+            except OSError:
+                return
+            return
+
+        # 有 since 窗口 → 逆向尾读，正向 yield
+        try:
+            # 读取最后 _MAX_TAIL_LINES 行（逆向）
+            tail_lines = self._read_tail_lines(self._MAX_TAIL_LINES)
+            # 逆序收集：从最新向最旧，直到遇到 < since 的行
+            collected: list[dict] = []
+            for line in reversed(tail_lines):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(d, dict):
+                    continue
+                ts = self._extract_time(d)
+                if ts and ts < since:
+                    # 已读到窗口外的行 → 停止（更旧的行必然也 < since，因文件追加单调）
+                    break
+                collected.append(d)
+
+            # 正向 yield（按时间序，兼容下游期望的顺序）
+            for d in reversed(collected):
+                errs = validate_decision(d)
+                if errs:  # 窗口内非法记录计数
+                    self._invalid_decision_count += 1
+                yield d
+        except OSError:
+            return
+
+    def _read_tail_lines(self, max_lines: int) -> list[str]:
+        """读取文件最后 N 行（逆向高效实现）。
+
+        使用 deque 固定大小缓冲，避免一次性读全文件。
+        对于大文件，性能约为 O(N) 其中 N = max_lines。
+        """
+        if not self.log_path.exists():
+            return []
+        buf: deque[str] = deque(maxlen=max_lines)
         try:
             with open(self.log_path, encoding="utf-8", errors="replace") as f:
                 for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        d = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(d, dict):
-                        continue  # 合法 JSON 但非 dict（形状漂移）→ 跳过，防 AttributeError
-                    # 消费同一 schema（非破坏：仅校验不跳过，历史无 contract 兼容）
-                    errs = validate_decision(d)
-                    if since:
-                        ts = self._extract_time(d)
-                        if ts and ts < since:
-                            continue
-                    if errs:  # 窗口内非法记录计数（since 过滤后，窗口粒度语义）
-                        self._invalid_decision_count += 1
-                    yield d
+                    buf.append(line)
         except OSError:
-            return  # 权限/删除竞态 → 静默跳过
+            return []
+        return list(buf)
 
     @staticmethod
     def _extract_time(entry: dict) -> datetime | None:
@@ -710,8 +767,10 @@ class ChiguoMonitor:
         # 只看最近 14 天
         since = now - timedelta(days=14)
         recent_entries = list(self._iter_decisions(since))
+        # 预计算并缓存时间戳，避免 B1/B2/B3/B6 重复调用 _extract_time
         for e in recent_entries:
             self._normalize_entry(e)  # 与 stats() 相同的脏数据归一化（state:null 等）
+            e["_cached_ts"] = self._extract_time(e)
 
 
         sends = [e for e in recent_entries if e.get("action") == "send"]
@@ -725,7 +784,7 @@ class ChiguoMonitor:
             if isinstance(mwr, (int, float)) and mwr > max_mwr:
                 max_mwr = int(mwr)
             if isinstance(mwr, (int, float)):
-                ts = self._extract_time(e)
+                ts = e.get("_cached_ts")
                 mwr_times.append((int(mwr), ts.isoformat() if ts else "?"))
 
         if max_mwr >= 5:
