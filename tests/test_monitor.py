@@ -1240,3 +1240,34 @@ def test_collect_new_alerts_to_push():
         second = collect_new_alerts_to_push(mon, am)
         assert second == [], f"重复运行不应重推: {second}"
     print("  OK test_collect_new_alerts_to_push")
+
+
+def test_health_mem0_write_fail_alert():
+    """health() 应感知 mem0 写链故障：state.mem0_write.add_fail_count>0 → issues 告警。"""
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "decisions.jsonl"
+        log.write_text("")
+        state = Path(td) / "state.json"
+        state.write_text(json.dumps({
+            "_version": 10,
+            "last_tick": datetime.now(CST).isoformat(),
+            "mem0_write": {"add_fail_count": 3,
+                           "last_error": [1720000000.0, "add_timeout", "mem0 add 超时"]},
+        }))
+        cfg = Path(td) / "chiguo_proactive.toml"
+        cfg.write_text("")
+        mon = ChiguoMonitor(str(log), str(state), config_path=str(cfg))
+        h = mon.health()
+        assert "mem0_write" in h, f"health() missing 'mem0_write' key: {list(h.keys())}"
+        assert h["mem0_write"]["add_fail_count"] == 3
+        assert any("写链" in i for i in h["issues"]), f"写失败应进 issues: {h['issues']}"
+        # 写失败不影响主链路 → 不置 healthy=False
+        assert h["healthy"] is True
+        # 无故障快照 → 无告警
+        state.write_text(json.dumps({
+            "_version": 10,
+            "last_tick": datetime.now(CST).isoformat(),
+        }))
+        h2 = mon.health()
+        assert not any("写链" in i for i in h2["issues"])
+    print("  OK test_health_mem0_write_fail_alert")
