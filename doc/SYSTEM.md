@@ -1663,6 +1663,8 @@ fail_threshold = 3   # agent 假死判定：连续失败次数 ≥ 此值 → �
 
 `chiguo_monitor.py` 提供零依赖的结构化监控。流式解析 `chiguo_decisions.jsonl`，一次遍历完成所有聚合。
 
+> 实现位置（#378）：`chiguo_monitor.py` 为兼容 shim（对外 import/CLI 零变化），实现按视图拆入 `monitor/` 包——`base.py`（ChiguoMonitor 壳 + I/O/helper + report/export + main）、`stats.py`、`alerts.py`（+ AlertManager）、`health.py`、`helpers.py`。
+
 ### 10.1 CLI
 
 ```bash
