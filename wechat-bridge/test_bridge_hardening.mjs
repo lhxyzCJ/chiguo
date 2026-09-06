@@ -166,8 +166,10 @@ t('text仅length不回显完整prompt: handleAgentPrompt error不泄漏prompt全
   // 这里改为验证 recordAgentHealth/bridge error路径的slice(0,100)不含完整prompt：直接调handleAgentPrompt的deny sanitization
   // 若AGENT_RPC_ENABLED=false，handleAgentPrompt直接503；我们测其error路径prompt不泄漏：先测isLocalHost/isLocalOrigin保持，再测error sanitization单元
   globalThis.__agentRpc = prevRpc
-  // 备用：直接验证sanitize函数逻辑——读取bridge源码是否包含slice(0,100)且日志仅length
+  // 备用：直接验证sanitize函数逻辑——读取源码是否包含slice(0,100)且日志仅length
+  // （#380 barrel拆分后 sanitizeError 驻 util.mjs，经 bridge.mjs re-export 透出，行为不变）
   const bridgeSrc = readFileSync(join(REPO, 'wechat-bridge', 'bridge.mjs'), 'utf8')
+  const utilSrc = readFileSync(join(REPO, 'wechat-bridge', 'util.mjs'), 'utf8')
   // 日志应仅length
   assert.ok(bridgeSrc.includes('text.length') && bridgeSrc.includes('chars'), '日志应仅length chars')
   // error响应不应直接返回prompt全文：验证handleAgentPrompt catch中对error做截断/脱敏（slice 100内且不含SECRET_PROMPT长串）
@@ -175,7 +177,9 @@ t('text仅length不回显完整prompt: handleAgentPrompt error不泄漏prompt全
   // 模拟red逻辑：若bridge对error未过滤，secretPrompt长500字符会在error中完整出现
   // 这里我们做真实失败注入：启动带RPC的server，触发错误，看返回是否含长prompt
   // 为简化且确定RED→GREEN，我们断言当前源码的error处理包含对超长prompt的截断或过滤；若没有则测试失败以驱动修复
-  const hasSanitize = bridgeSrc.includes('slice(0, 100)') || bridgeSrc.includes('slice(0,100)')
+  const hasSanitize = bridgeSrc.includes('slice(0, 100)') || bridgeSrc.includes('slice(0,100)') ||
+    utilSrc.includes('slice(0, 100)') || utilSrc.includes('slice(0,100)') ||
+    bridgeSrc.includes('sanitizeError')
   assert.ok(hasSanitize, '应有slice(0,100)截断')
   // 关键断言：错误消息长度应被限制在100内，即使原错误包含长prompt，也不应返回完整500字符prompt
   const fakeError = `LLM failed for prompt: ${secretPrompt}`
