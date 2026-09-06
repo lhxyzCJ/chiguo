@@ -1012,7 +1012,14 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 | 文件 | 职责 |
 |------|------|
-| `bridge.mjs` | HTTP 服务：askAgent + /send + /agent/prompt + TurnQueue 串行 + 鉴权 + 每日会话轮换 |
+| `bridge.mjs` | barrel（#380）：main 启动装配 + 全量 re-export（入口路径不变） |
+| `env.mjs` / `util.mjs` | env 快照（端口/token/owner/白名单/路径常量）/ withTimeout + sanitizeError |
+| `queue.mjs` | TurnQueue 串行（同一 agent 会话禁并发 turn，R10 预算版排队） |
+| `agent.mjs` | askAgent 全家 + attention/recall 注入 + /agent/prompt 处理器 + checkAgentRunScript |
+| `health.mjs` | recordAgentHealth（healthRecordArgs DTO 白名单版；旧手拼影子已删） |
+| `send.mjs` | HTTP 端点 + 鉴权中间件整体（Content-Type→Origin→Host→token→1M 上限）+ sendMessage |
+| `schedule.mjs` | 澄清存取 + 命令提取/校验/写入 + 会话轮换装配 |
+| `message.mjs` | 消息管线（handleMessage + askChat + 白名单门） |
 | `command-detect.mjs` | 特殊命令规则化检测（纪念日/假期 → CLI，不经 agent） |
 | `agent-rpc.mjs` | 常驻 agent RPC（analysis chiguo-main / send chiguo-send 双会话） |
 | `session-rotate.mjs` | 主会话每日轮换（每小时检查 + 空闲保护 + 幂等标记 + RPC 先杀进程） |
