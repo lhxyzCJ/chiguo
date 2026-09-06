@@ -26,7 +26,8 @@ _EXPECTED_MRO = {
                      "ContextMixin", "AccountingMixin", "LoopSenderMixin",
                      "DecisionEngineBase", "object"),
     ChiguoState: ("ChiguoState", "ScheduleMixin", "EmotionMixin",
-                  "InteractionMixin", "object"),
+                  "InteractionMixin", "PersonalityMixin", "MoodMixin",
+                  "PendingMixin", "LimitsMixin", "object"),
 }
 
 
