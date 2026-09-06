@@ -109,7 +109,7 @@ REF_CHECKS = [
     ("[health].fail_threshold", "scripts/agent_health.py", "fail_threshold"),
     ("[wechat].wechat_recipient", "scripts/chiguo-tick.sh", "wechat_recipient"),
     ("[memory].mem0_qdrant_path", "memory/factory.py", "mem0_qdrant_path"),
-    ("[cooldown].longing_break_enabled", "state/interaction.py", "longing_break_enabled"),
+    ("[cooldown].longing_break_enabled", "state/limits.py", "longing_break_enabled"),
     ("[trigger].reply_feedback_enabled", "chiguo_trigger.py", "reply_feedback_enabled"),
     # #393 收敛：ritual_special_weight 等 11 键已删（fallback 守护见
     # test_trigger_config_defaults.test_p393_removed_keys_absent_and_fallback_identical）
