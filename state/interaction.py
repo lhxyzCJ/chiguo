@@ -28,7 +28,7 @@ class InteractionMixin(PersonalityMixin, MoodMixin, PendingMixin, LimitsMixin):
             logging.debug("bayesian 记录失败: %s", __import__('traceback').format_exc(), exc_info=False)
 
     def on_user_message(self, now: datetime, msg_length: int = 10, analysis: dict | None = None):
-        """收到主人消息：情绪骤降编排（helpers 纯函数可测）。"""
+        """收到用户消息：情绪骤降编排（helpers 纯函数可测）。"""
         latency_h = self._compute_latency(now)
         lat_mult = self._latency_multiplier(latency_h) if latency_h is not None else {}
         cfg = self.config.get("cooldown", {})

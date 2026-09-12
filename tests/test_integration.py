@@ -255,7 +255,7 @@ def test_8_morning_window(cfg):
 
 
 def test_9_user_msg_reduces_loneliness(cfg):
-    """收到主人消息 → 孤独骤降"""
+    """收到用户消息 → 孤独骤降"""
     s = make_state(cfg, loneliness=70)
     before = s.emotion.loneliness
     s.on_user_message(dt(2026, 6, 15, 14, 0), msg_length=15)

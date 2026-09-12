@@ -84,7 +84,7 @@ class Demo:
             self.state.cooldown.mark_night_sent()
 
     def user_msg(self, text: str):
-        print(f"\n{Color.GRN}📩 主人: {text}{Color.R}")
+        print(f"\n{Color.GRN}📩 用户: {text}{Color.R}")
         self.state.on_user_message(self.sim_now, len(text))
 
     def render(self):
@@ -125,7 +125,7 @@ class Demo:
         # 节假日行（优先级最高）
         hol = s.get("holiday", {})
         if hol.get("is_holiday"):
-            print(f"{Color.B}{Color.MAG}║{Color.R} {Color.GRN}🎉 {hol['name']}假期！主人放假{Color.R}")
+            print(f"{Color.B}{Color.MAG}║{Color.R} {Color.GRN}🎉 {hol['name']}假期！用户放假{Color.R}")
         elif hol.get("is_makeup_workday"):
             print(f"{Color.B}{Color.MAG}║{Color.R} {Color.YEL}📅 调休日，今天要上课{Color.R}")
         elif hol.get("is_weekend"):

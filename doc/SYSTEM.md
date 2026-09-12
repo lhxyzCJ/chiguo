@@ -812,7 +812,7 @@ bridge 规则化检测"记住X月X日(是)XX / YYYY年X月X日(是|为|要)XX / 
 | `warmth` | -1.0~1.0 | 情感温度。负=冷淡，正=温暖 |
 | `effort` | 0.0~1.0 | 用心程度 |
 | `attention` | 0.0~1.0 | 对迟菓的关注度 |
-| `user_mood` | calm\|low\|distressed\|happy\|angry | 主人此刻情绪（v1.11，可选；缺失/非法 → calm 零效果） |
+| `user_mood` | calm\|low\|distressed\|happy\|angry | 用户此刻情绪（v1.11，可选；缺失/非法 → calm 零效果） |
 | `user_mood_intensity` | 0.0~1.0 | 情绪强度（v1.11，可选；缺失/非数值 → 0） |
 | `recall` | 文本 | 记忆检索词（涉及登记事实/过去日期时给，否则省略；v9） |
 
@@ -2022,7 +2022,7 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 
 | 哥哥说 | 执行 |
 |--------|------|
-| (哥哥/主人)记住X月X日(是)XX | `--anniversary "add anniversary MM-DD <名称>"` |
+| (哥哥)记住X月X日(是)XX | `--anniversary "add anniversary MM-DD <名称>"` |
 | YYYY年X月X日(是/为/要)XX / X月X日要XX | `--schedule-change {"kind":"reminder",...}`（一次性提醒） |
 | 有哪些纪念日 / 纪念日列表 | `--anniversary list` |
 | 放假了 / 放暑假了 / 我放假了 | `--break on`（**无限期** manual_override） |

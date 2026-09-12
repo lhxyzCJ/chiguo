@@ -2,7 +2,7 @@
  * 从 bridge.mjs 纯搬运；鉴权中间件（Content-Type→Origin→Host→token→1M 上限）整体搬运，不得拆散。
  * 依赖 env + agent（handleAgentPrompt）+ util。 */
 import { createServer } from 'node:http'
-import { SEND_PORT, SEND_TIMEOUT_MS, BRIDGE_TOKEN, OWNER_ID, isLocalHost, isLocalOrigin } from './env.mjs'
+import { SEND_PORT, SEND_TIMEOUT_MS, BRIDGE_TOKEN, currentOwnerId, isLocalHost, isLocalOrigin } from './env.mjs'
 import { handleAgentPrompt } from './agent.mjs'
 import { withTimeout } from './util.mjs'
 
@@ -81,7 +81,7 @@ export async function sendMessage(payload, bot) {
   const { to, text } = payload ?? {}
   if (typeof to !== 'string' || !to.trim()) return { status: 400, ok: false, error: 'to 必填' }
   if (typeof text !== 'string' || !text.trim()) return { status: 400, ok: false, error: 'text 必填' }
-  if (to !== OWNER_ID) return { status: 403, ok: false, error: 'forbidden recipient' }
+  if (to !== currentOwnerId()) return { status: 403, ok: false, error: 'forbidden recipient' }
   // #224: 服务端拒发 "prepare failed" = context_token 过期（微信侧无公开 TTL，
   // 实测最后一次收到用户消息后约 35h 失效；每次收到用户消息自动刷新）。
   // 显式提示恢复路径，避免误判为网络/登录问题而盲目重扫码。

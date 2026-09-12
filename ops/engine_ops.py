@@ -49,8 +49,8 @@ _CONSOLIDATE_TIMEOUT_S = 30.0
 class AccountingMixin(DecisionEngineBase):
         def record_user_message(self, text: str, analysis_json: str | None = None,
                                 recv_id: str | None = None):
-            """记录哥哥消息（确定性回传）。
-            U5 (#233, D1): recv_id 精确去重——bridge 对每条主人消息本地生成
+            """记录用户消息（确定性回传）。
+            U5 (#233, D1): recv_id 精确去重——bridge 对每条用户消息本地生成
             crypto.randomUUID() 作为 --recv-id，recordUserMsg 与 upgradeAnalysis 两次
             调用携带同一 id → daemon 以 id 精确判定补报升级（同 id → 只补分析账，免
             450s 窗口）。无 recv_id（CLI 手动/测试/老调用）→ 回退 text_sha+窗口逻辑

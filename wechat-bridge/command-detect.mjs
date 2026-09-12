@@ -54,8 +54,8 @@ export function detectSpecialCommand(text) {
   if (!t || t.length > MAX_LEN) return null
   if (/[吗？?]$/.test(t) || /^(你|您)/.test(t)) return null  // 问句/对话式提问不拦截
 
-  // 1) 纪念日：记住X月X日(是|为)?XX → add anniversary MM-DD <name>（哥哥/主人 前缀兼容）
-  let m = t.match(/^(?:哥哥|主人)?记住\s*(\d{1,2})月(\d{1,2})日\s*(?:是|为)?\s*(.+)$/)
+  // 1) 纪念日：记住X月X日(是|为)?XX → add anniversary MM-DD <name>（哥哥前缀兼容）
+  let m = t.match(/^(?:哥哥)?记住\s*(\d{1,2})月(\d{1,2})日\s*(?:是|为)?\s*(.+)$/)
   if (m && isValidMonthDay(Number(m[1]), Number(m[2]))) {
     const mm = String(Number(m[1])).padStart(2, '0')
     const dd = String(Number(m[2])).padStart(2, '0')

@@ -520,7 +520,7 @@ def _random_entry(time: datetime, seed: int = 42) -> dict:
         },
         "context": {
             "trigger_type": rng.choice(triggers),
-            "situation": rng.choice(["主人已经很久没发消息了", "早安问候", "晚安问候", "心情不错", None]),
+            "situation": rng.choice(["哥哥已经很久没发消息了", "早安问候", "晚安问候", "心情不错", None]),
             "topic": rng.choice(["课表提醒", "节气问候", "随机记忆", None]),
         },
     }

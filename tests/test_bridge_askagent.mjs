@@ -317,7 +317,7 @@ const botStub = () => {
   }
 }
 const msg = (text) => ({ userId: 'owner@im.wechat', text })
-// U5 (#233): handleMessage 对每条主人消息生成 --recv-id（uuid 随机）→ 断言存在性 + 其余参数
+// U5 (#233): handleMessage 对每条用户消息生成 --recv-id（uuid 随机）→ 断言存在性 + 其余参数
 const assertRecvUserMsg = (args, text, analysis) => {
   assert.strictEqual(args[0], '--user-msg')
   assert.strictEqual(args[1], text)
@@ -449,12 +449,12 @@ t('F-SEC-03: 白名单内非 owner 仍不进状态/记忆/命令路径（C1 门�
 })
 t('F-SEC-03: owner → 正常对话（白名单不影响 owner，不回归）', async () => {
   const pb = pLines().length
-  setResponse({ ok: true, text: '主人专属回复', analysis: { warmth: 0.9, effort: 0.1 } })
+  setResponse({ ok: true, text: '用户专属回复', analysis: { warmth: 0.9, effort: 0.1 } })
   const bot = botStub()
   const r = await handleMessage('正文消息', msg('正文消息'), bot, queue, { whitelist: [] })
   assert.strictEqual(r, 'agent')
   assert.strictEqual(pLines().length, pb + 1, 'owner 应正常调 LLM')
-  assert.deepStrictEqual(bot.replies, ['主人专属回复'])
+  assert.deepStrictEqual(bot.replies, ['用户专属回复'])
 })
 t('F-SEC-03: 缺省配置（无白名单）→ 非 owner 拒答（安全默认 = 仅 owner）', async () => {
   // 空白名单 = 仅 owner 可对话（自包含；不回退宿主 toml/env 配置，杜绝环境耦合导致测试翻转）
@@ -484,6 +484,43 @@ t('checkAgentRunScript: 不存在路径 → 错误文案含该路径', () => {
   const missing = `${FAKE_AGENT}.does-not-exist`
   const err = checkAgentRunScript(missing)
   assert.ok(typeof err === 'string' && err.includes(missing), '错误应指明缺失的脚本路径')
+})
+
+// ── currentOwnerId：登录后真实 userId 优先于启动快照（快照在新登录后过期）──
+const { currentOwnerId } = await import('../wechat-bridge/env.mjs')
+const withStorage = async (creds, fn) => {
+  const prev = process.env.WECHAT_BRIDGE_STORAGE
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-owner-'))
+  try {
+    if (creds !== null) writeFileSync(join(dir, 'credentials.json'), JSON.stringify(creds))
+    process.env.WECHAT_BRIDGE_STORAGE = dir
+    await fn()
+  } finally {
+    if (prev === undefined) delete process.env.WECHAT_BRIDGE_STORAGE
+    else process.env.WECHAT_BRIDGE_STORAGE = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+t('currentOwnerId: 登录态有真实 userId → 返回真实值', async () => {
+  await withStorage({ userId: 'real@im.wechat' }, async () => {
+    assert.strictEqual(currentOwnerId(), 'real@im.wechat')
+  })
+})
+t('currentOwnerId: 无登录态 → 回退启动快照', async () => {
+  await withStorage(null, async () => {
+    assert.strictEqual(currentOwnerId(), 'owner@im.wechat')
+  })
+})
+t('handleMessage: 快照是占位符但已登录 → 用户不被拒答、走 agent', async () => {
+  await withStorage({ userId: 'real@im.wechat' }, async () => {
+    const pb = pLines().length
+    setResponse({ ok: true, text: '登录后用户回复', analysis: { warmth: 0.8, effort: 0.2 } })
+    const bot = botStub()
+    const r = await handleMessage('今天天气怎么样', { userId: 'real@im.wechat', text: '今天天气怎么样' }, bot, queue)
+    assert.strictEqual(r, 'agent', `已登录用户不应拒答，实际 ${r}`)
+    assert.strictEqual(pLines().length, pb + 1, '已登录用户应正常调 LLM')
+    assert.deepStrictEqual(bot.replies, ['登录后用户回复'])
+  })
 })
 
 ;(async () => {

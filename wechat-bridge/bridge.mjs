@@ -8,13 +8,13 @@
  * v2 新增（迟菓主动链路）:
  *  - 主动发送端点: POST http://127.0.0.1:18790/send {"to","text"} → bot.send()
  *    （agent 生成消息后 curl 调用；仅允许发给 OWNER_ID）
- *  - 回复确定性回传: 收到主人消息先跑 chiguo_daemon.py --user-msg（无分析），
+ *  - 回复确定性回传: 收到用户消息先跑 chiguo_daemon.py --user-msg（无分析），
  *    standing order 随后由 agent 补 --analysis（daemon recv_dedup 升级语义，不重复记账）。
  *
  * v3 可移植化（随 chiguo 仓库部署）:
  *  - storageDir 默认 = 本文件同目录 credentials/（仅本地保留，不进 git（隐私）；
  *    失效时 SDK 打印二维码重新扫码，即"尝试保留"）。绝不写入 wechatbot 仓库。
- *  - 所有路径/端口/主人 ID 可用 WECHAT_BRIDGE_* 环境变量覆盖（scripts/wechat-bridge.sh 生成 .env）。
+ *  - 所有路径/端口/用户 ID 可用 WECHAT_BRIDGE_* 环境变量覆盖（scripts/wechat-bridge.sh 生成 .env）。
  *
  * v4（Phase 4 寄主迁移）:
  *  - 回复侧由 pi-agent 完成情绪分析与回复：askAgent 调 scripts/agent-run.mjs
@@ -76,6 +76,19 @@ async function main() {
   const storageDir = process.env.WECHAT_BRIDGE_STORAGE ?? DEFAULT_STORAGE
   mkdirSync(storageDir, { recursive: true, mode: 0o700 })
   chmodSync(storageDir, 0o700)
+  // 注意：SDK 只认 login()/run() 参数里的 callbacks，构造器 loginCallbacks 字段声明了但从未被读取
+  //（client.ts:41），回调必须在 login() 时显式传入，否则 SDK 自己打 "Scan this QR..." 日志，脚本抓不到码。
+  const loginCallbacks = {
+    onQrUrl: (url) => {
+      console.log('\n=== 微信扫码登录 ===')
+      // 二维码链接含登录凭证,默认打印;WECHAT_BRIDGE_QR_LOG=0 可关闭(日志分享/CI 场景防泄漏)
+      if (process.env.WECHAT_BRIDGE_QR_LOG === '0') console.log('[QR 隐藏] 设 WECHAT_BRIDGE_QR_LOG!=0 可打印二维码链接')
+      else console.log(url)
+      console.log('====================\n')
+    },
+    onScanned: () => console.log('已扫码，等待确认…'),
+    onExpired: () => console.log('二维码已过期，刷新中…'),
+  }
   const bot = new WeChatBot({
     storage: 'file',
     storageDir,
@@ -84,17 +97,7 @@ async function main() {
       windowMs: DEBOUNCE_MS,
       joinSeparator: '\n',
     },
-    loginCallbacks: {
-      onQrUrl: (url) => {
-        console.log('\n=== 微信扫码登录 ===')
-        // 二维码链接含登录凭证,默认打印;WECHAT_BRIDGE_QR_LOG=0 可关闭(日志分享/CI 场景防泄漏)
-        if (process.env.WECHAT_BRIDGE_QR_LOG === '0') console.log('[QR 隐藏] 设 WECHAT_BRIDGE_QR_LOG!=0 可打印二维码链接')
-        else console.log(url)
-        console.log('====================\n')
-      },
-      onScanned: () => console.log('已扫码，等待确认…'),
-      onExpired: () => console.log('二维码已过期，刷新中…'),
-    },
+    loginCallbacks,
   })
 
   const queue = new TurnQueue()
@@ -113,7 +116,7 @@ async function main() {
   })
   bot.on('session:expired', () => console.warn('[bot] 会话过期，尝试重登…'))
 
-  await bot.login()
+  await bot.login({ callbacks: loginCallbacks })
   // 该 fork 的 bot.start() 长轮询挂起不返回 → 主动发送端点必须先于 start 就绪
   startSendServer(bot, queue)
   armSessionRotation(queue)
