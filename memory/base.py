@@ -32,7 +32,7 @@ DEFAULT_EBBINGHAUS_STRENGTH = 168.0   # 记忆强度 S（小时），越大遗�
 DEFAULT_EBBINGHAUS_MIN_WEIGHT = 0.1   # 最低权重（不会彻底遗忘）
 
 # ── 搜索关键词（定位与迟菓/用户相关的记忆）─────────────────
-USER_KEYWORDS = ["迟菓", "菓菓", "主人", "chiguo", "微信", "互动", "早安", "晚安"]
+USER_KEYWORDS = ["迟菓", "菓菓", "哥哥", "chiguo", "微信", "互动", "早安", "晚安"]
 
 
 class MemoryBackend:

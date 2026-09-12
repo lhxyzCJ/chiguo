@@ -216,12 +216,12 @@ class HolidayParser:
     def _hint(self, d: date | datetime) -> str:
         if self.is_holiday(d):
             name = self.holiday_name(d)
-            return f"今天是{name}假期，主人放假在家，菓菓可以发消息。"
+            return f"今天是{name}假期，哥哥放假在家，菓菓可以发消息。"
         if self.is_makeup_workday(d):
             reason = self._makeup.get(d.date() if isinstance(d, datetime) else d, "")
             return f"今天是{reason}，虽然是周末但要上课。"
         if self.is_weekend(d):
-            return "今天是周末，主人没课。"
+            return "今天是周末，哥哥没课。"
         return "今天是普通工作日/上学日。"
 
 

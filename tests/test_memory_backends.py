@@ -240,7 +240,7 @@ def test_ebbinghaus_inherited():
         b = _fake_backend([
             {"id": "old", "memory": "一起看过的电影", "metadata": {"importance": 0.9},
              "created_at": _iso(30)},
-            {"id": "new", "memory": "主人新分享的记忆", "metadata": {"importance": 0.9},
+            {"id": "new", "memory": "用户新分享的记忆", "metadata": {"importance": 0.9},
              "created_at": _iso(1)},
         ], Path(td))
         r = b.search_with_forgetting("记忆", limit=5)

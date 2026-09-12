@@ -174,7 +174,7 @@ class AlertsMixin:
                     results.append({
                         "severity": "warn",
                         "type": "low_reply_rate",
-                        "message": f"过去14天回复率仅 {rate:.0%}（{replied}/{tracked}），主人可能逐渐疏远",
+                        "message": f"过去14天回复率仅 {rate:.0%}（{replied}/{tracked}），哥哥可能逐渐疏远",
                         "reply_rate": round(rate, 2),
                     })
 
@@ -195,7 +195,7 @@ class AlertsMixin:
                 results.append({
                     "severity": "info",
                     "type": "rapid_escalation",
-                    "message": f"过去24h孤独值暴涨 {delta:.0f}（{first_lo:.0f} → {last_lo:.0f}），主人可能异常沉默",
+                        "message": f"过去24h孤独值暴涨 {delta:.0f}（{first_lo:.0f} → {last_lo:.0f}），哥哥可能异常沉默",
                     "delta": round(delta, 1),
                 })
 

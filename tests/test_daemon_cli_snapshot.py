@@ -60,7 +60,7 @@ EXPECTED = {
 HELP_SNAPSHOT = {
     "version": "show program's version number and exit",
     "loop": "循环评估间隔秒数（最小60）",
-    "user_msg": "记录哥哥消息",
+    "user_msg": "记录用户消息",
     "analysis": "LLM情感分析JSON（配合 --user-msg 使用）",
     "recv_id": "bridge 每条用户消息本地生成的 uuid，用于 recv_dedup 精确去重（同 id 补报升级，不进 agent prompt；无则回退 text_sha+窗口逻辑）",
     "user_msg_file": "消息文本文件（配合 --analysis-file 使用）",

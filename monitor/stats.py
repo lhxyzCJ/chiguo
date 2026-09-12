@@ -221,7 +221,7 @@ class StatsMixin:
             for i in range(1, len(reply_events)):
                 prev = reply_events[i - 1]
                 curr = reply_events[i]
-                # messages_without_reply 下降 → 哥哥回复了
+                # messages_without_reply 下降 → 用户回复了
                 # 口径（与 alerts() B5 一致）：双方均为数值才比较；
                 # None/非数值视为未知，不计为回复变化（防止 prev=3, curr=None→0 误算成回复）
                 if (isinstance(curr["messages_without_reply"], (int, float))

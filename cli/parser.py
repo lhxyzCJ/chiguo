@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--loop", type=int, nargs="?", const=300, metavar="SECONDS",
                         help="循环评估间隔秒数（最小60）")
     parser.add_argument("--user-msg", type=str, default=None,
-                        help="记录哥哥消息")
+                        help="记录用户消息")
     parser.add_argument("--analysis", type=str, default=None,
                         help="LLM情感分析JSON（配合 --user-msg 使用）")
     parser.add_argument("--recv-id", type=str, default=None,
