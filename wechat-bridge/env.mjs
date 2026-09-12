@@ -3,6 +3,7 @@
  *  测试在动态 import 前设置 WECHAT_BRIDGE_* env；本模块无内部依赖，各模块 import 时保持先 env 后其他。 */
 import { resolveRepo, RUNNER, HOST } from '../scripts/agent-run.mjs'
 import { dirname, join } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 export const DEBOUNCE_MS = 4000
 // U8c: AGENT_RUN_SCRIPT 默认随仓库 scripts/ 部署(portable)，可用 WECHAT_BRIDGE_AGENT_RUN 覆盖;
@@ -22,6 +23,17 @@ export const SEND_PROMPT_QUEUE_WAIT_MS = Number(process.env.WECHAT_BRIDGE_SEND_P
 // #191: 未设置共享 token 时 /send 与 /agent/prompt 零鉴权 → main() FATAL 拒绝启动（require，而非跳过校验）。
 export const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
 export const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
+// 登录后生效的真实 owner：login 流程是“先启动（无登录态）→ 扫码后落盘 credentials.json”，
+// 启动快照 OWNER_ID 在新登录后必然过期（且 fresh 部署的 .env 里是占位符）。白名单门、/send
+// 鉴权、健康告警必须读实时值，否则主人消息会被当陌生人拒答、主动发送 403。
+export function currentOwnerId() {
+  try {
+    const dir = process.env.WECHAT_BRIDGE_STORAGE ?? DEFAULT_STORAGE
+    const uid = JSON.parse(readFileSync(join(dir, 'credentials.json'), 'utf8'))?.userId
+    if (typeof uid === 'string' && uid.trim()) return uid
+  } catch {}
+  return OWNER_ID
+}
 // F-SEC-03 (#316): 白名单模式 —— 仅白名单联系人可对话；缺省（两者皆空）= 仅 owner（安全默认）。
 export const REJECT_TEXT = process.env.WECHAT_BRIDGE_WHITELIST_REJECT
   ?? '这是迟菓的私人助手，暂不对陌生人开放哦'

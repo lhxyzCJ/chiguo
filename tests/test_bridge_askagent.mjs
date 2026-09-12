@@ -486,6 +486,43 @@ t('checkAgentRunScript: 不存在路径 → 错误文案含该路径', () => {
   assert.ok(typeof err === 'string' && err.includes(missing), '错误应指明缺失的脚本路径')
 })
 
+// ── currentOwnerId：登录后真实 userId 优先于启动快照（快照在新登录后过期）──
+const { currentOwnerId } = await import('../wechat-bridge/env.mjs')
+const withStorage = async (creds, fn) => {
+  const prev = process.env.WECHAT_BRIDGE_STORAGE
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-owner-'))
+  try {
+    if (creds !== null) writeFileSync(join(dir, 'credentials.json'), JSON.stringify(creds))
+    process.env.WECHAT_BRIDGE_STORAGE = dir
+    await fn()
+  } finally {
+    if (prev === undefined) delete process.env.WECHAT_BRIDGE_STORAGE
+    else process.env.WECHAT_BRIDGE_STORAGE = prev
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+t('currentOwnerId: 登录态有真实 userId → 返回真实值', async () => {
+  await withStorage({ userId: 'real@im.wechat' }, async () => {
+    assert.strictEqual(currentOwnerId(), 'real@im.wechat')
+  })
+})
+t('currentOwnerId: 无登录态 → 回退启动快照', async () => {
+  await withStorage(null, async () => {
+    assert.strictEqual(currentOwnerId(), 'owner@im.wechat')
+  })
+})
+t('handleMessage: 快照是占位符但已登录 → 主人不被拒答、走 agent', async () => {
+  await withStorage({ userId: 'real@im.wechat' }, async () => {
+    const pb = pLines().length
+    setResponse({ ok: true, text: '登录后主人回复', analysis: { warmth: 0.8, effort: 0.2 } })
+    const bot = botStub()
+    const r = await handleMessage('今天天气怎么样', { userId: 'real@im.wechat', text: '今天天气怎么样' }, bot, queue)
+    assert.strictEqual(r, 'agent', `已登录主人不应拒答，实际 ${r}`)
+    assert.strictEqual(pLines().length, pb + 1, '已登录主人应正常调 LLM')
+    assert.deepStrictEqual(bot.replies, ['登录后主人回复'])
+  })
+})
+
 ;(async () => {
   await runAll()
   console.log(`test_bridge_askagent: ${passed}/${tests.length} passed`)

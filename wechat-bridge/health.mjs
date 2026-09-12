@@ -2,7 +2,7 @@
  * 以 bridge.mjs 内联实现为准选主（healthRecordArgs DTO 白名单版），旧影子手拼版已删。 */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { AGENT_HEALTH_SCRIPT, AGENT_HEALTH_PY, OWNER_ID } from './env.mjs'
+import { AGENT_HEALTH_SCRIPT, AGENT_HEALTH_PY, currentOwnerId } from './env.mjs'
 import { healthRecordArgs } from './cli-dto.mjs'
 
 const execFileP = promisify(execFile)
@@ -19,7 +19,7 @@ export async function recordAgentHealth(bot, outcome, reason = null) {
     })
     const parsed = JSON.parse(stdout)
     if (parsed.transition !== 'none' && parsed.message) {
-      await bot.send(OWNER_ID, parsed.message)
+      await bot.send(currentOwnerId(), parsed.message)
         .catch((e) => console.error('[agent health alert send error]',
           e instanceof Error ? e.message : String(e)))
     }

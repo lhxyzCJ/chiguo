@@ -3,7 +3,7 @@
  * 不被任何模块 import（防循环），仅 barrel 组装 main 时使用。 */
 import { randomUUID } from 'node:crypto'
 import { detectSpecialCommand, executeSpecialCommand, detectScheduleIntent, detectSlashCommand, executeSlashCommand } from './command-detect.mjs'
-import { OWNER_ID, REJECT_TEXT, AGENT_RPC_ENABLED, BRIDGE_DIR, DAEMON_PY, DAEMON_SCRIPT, REPO_ROOT, isAllowedContact } from './env.mjs'
+import { currentOwnerId, REJECT_TEXT, AGENT_RPC_ENABLED, BRIDGE_DIR, DAEMON_PY, DAEMON_SCRIPT, REPO_ROOT, isAllowedContact } from './env.mjs'
 import { sanitizeError } from './util.mjs'
 import { spawn, askAgent, askAgentWithAttention, getAttention, getMemories, runWithRecall, recordUserMsg, upgradeAnalysis } from './agent.mjs'
 import { recordAgentHealth } from './health.mjs'
@@ -31,10 +31,13 @@ async function askChat(text, msg, bot, queue, askAgentFn) {
  * bot 需提供 reply(msg, text)/sendTyping(userId)；queue 提供 run(task)。 */
 export async function handleMessage(text, msg, bot, queue, deps = {}) {
   if (!text?.trim()) return null
-  const isOwner = msg.userId === OWNER_ID
+  // owner 取实时值（登录后落盘的 credentials.json 优先）：启动快照在新登录后过期，
+  // 用快照会把主人判成陌生人（F-SEC-03 拒答）。测试可经 deps.ownerId 注入。
+  const ownerId = deps.ownerId ?? currentOwnerId()
+  const isOwner = msg.userId === ownerId
   // F-SEC-03 (#316): 白名单门置顶于 C1 之前 —— 非 owner 必须命中白名单才放行，
   // 否则直接拒答固定文案且零 LLM 调用（成本攻击无门槛封闭）。owner 恒放行。
-  const isAllowed = isAllowedContact(msg.userId, deps.whitelist)
+  const isAllowed = isAllowedContact(msg.userId, deps.whitelist, ownerId)
   const repoRoot = deps.repoRoot ?? REPO_ROOT
   const askAgentFn = deps.askAgent ?? askAgent
   const extractAgent = deps.extractAgent ?? defaultExtractAgent
