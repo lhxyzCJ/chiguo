@@ -143,7 +143,7 @@ interaction_anxiety_energy = 1.0      # anxiety>70 → energy 恢复减速（ene
 # 只漂移 loneliness/anxiety/affection 三个关系感受维度；tsundere 全归人格层。
 
 # ── ① 用户情绪感知（user_mood；系数默认 0 = 关闭恒等，可灰度）──
-# 对标 ESConv：感知主人情绪（LLM 报 mood/intensity），幅度由系数表决定（决策零 LLM）。
+# 对标 ESConv：感知用户情绪（LLM 报 mood/intensity），幅度由系数表决定（决策零 LLM）。
 # ── B1: 事件类型化情绪 delta（默认关闭恒等，可灰度）──
 # 命中规则表（EVENT_DELTA：praise/criticism/contradiction/comfort/new_topic/question/complaint
 # → {loneliness/affection/anxiety} 直接加减）时按事件直接改情绪（不走 impact_inertia 阻尼）。

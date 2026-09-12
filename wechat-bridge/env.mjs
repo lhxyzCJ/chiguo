@@ -25,7 +25,7 @@ export const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
 export const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 // 登录后生效的真实 owner：login 流程是“先启动（无登录态）→ 扫码后落盘 credentials.json”，
 // 启动快照 OWNER_ID 在新登录后必然过期（且 fresh 部署的 .env 里是占位符）。白名单门、/send
-// 鉴权、健康告警必须读实时值，否则主人消息会被当陌生人拒答、主动发送 403。
+// 鉴权、健康告警必须读实时值，否则用户消息会被当陌生人拒答、主动发送 403。
 export function currentOwnerId() {
   try {
     const dir = process.env.WECHAT_BRIDGE_STORAGE ?? DEFAULT_STORAGE

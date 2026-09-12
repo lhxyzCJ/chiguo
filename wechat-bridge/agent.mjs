@@ -213,7 +213,7 @@ export async function runWithAttention(text, runOverride = null) {
   return (await askAgentWithAttention(text, att, mem)).text
 }
 
-/** 确定性记录主人消息到迟菓 daemon（无分析；随后的 askAgent 分析经 upgradeAnalysis 升级，daemon 去重）。失败不阻塞回复流。
+/** 确定性记录用户消息到迟菓 daemon（无分析；随后的 askAgent 分析经 upgradeAnalysis 升级，daemon 去重）。失败不阻塞回复流。
  *  U5 (#233, D1): recvId 为 handleMessage 对该条消息本地生成的 uuid，与 upgradeAnalysis 同传
  *  → daemon recv_dedup 按 id 精确判定补报升级（免 450s 窗口）；无则回退 text_sha+窗口逻辑。 */
 export async function recordUserMsg(text, recvId) {

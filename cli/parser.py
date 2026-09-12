@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--analysis", type=str, default=None,
                         help="LLM情感分析JSON（配合 --user-msg 使用）")
     parser.add_argument("--recv-id", type=str, default=None,
-                        help="bridge 每条主人消息本地生成的 uuid，用于 recv_dedup 精确去重（同 id 补报升级，不进 agent prompt；无则回退 text_sha+窗口逻辑）")
+                        help="bridge 每条用户消息本地生成的 uuid，用于 recv_dedup 精确去重（同 id 补报升级，不进 agent prompt；无则回退 text_sha+窗口逻辑）")
     # ── v6: 文件传参（避免 shell 转义问题，SKILL.md 已采用此路径）──
     parser.add_argument("--user-msg-file", type=str, default=None,
                         help="消息文本文件（配合 --analysis-file 使用）")

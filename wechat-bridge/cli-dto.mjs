@@ -123,7 +123,7 @@ export function daemonRecallArgs(recall) {
   return ['--schedule-recall', assertText(recall, 'recall')]
 }
 
-/** 确定性记录主人消息：--user-msg 原文（+ 可选 --recv-id 去重 id）。 */
+/** 确定性记录用户消息：--user-msg 原文（+ 可选 --recv-id 去重 id）。 */
 export function daemonUserMsgArgs(text, recvId) {
   assertText(text, 'user-msg')
   const args = ['--user-msg', text]

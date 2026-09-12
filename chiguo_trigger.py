@@ -487,7 +487,7 @@ def _should_meal(now: datetime, state: ChiguoState) -> bool:
 
 
 def _is_free_time(state: ChiguoState, now: datetime) -> bool:
-    """主人是否空闲（非上课、非深夜）。"""
+    """用户是否空闲（非上课、非深夜）。"""
     # 深夜不开(配置默认 0-8;生物钟学习达标后为学习窗口)
     qs, qe = state.cooldown.quiet_window()
     if in_quiet_window(now, qs, qe):

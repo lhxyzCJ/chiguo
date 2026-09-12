@@ -32,7 +32,7 @@ async function askChat(text, msg, bot, queue, askAgentFn) {
 export async function handleMessage(text, msg, bot, queue, deps = {}) {
   if (!text?.trim()) return null
   // owner 取实时值（登录后落盘的 credentials.json 优先）：启动快照在新登录后过期，
-  // 用快照会把主人判成陌生人（F-SEC-03 拒答）。测试可经 deps.ownerId 注入。
+  // 用快照会把用户判成陌生人（F-SEC-03 拒答）。测试可经 deps.ownerId 注入。
   const ownerId = deps.ownerId ?? currentOwnerId()
   const isOwner = msg.userId === ownerId
   // F-SEC-03 (#316): 白名单门置顶于 C1 之前 —— 非 owner 必须命中白名单才放行，
@@ -57,7 +57,7 @@ export async function handleMessage(text, msg, bot, queue, deps = {}) {
     return 'agent'
   }
 
-  // U5 (#233, D1): 每条主人消息本地生成 recv-id，recordUserMsg 与 upgradeAnalysis
+  // U5 (#233, D1): 每条用户消息本地生成 recv-id，recordUserMsg 与 upgradeAnalysis
   // 同传 → daemon recv_dedup 按 id 精确判定补报升级（免 450s 窗口；仅去重流，不进 agent prompt）
   const recvId = randomUUID()
   await queue.run(() => recordUserMsg(text, recvId))   // 确定性回传 daemon(命令消息 = --user-msg 无分析,dedup 继承)
