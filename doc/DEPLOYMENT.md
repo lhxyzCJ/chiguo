@@ -80,7 +80,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 `bash scripts/install_agent.sh`（阶段：探测 → ollama 检查 → auth 写 key → crontab/常驻注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。
 
-**切换 loop 常驻**：`CHIGUO_DAEMON_LOOP=1 bash scripts/install_agent.sh --yes` → 移除 chiguo-tick crontab（防与常驻双发）+ 安装 systemd `chiguo-daemon.service`（`--loop 900 --compact`）。
+**切换 loop 常驻**：`CHIGUO_DAEMON_LOOP=1 bash scripts/install_agent.sh --yes` → 移除三条 cron（tick/replan/alert，防双发/双推）+ 安装 systemd `chiguo-daemon.service`（`--loop 900 --compact`）。
 
 **手动停用 tick**：注释 crontab 中 `chiguo-tick.sh`/`replan-tick.sh` 行（行首加 `#`）即可停用自动推送。install_agent.sh 会把被注释条目识别为手动禁用并原样保留——不会删除/恢复（醒目提示；ask 模式额外确认后才继续处理活动旧条目）。
 
@@ -88,7 +88,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 `bash scripts/netease-api.sh install` → systemd `netease-api.service`（需 root）；扫码登录 `uv run python -m netease.bridge --login`。可 `--skip-netease`。
 
-部署完成后 crontab 有三条：`*/15 chiguo-tick.sh` → `logs/cron-tick.log`、`*/15 replan-tick.sh` → `logs/cron-replan.log`、`0 */2 * * * alert-cron.sh` → `logs/cron-alert.log`。**loop 常驻形态下** crontab 为 `replan-tick` + `alert-cron`（tick 条目互斥移除；告警推送两种形态都保留）。
+部署完成后 crontab 有三条：`*/15 chiguo-tick.sh` → `logs/cron-tick.log`、`*/15 replan-tick.sh` → `logs/cron-replan.log`、`0 */2 * * * alert-cron.sh` → `logs/cron-alert.log`。**loop 常驻形态下**三条全移除（tick/replan/alert 改由 loop 内 parity 接管：`_loop_send` + 15min replan `--check` + 2h alerts-push）。
 
 **告警微信推送 cron**（Q24/#275，随 `install_agent.sh` 自动注册）：`0 */2 * * * scripts/alert-cron.sh >> logs/cron-alert.log 2>&1`（调 `chiguo_daemon.py --alerts-push` 推送新增 critical/warn 告警）。**手动停用**：注释该行（行首加 `#`）即可，install_agent.sh 会把被注释条目识别为手动禁用并原样保留，不会自动恢复。
 
@@ -104,7 +104,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 | `~/.pi/agent/`（`auth.json` / `models.json`） | agent 配置与 key（含 mem0 LLM key 来源） | 否 | 拷贝 |
 | `/opt/netease-api` | 网易云 API 服务 | 否 | 重装 |
 | systemd：`chiguo-bridge.service` / `netease-api.service` / `chiguo-daemon.service`（loop 形态） | 常驻服务 | - | 部署时注册 |
-| crontab 2 条（loop 形态 1 条） | tick + replan-tick（loop 仅 replan） | - | install_agent.sh 注册 |
+| crontab 3 条（loop 形态 0 条） | tick + replan-tick + alert-cron（loop 形态三条全归 loop 内 parity） | - | install_agent.sh 注册 |
 
 ## 八、部署形态（默认 cron / 可选 loop 常驻）
 
@@ -114,6 +114,8 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 |---|---|---|
 | 决策评估 | crontab `*/15` tick.sh 冷启动 | systemd `chiguo-daemon.service`（`--loop 900` 动态休眠，PID 锁 + 配置热重载） |
 | agent 调用 | tick 冷启动 spawn agent-run；回复链 spawn（`WECHAT_BRIDGE_AGENT_RPC=1` 时回复链 RPC 优先） | 发送侧 `_loop_send` 经 bridge `/agent/prompt` 转发常驻 agent RPC；回复链同样 RPC 优先 |
+| 记忆检索 | 每消息 spawn `--memory-search`（冷启动 4~13s） | 同左；另可 `WECHAT_BRIDGE_MEMORY_RPC=1` 启用常驻只读边车（~0.5s，失败回退 spawn） |
+| replan/alerts | crontab（`*/15` replan-tick + `0 */2` alert-cron） | loop 内 parity（15min replan `--check` + 2h alerts-push），cron 三条全移除 |
 | 失败回退 | spawn（既有链） | RPC 失败自动回退 spawn（不变式） |
 | 回退 cron | - | `systemctl disable --now chiguo-daemon.service` + `CHIGUO_DAEMON_LOOP=0` 重跑 install_agent.sh |
 
@@ -121,7 +123,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 1. 微信扫码：`bash scripts/wechat-bridge.sh login`（交互终端直接显示 ASCII 二维码 + 备用登录链接，手机扫码；二维码过期自动换一张，扫最新的。等待时每 15 秒报一次进度；服务异常退出或二维码输出被隐藏会直接报错指引；等待中按 Ctrl-C 会连带停止服务。非交互/后台运行时仍提示看桥日志。终端二维码需 `qrencode`，缺则只打印链接，手机浏览器打开亦可）
 2. 网易云扫码（可选）：`uv run python -m netease.bridge --login`
-3. agent key：install_agent.sh 阶段 6 已写 `~/.pi/agent/auth.json`；换 key 重跑 `bash scripts/install_agent.sh --yes`
+3. agent provider（自填）：选任意 pi 支持的 provider（内置，或 `~/.pi/agent/models.json` 注册的自定义 OpenAI 兼容端点，见 `doc/AGENT_INTEGRATION.md`「接入任意模型 API」）→ 写 toml `[host]` 的 `provider`/`model` 与之对应 → key 写入 `~/.pi/agent/auth.json` 该 provider 条目（`export AGENT_API_KEY=...` 后重跑 `bash scripts/install_agent.sh --yes` 自动写，或手工编辑）；换 provider/key 重复本步即可
 4. 检查 toml `[host]` 的 provider/model（`chiguo_proactive.toml`）；`[wechat].wechat_recipient` 为占位符，登录后自动注入真实 openid，无需手改
 5. **回复侧白名单（可选，安全默认已生效）**：F-SEC-03 默认**仅 owner（`WECHAT_BRIDGE_OWNER`）可对话**，非 owner 一律拒答固定文案、零 LLM 调用。如需放行其他微信联系人，在 toml `[host]` 设置 `whitelist_contacts = ["联系人wxid", ...]`（白名单联系人仍不进状态/记忆/命令，仅对话）；亦可经 `.env` 的 `WECHAT_BRIDGE_WHITELIST`（逗号分隔）覆盖。
 
@@ -153,7 +155,7 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 1. **备份本地定制与运行时文件**：仓库内**跟踪**文件中的本地定制 `chiguo_proactive.toml` 会被 `git fetch && git reset --hard origin/main` 覆盖，先备份；运行时文件（`chiguo_state.json`、`chiguo_decisions.jsonl`、`chiguo_messages.jsonl`、`schedule_*.json`、`anniversaries.json`、`break_state.json`、`holidays.json`、`schedule_cache.json` 等，清单见「十一、迁移与备份」）**git 不跟踪**（见 .gitignore）——`git reset --hard` 不会动它们，但也没有版本保护，误删/损坏只能靠备份/拷贝恢复；`~/.chiguo/auth/`（登录态）与 `~/.pi/agent/`（agent key）在仓库外不受影响。
 2. **`.env` 键名迁移**：v1.7（pi 时代）的 `WECHAT_BRIDGE_PI_RUN` 等已废弃，v1.15 改用 `WECHAT_BRIDGE_AGENT_RUN`（agent 运行脚本路径）+ `WECHAT_BRIDGE_AGENT_RPC`（回复链 RPC 常驻开关，`=1` 启用）；完整 `PIRUN_*`/`PI_*` → `AGENTRUN_*`/`AGENT_*` 映射见 [AGENT_INTEGRATION.md「0.2 env 映射」](AGENT_INTEGRATION.md#02-env-映射)。升级后必须重跑 `bash scripts/wechat-bridge.sh install`（幂等，按新键名重写 `wechat-bridge/.env`，保留已配置 token 与登录态，不必重新扫码）。
 3. **显式重启服务**：`bash scripts/service.sh autostart` 只注册开机自启（`systemctl enable --now` 不会重启已运行实例）；升级后显式 `systemctl restart chiguo-bridge`，否则旧代码进程不换新。
-4. **crontab 会被恢复**：`bash scripts/install_agent.sh`（阶段 6/6b）会把 chiguo-tick 与 replan-tick 条目按当前路径整行替换/注册——若之前手动注释禁用或改过路径，升级后会被恢复为启用状态，注意核对（loop 形态反向切换还会停用 `chiguo-daemon.service`）。
+4. **crontab 注册规则**：`bash scripts/install_agent.sh`（阶段 6/6b/6d）只替换**活动**旧条目、注册缺失条目——被注释的手动禁用行原样保留、绝不恢复（ask 模式额外确认）；loop 形态反向移除三条活动条目 + 停用 `chiguo-daemon.service` 切回 cron 时重注册。
 5. **网易云两套登录态**：chiguo 侧 cookie（`~/.chiguo/auth/netease_cookie.txt`）与 `/opt/netease-api`（api-enhanced）服务内部登录态各自独立、分别校验；升级后分别确认，失效则重扫 `uv run python -m netease.bridge --login`（经本地 API 服务完成，两处状态一起刷新）。
 6. **记忆不迁移**：v1.15 前的 pi/lancedb 记忆**不迁移**，v1.15 起 mem0 从零开始（唯一记忆后端）；如需保留旧记忆先备份旧记忆库目录。
 

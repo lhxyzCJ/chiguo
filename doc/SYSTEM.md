@@ -55,8 +55,10 @@
 （`agent-rpc.mjs` 双会话：analysis `chiguo-main` / send `chiguo-send`）→ `POST /send` →
 `record_send_text`；RPC 失败自动回退 spawn（不变式）。`_loop_send` 对 bridge 的
 POST 走本地回环**绕系统代理**直连（防 http_proxy 劫持导致回环请求走代理失败降级，
-同 chiguo_envcheck `_urlopen`）。cron 仅剩 replan（判脏轮询）。
-与 cron tick **互斥**（install_agent.sh 阶段 6：loop 模式移除 tick 条目防双发；
+同 chiguo_envcheck `_urlopen`）。**Issue #450 全常驻**：loop 内 parity 接管 replan
+（15min `--check`）与 alerts-push（2h），cron 三条（tick/replan/alert）loop 形态下
+全部移除（install_agent.sh 阶段 6/6b/6d 互斥；被注释禁用行保留）。
+与 cron **互斥**（install_agent.sh 阶段 6/6b/6d：loop 模式移除三条 cron 条目防双发/双推；
 Q28 起**运行期自防锁互认**兜底：`--loop` 启动与 cron 单次主动评估（`--compact`）前先做
 形态互斥检测——loop 侧识别 cron 的 `chiguo-tick.lock` flock（chiguo-tick.sh 运行时持有）；
 cron 侧识别 loop 的 `chiguo_loop.pid` 存活——对方在跑则 loop 拒启（exit 1）/ cron 跳过本 tick
@@ -86,6 +88,7 @@ chiguo_daemon.py（薄 CLI facade，T10·Q2 拆分，Issue #268）
   │     │                    day_plan.py / resolve_when.py / attention.py / recall.py；确认 confirm.py；
   │     │                    复盘 replan.py）
   │     ├─ memory/ 包         → 记忆后端抽象（mem0 唯一后端）+ Ebbinghaus 遗忘
+  │     │                     + server.py 常驻只读边车（Issue #450 2C）
   │     │                       （v1.12 C1 确定性巩固 / C2 复习强化 / C3 死 metadata 清理 / C4 写全轮次 + B2 情绪标签）
   │     └─ chiguo_circadian.py → 生物钟学习（双作息双桶分桶学习：工作日/周末独立窗口 + 置信度，
   │                             听歌活跃合并计数）
@@ -1005,7 +1008,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `chiguo-tick.sh` | cron 门控入口（零模型，读 daemon 输出 → send → 5s 重试 → record-send；无 composer 兜底，health 告警/暂停） |
 | `ci-test.sh` | 全量测试链（py 走 pytest 收集 + mjs/sh 脚本链，计数动态化以 `scripts/ci-test.sh` 为准；CI 构建 vendor 真实 SDK） |
 | `agent-auth.sh` | agent 认证 |
-| `replan-tick.sh` | loop 形态 replan 判脏轮询 |
+| `replan-tick.sh` | cron 形态 replan 判脏轮询（loop 形态由 loop 内 parity 接管，见上） |
 | `chiguo-daemon.service` | systemd 单元（loop 常驻形态） |
 
 ### 6.6 `wechat-bridge/`（微信桥 Node 服务）
@@ -1022,6 +1025,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `message.mjs` | 消息管线（handleMessage + askChat + 白名单门） |
 | `command-detect.mjs` | 特殊命令规则化检测（纪念日/假期 → CLI，不经 agent） |
 | `agent-rpc.mjs` | 常驻 agent RPC（analysis chiguo-main / send chiguo-send 双会话） |
+| `memory-rpc.mjs` | 常驻只读记忆边车客户端（Issue #450 2C；`WECHAT_BRIDGE_MEMORY_RPC=1` 启用，失败回退 spawn；单 pending，TurnQueue 串行） |
 | `session-rotate.mjs` | 主会话每日轮换（每小时检查 + 空闲保护 + 幂等标记 + RPC 先杀进程） |
 | `package.json` | file: 本地依赖 @wechatbot/wechatbot（`file:./vendor/wechatbot`，真实 SDK） |
 | `vendor/wechatbot/` | vendor 入库的 wechatbot 真实 SDK（实测链 lhxyzCJ → corespeed-io，MIT，含 LICENSE；CI 从这里 npm ci + tsc 构建；package-lock.json 跟踪入库，npm ci 确定性安装） |
@@ -1138,6 +1142,8 @@ python3 chiguo_daemon.py --schedule-recall "明天"  # 安排回忆检索（日�
 python3 chiguo_daemon.py --schedule-change '{"kind":"reminder","when":{"date":"2026-08-08"},"label":"体检"}'
                                               # 写安排（reminder/add/cancel/move/exam_week/remove）
 python3 chiguo_daemon.py --memory-search "咖啡"  # 记忆检索（mem0 语义检索，回复侧注入用；mem0 不可用软降级返回空）
+                                              # 高频路径走常驻边车：python memory/server.py（stdio NDJSON，只读；
+                                              # bridge 经 memory-rpc.mjs 调用，WECHAT_BRIDGE_MEMORY_RPC=1 启用，失败回退 spawn）
 
 # 文件传参（避免 shell 转义问题）
 python3 chiguo_daemon.py --user-msg-file /tmp/user_msg.txt
