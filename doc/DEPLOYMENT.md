@@ -119,7 +119,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 ## 九、首次配置
 
-1. 微信扫码：`bash scripts/wechat-bridge.sh login`（二维码打印在桥日志）
+1. 微信扫码：`bash scripts/wechat-bridge.sh login`（交互终端直接打印登录链接 + ASCII 二维码，手机扫码；二维码过期自动刷新重打，扫最新的一张。非交互/后台运行时仍提示看桥日志。终端二维码需 `qrencode`，缺则只打印链接，手机浏览器打开亦可）
 2. 网易云扫码（可选）：`uv run python -m netease.bridge --login`
 3. agent key：install_agent.sh 阶段 6 已写 `~/.pi/agent/auth.json`；换 key 重跑 `bash scripts/install_agent.sh --yes`
 4. 检查 toml `[host]` 的 provider/model（`chiguo_proactive.toml`）；`[wechat].wechat_recipient` 为占位符，登录后自动注入真实 openid，无需手改

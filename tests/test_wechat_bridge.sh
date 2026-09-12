@@ -38,14 +38,27 @@ STUB
 cat > "$TMP/bin/pgrep" <<'STUB'
 #!/usr/bin/env bash
 [ -n "${FAKE_PID:-}" ] && echo "$FAKE_PID" && exit 0
+[ -n "${PGREP_FLAG:-}" ] && [ -f "$PGREP_FLAG" ] && echo 99999 && exit 0
 exit 1
+STUB
+cat > "$TMP/bin/node" <<'STUB'
+#!/usr/bin/env bash
+# 桩 bridge：往桥日志追加一个二维码块，模拟 SDK onQrUrl，然后挂起
+{
+echo ""
+echo "=== 微信扫码登录 ==="
+echo "https://login.test/qr-12345"
+echo "===================="
+} >> "$WECHAT_BRIDGE_LOG"
+[ -n "${PGREP_FLAG:-}" ] && touch "$PGREP_FLAG"
+sleep 25
 STUB
 cat > "$TMP/bin/pkill" <<'STUB'
 #!/usr/bin/env bash
 echo "pkill $*" >> "$PKILL_LOG"
 exit 0
 STUB
-for t in git npm pgrep pkill bash sleep; do chmod +x "$TMP/bin/$t" 2>/dev/null || true; done
+for t in git npm pgrep pkill node bash sleep; do chmod +x "$TMP/bin/$t" 2>/dev/null || true; done
 
 # 假上游 LICENSE fixture：`install update` 从伪上游 clone 后须拷入 vendor
 mkdir -p "$TMP"
@@ -198,5 +211,20 @@ set +e; OUT=$(HOME="$TMP/home" bash scripts/wechat-bridge.sh install 2>&1); RC=$
 grep -q "WECHAT_BRIDGE_OWNER=owner@im.wechat" "$TMP/repo/wechat-bridge/.env" \
   || fail "未登录时应注入占位符: $(cat "$TMP/repo/wechat-bridge/.env")"
 pass "未登录 → .env 占位符收件人"
+
+# ── 用例 12: 交互终端 login → 日志二维码打屏 + 登录链接（QR_WAIT 限时，桩 node 模拟 SDK onQrUrl）──
+export PGREP_FLAG="$TMP/bridge-up"
+rm -f "$PGREP_FLAG" "$TMP/home/.chiguo/auth/wechat/credentials.json"
+unset FAKE_PID
+set +e; OUT=$(WECHAT_BRIDGE_QR_WAIT=8 script -qec "bash scripts/wechat-bridge.sh login" /dev/null 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "TTY login 期望 0 实得 $RC（$OUT）"
+echo "$OUT" | grep -q "https://login.test/qr-12345" || fail "TTY login 未打印登录链接（$OUT）"
+echo "$OUT" | grep -q "登录链接" || fail "TTY login 缺少链接提示（$OUT）"
+if command -v qrencode >/dev/null 2>&1; then
+  echo "$OUT" | grep -q "40;37;1m" || fail "TTY login 未渲染终端二维码"
+  pass "TTY login：链接 + 终端二维码打屏"
+else
+  pass "TTY login：链接打屏（本机缺 qrencode，跳过渲染断言）"
+fi
 
 echo "test_wechat_bridge: 通过"
