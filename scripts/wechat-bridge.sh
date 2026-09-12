@@ -44,40 +44,62 @@ fail() { printf '\033[1;31m[wechat-bridge]\033[0m %s\n' "$*"; exit 2; }
 has_credentials() { [ -f "$WX_STORAGE/credentials.json" ]; }
 
 # 登录二维码打屏：只在交互终端生效（[ -t 1 ]），CI/后台/测试走旧提示。
-# 轮询 $LOG_FILE 中 $1 行之后新出现的二维码块 → 终端打印登录链接 + qrencode
+# 轮询 $LOG_FILE 中 $1 行之后新出现的二维码块 → 终端打印备用登录链接 + qrencode
 # 渲染 ASCII 二维码；二维码过期刷新自动重打；出现 credentials.json 即成功。
-# 超时/无码返回 0（pending 非错误）。限时可调：WECHAT_BRIDGE_QR_WAIT（秒，默认 300）。
+# 等待过程每 15 秒报一次进度；进程退出或二维码输出被隐藏时直接报错。
+# 限时可调：WECHAT_BRIDGE_QR_WAIT（秒，默认 300）。Ctrl-C 只停止等待，不杀后台服务。
 QR_WAIT_SECS="${WECHAT_BRIDGE_QR_WAIT:-300}"
 wait_for_qr() {
     local since_line="$1"
-    local deadline=$(( $(date +%s) + QR_WAIT_SECS ))
-    local last_qr=""
-    say "等待扫码（最长 ${QR_WAIT_SECS}s；二维码过期会自动刷新重打，扫最新的一张）..."
-    while [ "$(date +%s)" -lt "$deadline" ]; do
+    local start_ts end_ts next_heartbeat last_qr=""
+    start_ts="$(date +%s)"
+    end_ts=$((start_ts + QR_WAIT_SECS))
+    next_heartbeat=$((start_ts + 15))
+    say "请用微信扫码登录。二维码出来后会直接显示在这里；过期会自动换一张，扫最新的一张就行。"
+    trap 'warn "已停止等待。微信服务还在后台准备，可以稍后运行 tail -30 $LOG_FILE 查看最新二维码。"; trap - INT; return 130' INT
+    while [ "$(date +%s)" -lt "$end_ts" ]; do
         if has_credentials; then
-            say "登录成功 ✓（bash scripts/wechat-bridge.sh status 确认）"
+            say "登录成功 ✓"
+            trap - INT
             return 0
         fi
-        local qr
-        qr="$(tail -n +"$((since_line + 1))" "$LOG_FILE" 2>/dev/null \
+        local new_log qr
+        new_log="$(tail -n +"$((since_line + 1))" "$LOG_FILE" 2>/dev/null || true)"
+        qr="$(printf '%s\n' "$new_log" \
             | awk '/=== 微信扫码登录 ===/{f=1;next}/====================/{f=0}f' \
             | grep -Eo 'https?://[^[:space:]]+' | tail -1 || true)"
         if [ -n "$qr" ] && [ "$qr" != "$last_qr" ]; then
             last_qr="$qr"
-            say "登录链接：$qr"
+            say "备用登录链接（二维码显示不清时用）：$qr"
             if command -v qrencode >/dev/null 2>&1; then
                 qrencode -t ANSIUTF8 -o - "$qr"
             else
-                warn "缺 qrencode（apt install qrencode）→ 终端二维码不可用，手机浏览器打开上方链接扫码"
+                warn "这台终端缺少二维码显示组件（qrencode），请安装后再跑一次；也可以用手机浏览器打开上面的备用链接登录"
             fi
+        elif [ -z "$qr" ] && printf '%s\n' "$new_log" | grep -q "QR 隐藏"; then
+            warn "日志提示二维码输出被隐藏了（WECHAT_BRIDGE_QR_LOG=0）。请把 wechat-bridge/.env 里的这个值改成 1，再重跑 login"
+            trap - INT
+            return 1
+        fi
+        if ! pgrep -f "$BRIDGE_PGREP" >/dev/null 2>&1; then
+            warn "微信服务意外退出了，没拿到二维码。请运行 tail -30 $LOG_FILE 看报错，再重跑 login"
+            trap - INT
+            return 1
+        fi
+        local now
+        now="$(date +%s)"
+        if [ "$now" -ge "$next_heartbeat" ]; then
+            say "还没看到二维码，服务还在准备（已等待 $((now - start_ts)) 秒），请稍等…"
+            next_heartbeat=$((now + 15))
         fi
         sleep 2
     done
+    trap - INT
     if has_credentials; then
-        say "登录成功 ✓（bash scripts/wechat-bridge.sh status 确认）"
+        say "登录成功 ✓"
         return 0
     fi
-    warn "等待超时 → 取日志最新二维码扫（tail -30 $LOG_FILE），或重跑 login"
+    warn "还没等到扫码结果。微信服务还在后台运行，可以先运行 tail -30 $LOG_FILE 看最新二维码，或重跑 login 再试一次"
     return 0
 }
 
@@ -180,7 +202,7 @@ do_start() {
     mkdir -p "$(dirname "$LOG_FILE")"
     local start_line=0
     [ -f "$LOG_FILE" ] && start_line="$(wc -l < "$LOG_FILE")"
-    say "启动 bridge（日志: $LOG_FILE）..."
+    say "正在启动微信服务…"
     # 以绝对路径启动 → 进程 cmdline 含 "$BRIDGE_DIR/bridge.mjs"，供 BRIDGE_PGREP 精确匹配
     ( cd "$BRIDGE_DIR" && setsid nohup node --env-file="$ENV_FILE" "$BRIDGE_DIR/bridge.mjs" >> "$LOG_FILE" 2>&1 < /dev/null & disown )
     for _ in 1 2 3 4 5; do
@@ -191,7 +213,7 @@ do_start() {
         warn "启动失败，请查看日志: tail -20 $LOG_FILE"
         return 1
     fi
-    say "bridge 已启动（PID $(pgrep -f "$BRIDGE_PGREP" | head -1)）"
+    say "服务已启动，正在获取登录二维码…"
     if has_credentials; then
         say "复用已有登录态；若过期会自动打印新二维码"
     elif [ -t 1 ]; then
@@ -251,7 +273,7 @@ do_status() {
 
 do_login() {
     # 强制重新扫码：删除登录态后 start（旧会话服务端可能已失效）
-    say "清除登录态并重启（打印新二维码）..."
+    say "正在准备新的微信登录…"
     do_stop
     rm -f "$WX_STORAGE/"*.json
     do_start
