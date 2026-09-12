@@ -15,7 +15,8 @@ ENGINE_MODULES = ["chiguo_daemon.py", "chiguo_trigger.py", "chiguo_topics.py", "
 # main() 内 CLI 分支惰性 import(如 --anniversary/--break 的 ScheduleApi)同样只随 CLI 调用发生,不污染模块导入路径;
 # cli.dispatch.run() 承载拆包后的子命令分发(原 main() 的 CLI 分支),其中 --anniversary/--break 惰性 import
 # ScheduleApi 属同一合法模式,故同列豁免
-DAEMON_EXEMPT_FUNCS = {"_cmd_schedule_change", "_cmd_attention", "_cmd_schedule_recall", "main", "run"}
+DAEMON_EXEMPT_FUNCS = {"_cmd_schedule_change", "_cmd_attention", "_cmd_schedule_recall", "main", "run",
+                         "_run_replan_tick"}  # loop 内 replan parity（Issue #450 全常驻）：函数体惰性 import，同列豁免
 
 
 def _top_level_schedule_imports(tree):

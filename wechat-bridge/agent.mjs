@@ -9,7 +9,7 @@ import { homeDir } from './home-dir.mjs'
 import { backupSessionFile } from './command-detect.mjs'
 import { agentAnalysisArgs, agentRecallArgs, daemonMemorySearchArgs, daemonRecallArgs, daemonUserMsgArgs, daemonAnalysisArgs } from './cli-dto.mjs'
 import { parseNdjson, extractAnalysis } from '../scripts/agent-run.mjs'
-import { AGENT_RUN_SCRIPT, AGENT_RPC_ENABLED, SEND_PROMPT_TOTAL_MS, SEND_PROMPT_QUEUE_WAIT_MS, BRIDGE_DIR, DAEMON_PY, DAEMON_SCRIPT } from './env.mjs'
+import { AGENT_RUN_SCRIPT, AGENT_RPC_ENABLED, MEMORY_RPC_ENABLED, SEND_PROMPT_TOTAL_MS, SEND_PROMPT_QUEUE_WAIT_MS, BRIDGE_DIR, DAEMON_PY, DAEMON_SCRIPT } from './env.mjs'
 import { sanitizeError, withTimeout } from './util.mjs'
 import { TurnQueue } from './queue.mjs'
 
@@ -62,8 +62,24 @@ export async function askAgent(text) {
 // ── 6b:recall 信号 + 回复侧 --attention 注入(导出供测试注入 fake run)──
 // #84 单通道:事实只走 --facts 参数(agent-run recall 模板自行拼装并含反问引导),prompt 不放事实。
 
+/** 常驻只读记忆边车单例（Issue #450 2C）：MEMORY_RPC_ENABLED 时优先走边车，任何失败回退 spawn。 */
+async function memoryRpcQuery(cmd, params) {
+  if (!MEMORY_RPC_ENABLED) throw new Error('memory 边车未启用(WECHAT_BRIDGE_MEMORY_RPC≠1)')
+  const { MemoryRpc } = await import('./memory-rpc.mjs')
+  if (!globalThis.__memoryRpc) globalThis.__memoryRpc = new MemoryRpc()
+  return globalThis.__memoryRpc.query(cmd, params)
+}
+
 /** --attention 轻量读(§5.4):失败/畸形 → null(跳过注入继续 askAgent,不阻塞回复流)。 */
 export async function getAttention() {
+  if (MEMORY_RPC_ENABLED) {
+    try {
+      const r = await memoryRpcQuery('attention')
+      if (r && r.ok && r.action === 'attention') return r
+    } catch (err) {
+      console.error('[memory-rpc] attention 失败,回退 spawn:', err instanceof Error ? err.message : String(err))
+    }
+  }
   try {
     const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, '--attention'], {
       timeout: 30_000,
@@ -77,6 +93,14 @@ export async function getAttention() {
 
 /** --memory-search 轻量读(回复侧 mem0 记忆检索):失败/畸形 → null(跳过注入继续 askAgent,不阻塞回复流)。 */
 export async function getMemories(query) {
+  if (MEMORY_RPC_ENABLED) {
+    try {
+      const r = await memoryRpcQuery('memory_search', { query })
+      if (r && r.ok && r.action === 'memory_search') return r
+    } catch (err) {
+      console.error('[memory-rpc] memory_search 失败,回退 spawn:', err instanceof Error ? err.message : String(err))
+    }
+  }
   try {
     const r = await execFileP(DAEMON_PY, [DAEMON_SCRIPT, ...daemonMemorySearchArgs(query)], {
       timeout: 30_000,

@@ -13,6 +13,9 @@ export const AGENT_RUN_SCRIPT = process.env.WECHAT_BRIDGE_AGENT_RUN
 // RPC 常驻(仿 OpenClaw gateway):env WECHAT_BRIDGE_AGENT_RPC=1 显式启用;失败自动回退 spawn。
 // RPC 是 agent 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
 export const AGENT_RPC_ENABLED = RUNNER === 'agent' && process.env.WECHAT_BRIDGE_AGENT_RPC === '1'
+// 记忆边车(Issue #450 2C):env WECHAT_BRIDGE_MEMORY_RPC=1 显式启用;失败自动回退 spawn。
+// opt-in(与 AGENT_RPC 同规约):测试 fake DAEMON_PY 下默认关闭，不污染既有套件语义。
+export const MEMORY_RPC_ENABLED = process.env.WECHAT_BRIDGE_MEMORY_RPC === '1'
 export const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 // F-A17-003: bot.send 底层不可取消——withTimeout 超时只代表「未在时限内确认送达」，
 export const SEND_TIMEOUT_MS = Number(process.env.WECHAT_BRIDGE_SEND_TIMEOUT_MS ?? 30_000)
