@@ -43,6 +43,44 @@ fail() { printf '\033[1;31m[wechat-bridge]\033[0m %s\n' "$*"; exit 2; }
 
 has_credentials() { [ -f "$WX_STORAGE/credentials.json" ]; }
 
+# 登录二维码打屏：只在交互终端生效（[ -t 1 ]），CI/后台/测试走旧提示。
+# 轮询 $LOG_FILE 中 $1 行之后新出现的二维码块 → 终端打印登录链接 + qrencode
+# 渲染 ASCII 二维码；二维码过期刷新自动重打；出现 credentials.json 即成功。
+# 超时/无码返回 0（pending 非错误）。限时可调：WECHAT_BRIDGE_QR_WAIT（秒，默认 300）。
+QR_WAIT_SECS="${WECHAT_BRIDGE_QR_WAIT:-300}"
+wait_for_qr() {
+    local since_line="$1"
+    local deadline=$(( $(date +%s) + QR_WAIT_SECS ))
+    local last_qr=""
+    say "等待扫码（最长 ${QR_WAIT_SECS}s；二维码过期会自动刷新重打，扫最新的一张）..."
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if has_credentials; then
+            say "登录成功 ✓（bash scripts/wechat-bridge.sh status 确认）"
+            return 0
+        fi
+        local qr
+        qr="$(tail -n +"$((since_line + 1))" "$LOG_FILE" 2>/dev/null \
+            | awk '/=== 微信扫码登录 ===/{f=1;next}/====================/{f=0}f' \
+            | grep -Eo 'https?://[^[:space:]]+' | tail -1 || true)"
+        if [ -n "$qr" ] && [ "$qr" != "$last_qr" ]; then
+            last_qr="$qr"
+            say "登录链接：$qr"
+            if command -v qrencode >/dev/null 2>&1; then
+                qrencode -t ANSIUTF8 -o - "$qr"
+            else
+                warn "缺 qrencode（apt install qrencode）→ 终端二维码不可用，手机浏览器打开上方链接扫码"
+            fi
+        fi
+        sleep 2
+    done
+    if has_credentials; then
+        say "登录成功 ✓（bash scripts/wechat-bridge.sh status 确认）"
+        return 0
+    fi
+    warn "等待超时 → 取日志最新二维码扫（tail -30 $LOG_FILE），或重跑 login"
+    return 0
+}
+
 # #review: 默认生成随机共享 token（同机任意进程也能打 /agent/prompt 消耗 LLM 配额）。
 # 升级：#191 起未配置 token 直接 FATAL 拒绝启动（main() 校验），此处生成保证能启动。
 # 幂等：已配置的 token 保留（重跑 install 不覆盖）。调用方：tick.sh 读 .env、daemon _loop_send 读 env。
@@ -140,6 +178,8 @@ do_start() {
     [ -f "$ENV_FILE" ] || { warn "缺少 .env（先运行: bash scripts/wechat-bridge.sh install）"; return 1; }
     [ -d "$BRIDGE_DIR/node_modules/@wechatbot" ] || { warn "缺少 node_modules（先运行: bash scripts/wechat-bridge.sh install）"; return 1; }
     mkdir -p "$(dirname "$LOG_FILE")"
+    local start_line=0
+    [ -f "$LOG_FILE" ] && start_line="$(wc -l < "$LOG_FILE")"
     say "启动 bridge（日志: $LOG_FILE）..."
     # 以绝对路径启动 → 进程 cmdline 含 "$BRIDGE_DIR/bridge.mjs"，供 BRIDGE_PGREP 精确匹配
     ( cd "$BRIDGE_DIR" && setsid nohup node --env-file="$ENV_FILE" "$BRIDGE_DIR/bridge.mjs" >> "$LOG_FILE" 2>&1 < /dev/null & disown )
@@ -154,6 +194,8 @@ do_start() {
     say "bridge 已启动（PID $(pgrep -f "$BRIDGE_PGREP" | head -1)）"
     if has_credentials; then
         say "复用已有登录态；若过期会自动打印新二维码"
+    elif [ -t 1 ]; then
+        wait_for_qr "$start_line"
     else
         say "首次运行，请扫码登录（二维码见 $LOG_FILE）"
     fi
