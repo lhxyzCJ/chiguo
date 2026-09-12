@@ -3,7 +3,7 @@
 （#378 纯搬运，零行为变化；B3-B6 探针只搬运不拆子函数）。
 
 AlertsMixin 由 monitor.base.ChiguoMonitor 组装；self.* helper
-（_iter_decisions/_extract_time/_normalize_entry/_read_state/
+（_iter_decisions/_extract_time/_ts/_normalize_entry/_read_state/
 _read_break_state/_now）运行时经宿主类解析。
 """
 
@@ -103,7 +103,7 @@ class AlertsMixin:
         if sends:
             recent_sends_24h = []
             for e in sends:
-                t = e["_cached_ts"] if "_cached_ts" in e else self._extract_time(e)
+                t = self._ts(e)
                 if t and (now - t).total_seconds() < 86400:
                     recent_sends_24h.append(e)
 
@@ -181,7 +181,7 @@ class AlertsMixin:
         # B6. 情绪快速攀升（24h 内 loneliness 涨 > 40）
         emotion_vals_24h = []
         for e in recent_entries:
-            ts = e["_cached_ts"] if "_cached_ts" in e else self._extract_time(e)
+            ts = self._ts(e)
             if ts and (now - ts).total_seconds() < 86400:
                 lo = e.get("state", {}).get("emotion", {}).get("loneliness", 0)
                 if isinstance(lo, (int, float)):

@@ -147,31 +147,45 @@ class InteractionMixin(PersonalityMixin, MoodMixin, PendingMixin, LimitsMixin):
         if msg_id is not None and msg_id in self.cooldown.refunded_msg_ids:
             print(f"[refund_send] msg_id {msg_id!r} 已退款过（FIFO），拒绝重复退款", file=sys.stderr)
             return False
-        memory_marker = None
-        if msg_id is not None:
-            events = self.cooldown.event_timestamps
+
+        def _marker_of(ev):
+            return ev.get("memory_marker") if isinstance(ev, dict) else None
+
+        def _remove_at(events, idx):
+            marker = _marker_of(events[idx])
+            del events[idx]
+            return marker
+
+        def _pop_last(events):
+            marker = _marker_of(events[-1])
+            events.pop()  # 无 msg_id 旧批次 / 未提供 msg_id：回退删除最后一条
+            return marker
+
+        def _resolve(events, mid):
+            """事件移除策略分发：返回 (proceed, memory_marker)。
+
+            - mid 为 None → 有事件则回退 pop，无事件则直接退款（旧行为）。
+            - mid 非 None → 命中则精确删除；未命中且非全 legacy / 在途为空 → 拒收；
+              未命中但全 legacy 批次 → 回退 pop。
+            proceed=False → 调用方直接 return False（零退款副作用，仅 stderr 告警）。
+            """
+            if mid is None:
+                return (True, _pop_last(events) if events else None)
             if not events:
-                print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
-                return False
-            all_legacy_batch = all("msg_id" not in ev for ev in events)
-            matched = False
+                print(f"[refund_send] msg_id {mid!r} 未匹配到事件记录，保留", file=sys.stderr)
+                return (False, None)
             for i, ev in enumerate(events):
-                if ev.get("msg_id") == msg_id:
-                    memory_marker = ev.get("memory_marker") if isinstance(ev, dict) else None
-                    del self.cooldown.event_timestamps[i]
-                    matched = True
-                    break
-            if not matched and not all_legacy_batch:
-                print(f"[refund_send] msg_id {msg_id!r} 未匹配到事件记录，保留", file=sys.stderr)
-                return False
-            if not matched:
-                memory_marker = self.cooldown.event_timestamps[-1].get("memory_marker") \
-                    if isinstance(self.cooldown.event_timestamps[-1], dict) else None
-                self.cooldown.event_timestamps.pop()  # 无 msg_id 旧批次：回退删除最后一条
-        elif self.cooldown.event_timestamps:
-            memory_marker = self.cooldown.event_timestamps[-1].get("memory_marker") \
-                if isinstance(self.cooldown.event_timestamps[-1], dict) else None
-            self.cooldown.event_timestamps.pop()
+                if ev.get("msg_id") == mid:
+                    return (True, _remove_at(events, i))
+            if not all("msg_id" not in ev for ev in events):
+                print(f"[refund_send] msg_id {mid!r} 未匹配到事件记录，保留", file=sys.stderr)
+                return (False, None)
+            return (True, _pop_last(events))  # 全 legacy 批次：回退删除最后一条
+
+        events = self.cooldown.event_timestamps
+        proceed, memory_marker = _resolve(events, msg_id)
+        if not proceed:
+            return False
         cfg = self.config.get("emotion", {})
         cost = cfg.get("energy_cost_per_message", 20.0)
         self.emotion.energy = min(100.0, self.emotion.energy + cost)
