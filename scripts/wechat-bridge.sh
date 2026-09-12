@@ -44,10 +44,12 @@ fail() { printf '\033[1;31m[wechat-bridge]\033[0m %s\n' "$*"; exit 2; }
 has_credentials() { [ -f "$WX_STORAGE/credentials.json" ]; }
 
 # 登录二维码打屏：只在交互终端生效（[ -t 1 ]），CI/后台/测试走旧提示。
-# 轮询 $LOG_FILE 中 $1 行之后新出现的二维码块 → 终端打印备用登录链接 + qrencode
+# 兼容两种日志格式：bridge.mjs 回调打的 "=== 微信扫码登录 ===" 块，以及 SDK
+# （callbacks 缺失/旧版本）自己打的 "Scan this QR code in WeChat: <url>" 行。
+# 轮询 $LOG_FILE 中 $1 行之后新出现的二维码 → 终端打印备用登录链接 + qrencode
 # 渲染 ASCII 二维码；二维码过期刷新自动重打；出现 credentials.json 即成功。
-# 等待过程每 15 秒报一次进度；进程退出或二维码输出被隐藏时直接报错。
-# 限时可调：WECHAT_BRIDGE_QR_WAIT（秒，默认 300）。Ctrl-C 只停止等待，不杀后台服务。
+# 等待过程每 15 秒报一次进度；进程退出/二维码输出被隐藏/登录失败时直接报错。
+# 限时可调：WECHAT_BRIDGE_QR_WAIT（秒，默认 300）。Ctrl-C 停止等待并连带停止刚启动的服务。
 QR_WAIT_SECS="${WECHAT_BRIDGE_QR_WAIT:-300}"
 wait_for_qr() {
     local since_line="$1"
@@ -56,7 +58,7 @@ wait_for_qr() {
     end_ts=$((start_ts + QR_WAIT_SECS))
     next_heartbeat=$((start_ts + 15))
     say "请用微信扫码登录。二维码出来后会直接显示在这里；过期会自动换一张，扫最新的一张就行。"
-    trap 'warn "已停止等待。微信服务还在后台准备，可以稍后运行 tail -30 $LOG_FILE 查看最新二维码。"; trap - INT; return 130' INT
+    trap 'warn "收到中断，正在停止…"; do_stop; trap - INT; return 130' INT
     while [ "$(date +%s)" -lt "$end_ts" ]; do
         if has_credentials; then
             say "登录成功 ✓"
@@ -66,7 +68,7 @@ wait_for_qr() {
         local new_log qr
         new_log="$(tail -n +"$((since_line + 1))" "$LOG_FILE" 2>/dev/null || true)"
         qr="$(printf '%s\n' "$new_log" \
-            | awk '/=== 微信扫码登录 ===/{f=1;next}/====================/{f=0}f' \
+            | awk '/=== 微信扫码登录 ===/{f=1;next}/====================/{f=0} f || /Scan this QR code in WeChat:/' \
             | grep -Eo 'https?://[^[:space:]]+' | tail -1 || true)"
         if [ -n "$qr" ] && [ "$qr" != "$last_qr" ]; then
             last_qr="$qr"
@@ -78,6 +80,11 @@ wait_for_qr() {
             fi
         elif [ -z "$qr" ] && printf '%s\n' "$new_log" | grep -q "QR 隐藏"; then
             warn "日志提示二维码输出被隐藏了（WECHAT_BRIDGE_QR_LOG=0）。请把 wechat-bridge/.env 里的这个值改成 1，再重跑 login"
+            trap - INT
+            return 1
+        elif printf '%s\n' "$new_log" | grep -qE "login aborted|启动失败"; then
+            warn "微信登录失败了（二维码多次过期没人扫，服务端已中止）。正在停止服务，重跑 login 会拿一张新码"
+            do_stop
             trap - INT
             return 1
         fi

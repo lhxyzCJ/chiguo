@@ -76,6 +76,19 @@ async function main() {
   const storageDir = process.env.WECHAT_BRIDGE_STORAGE ?? DEFAULT_STORAGE
   mkdirSync(storageDir, { recursive: true, mode: 0o700 })
   chmodSync(storageDir, 0o700)
+  // 注意：SDK 只认 login()/run() 参数里的 callbacks，构造器 loginCallbacks 字段声明了但从未被读取
+  //（client.ts:41），回调必须在 login() 时显式传入，否则 SDK 自己打 "Scan this QR..." 日志，脚本抓不到码。
+  const loginCallbacks = {
+    onQrUrl: (url) => {
+      console.log('\n=== 微信扫码登录 ===')
+      // 二维码链接含登录凭证,默认打印;WECHAT_BRIDGE_QR_LOG=0 可关闭(日志分享/CI 场景防泄漏)
+      if (process.env.WECHAT_BRIDGE_QR_LOG === '0') console.log('[QR 隐藏] 设 WECHAT_BRIDGE_QR_LOG!=0 可打印二维码链接')
+      else console.log(url)
+      console.log('====================\n')
+    },
+    onScanned: () => console.log('已扫码，等待确认…'),
+    onExpired: () => console.log('二维码已过期，刷新中…'),
+  }
   const bot = new WeChatBot({
     storage: 'file',
     storageDir,
@@ -84,17 +97,7 @@ async function main() {
       windowMs: DEBOUNCE_MS,
       joinSeparator: '\n',
     },
-    loginCallbacks: {
-      onQrUrl: (url) => {
-        console.log('\n=== 微信扫码登录 ===')
-        // 二维码链接含登录凭证,默认打印;WECHAT_BRIDGE_QR_LOG=0 可关闭(日志分享/CI 场景防泄漏)
-        if (process.env.WECHAT_BRIDGE_QR_LOG === '0') console.log('[QR 隐藏] 设 WECHAT_BRIDGE_QR_LOG!=0 可打印二维码链接')
-        else console.log(url)
-        console.log('====================\n')
-      },
-      onScanned: () => console.log('已扫码，等待确认…'),
-      onExpired: () => console.log('二维码已过期，刷新中…'),
-    },
+    loginCallbacks,
   })
 
   const queue = new TurnQueue()
@@ -113,7 +116,7 @@ async function main() {
   })
   bot.on('session:expired', () => console.warn('[bot] 会话过期，尝试重登…'))
 
-  await bot.login()
+  await bot.login({ callbacks: loginCallbacks })
   // 该 fork 的 bot.start() 长轮询挂起不返回 → 主动发送端点必须先于 start 就绪
   startSendServer(bot, queue)
   armSessionRotation(queue)

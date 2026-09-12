@@ -43,12 +43,10 @@ exit 1
 STUB
 cat > "$TMP/bin/node" <<'STUB'
 #!/usr/bin/env bash
-# 桩 bridge：往桥日志追加一个二维码块，模拟 SDK onQrUrl，然后挂起
+# 桩 bridge：按 SDK 真实格式（callbacks 缺失时 SDK 自己打日志）追加二维码行，然后挂起
 {
-echo ""
-echo "=== 微信扫码登录 ==="
-echo "https://login.test/qr-12345"
-echo "===================="
+echo "2026-09-12T04:44:54.545Z INFO  [auth] Requesting QR code... (1/3)"
+echo "2026-09-12T04:44:54.767Z INFO  [auth] Scan this QR code in WeChat: https://login.test/qr-sdk-67890"
 } >> "$WECHAT_BRIDGE_LOG"
 [ -n "${PGREP_FLAG:-}" ] && touch "$PGREP_FLAG"
 sleep 25
@@ -218,7 +216,7 @@ rm -f "$PGREP_FLAG" "$TMP/home/.chiguo/auth/wechat/credentials.json"
 unset FAKE_PID
 set +e; OUT=$(WECHAT_BRIDGE_QR_WAIT=8 script -qec "bash scripts/wechat-bridge.sh login" /dev/null 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "TTY login 期望 0 实得 $RC（$OUT）"
-echo "$OUT" | grep -q "https://login.test/qr-12345" || fail "TTY login 未打印登录链接（$OUT）"
+echo "$OUT" | grep -q "https://login.test/qr-sdk-67890" || fail "TTY login 未打印登录链接（$OUT）"
 echo "$OUT" | grep -q "备用登录链接" || fail "TTY login 缺少链接提示（$OUT）"
 if command -v qrencode >/dev/null 2>&1; then
   echo "$OUT" | grep -q "40;37;1m" || fail "TTY login 未渲染终端二维码"
@@ -256,5 +254,40 @@ set +e; OUT=$(WECHAT_BRIDGE_QR_WAIT=6 script -qec "bash scripts/wechat-bridge.sh
 [ "$RC" = 1 ] || fail "进程退出 login 期望 1 实得 $RC（$OUT）"
 echo "$OUT" | grep -q "意外退出" || fail "进程退出未提示（$OUT）"
 pass "服务意外退出 → 直接报错"
+
+# ── 用例 15: bridge.mjs 回调格式（=== 微信扫码登录 === 块）同样能抓到码 ──
+cat > "$TMP/bin/node" <<'STUB'
+#!/usr/bin/env bash
+{
+echo ""
+echo "=== 微信扫码登录 ==="
+echo "https://login.test/qr-12345"
+echo "===================="
+} >> "$WECHAT_BRIDGE_LOG"
+[ -n "${PGREP_FLAG:-}" ] && touch "$PGREP_FLAG"
+sleep 10
+STUB
+chmod +x "$TMP/bin/node"
+rm -f "$PGREP_FLAG" "$TMP/home/.chiguo/auth/wechat/credentials.json" "$WECHAT_BRIDGE_LOG"
+set +e; OUT=$(WECHAT_BRIDGE_QR_WAIT=6 script -qec "bash scripts/wechat-bridge.sh login" /dev/null 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] || fail "回调格式 login 期望 0 实得 $RC（$OUT）"
+echo "$OUT" | grep -q "https://login.test/qr-12345" || fail "回调格式未打印登录链接（$OUT）"
+pass "回调标记块格式 → 照样抓码打屏"
+
+# ── 用例 16: 二维码多次过期、服务端中止登录 → 直接报错停服务 ──
+cat > "$TMP/bin/node" <<'STUB'
+#!/usr/bin/env bash
+echo "启动失败: QR code expired 3 times — login aborted" >> "$WECHAT_BRIDGE_LOG"
+[ -n "${PGREP_FLAG:-}" ] && touch "$PGREP_FLAG"
+sleep 10
+STUB
+chmod +x "$TMP/bin/node"
+rm -f "$PGREP_FLAG" "$TMP/home/.chiguo/auth/wechat/credentials.json" "$WECHAT_BRIDGE_LOG"
+: > "$PKILL_LOG"
+set +e; OUT=$(WECHAT_BRIDGE_QR_WAIT=6 script -qec "bash scripts/wechat-bridge.sh login" /dev/null 2>&1); RC=$?; set -e
+[ "$RC" = 1 ] || fail "登录中止 login 期望 1 实得 $RC（$OUT）"
+echo "$OUT" | grep -q "登录失败" || fail "登录中止未提示失败（$OUT）"
+grep -q "pkill" "$PKILL_LOG" || fail "登录中止未连带停服务"
+pass "登录被服务端中止 → 报错 + 停服务"
 
 echo "test_wechat_bridge: 通过"
