@@ -65,6 +65,49 @@ OBS_SPACE: dict[str, set[str]] = {
     "silence": {"active", "recent", "moderate", "long"},
 }
 
+# ── 模块级表：时段先验（_time_based_prior 数据源，单一事实源）────
+# 每项 (start, end, weekday, weekend)：左闭右开小时区间；weekend 为 None
+# 表示周末/工作日同分布，否则按 is_weekend 二选一。数值与原 if/elif 链逐字一致。
+TIME_PRIOR_RULES: list[tuple[int, int, dict[str, float], dict[str, float] | None]] = [
+    (0, 7, {
+        "chatting": 0.02, "browsing": 0.03, "busy": 0.02,
+        "sleeping": 0.85, "away": 0.05, "needs_care": 0.03,
+    }, None),
+    (7, 9, {
+        "chatting": 0.10, "browsing": 0.25, "busy": 0.35,
+        "sleeping": 0.10, "away": 0.15, "needs_care": 0.05,
+    }, {
+        "chatting": 0.10, "browsing": 0.30, "busy": 0.05,
+        "sleeping": 0.35, "away": 0.15, "needs_care": 0.05,
+    }),
+    (9, 12, {
+        "chatting": 0.15, "browsing": 0.25, "busy": 0.40,
+        "sleeping": 0.02, "away": 0.13, "needs_care": 0.05,
+    }, {
+        "chatting": 0.20, "browsing": 0.40, "busy": 0.10,
+        "sleeping": 0.10, "away": 0.15, "needs_care": 0.05,
+    }),
+    (12, 14, {
+        "chatting": 0.25, "browsing": 0.35, "busy": 0.15,
+        "sleeping": 0.05, "away": 0.15, "needs_care": 0.05,
+    }, None),
+    (14, 18, {
+        "chatting": 0.15, "browsing": 0.25, "busy": 0.40,
+        "sleeping": 0.02, "away": 0.13, "needs_care": 0.05,
+    }, {
+        "chatting": 0.20, "browsing": 0.40, "busy": 0.10,
+        "sleeping": 0.03, "away": 0.22, "needs_care": 0.05,
+    }),
+    (18, 22, {
+        "chatting": 0.30, "browsing": 0.35, "busy": 0.10,
+        "sleeping": 0.01, "away": 0.19, "needs_care": 0.05,
+    }, None),
+    (22, 24, {
+        "chatting": 0.15, "browsing": 0.30, "busy": 0.05,
+        "sleeping": 0.35, "away": 0.10, "needs_care": 0.05,
+    }, None),
+]
+
 
 # ── 纯函数：前向滤波 / 后验更新 / 熵 / 效用 ──────────────────
 def _normalize_dist(dist: dict[str, float]) -> dict[str, float]:
@@ -326,63 +369,12 @@ class UserStateEstimator:
         wd = now.weekday()  # 0=Mon, 6=Sun
         is_weekend = wd >= 5
 
-        if 0 <= h < 7:
-            # 深夜：sleeping 先验极高
-            return {
-                "chatting": 0.02, "browsing": 0.03, "busy": 0.02,
-                "sleeping": 0.85, "away": 0.05, "needs_care": 0.03,
-            }
-        elif 7 <= h < 9:
-            # 早晨：刚醒/通勤
-            if is_weekend:
-                return {
-                    "chatting": 0.10, "browsing": 0.30, "busy": 0.05,
-                    "sleeping": 0.35, "away": 0.15, "needs_care": 0.05,
-                }
-            return {
-                "chatting": 0.10, "browsing": 0.25, "busy": 0.35,
-                "sleeping": 0.10, "away": 0.15, "needs_care": 0.05,
-            }
-        elif 9 <= h < 12:
-            # 上午：忙碌/工作
-            if is_weekend:
-                return {
-                    "chatting": 0.20, "browsing": 0.40, "busy": 0.10,
-                    "sleeping": 0.10, "away": 0.15, "needs_care": 0.05,
-                }
-            return {
-                "chatting": 0.15, "browsing": 0.25, "busy": 0.40,
-                "sleeping": 0.02, "away": 0.13, "needs_care": 0.05,
-            }
-        elif 12 <= h < 14:
-            # 午休
-            return {
-                "chatting": 0.25, "browsing": 0.35, "busy": 0.15,
-                "sleeping": 0.05, "away": 0.15, "needs_care": 0.05,
-            }
-        elif 14 <= h < 18:
-            # 下午
-            if is_weekend:
-                return {
-                    "chatting": 0.20, "browsing": 0.40, "busy": 0.10,
-                    "sleeping": 0.03, "away": 0.22, "needs_care": 0.05,
-                }
-            return {
-                "chatting": 0.15, "browsing": 0.25, "busy": 0.40,
-                "sleeping": 0.02, "away": 0.13, "needs_care": 0.05,
-            }
-        elif 18 <= h < 22:
-            # 晚上：自由时间
-            return {
-                "chatting": 0.30, "browsing": 0.35, "busy": 0.10,
-                "sleeping": 0.01, "away": 0.19, "needs_care": 0.05,
-            }
-        else:  # 22-24
-            # 深夜前：准备睡觉/刷手机
-            return {
-                "chatting": 0.15, "browsing": 0.30, "busy": 0.05,
-                "sleeping": 0.35, "away": 0.10, "needs_care": 0.05,
-            }
+        for start, end, weekday, weekend in TIME_PRIOR_RULES:
+            if start <= h < end:
+                if is_weekend and weekend is not None:
+                    return dict(weekend)
+                return dict(weekday)
+        return dict(TIME_PRIOR_RULES[-1][2])
 
     # ── 信号分类 ──────────────────────────────────────────
 

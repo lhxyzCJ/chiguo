@@ -220,6 +220,16 @@ class ChiguoMonitor(StatsMixin, AlertsMixin, HealthMixin):
             return ChiguoMonitor._parse_time_str(raw)
         return None
 
+    def _ts(self, entry: dict) -> datetime | None:
+        """取缓存时间戳：alerts() 预计算的 _cached_ts 优先，无缓存才解析。
+
+        与 `entry["_cached_ts"] if "_cached_ts" in entry else self._extract_time(entry)`
+        等价的统一收口（B2/B6 共用）；键存在但值为 None 时直接返回 None，不重解析。
+        """
+        if "_cached_ts" in entry:
+            return entry["_cached_ts"]
+        return self._extract_time(entry)
+
     @staticmethod
     def _parse_time_str(raw: str) -> datetime | None:
         """解析单条时间字符串。
