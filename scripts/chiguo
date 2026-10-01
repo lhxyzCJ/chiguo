@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# chiguo — v2 CLI 入口包装（等价：PYTHONPATH=<repo> .venv/bin/python -m app.cli "$@"）
+# 用法：bash scripts/chiguo db status / chiguo db migrate ...
+set -euo pipefail
+REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
+PY="$REPO/.venv/bin/python"
+if [ ! -x "$PY" ]; then
+    echo "[chiguo] 未找到虚拟环境解释器: $PY（先跑 uv sync）" >&2
+    exit 1
+fi
+exec env PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" "$PY" -m app.cli "$@"
