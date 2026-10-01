@@ -15,6 +15,7 @@ from chiguo_time import CST
 
 from decision.base import DecisionEngineBase
 from decision.idle import IdleMixin
+from storage import dualwrite  # v2 事件双写（Phase 3；失败静默不阻断旧链）
 from chiguo_trigger import evaluate_triggers
 from chiguo_version import VERSION
 from chiguo_math import in_quiet_window
@@ -107,6 +108,12 @@ class DecisionCoreMixin(IdleMixin):
             except OSError as e:
                 # 磁盘级 I/O 失败（非序列化问题）：仅告警，不吞，不影响主流程。
                 print(f"[warn] 写入 {self.log_path} 失败: {e}", file=sys.stderr)
+            # ── v2 Phase 3: wake 事件双写（仅 send/idle 决策；recv/send_result 另有专项事件）──
+            if decision.get("action") in ("send", "idle"):
+                dualwrite.wake(action=decision["action"],
+                               reason=decision.get("reason"),
+                               msg_id=decision.get("msg_id"),
+                               config=self.config)
 
         def _check_data_freshness(self) -> str | None:
             """

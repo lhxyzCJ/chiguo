@@ -11,6 +11,7 @@ from chiguo_time import CST
 
 from decision.base import DecisionEngineBase
 from chiguo_state import emotion_tag_snapshot
+from storage import dualwrite  # v2 事件双写（Phase 3；失败静默不阻断旧链）
 
 
 # F-A21-002 (#336): autowrite 同文本去重窗口（小时）。窗口内同文本二次写入跳过，
@@ -171,7 +172,11 @@ class AccountingMixin(DecisionEngineBase):
                 text=text,
                 user_emotion_analysis=analysis_dict,
             )
-    
+
+            # ── v2 Phase 3: 事件双写（旁路，不阻断旧链）──
+            dualwrite.message_received(text, recv_id=recv_id,
+                                       analysis=analysis_dict, config=self.config)
+
             # ── v10: 对话后自动写入 mem0（事实提取）──
             # mem0 从用户话语提取长期记忆；短消息（寒暄/无信息量）跳过。
             # 失败静默（LLM 超时/ollama 未启动等不影响 --user-msg 主链路）。
@@ -294,6 +299,9 @@ class AccountingMixin(DecisionEngineBase):
                 intensity=intensity,
                 fallback=fallback,
             )
+            # ── v2 Phase 3: 事件双写（旁路，不阻断旧链）──
+            dualwrite.message_sent(msg_id, text, trigger=trigger,
+                                   intensity=intensity, config=self.config)
 
         def record_send_result(self, msg_id: str, status: str, error: str = None):
             """v6 反馈闭环: 发送后回传结果。
@@ -375,6 +383,11 @@ class AccountingMixin(DecisionEngineBase):
                             "duplicate": False,
                         }
                     refunded = True
+                # ── v2 Phase 3: 事件双写（仅确定结果路径；save 失败早退不写，重试再报）──
+                if status == "failed":
+                    dualwrite.delivery_failed(msg_id, error or "", config=self.config)
+                elif status == "uncertain":
+                    dualwrite.delivery_uncertain(msg_id, error or "", config=self.config)
                 result = {
                     "action": "send_result",
                     "msg_id": msg_id,

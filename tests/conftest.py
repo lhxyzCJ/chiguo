@@ -24,6 +24,12 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 CST = timezone(timedelta(hours=8))
 
+# v2 事件双写（storage/dualwrite.py）在测试中默认关闭：旧链测试会调用
+# record_user_message/record_send_text 等路径，若开启会旁路写入开发机真实
+# ~/.chiguo/chiguo.sqlite。需要验证双写的测试显式 setenv("CHIGUO_EVENT_DUALWRITE", "1")
+# （见 tests/test_v2_dualwrite.py）。
+os.environ.setdefault("CHIGUO_EVENT_DUALWRITE", "0")
+
 # 默认冻结时刻（供 frozen_now fixture 复用，北京时间 2026-06-15 14:00）
 _FROZEN_NOW = datetime(2026, 6, 15, 14, 0, tzinfo=CST)
 
