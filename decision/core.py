@@ -113,7 +113,7 @@ class DecisionCoreMixin(IdleMixin):
                 dualwrite.wake(action=decision["action"],
                                reason=decision.get("reason"),
                                msg_id=decision.get("msg_id"),
-                               config=self.config)
+                               config=getattr(self, "config", None))
 
         def _check_data_freshness(self) -> str | None:
             """
