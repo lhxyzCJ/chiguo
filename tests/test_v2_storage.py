@@ -183,6 +183,18 @@ def test_chain_walks_causation_to_root(tmp_path):
     assert store.chain("nope") == []
 
 
+def test_caused_by_returns_direct_children(tmp_path):
+    store = _store(tmp_path)
+    root = store.append("message.received", source="wechat")
+    c1 = store.append("commitment.created", source="reducer", causation_id=root.event_id)
+    c2 = store.append("thread.opened", source="reducer", causation_id=root.event_id)
+    child = store.append("intent.created", source="planner", causation_id=c1.event_id)
+    children = store.caused_by(root.event_id)
+    assert [e.event_id for e in children] == [c1.event_id, c2.event_id]
+    assert [e.event_id for e in store.caused_by(c1.event_id)] == [child.event_id]
+    assert store.caused_by("nope") == []
+
+
 def test_concurrent_appends_both_persist(tmp_path):
     store = _store(tmp_path)
     db2 = Database(tmp_path / "chiguo.sqlite")

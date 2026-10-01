@@ -118,6 +118,15 @@ class EventStore:
         out.reverse()
         return out
 
+    def caused_by(self, event_id: str, *, limit: int = 50) -> list[Event]:
+        """直接子事件（causation_id == event_id），按发生时间旧→新。"""
+        conn = self.db.connect()
+        rows = conn.execute(
+            "SELECT * FROM events WHERE causation_id = ?"
+            " ORDER BY occurred_at ASC, event_id ASC LIMIT ?",
+            (event_id, int(limit))).fetchall()
+        return [self._row(r) for r in rows]
+
     def count(self) -> int:
         conn = self.db.connect()
         return int(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0])

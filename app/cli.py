@@ -109,6 +109,51 @@ def cmd_db_backup(args) -> int:
     return 0
 
 
+# ── events 子命令（因果链查看：回答「为什么」）──────────────
+
+def _event_json(ev) -> dict:
+    return {
+        "event_id": ev.event_id,
+        "type": ev.type,
+        "occurred_at": ev.occurred_at.isoformat(),
+        "observed_at": ev.observed_at.isoformat(),
+        "source": ev.source,
+        "correlation_id": ev.correlation_id,
+        "causation_id": ev.causation_id,
+        "payload": ev.payload,
+    }
+
+
+def cmd_events_recent(args) -> int:
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "events_recent", "ok": False, "error": f"数据库不存在: {db.path}"})
+        return 1
+    events = EventStore(db).recent(limit=args.limit, type=args.type, source=args.source)
+    _print({"action": "events_recent", "ok": True, "count": len(events),
+            "events": [_event_json(e) for e in events]})
+    return 0
+
+
+def cmd_events_show(args) -> int:
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "events_show", "ok": False, "error": f"数据库不存在: {db.path}"})
+        return 1
+    store = EventStore(db)
+    ev = store.get(args.event_id)
+    if ev is None:
+        _print({"action": "events_show", "ok": False,
+                "error": f"事件不存在: {args.event_id}"})
+        return 1
+    chain = store.chain(ev.event_id)
+    caused = store.caused_by(ev.event_id)
+    _print({"action": "events_show", "ok": True, "event": _event_json(ev),
+            "chain": [_event_json(e) for e in chain],
+            "caused_by": [_event_json(e) for e in caused]})
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chiguo", description="Chiguo v2 CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -125,19 +170,38 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--config", default=None, help="toml 配置路径")
         if name == "backup":
             p.add_argument("--dest", default=None, help="备份目标路径")
+
+    events = sub.add_parser("events", help="事件日志查看（因果链）")
+    ev_sub = events.add_subparsers(dest="events_command", required=True)
+    p = ev_sub.add_parser("recent", help="最近事件（新→旧）")
+    p.add_argument("--db", default=None)
+    p.add_argument("--config", default=None)
+    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--type", default=None)
+    p.add_argument("--source", default=None)
+    p = ev_sub.add_parser("show", help="单事件 + 因果链（为什么）")
+    p.add_argument("event_id")
+    p.add_argument("--db", default=None)
+    p.add_argument("--config", default=None)
     return parser
 
 
 def main(argv=None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    handlers = {"status": cmd_db_status, "migrate": cmd_db_migrate,
-                "integrity": cmd_db_integrity, "backup": cmd_db_backup}
-    handler = handlers[args.db_command]
+    if args.command == "events":
+        handlers = {"recent": cmd_events_recent, "show": cmd_events_show}
+        handler = handlers[args.events_command]
+        action = f"events_{args.events_command}"
+    else:
+        handlers = {"status": cmd_db_status, "migrate": cmd_db_migrate,
+                    "integrity": cmd_db_integrity, "backup": cmd_db_backup}
+        handler = handlers[args.db_command]
+        action = f"db_{args.db_command}"
     try:
         return handler(args)
     except StorageError as e:
-        _print({"action": f"db_{args.db_command}", "ok": False, "error": str(e)})
+        _print({"action": action, "ok": False, "error": str(e)})
         return 1
 
 
