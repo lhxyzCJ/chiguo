@@ -245,6 +245,61 @@ def cmd_execute(args) -> int:
     return 0 if out.ok else 1
 
 
+# ── chiguo tick（唤醒入口：wake → autonomous turn）───────────────
+
+def cmd_tick(args) -> int:
+    from app.actions.executor import execute_action
+    from app.autonomous.turn import autonomous_turn
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "tick", "ok": False,
+                "error": f"数据库不存在: {db.path}（先 chiguo db migrate）"})
+        return 1
+    cfg, cfg_path = load_config(args.config)
+    cfg = dict(cfg)
+    cfg.setdefault("_base_dir", str(cfg_path.resolve().parent))
+    now = None
+    if args.now:
+        now = datetime.fromisoformat(args.now)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=CST)
+    res = autonomous_turn(db=db, config=cfg, reason=args.reason or "cron",
+                          now=now, execute=bool(args.execute))
+    sent = None
+    if args.execute and res.action_id:
+        out = execute_action(db, res.action_id, config=cfg)
+        sent = {"ok": out.ok, "status": out.status, "error": out.error}
+    _print({"action": "tick", "ok": True, "turn_id": res.turn_id,
+            "outcome": res.outcome, "intent_id": res.intent_id,
+            "action_id": res.action_id, "sent": sent})
+    return 0
+
+
+# ── chiguo serve（运行时回环 HTTP；Pi extension 服务端）─────────
+
+def cmd_serve(args) -> int:
+    from app.runtime.serve import DEFAULT_PORT, RuntimeServer
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "serve", "ok": False, "error": f"数据库不存在: {db.path}"})
+        return 1
+    cfg, cfg_path = load_config(args.config)
+    cfg = dict(cfg)
+    cfg.setdefault("_base_dir", str(cfg_path.resolve().parent))
+    srv = RuntimeServer(db, cfg, port=args.port or DEFAULT_PORT)
+    srv.start()
+    print(json.dumps({"action": "serve", "ok": True, "url":
+                      f"http://127.0.0.1:{srv.port}"}, ensure_ascii=False),
+          flush=True)
+    try:
+        import time
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        srv.stop()
+    return 0
+
+
 # ── chiguo replay（历史重放，不发送不触碰生产库）────────────────
 
 def cmd_replay(args) -> int:
@@ -379,6 +434,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=200)
     p.add_argument("--db", default=None)
     p.add_argument("--config", default=None)
+    p = sub.add_parser("tick", help="唤醒入口（默认 shadow；--execute 生成并发送）")
+    p.add_argument("--db", default=None)
+    p.add_argument("--config", default=None)
+    p.add_argument("--execute", action="store_true", help="执行 send（生成+bridge 发送）")
+    p.add_argument("--now", default=None, help="覆盖当前时间（ISO8601）")
+    p.add_argument("--reason", default="cron")
+    p = sub.add_parser("serve", help="运行时回环 HTTP（Pi extension 服务端）")
+    p.add_argument("--db", default=None)
+    p.add_argument("--config", default=None)
+    p.add_argument("--port", type=int, default=None)
     return parser
 
 
@@ -390,10 +455,11 @@ def main(argv=None) -> int:
         handler = handlers[args.events_command]
         action = f"events_{args.events_command}"
     elif args.command in ("commitments", "threads", "status", "autonomous-turn",
-                          "execute", "replay"):
+                          "execute", "replay", "tick", "serve"):
         handlers = {"commitments": cmd_commitments, "threads": cmd_threads,
                     "status": cmd_status, "autonomous-turn": cmd_autonomous_turn,
-                    "execute": cmd_execute, "replay": cmd_replay}
+                    "execute": cmd_execute, "replay": cmd_replay,
+                    "tick": cmd_tick, "serve": cmd_serve}
         handler = handlers[args.command]
         action = args.command.replace("-", "_")
     else:
