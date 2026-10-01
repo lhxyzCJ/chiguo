@@ -196,9 +196,13 @@ def test_status_aggregates_state(tmp_path, capsys):
     store.append("commitment.created", source="extractor",
                  payload={"kind": "user_event", "subject": "线代考试",
                           "due_at": "2026-10-03T09:00:00+08:00"})
+    (tmp_path / "agent_health.json").write_text(
+        json.dumps({"state": "up", "fail_streak": 0}), encoding="utf-8")
     count_before = store.count()
 
-    rc, cap = _run(capsys, "status", "--db", str(dbp))
+    cfg = tmp_path / "chiguo_proactive.toml"
+    cfg.write_text('[storage]\ndb_path = "c.sqlite"\n', encoding="utf-8")
+    rc, cap = _run(capsys, "status", "--db", str(dbp), "--config", str(cfg))
     assert rc == 0
     out = json.loads(cap.out)
     assert out["action"] == "status"
@@ -208,6 +212,7 @@ def test_status_aggregates_state(tmp_path, capsys):
     assert out["commitments"]["count"] == 0             # 未消费事件 → 投影未更新
     assert "last_turn" in out and out["last_turn"] is None
     assert "last_message_sent" in out
+    assert out["agent_health"]["state"] == "up"         # 旧健康文件只读展示（迁移期）
     # status 只读：不消费事件
     assert store.count() == count_before
 
