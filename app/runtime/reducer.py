@@ -60,6 +60,20 @@ def in_quiet_hours(now: datetime, quiet_start: int, quiet_end: int) -> bool:
     return h >= qs or h < qe
 
 
+def next_quiet_end(now: datetime, quiet_start: int, quiet_end: int) -> datetime | None:
+    """当前（或下一次）静默窗口的结束时刻；不在静默窗内 → None。"""
+    if not in_quiet_hours(now, quiet_start, quiet_end):
+        return None
+    try:
+        qe = int(quiet_end)
+    except (TypeError, ValueError):
+        return None
+    candidate = datetime.combine(now.date(), dtime(hour=qe), tzinfo=CST)
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    return candidate
+
+
 def _dt(value) -> datetime | None:
     """宽松时间解析：datetime 原样；ISO 字符串（含 date-only）→ CST aware。"""
     if isinstance(value, datetime):

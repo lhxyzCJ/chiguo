@@ -245,6 +245,33 @@ def cmd_execute(args) -> int:
     return 0 if out.ok else 1
 
 
+# ── chiguo replay（历史重放，不发送不触碰生产库）────────────────
+
+def cmd_replay(args) -> int:
+    from app.runtime.replay import replay
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "replay", "ok": False, "error": f"数据库不存在: {db.path}"})
+        return 1
+    cfg, cfg_path = load_config(args.config)
+    cfg = dict(cfg)
+    cfg.setdefault("_base_dir", str(cfg_path.resolve().parent))
+    since = datetime.fromisoformat(args.since)
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=CST)
+    until = None
+    if args.until:
+        until = datetime.fromisoformat(args.until)
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=CST)
+    results = replay(db, cfg, since=since, until=until, limit=args.limit)
+    _print({"action": "replay", "ok": True, "count": len(results),
+            "decisions": [{"event_id": r.event_id, "at": r.at.isoformat(),
+                           "outcome": r.outcome, "intent_type": r.intent_type,
+                           "why": r.why} for r in results]})
+    return 0
+
+
 # ── chiguo status（聚合视图；只读，不消费事件）─────────────────
 
 def cmd_status(args) -> int:
@@ -346,6 +373,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default=None)
     p.add_argument("--config", default=None)
     p.add_argument("--dry-run", action="store_true", help="只打印生成 prompt，不生成不发送")
+    p = sub.add_parser("replay", help="历史事件重放（不发送、不触碰生产库）")
+    p.add_argument("--since", required=True, help="起始时间（ISO8601）")
+    p.add_argument("--until", default=None, help="截止时间（ISO8601，不含）")
+    p.add_argument("--limit", type=int, default=200)
+    p.add_argument("--db", default=None)
+    p.add_argument("--config", default=None)
     return parser
 
 
@@ -356,10 +389,11 @@ def main(argv=None) -> int:
         handlers = {"recent": cmd_events_recent, "show": cmd_events_show}
         handler = handlers[args.events_command]
         action = f"events_{args.events_command}"
-    elif args.command in ("commitments", "threads", "status", "autonomous-turn", "execute"):
+    elif args.command in ("commitments", "threads", "status", "autonomous-turn",
+                          "execute", "replay"):
         handlers = {"commitments": cmd_commitments, "threads": cmd_threads,
                     "status": cmd_status, "autonomous-turn": cmd_autonomous_turn,
-                    "execute": cmd_execute}
+                    "execute": cmd_execute, "replay": cmd_replay}
         handler = handlers[args.command]
         action = args.command.replace("-", "_")
     else:

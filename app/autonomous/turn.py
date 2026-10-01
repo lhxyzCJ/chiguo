@@ -23,7 +23,7 @@ from domain.planning.drives import evaluate_drives
 from domain.planning.opportunities import discover_opportunities
 from domain.planning.planner import Defer, IntentDraft, Wait, plan
 from app.runtime.extractor import Extractor
-from app.runtime.reducer import STREAM as REDUCER_STREAM, in_quiet_hours
+from app.runtime.reducer import STREAM as REDUCER_STREAM, in_quiet_hours, next_quiet_end
 from app.runtime.reducer import Reducer
 from sources.base import observe_all
 from storage.events import EventStore
@@ -72,20 +72,6 @@ def build_sources(config: dict, base_dir: str) -> list:
     except Exception as e:  # noqa: BLE001
         print(f"[turn] WeatherSource 构造失败，跳过: {e}", file=sys.stderr)
     return src
-
-
-def _next_quiet_end(now: datetime, quiet_start: int, quiet_end: int) -> datetime | None:
-    """当前（或下一次）静默窗口的结束时刻；不在静默窗内 → None。"""
-    if not in_quiet_hours(now, quiet_start, quiet_end):
-        return None
-    try:
-        qe = int(quiet_end)
-    except (TypeError, ValueError):
-        return None
-    candidate = datetime.combine(now.date(), dtime(hour=qe), tzinfo=CST)
-    if candidate <= now:
-        candidate += timedelta(days=1)
-    return candidate
 
 
 def autonomous_turn(*, db: Database, config: dict, reason: str = "manual",
@@ -141,7 +127,7 @@ def autonomous_turn(*, db: Database, config: dict, reason: str = "manual",
     quiet = in_quiet_hours(now, qs, qe)
     decision = plan(opportunities=opps, drives=drives, now=now,
                     constraints={"quiet": quiet,
-                                 "quiet_until": _next_quiet_end(now, qs, qe)})
+                                 "quiet_until": next_quiet_end(now, qs, qe)})
 
     # ⑧ 落库
     turn_id = uuid.uuid7().hex

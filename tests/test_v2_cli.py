@@ -321,3 +321,29 @@ def test_execute_cli_rejects_non_pending(tmp_path, capsys):
     rc, cap = _run(capsys, "execute", action.id, "--db", str(dbp), "--config", str(cfg))
     assert rc == 1
     assert json.loads(cap.out)["ok"] is False
+
+
+# ── chiguo replay ───────────────────────────────────────────────
+
+def test_replay_cli(tmp_path, capsys):
+    from storage.events import EventStore
+    from storage.sqlite.db import Database
+    cfg = _write_toml(tmp_path)
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    store = EventStore(Database(dbp))
+    tz = timezone(timedelta(hours=8))
+    store.append("commitment.created", source="extractor",
+                 occurred_at=datetime(2026, 10, 1, 9, 0, tzinfo=tz),
+                 payload={"kind": "user_event", "subject": "线代考试",
+                          "due_at": "2026-10-02T09:00:00+08:00"})
+    store.append("wake", source="scheduler",
+                 occurred_at=datetime(2026, 10, 2, 20, 0, tzinfo=tz))
+    rc, cap = _run(capsys, "replay", "--since", "2026-10-01T00:00:00+08:00",
+                   "--until", "2026-10-03T00:00:00+08:00",
+                   "--db", str(dbp), "--config", str(cfg))
+    assert rc == 0
+    out = json.loads(cap.out)
+    assert out["action"] == "replay" and out["count"] == 1
+    assert out["decisions"][0]["outcome"] == "intent"
+    assert out["decisions"][0]["intent_type"] == "follow_up"
