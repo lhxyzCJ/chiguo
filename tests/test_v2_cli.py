@@ -227,3 +227,97 @@ def test_status_after_catch_up_reflects_projection(tmp_path, capsys):
     out = json.loads(cap.out)
     assert out["commitments"]["count"] == 1
     assert out["commitments"]["items"][0]["subject"] == "体检"
+
+
+# ── chiguo autonomous-turn（shadow 自主回合）────────────────────
+
+def _write_toml(tmp_path) -> Path:
+    cfg = tmp_path / "chiguo_proactive.toml"
+    cfg.write_text(
+        '[emotion]\n'
+        '[schedule]\nquiet_start = 0\nquiet_end = 8\n'
+        '[storage]\ndb_path = "c.sqlite"\n'
+        '[netease]\nenabled = false\n'
+        '[weather]\nenabled = false\n'
+        '[planning]\n', encoding="utf-8")
+    return cfg
+
+
+def test_autonomous_turn_cli_shadow(tmp_path, capsys):
+    cfg = _write_toml(tmp_path)
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    rc, cap = _run(capsys, "autonomous-turn", "--db", str(dbp), "--config", str(cfg))
+    assert rc == 0
+    out = json.loads(cap.out)
+    assert out["action"] == "autonomous_turn"
+    assert out["outcome"] in ("waited", "deferred", "intent")
+    assert out["turn_id"]
+    # shadow：不产生 delivery / 不发送
+    conn = _open(dbp)
+    assert conn.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0] == 0
+
+
+def test_autonomous_turn_cli_execute_creates_action_but_does_not_send(tmp_path, capsys):
+    """--execute：有意图时创建 pending action 行；执行仍由 chiguo execute 承担。"""
+    cfg = _write_toml(tmp_path)
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    _open(dbp).execute(
+        "INSERT INTO commitments(id, kind, subject, due_at, status, created_at)"
+        " VALUES ('c1','user_event','线代考试','2026-10-01T09:00:00+08:00','open',"
+        " '2026-10-01T00:00:00+08:00')")
+    rc, cap = _run(capsys, "autonomous-turn", "--execute",
+                   "--now", "2026-10-01T20:00:00+08:00",
+                   "--db", str(dbp), "--config", str(cfg))
+    assert rc == 0
+    out = json.loads(cap.out)
+    assert out["outcome"] == "action_pending"
+    conn = _open(dbp)
+    row = conn.execute("SELECT * FROM actions").fetchone()
+    assert row["status"] == "pending" and row["type"] == "send_message"
+    assert conn.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0] == 0
+
+
+def _open(path):
+    import sqlite3
+    conn = sqlite3.connect(str(path), isolation_level=None)  # autocommit（与生产一致）
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# ── chiguo execute（执行 pending action）────────────────────────
+
+def test_execute_dry_run_prints_prompt(tmp_path, capsys):
+    from storage.repositories.actions import ActionRepo
+    from storage.repositories.drives import IntentRepo
+    from storage.sqlite.db import Database
+    cfg = _write_toml(tmp_path)
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    db = Database(dbp)
+    intent = IntentRepo(db).add("follow_up", why={"opportunity_kind": "commitment_due"},
+                                plan={"primary": {"subject": "线代考试"}})
+    action = ActionRepo(db).add("send_message", intent_id=intent.id)
+    rc, cap = _run(capsys, "execute", action.id, "--dry-run",
+                   "--db", str(dbp), "--config", str(cfg))
+    assert rc == 0
+    out = json.loads(cap.out)
+    assert out["action"] == "execute" and out["dry_run"] is True
+    assert out["prompt"]["context"]["intent_type"] == "follow_up"
+
+
+def test_execute_cli_rejects_non_pending(tmp_path, capsys):
+    from storage.repositories.actions import ActionRepo
+    from storage.repositories.drives import IntentRepo
+    from storage.sqlite.db import Database
+    cfg = _write_toml(tmp_path)
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    db = Database(dbp)
+    intent = IntentRepo(db).add("share", why={}, plan={})
+    action = ActionRepo(db).add("send_message", intent_id=intent.id)
+    ActionRepo(db).set_status(action.id, "completed")
+    rc, cap = _run(capsys, "execute", action.id, "--db", str(dbp), "--config", str(cfg))
+    assert rc == 1
+    assert json.loads(cap.out)["ok"] is False

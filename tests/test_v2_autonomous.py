@@ -109,3 +109,34 @@ def test_scenario_4_quiet_hours_defers(tmp_path):
     assert r.outcome == "deferred"
     turn = TurnRepo(db).get(r.turn_id)
     assert "quiet" in str(turn.state_snapshot) or "quiet" in str(turn.outcome)
+
+
+def test_scenario_5_mem0_unavailable_core_still_works(tmp_path, monkeypatch):
+    """Mem0 不可用：structured state 与核心运行不受影响（v2 核心不依赖 mem0）。"""
+    monkeypatch.setenv("CHIGUO_MEM0_DISABLED", "1")
+    db, store = _setup(tmp_path)
+    cfg = {**_config(tmp_path),
+           "memory": {"backend": "mem0",
+                      "mem0_qdrant_path": str(tmp_path / "nonexistent-qdrant"),
+                      "mem0_history_db": str(tmp_path / "nonexistent.db")}}
+    store.append("commitment.created", source="extractor",
+                 occurred_at=T0 - timedelta(hours=3),
+                 payload={"kind": "user_event", "subject": "面试",
+                          "due_at": (T0 - timedelta(hours=2)).isoformat()})
+    r = autonomous_turn(db=db, config=cfg, reason="cron", now=T0)
+    assert r.outcome == "intent"          # 核心链路照常产出意图
+    assert r.intent_id is not None
+
+
+def test_scenario_6_corrupt_db_fails_fast(tmp_path):
+    """SQLite 损坏 → fail-fast（StorageError），不静默重建。"""
+    from storage.sqlite.db import StorageError
+    bad = tmp_path / "bad.sqlite"
+    bad.write_bytes(b"garbage" * 128)
+    db = Database(bad)
+    try:
+        autonomous_turn(db=db, config=_config(tmp_path), reason="cron", now=T0)
+        raised = False
+    except StorageError:
+        raised = True
+    assert raised, "损坏数据库必须 fail-fast（StorageError），交由备份恢复流程处理"

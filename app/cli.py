@@ -190,6 +190,61 @@ def cmd_threads(args) -> int:
     return 0
 
 
+# ── chiguo autonomous-turn（shadow 自主回合）────────────────────
+
+def cmd_autonomous_turn(args) -> int:
+    from app.autonomous.turn import autonomous_turn
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "autonomous_turn", "ok": False,
+                "error": f"数据库不存在: {db.path}（先 chiguo db migrate）"})
+        return 1
+    cfg, cfg_path = load_config(args.config)
+    cfg = dict(cfg)
+    cfg.setdefault("_base_dir", str(cfg_path.resolve().parent))
+    now = None
+    if args.now:
+        now = datetime.fromisoformat(args.now)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=CST)
+    res = autonomous_turn(db=db, config=cfg, reason=args.reason or "manual",
+                          now=now, execute=bool(args.execute))
+    _print({"action": "autonomous_turn", "ok": True, "turn_id": res.turn_id,
+            "outcome": res.outcome, "intent_id": res.intent_id,
+            "action_id": res.action_id, "why": res.why})
+    return 0
+
+
+# ── chiguo execute（执行 pending action）───────────────────────
+
+def cmd_execute(args) -> int:
+    from app.actions.executor import build_generation_payload, execute_action
+    from storage.repositories.actions import ActionRepo
+    from storage.repositories.drives import IntentRepo
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "execute", "ok": False, "error": f"数据库不存在: {db.path}"})
+        return 1
+    cfg, cfg_path = load_config(args.config)
+    cfg = dict(cfg)
+    cfg.setdefault("_base_dir", str(cfg_path.resolve().parent))
+    if args.dry_run:
+        action = ActionRepo(db).get(args.action_id)
+        if action is None:
+            _print({"action": "execute", "ok": False,
+                    "error": f"action 不存在: {args.action_id}"})
+            return 1
+        intent = IntentRepo(db).get(action.intent_id) if action.intent_id else None
+        _print({"action": "execute", "ok": True, "dry_run": True,
+                "action_id": action.id, "status": action.status,
+                "prompt": build_generation_payload(intent, config=cfg)})
+        return 0
+    out = execute_action(db, args.action_id, config=cfg)
+    _print({"action": "execute", "ok": out.ok, "status": out.status,
+            "error": out.error, "text": out.text})
+    return 0 if out.ok else 1
+
+
 # ── chiguo status（聚合视图；只读，不消费事件）─────────────────
 
 def cmd_status(args) -> int:
@@ -278,6 +333,19 @@ def _build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--db", default=None)
         p.add_argument("--config", default=None)
+    p = sub.add_parser("autonomous-turn",
+                       help="自主回合（默认 shadow：只记录不发送）")
+    p.add_argument("--db", default=None)
+    p.add_argument("--config", default=None)
+    p.add_argument("--execute", action="store_true",
+                   help="有意图时创建 pending action 行（仍不发送）")
+    p.add_argument("--now", default=None, help="覆盖当前时间（ISO8601；调试/replay）")
+    p.add_argument("--reason", default="manual")
+    p = sub.add_parser("execute", help="执行 pending send_message action（生成+发送）")
+    p.add_argument("action_id")
+    p.add_argument("--db", default=None)
+    p.add_argument("--config", default=None)
+    p.add_argument("--dry-run", action="store_true", help="只打印生成 prompt，不生成不发送")
     return parser
 
 
@@ -288,11 +356,12 @@ def main(argv=None) -> int:
         handlers = {"recent": cmd_events_recent, "show": cmd_events_show}
         handler = handlers[args.events_command]
         action = f"events_{args.events_command}"
-    elif args.command in ("commitments", "threads", "status"):
+    elif args.command in ("commitments", "threads", "status", "autonomous-turn", "execute"):
         handlers = {"commitments": cmd_commitments, "threads": cmd_threads,
-                    "status": cmd_status}
+                    "status": cmd_status, "autonomous-turn": cmd_autonomous_turn,
+                    "execute": cmd_execute}
         handler = handlers[args.command]
-        action = args.command
+        action = args.command.replace("-", "_")
     else:
         handlers = {"status": cmd_db_status, "migrate": cmd_db_migrate,
                     "integrity": cmd_db_integrity, "backup": cmd_db_backup}
