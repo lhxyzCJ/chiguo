@@ -35,7 +35,8 @@ class TurnRepo:
     def __init__(self, db: Database):
         self.db = db
 
-    def add(self, reason: str, *, started_at: datetime | None = None,
+    def add(self, reason: str, *, turn_id: str | None = None,
+            started_at: datetime | None = None,
             finished_at: datetime | None = None,
             event_window_from: str | None = None,
             event_window_to: str | None = None,
@@ -45,8 +46,9 @@ class TurnRepo:
             intent_id: str | None = None,
             action_id: str | None = None,
             outcome: str | None = None) -> Turn:
+        """写入回合行；turn_id 显式传入（调用方先用同一 id 关联 drives/intents）。"""
         now = datetime.now(CST)
-        t = Turn(id=uuid.uuid7().hex, reason=str(reason),
+        t = Turn(id=turn_id or uuid.uuid7().hex, reason=str(reason),
                  started_at=started_at or now, finished_at=finished_at,
                  event_window_from=event_window_from, event_window_to=event_window_to,
                  state_snapshot=state_snapshot, opportunity_ids=opportunity_ids,

@@ -12,6 +12,7 @@ Reducer = 确定性事件消费者：
 - thread.opened 的 opened_at 用仓储写入时刻（事件时间戳对齐待补充）。
 """
 import dataclasses
+import json
 import random
 from dataclasses import dataclass
 from datetime import datetime, time as dtime, timedelta
@@ -251,11 +252,15 @@ class Reducer:
         subject = str(payload.get("subject") or "").strip()
         if not subject:
             return
+        details = payload.get("details")
+        if isinstance(details, dict):
+            details = json.dumps(details, ensure_ascii=False)  # TEXT 列：dict → JSON 文本
+        elif details is not None:
+            details = str(details)
         CommitmentRepo(self.db).add(
             str(payload.get("kind") or "user_event"), subject,
             due_at=_dt(payload.get("due_at")),
-            details=payload.get("details") if isinstance(payload.get("details"), dict) else None,
-            created_from_event=ev.event_id)
+            details=details, created_from_event=ev.event_id)
 
     def _on_commitment_resolved(self, ev):
         payload = ev.payload or {}
@@ -273,7 +278,8 @@ class Reducer:
         subject = str(payload.get("subject") or "").strip()
         if not subject:
             return
-        ThreadRepo(self.db).open_thread(subject, source=payload.get("source"))
+        ThreadRepo(self.db).open_thread(subject, source=payload.get("source"),
+                                        opened_at=ev.occurred_at)
 
     def _on_thread_closed(self, ev):
         payload = ev.payload or {}

@@ -29,15 +29,20 @@ class ThreadRepo:
     def __init__(self, db: Database):
         self.db = db
 
-    def open_thread(self, subject: str, source: str | None = None) -> Thread:
+    def open_thread(self, subject: str, source: str | None = None,
+                    opened_at: datetime | None = None,
+                    payload: dict | None = None) -> Thread:
+        """开一条线索；opened_at 缺省为写入时刻（事件重放方应传事件时间）。"""
         t = Thread(id=uuid.uuid7().hex, subject=str(subject), state="open",
-                   opened_at=datetime.now(CST), last_interaction_at=None,
-                   closed_at=None, source=source, payload=None)
+                   opened_at=opened_at or datetime.now(CST),
+                   last_interaction_at=None,
+                   closed_at=None, source=source, payload=payload)
         self.db.connect().execute(
             "INSERT INTO threads(id, subject, state, opened_at, last_interaction_at,"
             " closed_at, source, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (t.id, t.subject, t.state, t.opened_at.isoformat(), None, None,
-             t.source, None))
+             t.source,
+             json.dumps(t.payload, ensure_ascii=False) if t.payload is not None else None))
         return t
 
     def get(self, thread_id: str) -> Thread | None:

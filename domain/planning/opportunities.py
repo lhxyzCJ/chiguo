@@ -124,7 +124,7 @@ def discover_opportunities(*, observations, commitments, threads, now,
         if last is None or (now - last) < timedelta(hours=stale_h):
             continue
         drafts.append(OpportunityDraft(
-            kind="open_thread", novelty=1.0, relevance=0.5, urgency=0.2,
+            kind="open_thread", novelty=1.0, relevance=0.6, urgency=0.3,
             emotional_affordance=0.3, expires_at=None,
             observation_event_id=None,
             payload={"thread_id": getattr(t, "id", None),

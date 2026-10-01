@@ -200,7 +200,7 @@ def autonomous_turn(*, db: Database, config: dict, reason: str = "manual",
         "drives": {d.kind: round(d.intensity, 3) for d in drives},
         "planner": outcome,
     }
-    TurnRepo(db).add(reason, started_at=started_at,
+    TurnRepo(db).add(reason, turn_id=turn_id, started_at=started_at,
                      finished_at=datetime.now(CST),
                      event_window_from=prev_event_id,
                      event_window_to=state.last_event_id,
