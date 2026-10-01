@@ -1,4 +1,5 @@
 """tests/test_v2_reducer.py — app.runtime.reducer 事件 → 物化状态 TDD。"""
+import pytest
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -170,3 +171,68 @@ def test_quiet_window_constraint_helper(tmp_path):
     assert in_quiet_hours(datetime(2026, 10, 1, 9, 0, tzinfo=CST), 0, 8) is False
     assert in_quiet_hours(datetime(2026, 10, 1, 23, 0, tzinfo=CST), 22, 7) is True
     assert in_quiet_hours(datetime(2026, 10, 1, 12, 0, tzinfo=CST), 22, 7) is False
+
+
+def test_catch_up_advances_to_now_without_events(tmp_path):
+    """M3：无新事件时 catch_up(now) 也把状态推进到 now（长期静默可见）。"""
+    db, store = _setup(tmp_path)
+    store.append("message.received", source="wechat", occurred_at=T0,
+                 payload={"text": "在吗"})
+    r = Reducer(db, CONFIG)
+    r.catch_up()
+    lo1 = r.current().affect.loneliness
+    r.catch_up(now=T0 + timedelta(hours=50))
+    assert r.current().affect.loneliness > lo1 + 5
+
+
+def test_silent_hours_excludes_sleep_window():
+    """M2：清醒沉默 = 墙钟跨度 − 静默窗重叠（旧 cooldown.silent_hours 同语义）。"""
+    from app.runtime.reducer import silent_hours
+    last = datetime(2026, 9, 30, 23, 0, tzinfo=CST)
+    now = datetime(2026, 10, 1, 9, 0, tzinfo=CST)
+    assert silent_hours(now, last, 0, 8) == 2.0    # 10h − 8h 睡眠
+    assert silent_hours(now, last, 0, 0) == 10.0   # 无窗口
+    assert silent_hours(now, None, 0, 8) == 999.0  # 从未交互
+
+
+def test_message_sent_after_long_silence_raises_tension(tmp_path):
+    """M11：久未回应后的主动 send → recent_tension 上升（payload.silent_hours 生效）。"""
+    db, store = _setup(tmp_path)
+    store.append("message.received", source="wechat",
+                 occurred_at=T0 - timedelta(hours=96), payload={"text": "嗯"})
+    store.append("message.sent", source="wechat", occurred_at=T0,
+                 payload={"text": "……在吗"})
+    r = Reducer(db, CONFIG)
+    r.catch_up()
+    assert r.current().relationship.recent_tension > 0.0
+
+
+def test_failed_delivery_does_not_change_energy(tmp_path):
+    """H1 语义锁定：v2 计费=送达成功（message.sent）才扣 energy；
+    失败/不确定不扣（因此无需退款），对账时不要按旧引擎预扣语义比较。"""
+    db, store = _setup(tmp_path)
+    store.append("message.received", source="wechat", occurred_at=T0,
+                 payload={"text": "在吗"})
+    r = Reducer(db, CONFIG)
+    r.catch_up()
+    before = r.current().affect
+    store.append("message.delivery_failed", source="wechat",
+                 occurred_at=T0 + timedelta(minutes=1),
+                 payload={"error": "bridge 500"}, correlation_id="m1")
+    r.catch_up()
+    after = r.current().affect
+    # 1 分钟时间推进允许微小的自然回弹（energy 向 100、anxiety 向基线），
+    # 但绝无 -20 的能量扣除（失败不扣费，无需退款）
+    assert after.energy == pytest.approx(before.energy, abs=0.1)
+    assert after.anxiety == pytest.approx(before.anxiety, abs=1.0)
+
+
+def test_bad_checkpoint_state_warns_and_falls_back(tmp_path, capsys):
+    """L5：检查点状态反序列化失败 → 告警 + 回退初始值（不静默重置）。"""
+    from storage.repositories.checkpoints import CheckpointRepo
+    db, store = _setup(tmp_path)
+    CheckpointRepo(db).save("runtime", last_event_id=None, last_occurred_at=None,
+                            state={"affect": "not-a-dict"})
+    r = Reducer(db, CONFIG)
+    assert r.current().affect.loneliness == 15.0
+    assert "反序列化失败" in capsys.readouterr().err

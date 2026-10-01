@@ -82,3 +82,16 @@ chiguo_rotation.py ← decision/base、cli/handlers/rotation.py（+ tests/confte
 结论：旧栈是**闭环**——除 daemon CLI / tick.sh / bridge 三个进程入口外无外部消费者；
 v2 代码零依赖（`chiguo_state_models`/`chiguo_math` 常量级依赖除外）。
 C1–C6 完成后，B 段可一次性删除且不影响 v2。
+
+## E. 语义差异备忘（删除旧栈前必须知晓）
+
+1. **计费时点**：v2 = 送达成功（`message.sent`）才扣 energy/anxiety，失败/不确定不扣、
+   无退款路径；旧引擎 = 决策时预扣 + 失败退款（`refund_send`）。双写对账期两边数值
+   系统性偏移属预期；Phase 8 删除旧栈后旧退款语义消失（v2 语义更简单且无损）。
+2. **silent_hours**：v2 reducer 已对齐旧引擎（扣除睡眠窗重叠）；untrusted 时间戳
+   由 /turn ±24h 钳制兜底。
+3. **damp（A10 回复饱和阻尼）**：v2 恒 1.0（旧引擎按 30 分钟窗口计数）——双写对账期
+   密集连发场景会偏移；Phase 6 前补齐或显式记入验收差异。
+4. **tick 的日程情境**（is_holiday/in_class 参与情绪半衰期修正）：v2 tick 恒取默认，
+   schedule 感知在 Phase 6 sources 接线时注入。
+5. **假期/纪念日机会**：v2 已可达（H3 修复后）；旧栈无对应「机会」概念，属新增能力。

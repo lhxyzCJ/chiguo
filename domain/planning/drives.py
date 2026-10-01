@@ -8,7 +8,7 @@ planner 再把 opportunity + drive 变成 intent（architecture-v2 §3.8）。
 - care                = affect.affection / 100 × (0.5 + relationship.closeness / 2)
 - playfulness         = affect.energy / 100 × 0.4
 - unfinished_business = 0.8（存在 kind == "commitment_due" 的机会）否则不产
-- curiosity           = relationship.familiarity / 100 × 0.3
+- curiosity           = relationship.familiarity（域 [0,1]）× 0.3
 
 输出 intensity ∈ [0,1]（越界 clamp），<= MIN_INTENSITY 过滤；
 按 intensity 降序，同分按 kind 字典序。affect / relationship 为 duck-type
@@ -24,7 +24,7 @@ CARE_BASE = 0.5                   # care = affection/100 × (0.5 + closeness/2)
 CARE_CLOSENESS_SCALE = 0.5
 PLAYFULNESS_SCALE = 0.4           # playfulness = energy/100 × 0.4
 UNFINISHED_BUSINESS_INTENSITY = 0.8
-CURIOSITY_SCALE = 0.3             # curiosity = familiarity/100 × 0.3
+CURIOSITY_SCALE = 0.3             # curiosity = familiarity（[0,1]）× 0.3
 
 MIN_INTENSITY = 0.05              # 过滤阈值（含）
 
@@ -122,7 +122,7 @@ def evaluate_drives(*, affect, relationship, opportunities=None,
     familiarity = _num_attr(relationship, "familiarity")
     if familiarity is not None:
         drafts.append(DriveDraft(
-            "curiosity", _u01(familiarity / 100.0 * CURIOSITY_SCALE),
+            "curiosity", _u01(familiarity * CURIOSITY_SCALE),
             {"familiarity": familiarity}))
 
     drafts = [d for d in drafts if d.intensity > MIN_INTENSITY]

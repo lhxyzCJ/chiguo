@@ -46,17 +46,14 @@ def _commitments(store, limit=20):
 # ── 日期词 → due_at ──────────────────────────────────────────────
 
 @pytest.mark.parametrize("text,due", [
-    ("今天考试", "2026-10-01T09:00:00+08:00"),
     ("明天交作业", "2026-10-02T09:00:00+08:00"),
     ("后天面试", "2026-10-03T09:00:00+08:00"),
     ("大后天答辩", "2026-10-04T09:00:00+08:00"),
     ("3天后体检", "2026-10-04T09:00:00+08:00"),
-    ("0天后开会", "2026-10-01T09:00:00+08:00"),
     ("下周一开会", "2026-10-05T09:00:00+08:00"),
     ("下周日面签", "2026-10-11T09:00:00+08:00"),
     ("周五聚", "2026-10-02T09:00:00+08:00"),
     ("周三约饭", "2026-10-07T09:00:00+08:00"),   # 本周三（9/30）已过 → 下周三
-    ("周四体检", "2026-10-01T09:00:00+08:00"),   # 今天即周四（未过 → 今天）
     ("周天取快递", "2026-10-04T09:00:00+08:00"),
     ("10月5日报名", "2026-10-05T09:00:00+08:00"),
     ("10月5号缴费", "2026-10-05T09:00:00+08:00"),
@@ -215,5 +212,37 @@ def test_non_text_payload_skipped(tmp_path):
     for payload in ({}, {"text": 123}, {"text": "   "}, {"text": None}):
         store.append("message.received", source="wechat", payload=payload,
                      occurred_at=NOW)
+    assert Extractor(db).catch_up(NOW) == []
+    assert _commitments(store) == []
+
+
+def test_past_due_rejected(tmp_path):
+    """已过期日期不产承诺（NOW=20:00；今天 09:00 已过）——防过去式闲谈误报。"""
+    db = _db(tmp_path)
+    store = EventStore(db)
+    _recv(store, "今天考试")
+    assert Extractor(db).catch_up(NOW) == []
+    assert _commitments(store) == []
+
+
+def test_today_keyword_works_before_default_hour(tmp_path):
+    """上午（07:00）说「今天考试」→ 今日 09:00 仍在未来，正常产事件。"""
+    from datetime import datetime as dt
+    db = _db(tmp_path)
+    store = EventStore(db)
+    morning = dt(2026, 10, 1, 7, 0, tzinfo=NOW.tzinfo)
+    _recv(store, "今天考试")
+    ids = Extractor(db).catch_up(morning)
+    events = _commitments(store)
+    assert len(ids) == 1 and len(events) == 1
+    assert events[0].payload["due_at"] == "2026-10-01T09:00:00+08:00"
+
+
+def test_exclusion_words_do_not_trigger(tmp_path):
+    """易混词剥离：「明天考虑一下」「今天考试好难啊」（后者亦被过期规则拦截）。"""
+    db = _db(tmp_path)
+    store = EventStore(db)
+    _recv(store, "明天考虑一下")
+    _recv(store, "今天考试好难啊")
     assert Extractor(db).catch_up(NOW) == []
     assert _commitments(store) == []

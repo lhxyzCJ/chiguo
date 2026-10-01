@@ -352,3 +352,43 @@ def test_replay_cli(tmp_path, capsys):
     assert out["action"] == "replay" and out["count"] == 1
     assert out["decisions"][0]["outcome"] == "intent"
     assert out["decisions"][0]["intent_type"] == "follow_up"
+
+
+def test_db_path_env_override(tmp_path, capsys, monkeypatch):
+    """M6：env CHIGUO_DB_PATH 与 dualwrite 同源（--db > env > toml > 默认）。"""
+    dbp = tmp_path / "env.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    monkeypatch.setenv("CHIGUO_DB_PATH", str(dbp))
+    monkeypatch.chdir(tmp_path)  # 防误读仓库 toml
+    rc, cap = _run(capsys, "status")
+    out = json.loads(cap.out)
+    assert rc == 0 and out["db"]["path"] == str(dbp)
+
+
+def test_unmigrated_db_is_json_error(tmp_path, capsys):
+    """M9：存在但未迁移的库 → JSON error + exit 1（不裸 traceback）。"""
+    empty = tmp_path / "empty.sqlite"
+    empty.write_bytes(b"")
+    rc, cap = _run(capsys, "status", "--db", str(empty))
+    assert rc == 1
+    out = json.loads(cap.out)
+    assert out["ok"] is False and "error" in out
+
+
+def test_tick_execute_generation_failure_exits_1(tmp_path, capsys, monkeypatch):
+    """M8：--execute 发送失败 → exit 1（cron 可见）；shadow 恒 0。"""
+    cfg = _write_toml(tmp_path)
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    _open(dbp).execute(
+        "INSERT INTO commitments(id, kind, subject, due_at, status, created_at)"
+        " VALUES ('c1','user_event','线代考试','2026-09-14T09:00:00+08:00','open',"
+        " '2026-09-14T00:00:00+08:00')")
+    monkeypatch.setenv("AGENT_RUN_SCRIPT", str(tmp_path / "missing-agent-run.mjs"))
+    rc, cap = _run(capsys, "tick", "--execute",
+                   "--now", "2026-09-14T20:00:00+08:00",
+                   "--db", str(dbp), "--config", str(cfg))
+    out = json.loads(cap.out)
+    assert rc == 1 and out["ok"] is False
+    assert out["sent"]["ok"] is False
+    assert out["action_id"]  # action 已记失败终态

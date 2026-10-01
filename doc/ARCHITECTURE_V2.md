@@ -678,3 +678,37 @@ class Source(Protocol):
 3. shadow 期：cron 加 `chiguo tick`（不 `--execute`），`chiguo replay` 复盘历史窗口；
 4. 切换发送：`chiguo tick --execute` 替代 `scripts/chiguo-tick.sh` 的决策+发送；
 5. 完成 §5.2 的 6 项移植后执行 Phase 8 删除（见 deletion-audit）。
+
+### 5.4 自审修复轮（2026-10-02，分支内）
+
+独立子代理只读审查（19 提交全量 diff）发现并已修复：
+
+| 级别 | 问题 | 修复 |
+|---|---|---|
+| Critical | 事件游标用 uuid 字典序 → 并发乱序提交时永久漏事件 | 游标改 rowid（提交序）：`Event.cursor`、`after()`、reducer/extractor 游标；补乱序提交回归测试 |
+| High | 假期/纪念日当天观测 expires=当天 00:00 自我过期（holiday 机会恒不可达） | expires=次日 00:00；补「当天观测有效」测试（代价：scenario 测试日期避开节假日窗口） |
+| High | 双写 reminder 携带相对日期令牌（days/weekday/MM-DD）→ due 丢失 | 双写已归一化的 `result["item"]`（绝对 ISO） |
+| High | v2 无退款语义未记录 | 明确 v2 计费=送达成功才扣（失败不扣、无需退款）；docstring 记录；补语义锁定测试 |
+| Medium | replay 在已物化副本上重复投影（机会重复/张力翻倍） | 副本重置派生表 + `opportunities` 诊断字段 + 回归测试 |
+| Medium | silent_hours 未扣睡眠窗（与旧引擎分叉） | 移植 `sleep_hours_between`/`silent_hours`（同旧语义）+ 单测 |
+| Medium | `catch_up(now)` 的 now 是死参数（无事件时状态不推进） | 无新事件也推进到 now；补测 |
+| Medium | /turn 时间戳零校验（秒/未来值污染时间轴） | ±24h 偏差钳制为服务器时间 + 告警 + 测 |
+| Medium | serve 无 token/Host/Content-Type 校验 | `CHIGUO_RUNTIME_TOKEN` + X-Chiguo-Token；Host 回环校验；POST 强制 application/json |
+| Medium | CLI 不认 `CHIGUO_DB_PATH`（与 dualwrite 分叉） | `--db > env > toml > 默认` 统一 |
+| Medium | 测试双写开关用 setdefault（shell export=1 可穿透） | conftest 无条件置 0 |
+| Medium | tick 发送失败仍 exit 0；失败无重试 | `--execute` 失败 exit 1（executor 失败允许下轮重试）；`AGENT_RUN_SCRIPT` 可覆盖（测试/运维） |
+| Medium | 未迁移库裸 traceback | `main()` 捕获 sqlite3.Error → JSON error + exit 1 |
+| Medium | 机会每轮重复落库无界增长 | turn 内 (kind,payload) 去重跳过 |
+| Medium | relationship 张力分支（silent_hours）不可达 | `_on_message_sent` 注入清醒沉默时长 |
+| Medium | curiosity 量纲错误（familiarity [0,1] 被 /100）恒被过滤 | 直接 `familiarity × 0.3` |
+| Medium | 提取器误报（"今天考试好难啊"→承诺） | 过期日期拒收 + 易混词剥离（考虑/交流/还好…） |
+| Low | 死导入/死参数/`--port 0`/检查点反序列化静默 | 全部清理/修复；检查点坏状态记 stderr |
+
+**仍开放（Low，已记录不阻塞）**：serve `?session=` 作用域未消费（L3）；备份复制期
+`dest-journal` 权限窗口（L4）；dualwrite 进程内 sink 缓存忽略 config 差异（L6）；
+并发测试仍为顺序双连接（C1 回归测试覆盖乱序语义，真并发压测留后续）；
+`refund_send` 无 runtime 调用点（保留用于对齐旧语义/对账）。
+
+**环境备注（开发者）**：本机 WSL2 回环偶发 connect 超时（stock stdlib
+ThreadingHTTPServer 亦可复现，与项目代码无关）——serve 测试带界重试；
+README 已注明真机部署不受影响面。

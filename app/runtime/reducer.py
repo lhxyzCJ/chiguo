@@ -8,10 +8,15 @@ Reducer = 确定性事件消费者：
 简化声明（Phase 4 最小版，后续阶段收口）：
 - tick 的日程情境参数（is_holiday/in_class/class_load）恒取默认——schedule 感知
   留给 Phase 6 的 source 接入；
-- damp（A10 饱和阻尼）恒 1.0——drop_events 窗口统计待 reducer 补齐；
-- thread.opened 的 opened_at 用仓储写入时刻（事件时间戳对齐待补充）。
+- damp（A10 饱和阻尼）恒 1.0——drop_events 窗口统计待 reducer 补齐。
+
+计费语义（与旧引擎的已知差异，对账时注意）：**送达成功（message.sent）才扣
+energy/anxiety**；message.delivery_failed/uncertain 不扣费、因此无需退款
+（旧引擎在决策时预扣、失败退款）。domain.affect.refund_send 为对齐旧语义保留，
+当前 runtime 无调用点。
 """
 import dataclasses
+import sys
 import json
 import random
 from dataclasses import dataclass
@@ -74,6 +79,62 @@ def next_quiet_end(now: datetime, quiet_start: int, quiet_end: int) -> datetime 
     return candidate
 
 
+def sleep_hours_between(start: datetime, end: datetime,
+                        quiet_start: int, quiet_end: int) -> float:
+    """[start, end) 与静默窗（跨午夜语义）重叠的小时数。
+
+    与旧 `chiguo_state_models.CooldownState._sleep_hours_in_range` 同语义
+    （qs==qe 视为无窗口；qe < qs 表示跨午夜，qe 不含）。
+    """
+    try:
+        qs, qe = int(quiet_start), int(quiet_end)
+    except (TypeError, ValueError):
+        return 0.0
+    if qs == qe or end <= start:
+        return 0.0
+    total = 0.0
+    cur = start
+    guard = 0
+    while cur < end and guard < 4000:
+        day = cur.replace(hour=0, minute=0, second=0, microsecond=0)
+        ws = day.replace(hour=qs)
+        we = day.replace(hour=qe)
+        if qe < qs:
+            if cur < we:
+                tail_start = max(cur, day)
+                tail_end = min(end, we)
+                if tail_start < tail_end:
+                    total += (tail_end - tail_start).total_seconds() / 3600.0
+                cur = we
+                guard += 1
+                continue
+            we = we + timedelta(days=1)
+        if we <= cur:
+            cur = ws + timedelta(days=1)
+            guard += 1
+            continue
+        if ws < end and we > cur:
+            overlap_start = max(cur, ws)
+            overlap_end = min(end, we)
+            total += (overlap_end - overlap_start).total_seconds() / 3600.0
+        cur = we
+        guard += 1
+    return total
+
+
+def silent_hours(now: datetime, last_user_at: datetime | None,
+                 quiet_start: int, quiet_end: int) -> float:
+    """清醒沉默时长（旧 cooldown.silent_hours 同语义：扣除静默窗睡眠重叠）。
+
+    从未交互（last_user_at None）→ 999.0（与旧引擎一致）。
+    """
+    if last_user_at is None:
+        return _NO_USER_SILENT_HOURS
+    raw = max(0.0, (now - last_user_at).total_seconds() / 3600.0)
+    return max(0.0, raw - sleep_hours_between(last_user_at, now,
+                                              quiet_start, quiet_end))
+
+
 def _dt(value) -> datetime | None:
     """宽松时间解析：datetime 原样；ISO 字符串（含 date-only）→ CST aware。"""
     if isinstance(value, datetime):
@@ -122,12 +183,17 @@ class Reducer:
     def _load(self) -> dict:
         cp = self.checkpoints.get(STREAM)
         saved = cp.state if cp is not None and isinstance(cp.state, dict) else {}
+        affect = _from_json(affect_mod.AffectState, saved.get("affect"))
+        rel = _from_json(rel_mod.RelationshipState, saved.get("relationship"))
+        if affect is None and saved.get("affect"):
+            print("[reducer] 检查点 affect 反序列化失败，已回退初始值"
+                  "（游标未动——需人工排查该检查点）", file=sys.stderr)
+        if rel is None and saved.get("relationship"):
+            print("[reducer] 检查点 relationship 反序列化失败，已回退初始值",
+                  file=sys.stderr)
         st = {
-            "affect": (_from_json(affect_mod.AffectState, saved.get("affect"))
-                       or affect_mod.initial(self.config)),
-            "relationship": (_from_json(rel_mod.RelationshipState,
-                                        saved.get("relationship"))
-                             or rel_mod.initial()),
+            "affect": affect or affect_mod.initial(self.config),
+            "relationship": rel or rel_mod.initial(),
             "last_user_at": _dt(saved.get("last_user_at")),
             "last_sent_at": _dt(saved.get("last_sent_at")),
             "last_event_id": cp.last_event_id if cp is not None else None,
@@ -171,16 +237,26 @@ class Reducer:
     # ── 消费 ─────────────────────────────────────────────
 
     def catch_up(self, now: datetime | None = None, limit: int = 500) -> int:
-        """消费新事件（原子：投影 + 游标同一事务提交）；返回本轮消费数。"""
+        """增量消费（原子：投影 + 游标同一事务提交）；返回本轮消费数。
+
+        `now` 给出时，状态额外推进到 `now`（即使本轮无新事件）——保证评估时刻
+        的情绪已含真实流逝（如长期静默后的 reconnect 驱动可见）。
+        """
         batch = self.events.after(self._st["last_event_id"], limit=limit)
-        if not batch:
+        last_at = self._st["last_event_at"]
+        need_advance = (now is not None
+                        and (last_at is None or now > last_at))
+        if not batch and not need_advance:
             return 0
         with self.db.transaction():
             for ev in batch:
                 self._advance_time(ev.occurred_at)
                 self._dispatch(ev)
-                self._st["last_event_id"] = ev.event_id
+                self._st["last_event_id"] = (str(ev.cursor) if ev.cursor is not None
+                                             else ev.event_id)
                 self._st["last_event_at"] = ev.occurred_at
+            if now is not None:
+                self._advance_time(now)
             self._save_checkpoint()
         return len(batch)
 
@@ -193,10 +269,10 @@ class Reducer:
     # ── 内部 ─────────────────────────────────────────────
 
     def _silent_hours(self, now: datetime) -> float:
-        last = self._st["last_user_at"]
-        if last is None:
-            return _NO_USER_SILENT_HOURS
-        return max(0.0, (now - last).total_seconds() / 3600.0)
+        sched = self.config.get("schedule") or {}
+        return silent_hours(now, self._st["last_user_at"],
+                            sched.get("quiet_start", 0),
+                            sched.get("quiet_end", 8))
 
     def _advance_time(self, at: datetime):
         last = self._st["last_event_at"]
@@ -247,9 +323,15 @@ class Reducer:
     def _on_message_sent(self, ev):
         self._st["affect"] = affect_mod.apply_character_send(
             self._st["affect"], config=self.config)
+        payload = dict(ev.payload or {})
+        # M11: 静默时长（睡眠窗扣除后）供关系域「久未回应→张力」分支使用；
+        # 从未交互（last_user_at=None）不算张力，置 0。
+        if self._st["last_user_at"] is not None:
+            payload.setdefault("silent_hours",
+                               self._silent_hours(ev.occurred_at))
         self._st["relationship"] = rel_mod.apply_event(
             self._st["relationship"], "message.sent", now=ev.occurred_at,
-            payload=dict(ev.payload or {}))
+            payload=payload)
         self._st["last_sent_at"] = ev.occurred_at
 
     def _on_message_delivery_failed(self, ev):

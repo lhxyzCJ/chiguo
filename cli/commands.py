@@ -100,8 +100,12 @@ def _cmd_schedule_change(json_arg: str, config_path: str | None = None):
         print(f"[chiguo_daemon] --schedule-change 异常: {e}", file=sys.stderr)
         sys.exit(1)
     # ── v2 Phase 3: 事件双写（旁路，不阻断旧链）──
+    # 双写「已归一化」的条目（result["item"] = OverrideStore 落盘实体，日期已由
+    # resolve_when 折算为绝对 ISO）——原始 item 的 when 可能是 {days:n}/{weekday:1-7}/
+    # MM-DD 等相对令牌，v2 侧无法解析会丢 due（H2）。
     from storage import dualwrite
-    dualwrite.schedule_changed(kind=str(item.get("kind", "")), item=item,
+    dualwrite.schedule_changed(kind=str(item.get("kind", "")),
+                               item=result.get("item") or item,
                                actor="wechat_command", config=cfg)
     print(_json.dumps({"action": "schedule_change", "ok": True, "text": result["text"]},
                       ensure_ascii=False))

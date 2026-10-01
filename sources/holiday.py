@@ -28,7 +28,9 @@ def _anniversary_observation(name: str, occurrence, days_until: int,
         type="anniversary.upcoming",
         source="holiday",
         observed_at=now,
-        expires_at=datetime.combine(occurrence, time.min, tzinfo=CST),
+        # 过期 = 事件日「之后」的 00:00（事件当天全程有效）——若设为事件日 00:00，
+        # days_until==0 的当天观测会被 active()/discover 直接判过期，当天机会永不可达。
+        expires_at=datetime.combine(occurrence + timedelta(days=1), time.min, tzinfo=CST),
         payload={"name": name, "date": occurrence.isoformat(), "days_until": days_until},
     )
 
@@ -59,7 +61,8 @@ class HolidaySource:
                     type="holiday.upcoming",
                     source=self.name,
                     observed_at=now,
-                    expires_at=datetime.combine(start, time.min, tzinfo=CST),
+                    # 同上：假期首日当天全程有效，过期 = 次日 00:00
+                    expires_at=datetime.combine(start + timedelta(days=1), time.min, tzinfo=CST),
                     payload={"name": key.split("@", 1)[0], "start": start.isoformat(),
                              "end": end.isoformat(), "days_until": days_until},
                 ))

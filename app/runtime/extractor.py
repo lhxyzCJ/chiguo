@@ -4,18 +4,21 @@ Phase 6 前的最小提取器：中文自然语言 → commitment.created 事件
 无 LLM（LLM 提取留给 Phase 7 Pi）。提取是旁路：逐条消费、失败记 stderr 并继续，
 任何情况下不向主链抛出。
 
-游标语义与 reducer 相同：runtime_checkpoints.stream="extractor" 记 last_event_id，
-按 `event_id > last_event_id`（uuid7 字典序≈时间序）增量消费 message.received；
+游标语义与 reducer 相同：runtime_checkpoints.stream="extractor" 记 rowid（提交序），
+按 `rowid > last_cursor` 增量消费 message.received；
 `runtime_checkpoints` 表不存在（migration 未跑）→ 返回空列表空转，不抛。
 
 规则（最小确定性集）：
 1. 日期词：今天/明天/后天/大后天、N天后、下周[一二三四五六日天]、
    周[一二三四五六日天]（本周，若已过则下周）、M月D日/号（今年已过则明年）。
    取最左命中的一个；只取日期，时间固定 09:00 CST；解析失败不产事件。
-2. 命中日期词且命中事件触发词（TRIGGER_WORDS）→ 产 commitment.created
+2. 命中日期词且命中事件触发词（TRIGGER_WORDS，先剥离易混词 EXCLUDE_WORDS，
+   如「考虑/思考/参考/交流/还好」）→ 产 commitment.created
    （source="extractor"，extracted_by="rule"），causation_id=原 message.received，
    correlation_id 继承原事件。
-3. 幂等：同一 (subject, due_at) 24h 内已有 commitment.created → 跳过（防 bridge 重报）；
+3. 已过期的日期（解析出的 due ≤ now）不产事件——防过去式闲谈误报
+   （如 20:00 说「今天考试好难啊」不应产生今天的承诺）。
+4. 幂等：同一 (subject, due_at) 24h 内已有 commitment.created → 跳过（防 bridge 重报）；
    游标保证每条 message.received 只处理一次。
 """
 import json
@@ -41,6 +44,10 @@ TRIGGER_WORDS = (
     "面签", "生日", "纪念日", "报名", "缴费", "还", "取", "寄",
 )
 _TRIGGER_RE = re.compile("|".join(map(re.escape, TRIGGER_WORDS)))
+
+# 易混词：单字触发词（考/交/还/取）常见于非事件语境，匹配前先剥离
+# （注：「约会」是真实事件，不在剥离表内）
+EXCLUDE_WORDS = ("考虑", "思考", "参考", "交流", "还好", "还是", "还有", "取消")
 
 _REL_DAYS = {"今天": 0, "明天": 1, "后天": 2, "大后天": 3}
 _WEEKDAYS = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
@@ -145,12 +152,16 @@ class Extractor:
             return []
         try:
             cp = self.checkpoints.get(self.STREAM)
-            cursor = cp.last_event_id if cp is not None else None
+            try:
+                cursor = int(cp.last_event_id) if cp is not None and cp.last_event_id else 0
+            except (TypeError, ValueError):
+                cursor = 0
             rows = self.db.connect().execute(
-                "SELECT event_id, payload, correlation_id, occurred_at FROM events"
-                " WHERE type = 'message.received' AND event_id > ?"
-                " ORDER BY event_id ASC LIMIT ?",
-                (cursor or "", limit)).fetchall()
+                "SELECT rowid AS _rowid, event_id, payload, correlation_id,"
+                " occurred_at FROM events"
+                " WHERE type = 'message.received' AND rowid > ?"
+                " ORDER BY rowid ASC LIMIT ?",
+                (cursor, limit)).fetchall()
         except sqlite3.OperationalError:
             return []  # runtime_checkpoints/events 表不存在（migration 未跑）→ 空转
         except Exception as e:  # noqa: BLE001 —— 提取不上主链
@@ -158,10 +169,10 @@ class Extractor:
             return []
 
         produced: list[str] = []
-        last_id: str | None = None
+        last_cursor: int | None = None
         last_at = None
         for row in rows:
-            last_id, last_at = row["event_id"], row["occurred_at"]
+            last_cursor, last_at = row["_rowid"], row["occurred_at"]
             try:
                 event_id = self._extract(row, now)
             except Exception as e:  # noqa: BLE001 —— 坏数据逐条跳过
@@ -170,9 +181,9 @@ class Extractor:
             if event_id is not None:
                 produced.append(event_id)
 
-        if last_id is not None:
+        if last_cursor is not None:
             try:
-                self.checkpoints.save(self.STREAM, last_event_id=last_id,
+                self.checkpoints.save(self.STREAM, last_event_id=str(last_cursor),
                                       last_occurred_at=_parse_dt(last_at), state={})
             except Exception as e:  # noqa: BLE001
                 _warn(f"游标写盘失败（下轮重放，由幂等去重兜底）: {e!r}")
@@ -190,7 +201,12 @@ class Extractor:
         parsed = _parse_due(text, now)
         if parsed is None:
             return None
-        if _TRIGGER_RE.search(text) is None:
+        if parsed[0] <= now:
+            return None  # 已过期日期：过去式闲谈不产承诺（如 20:00 说「今天考试好难」）
+        match_text = text
+        for w in EXCLUDE_WORDS:
+            match_text = match_text.replace(w, "")
+        if _TRIGGER_RE.search(match_text) is None:
             return None
         due_at, token = parsed
         subject = _clean_subject(text, token)

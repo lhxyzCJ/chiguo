@@ -183,15 +183,37 @@ def test_chain_walks_causation_to_root(tmp_path):
     assert store.chain("nope") == []
 
 
-def test_after_cursor_returns_events_in_id_order(tmp_path):
+def test_after_cursor_returns_events_in_commit_order(tmp_path):
     store = _store(tmp_path)
     first = store.append("wake", source="scheduler")
     e2 = store.append("message.received", source="wechat")
     e3 = store.append("wake", source="scheduler")
-    got = store.after(first.event_id)
+    got = store.after(first.cursor)
     assert [e.event_id for e in got] == [e2.event_id, e3.event_id]
-    assert store.after(e3.event_id) == []
-    assert [e.event_id for e in store.after(first.event_id, limit=1)] == [e2.event_id]
+    assert store.after(e3.cursor) == []
+    assert [e.event_id for e in store.after(first.cursor, limit=1)] == [e2.event_id]
+    assert store.latest_cursor() == e3.cursor
+    assert store.get(e2.event_id).cursor == e2.cursor
+
+
+def test_cursor_not_poisoned_by_out_of_order_commit(tmp_path):
+    """并发乱序提交回归：uuid 更小但提交更晚的事件必须仍被消费。
+
+    uuid7 仅保证生成时的时间趋势——并发进程/线程下可能「先生成、后提交」，
+    按 uuid 字典序做游标会永久漏事件（旧实现 bug）；rowid 游标（提交序）
+    不受影响。
+    """
+    from app.runtime.reducer import Reducer
+    db = _db(tmp_path)
+    migrate(db)
+    store = EventStore(db)
+    store.append("wake", source="a")
+    # 模拟 B 进程：uuid 更小（更早生成）、rowid 更大（更晚提交）
+    db.connect().execute(
+        "INSERT INTO events(event_id,type,occurred_at,observed_at,source,payload)"
+        " VALUES ('00000000000000000000000000000001','wake',"
+        " '2026-10-01T00:00:00+08:00','2026-10-01T00:00:00+08:00','b','{}')")
+    assert Reducer(db, {}).catch_up() == 2  # uuid 游标会漏掉第二条
 
 
 def test_migration_v2_checkpoints_table(tmp_path):

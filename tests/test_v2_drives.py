@@ -93,11 +93,11 @@ def test_unfinished_business_absent_without_commitment_due():
 
 def test_curiosity_from_familiarity():
     affect = AffectState(loneliness=0.0, affection=5.0, energy=0.0)
-    drafts = evaluate_drives(affect=affect, relationship=_rel(familiarity=50.0),
+    drafts = evaluate_drives(affect=affect, relationship=_rel(familiarity=0.5),
                              opportunities=[], now=NOW)
     assert _kinds(drafts) == ["curiosity"]
     assert drafts[0].intensity == pytest.approx(0.15)  # 0.5 × 0.3
-    assert drafts[0].inputs == {"familiarity": 50.0}
+    assert drafts[0].inputs == {"familiarity": 0.5}
 
 
 # ── 过滤 / 排序 / 组合 ───────────────────────────────────────────
@@ -124,14 +124,14 @@ def test_tie_break_by_kind_lexicographic():
 def test_all_drives_composed_sorted_desc():
     affect = AffectState(loneliness=30.0, affection=70.0, energy=90.0)
     drafts = evaluate_drives(affect=affect, relationship=_rel(closeness=0.6,
-                                                              familiarity=40.0),
+                                                              familiarity=0.4),
                              opportunities=[_opp("commitment_due")], now=NOW)
     assert _kinds(drafts) == [
         "unfinished_business",  # 0.8
         "care",                 # 0.70 × (0.5+0.3) = 0.56
         "playfulness",          # 0.90 × 0.4 = 0.36
         "reconnect",            # 0.30
-        "curiosity",            # 0.40 × 0.3 = 0.12
+        "curiosity",            # 0.4 × 0.3 = 0.12
     ]
     assert all(isinstance(d, DriveDraft) for d in drafts)
     assert all(0.0 <= d.intensity <= 1.0 for d in drafts)

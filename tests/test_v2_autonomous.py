@@ -21,7 +21,7 @@ from storage.sqlite.db import Database  # noqa: E402
 from storage.sqlite.migrations import migrate  # noqa: E402
 
 CST = timezone(timedelta(hours=8))
-T0 = datetime(2026, 10, 1, 20, 0, tzinfo=CST)
+T0 = datetime(2026, 9, 14, 20, 0, tzinfo=CST)  # 周一；避开节假日窗口（H3 修复后假期机会真实可达）
 CONFIG = {
     "emotion": {},
     "schedule": {"quiet_start": 0, "quiet_end": 8},
@@ -112,7 +112,22 @@ def test_scenario_4_quiet_hours_defers(tmp_path):
 
 
 def test_scenario_5_mem0_unavailable_core_still_works(tmp_path, monkeypatch):
-    """Mem0 不可用：structured state 与核心运行不受影响（v2 核心不依赖 mem0）。"""
+    """Mem0 不可用：structured state 与核心运行不受影响。
+
+    硬断言：v2 核心模块的 import 闭包不含 memory/mem0（不是"不存在的代码不会失败"），
+    外加端到端仍能产出意图。
+    """
+    import subprocess
+    import sys as _sys
+    probe = subprocess.run(
+        [_sys.executable, "-c",
+         "import sys; sys.path.insert(0, '.');"
+         "import app.autonomous.turn, app.runtime.reducer, app.actions.executor;"
+         "assert 'mem0' not in sys.modules, 'mem0 不应被核心链导入';"
+         "assert 'memory' not in sys.modules, 'memory 包不应被核心链导入';"
+         "print('ok')"],
+        capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent))
+    assert probe.returncode == 0 and "ok" in probe.stdout, probe.stderr
     monkeypatch.setenv("CHIGUO_MEM0_DISABLED", "1")
     db, store = _setup(tmp_path)
     cfg = {**_config(tmp_path),
@@ -140,3 +155,18 @@ def test_scenario_6_corrupt_db_fails_fast(tmp_path):
     except StorageError:
         raised = True
     assert raised, "损坏数据库必须 fail-fast（StorageError），交由备份恢复流程处理"
+
+
+def test_repeated_turns_do_not_duplicate_open_opportunities(tmp_path):
+    """M10：同一 (kind,payload) 的 open 机会不随每轮 tick 重复落库。"""
+    from storage.repositories.opportunities import OpportunityRepo
+    db, store = _setup(tmp_path)
+    store.append("commitment.created", source="extractor",
+                 occurred_at=T0 - timedelta(hours=3),
+                 payload={"kind": "user_event", "subject": "面试",
+                          "due_at": (T0 - timedelta(hours=2)).isoformat()})
+    autonomous_turn(db=db, config=_config(tmp_path), reason="cron", now=T0)
+    autonomous_turn(db=db, config=_config(tmp_path), reason="cron",
+                    now=T0 + timedelta(minutes=15))
+    open_opps = OpportunityRepo(db).list_open(now=T0 + timedelta(hours=1))
+    assert [o.kind for o in open_opps].count("commitment_due") == 1

@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from app.runtime.extractor import Extractor  # noqa: F401（语义对照：replay 不调用）
 from app.runtime.reducer import Reducer, in_quiet_hours, next_quiet_end
 from domain.planning.drives import evaluate_drives
 from domain.planning.opportunities import discover_opportunities
@@ -33,6 +32,7 @@ class ReplayDecision:
     outcome: str                # intent / waited / deferred
     intent_type: str | None
     why: dict
+    opportunities: tuple = ()   # 本轮机会 kinds（诊断：重复投影会在此显形）
 
 
 def replay(db: Database, config: dict, *, since: datetime,
@@ -42,8 +42,15 @@ def replay(db: Database, config: dict, *, since: datetime,
         work = Path(td) / "replay.sqlite"
         db.backup(work)
         wdb = Database(work)
-        # 重放语义：从零消费（清掉原游标），保证结论只由事件流决定
-        wdb.connect().execute("DELETE FROM runtime_checkpoints")
+        # 重放语义：从零消费（清游标）+ 清空事件派生投影表——否则副本里已物化的
+        # 承诺/话题/观测会被再次投影（重复事实 → 机会重复/张力翻倍）。
+        # 删除顺序：先子后父（外键 ON）。
+        with wdb.transaction() as conn:
+            conn.execute("DELETE FROM runtime_checkpoints")
+            for table in ("deliveries", "actions", "intents", "drives",
+                          "opportunities", "world_observations", "threads",
+                          "commitments", "autonomous_turns"):
+                conn.execute(f"DELETE FROM {table}")
         reducer = Reducer(wdb, config)
         store = EventStore(wdb)
 
@@ -69,20 +76,23 @@ def replay(db: Database, config: dict, *, since: datetime,
                             constraints={
                                 "quiet": in_quiet_hours(ev.occurred_at, qs, qe),
                                 "quiet_until": next_quiet_end(ev.occurred_at, qs, qe)})
+            opp_kinds = tuple(d.kind for d in opps)
             if isinstance(decision, IntentDraft):
                 results.append(ReplayDecision(
                     event_id=ev.event_id, at=ev.occurred_at, outcome="intent",
-                    intent_type=decision.type, why=dict(decision.why)))
+                    intent_type=decision.type, why=dict(decision.why),
+                    opportunities=opp_kinds))
             elif isinstance(decision, Defer):
                 results.append(ReplayDecision(
                     event_id=ev.event_id, at=ev.occurred_at, outcome="deferred",
                     intent_type=(decision.candidate.type
                                  if decision.candidate else None),
-                    why={"reason": decision.reason}))
+                    why={"reason": decision.reason}, opportunities=opp_kinds))
             else:
                 results.append(ReplayDecision(
                     event_id=ev.event_id, at=ev.occurred_at, outcome="waited",
-                    intent_type=None, why={"reason": decision.reason}))
+                    intent_type=None, why={"reason": decision.reason},
+                    opportunities=opp_kinds))
             if len(results) >= limit:
                 break
         return results

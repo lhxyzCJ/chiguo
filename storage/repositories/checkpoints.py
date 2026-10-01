@@ -5,7 +5,6 @@ reducer / extractor / scheduler 等增量消费者各自持一条 stream：
 RNG 态），重启后从游标继续，无需全量重放。
 """
 import json
-import uuid
 from dataclasses import dataclass
 from datetime import datetime
 

@@ -67,3 +67,19 @@ def test_replay_window_and_limit(tmp_path):
     # limit 截断
     results = replay(prod, CONFIG, since=T0, until=T0 + timedelta(hours=5), limit=1)
     assert len(results) == 1
+
+
+def test_replay_ignores_preexisting_projections(tmp_path):
+    """副本里已物化的派生行不得再次投影（否则机会重复/张力翻倍）。"""
+    from app.runtime.reducer import Reducer
+    prod = Database(tmp_path / "prod.sqlite")
+    migrate(prod)
+    store = EventStore(prod)
+    store.append("thread.opened", source="reducer",
+                 occurred_at=T0 - timedelta(days=2), payload={"subject": "考试怎么样"})
+    store.append("wake", source="scheduler", occurred_at=T0)
+    Reducer(prod, CONFIG).catch_up()   # 生产库先物化（thread 行已存在）
+    results = replay(prod, CONFIG, since=T0 - timedelta(minutes=1),
+                     until=T0 + timedelta(hours=1))
+    assert len(results) == 1
+    assert results[0].opportunities.count("open_thread") == 1  # 未重置会变 2

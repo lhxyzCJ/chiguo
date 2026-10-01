@@ -8,6 +8,8 @@ DB 路径解析优先级：`--db` 参数 > toml `[storage].db_path`
 """
 import argparse
 import json
+import os
+import sqlite3
 import sys
 import tomllib
 from datetime import datetime
@@ -36,9 +38,15 @@ def load_config(config_path: str | None = None) -> tuple[dict, Path]:
 
 
 def resolve_db_path(db_arg: str | None, config_path: str | None = None) -> Path:
-    """解析数据库路径（--db 优先；否则 toml [storage].db_path；否则默认）。"""
+    """解析数据库路径（--db > env CHIGUO_DB_PATH > toml [storage].db_path > 默认）。
+
+    env 与 dualwrite 的同名解析保持一致——否则双写观察期两边看的是不同数据库。
+    """
     if db_arg:
         return Path(db_arg).expanduser()
+    env = os.environ.get("CHIGUO_DB_PATH")
+    if env:
+        return Path(env).expanduser()
     cfg, cfg_path = load_config(config_path)
     db_path = DEFAULT_DB_PATH
     configured = (cfg.get("storage", {}) or {}).get("db_path")
@@ -269,9 +277,13 @@ def cmd_tick(args) -> int:
     if args.execute and res.action_id:
         out = execute_action(db, res.action_id, config=cfg)
         sent = {"ok": out.ok, "status": out.status, "error": out.error}
-    _print({"action": "tick", "ok": True, "turn_id": res.turn_id,
+    _print({"action": "tick", "ok": sent is None or sent["ok"],
+            "turn_id": res.turn_id,
             "outcome": res.outcome, "intent_id": res.intent_id,
             "action_id": res.action_id, "sent": sent})
+    # M8：--execute 下发送失败 → exit 1（cron/运维能看到失败）；shadow 恒 0
+    if sent is not None and not sent["ok"]:
+        return 1
     return 0
 
 
@@ -286,7 +298,8 @@ def cmd_serve(args) -> int:
     cfg, cfg_path = load_config(args.config)
     cfg = dict(cfg)
     cfg.setdefault("_base_dir", str(cfg_path.resolve().parent))
-    srv = RuntimeServer(db, cfg, port=args.port or DEFAULT_PORT)
+    port = args.port if args.port is not None else DEFAULT_PORT  # --port 0 = 系统分配
+    srv = RuntimeServer(db, cfg, port=port)
     srv.start()
     print(json.dumps({"action": "serve", "ok": True, "url":
                       f"http://127.0.0.1:{srv.port}"}, ensure_ascii=False),
@@ -323,7 +336,8 @@ def cmd_replay(args) -> int:
     _print({"action": "replay", "ok": True, "count": len(results),
             "decisions": [{"event_id": r.event_id, "at": r.at.isoformat(),
                            "outcome": r.outcome, "intent_type": r.intent_type,
-                           "why": r.why} for r in results]})
+                           "why": r.why, "opportunities": list(r.opportunities)}
+                          for r in results]})
     return 0
 
 
@@ -476,7 +490,9 @@ def main(argv=None) -> int:
         action = f"db_{args.db_command}"
     try:
         return handler(args)
-    except StorageError as e:
+    except (StorageError, sqlite3.Error) as e:
+        # StorageError：损坏/迁移问题；sqlite3.Error：空文件/未迁移库的表缺失等
+        # —— 一律 JSON→stdout + exit 1（不裸 traceback）
         _print({"action": action, "ok": False, "error": str(e)})
         return 1
 

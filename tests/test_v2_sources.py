@@ -178,7 +178,31 @@ def test_holiday_upcoming(tmp_path):
     assert upcoming[0].payload == {"name": "测试节", "start": "2026-06-03",
                                    "end": "2026-06-05", "days_until": 2}
     assert upcoming[0].source == "holiday"
-    assert upcoming[0].expires_at == datetime(2026, 6, 3, 0, 0, tzinfo=CST)
+    # 假期首日当天全程有效 → 过期 = 次日 00:00（H3：当天观测不得自我过期）
+    assert upcoming[0].expires_at == datetime(2026, 6, 4, 0, 0, tzinfo=CST)
+
+
+def test_holiday_today_observation_not_expired(tmp_path):
+    """假期首日当天 observe → 观测必须仍在有效期内（否则 holiday 机会永不可达）。"""
+    (tmp_path / "holidays.json").write_text(json.dumps({
+        "holidays": {"测试节": {"start": "2026-06-03", "end": "2026-06-05"}},
+        "makeup_workdays": {},
+    }, ensure_ascii=False))
+    now = _now(y=2026, mo=6, d=3, h=10, mi=0)
+    obs = HolidaySource(str(tmp_path)).observe(now)
+    today_obs = [o for o in obs if o.type == "holiday.upcoming" and o.payload["days_until"] == 0]
+    assert len(today_obs) == 1
+    assert today_obs[0].expires_at > now
+
+
+def test_anniversary_today_observation_not_expired(tmp_path):
+    (tmp_path / "anniversaries.json").write_text(json.dumps({
+        "anniversaries": [{"id": "a1", "type": "anniversary", "name": "今天纪念", "date": "06-03"}],
+    }, ensure_ascii=False))
+    now = _now(y=2026, mo=6, d=3, h=10, mi=0)
+    obs = HolidaySource(str(tmp_path)).observe(now)
+    ann = [o for o in obs if o.type == "anniversary.upcoming"]
+    assert len(ann) == 1 and ann[0].expires_at > now
 
 
 def test_anniversary_upcoming_today_and_7d(tmp_path):

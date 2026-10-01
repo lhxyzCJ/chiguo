@@ -28,7 +28,7 @@ CST = timezone(timedelta(hours=8))
 # record_user_message/record_send_text 等路径，若开启会旁路写入开发机真实
 # ~/.chiguo/chiguo.sqlite。需要验证双写的测试显式 setenv("CHIGUO_EVENT_DUALWRITE", "1")
 # （见 tests/test_v2_dualwrite.py）。
-os.environ.setdefault("CHIGUO_EVENT_DUALWRITE", "0")
+os.environ["CHIGUO_EVENT_DUALWRITE"] = "0"  # 无条件（shell 里 export=1 也不放行）
 
 # 默认冻结时刻（供 frozen_now fixture 复用，北京时间 2026-06-15 14:00）
 _FROZEN_NOW = datetime(2026, 6, 15, 14, 0, tzinfo=CST)

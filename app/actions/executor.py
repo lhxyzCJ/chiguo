@@ -75,11 +75,17 @@ def _state_summary(config: dict, now: datetime) -> dict:
 # ── 默认实现（生产路径）───────────────────────────────────────
 
 def default_generator(prompt_json: str, config: dict) -> str | None:
-    """node scripts/agent-run.mjs --prompt <payload> --send-mode → 文本。"""
-    script = PROJECT_ROOT / "scripts" / "agent-run.mjs"
+    """node scripts/agent-run.mjs --prompt <payload> --send-mode → 文本。
+
+    AGENT_RUN_SCRIPT 可覆盖脚本路径（与 runner/loop.py、tick.sh 同约定；
+    测试/运维替换用）。
+    """
+    script = os.environ.get("AGENT_RUN_SCRIPT") or \
+        str(PROJECT_ROOT / "scripts" / "agent-run.mjs")
+    node_bin = os.environ.get("NODE_BIN") or "node"
     env = {**os.environ, "CHIGUO_REPO": str(PROJECT_ROOT)}
     p = subprocess.run(
-        ["node", str(script), "--prompt", prompt_json, "--send-mode"],
+        [node_bin, str(script), "--prompt", prompt_json, "--send-mode"],
         capture_output=True, text=True, timeout=GENERATE_TIMEOUT_S, env=env)
     try:
         data = json.loads(p.stdout or "{}")

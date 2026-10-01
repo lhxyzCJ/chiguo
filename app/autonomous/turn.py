@@ -12,16 +12,17 @@
 shadow 语义（默认）：只记录决策，不发送。`execute=True` 时仅创建
 status=pending 的 send_message action 行（真正送达在 Phase 6 的 executor）。
 """
+import json
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, time as dtime, timedelta
+from datetime import datetime
 
 from chiguo_paths import PROJECT_ROOT
 from chiguo_time import CST
 from domain.planning.drives import evaluate_drives
 from domain.planning.opportunities import discover_opportunities
-from domain.planning.planner import Defer, IntentDraft, Wait, plan
+from domain.planning.planner import Defer, IntentDraft, plan
 from app.runtime.extractor import Extractor
 from app.runtime.reducer import STREAM as REDUCER_STREAM, in_quiet_hours, next_quiet_end
 from app.runtime.reducer import Reducer
@@ -133,7 +134,15 @@ def autonomous_turn(*, db: Database, config: dict, reason: str = "manual",
     turn_id = uuid.uuid7().hex
     opp_ids = []
     opp_repo = OpportunityRepo(db)
+    # M10：机会去重——同 (kind, payload) 的 open 机会已存在则跳过，
+    # 否则每 15 分钟 cron 会把同一批 draft 无限重复落库。
+    existing_keys = {
+        (o.kind, json.dumps(o.payload or {}, sort_keys=True, ensure_ascii=False))
+        for o in opp_repo.list_open(now)}
     for d in opps:
+        key = (d.kind, json.dumps(dict(d.payload), sort_keys=True, ensure_ascii=False))
+        if key in existing_keys:
+            continue
         row = opp_repo.add(d.kind, expires_at=d.expires_at,
                            observation_event_id=d.observation_event_id,
                            novelty=d.novelty, relevance=d.relevance,
@@ -141,6 +150,7 @@ def autonomous_turn(*, db: Database, config: dict, reason: str = "manual",
                            emotional_affordance=d.emotional_affordance,
                            payload=dict(d.payload))
         opp_ids.append(row.id)
+        existing_keys.add(key)
     drive_ids = []
     drive_repo = DriveRepo(db)
     for d in drives:
