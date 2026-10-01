@@ -25,20 +25,25 @@ _COUNT_TABLES = ("events", "messages", "sessions", "commitments", "threads",
                  "memories", "schedules", "world_observations", "autonomous_turns")
 
 
+def load_config(config_path: str | None = None) -> tuple[dict, Path]:
+    """读取 toml 配置（缺省项目根 chiguo_proactive.toml）；失败 → 空配置。"""
+    cfg_path = Path(config_path) if config_path else PROJECT_ROOT / "chiguo_proactive.toml"
+    try:
+        with open(cfg_path, "rb") as f:
+            return tomllib.load(f), cfg_path
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}, cfg_path
+
+
 def resolve_db_path(db_arg: str | None, config_path: str | None = None) -> Path:
     """解析数据库路径（--db 优先；否则 toml [storage].db_path；否则默认）。"""
     if db_arg:
         return Path(db_arg).expanduser()
-    cfg_path = Path(config_path) if config_path else PROJECT_ROOT / "chiguo_proactive.toml"
+    cfg, cfg_path = load_config(config_path)
     db_path = DEFAULT_DB_PATH
-    try:
-        with open(cfg_path, "rb") as f:
-            cfg = tomllib.load(f)
-        configured = (cfg.get("storage", {}) or {}).get("db_path")
-        if isinstance(configured, str) and configured.strip():
-            db_path = configured.strip()
-    except (OSError, tomllib.TOMLDecodeError):
-        pass
+    configured = (cfg.get("storage", {}) or {}).get("db_path")
+    if isinstance(configured, str) and configured.strip():
+        db_path = configured.strip()
     p = Path(db_path).expanduser()
     if not p.is_absolute():
         p = cfg_path.resolve().parent / p
@@ -185,6 +190,58 @@ def cmd_threads(args) -> int:
     return 0
 
 
+# ── chiguo status（聚合视图；只读，不消费事件）─────────────────
+
+def cmd_status(args) -> int:
+    from app.runtime.reducer import Reducer
+    from storage.events import EventStore
+    from storage.repositories.commitments import CommitmentRepo
+    from storage.repositories.opportunities import OpportunityRepo
+    from storage.repositories.threads import ThreadRepo
+    from storage.repositories.turns import TurnRepo
+
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "status", "ok": True, "initialized": False,
+                "path": str(db.path)})
+        return 0
+    cfg, _ = load_config(args.config)
+    cfg = dict(cfg)
+    cfg.setdefault("_base_dir", str(Path(args.config).resolve().parent if args.config
+                                     else PROJECT_ROOT))
+
+    state = Reducer(db, cfg).current()  # 只读检查点，不 catch_up
+    commitments = CommitmentRepo(db).list_open()
+    threads = ThreadRepo(db).list_open()
+    opps = OpportunityRepo(db).list_open(now=datetime.now(CST))
+    turns = TurnRepo(db).recent(limit=1)
+    last_sent = EventStore(db).recent(limit=1, type="message.sent")
+    _print({
+        "action": "status", "ok": True, "initialized": True,
+        "db": {"path": str(db.path), "schema_version": db.schema_version(),
+               "size_bytes": db.path.stat().st_size},
+        "affect": {
+            "loneliness": round(state.affect.loneliness, 1),
+            "affection": round(state.affect.affection, 1),
+            "anxiety": round(state.affect.anxiety, 1),
+            "energy": round(state.affect.energy, 1),
+            "tsundere_index": round(state.affect.tsundere_index, 1),
+            "dominant_layer": state.affect.dominant_layer,
+        },
+        "relationship": _jsonable(vars(state.relationship)),
+        "commitments": {"count": len(commitments),
+                        "items": [_jsonable(vars(c)) for c in commitments]},
+        "threads": {"count": len(threads),
+                    "threads": [_jsonable(vars(t)) for t in threads]},
+        "opportunities_open": [
+            {"kind": o.kind, "payload": o.payload, "expires_at": o.expires_at}
+            for o in opps],
+        "last_turn": (_jsonable(vars(turns[0])) if turns else None),
+        "last_message_sent": (_event_json(last_sent[0]) if last_sent else None),
+    })
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chiguo", description="Chiguo v2 CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -216,7 +273,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", default=None)
 
     for name, help_text in (("commitments", "未完成承诺（open）"),
-                            ("threads", "未结束话题（open）")):
+                            ("threads", "未结束话题（open）"),
+                            ("status", "聚合状态（affect/关系/承诺/线程/最近回合）")):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--db", default=None)
         p.add_argument("--config", default=None)
@@ -230,8 +288,9 @@ def main(argv=None) -> int:
         handlers = {"recent": cmd_events_recent, "show": cmd_events_show}
         handler = handlers[args.events_command]
         action = f"events_{args.events_command}"
-    elif args.command in ("commitments", "threads"):
-        handlers = {"commitments": cmd_commitments, "threads": cmd_threads}
+    elif args.command in ("commitments", "threads", "status"):
+        handlers = {"commitments": cmd_commitments, "threads": cmd_threads,
+                    "status": cmd_status}
         handler = handlers[args.command]
         action = args.command
     else:

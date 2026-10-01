@@ -182,3 +182,48 @@ def test_threads_cli(tmp_path, capsys):
     repo.close(t.id, datetime(2026, 10, 3, 18, 0, tzinfo=timezone(timedelta(hours=8))))
     rc, cap = _run(capsys, "threads", "--db", str(dbp))
     assert json.loads(cap.out)["count"] == 0
+
+
+# ── chiguo status 聚合视图 ──────────────────────────────────────
+
+def test_status_aggregates_state(tmp_path, capsys):
+    from storage.events import EventStore
+    from storage.sqlite.db import Database
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    store = EventStore(Database(dbp))
+    store.append("message.received", source="wechat", payload={"text": "在吗"})
+    store.append("commitment.created", source="extractor",
+                 payload={"kind": "user_event", "subject": "线代考试",
+                          "due_at": "2026-10-03T09:00:00+08:00"})
+    count_before = store.count()
+
+    rc, cap = _run(capsys, "status", "--db", str(dbp))
+    assert rc == 0
+    out = json.loads(cap.out)
+    assert out["action"] == "status"
+    assert out["db"]["schema_version"] == 2
+    assert out["affect"]["loneliness"] == 15.0          # 初始态（未消费）
+    assert isinstance(out["relationship"]["closeness"], float)
+    assert out["commitments"]["count"] == 0             # 未消费事件 → 投影未更新
+    assert "last_turn" in out and out["last_turn"] is None
+    assert "last_message_sent" in out
+    # status 只读：不消费事件
+    assert store.count() == count_before
+
+
+def test_status_after_catch_up_reflects_projection(tmp_path, capsys):
+    from app.runtime.reducer import Reducer
+    from storage.events import EventStore
+    from storage.sqlite.db import Database
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    db = Database(dbp)
+    EventStore(db).append("commitment.created", source="extractor",
+                          payload={"kind": "user_event", "subject": "体检",
+                                   "due_at": "2026-10-08T09:00:00+08:00"})
+    Reducer(db, {"emotion": {}}).catch_up()
+    rc, cap = _run(capsys, "status", "--db", str(dbp))
+    out = json.loads(cap.out)
+    assert out["commitments"]["count"] == 1
+    assert out["commitments"]["items"][0]["subject"] == "体检"
