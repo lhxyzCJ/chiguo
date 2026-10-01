@@ -118,6 +118,24 @@ class EventStore:
         out.reverse()
         return out
 
+    def after(self, event_id: str | None, *, limit: int = 200) -> list[Event]:
+        """游标读取：event_id 之后的事件（含 limit）。
+
+        依赖 uuid7 的字典序≈时间序（append 顺序即观测顺序）——这是 reducer/
+        extractor 增量消费的游标原语。event_id=None → 从头读。
+        """
+        conn = self.db.connect()
+        if event_id:
+            rows = conn.execute(
+                "SELECT * FROM events WHERE event_id > ?"
+                " ORDER BY event_id ASC LIMIT ?",
+                (event_id, int(limit))).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM events ORDER BY event_id ASC LIMIT ?",
+                (int(limit),)).fetchall()
+        return [self._row(r) for r in rows]
+
     def caused_by(self, event_id: str, *, limit: int = 50) -> list[Event]:
         """直接子事件（causation_id == event_id），按发生时间旧→新。"""
         conn = self.db.connect()

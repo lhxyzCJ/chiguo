@@ -252,8 +252,22 @@ CREATE TABLE autonomous_turns (
 """
 
 
+# ── v2：运行时消费游标（reducer / extractor / scheduler 增量消费 events）──
+
+_SQL_V2 = """
+CREATE TABLE runtime_checkpoints (
+  stream           TEXT PRIMARY KEY,
+  last_event_id    TEXT,
+  last_occurred_at TEXT,
+  state            TEXT,
+  updated_at       TEXT NOT NULL
+);
+"""
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "init", _SQL_V1),
+    Migration(2, "runtime_checkpoints", _SQL_V2),
 )
 
 SCHEMA_VERSION = MIGRATIONS[-1].version

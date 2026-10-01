@@ -183,6 +183,44 @@ def test_chain_walks_causation_to_root(tmp_path):
     assert store.chain("nope") == []
 
 
+def test_after_cursor_returns_events_in_id_order(tmp_path):
+    store = _store(tmp_path)
+    first = store.append("wake", source="scheduler")
+    e2 = store.append("message.received", source="wechat")
+    e3 = store.append("wake", source="scheduler")
+    got = store.after(first.event_id)
+    assert [e.event_id for e in got] == [e2.event_id, e3.event_id]
+    assert store.after(e3.event_id) == []
+    assert [e.event_id for e in store.after(first.event_id, limit=1)] == [e2.event_id]
+
+
+def test_migration_v2_checkpoints_table(tmp_path):
+    db = _db(tmp_path)
+    applied = migrate(db)
+    assert 2 in applied
+    assert db.schema_version() == SCHEMA_VERSION == 2
+    assert "runtime_checkpoints" in db.table_names()
+
+
+def test_checkpoint_roundtrip(tmp_path):
+    from storage.repositories.checkpoints import CheckpointRepo
+    db = _db(tmp_path)
+    migrate(db)
+    repo = CheckpointRepo(db)
+    assert repo.get("runtime") is None
+    t = datetime(2026, 10, 1, 9, 0, tzinfo=CST)
+    repo.save("runtime", last_event_id="e-1", last_occurred_at=t,
+              state={"affect": {"loneliness": 42.0}})
+    cp = repo.get("runtime")
+    assert cp.last_event_id == "e-1"
+    assert cp.last_occurred_at == t
+    assert cp.state == {"affect": {"loneliness": 42.0}}
+    # upsert 覆盖
+    repo.save("runtime", last_event_id="e-2", last_occurred_at=t, state={})
+    assert repo.get("runtime").last_event_id == "e-2"
+    assert repo.get("runtime").state == {}
+
+
 def test_caused_by_returns_direct_children(tmp_path):
     store = _store(tmp_path)
     root = store.append("message.received", source="wechat")
