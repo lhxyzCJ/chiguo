@@ -1,6 +1,7 @@
 """tests/test_v2_cli.py — v2 CLI（chiguo db ...）TDD。"""
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -142,3 +143,42 @@ def test_events_show_unknown_id_fails(tmp_path, capsys):
     rc, cap = _run(capsys, "events", "show", "nope", "--db", str(dbp))
     assert rc == 1
     assert json.loads(cap.out)["ok"] is False
+
+
+# ── commitments / threads 读取命令 ───────────────────────────────
+
+def test_commitments_cli(tmp_path, capsys):
+    from storage.repositories.commitments import CommitmentRepo
+    from storage.sqlite.db import Database
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    repo = CommitmentRepo(Database(dbp))
+    c = repo.add("user_event", "线代考试",
+             due_at=datetime(2026, 10, 3, 9, 0, tzinfo=timezone(timedelta(hours=8))))
+    rc, cap = _run(capsys, "commitments", "--db", str(dbp))
+    assert rc == 0
+    out = json.loads(cap.out)
+    assert out["action"] == "commitments"
+    assert out["count"] == 1
+    assert out["commitments"][0]["id"] == c.id
+    assert out["commitments"][0]["subject"] == "线代考试"
+    repo.resolve(c.id, datetime(2026, 10, 3, 18, 0, tzinfo=timezone(timedelta(hours=8))))
+    rc, cap = _run(capsys, "commitments", "--db", str(dbp))
+    assert json.loads(cap.out)["count"] == 0
+
+
+def test_threads_cli(tmp_path, capsys):
+    from storage.repositories.threads import ThreadRepo
+    from storage.sqlite.db import Database
+    dbp = tmp_path / "c.sqlite"
+    _run(capsys, "db", "migrate", "--db", str(dbp))
+    repo = ThreadRepo(Database(dbp))
+    t = repo.open_thread("线代考试", source="conversation")
+    rc, cap = _run(capsys, "threads", "--db", str(dbp))
+    assert rc == 0
+    out = json.loads(cap.out)
+    assert out["count"] == 1
+    assert out["threads"][0]["id"] == t.id
+    repo.close(t.id, datetime(2026, 10, 3, 18, 0, tzinfo=timezone(timedelta(hours=8))))
+    rc, cap = _run(capsys, "threads", "--db", str(dbp))
+    assert json.loads(cap.out)["count"] == 0

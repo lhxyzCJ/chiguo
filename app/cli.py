@@ -154,6 +154,37 @@ def cmd_events_show(args) -> int:
     return 0
 
 
+# ── commitments / threads 读取命令 ─────────────────────────────
+
+def _jsonable(row: dict) -> dict:
+    return {k: (v.isoformat() if isinstance(v, datetime) else v)
+            for k, v in row.items()}
+
+
+def cmd_commitments(args) -> int:
+    from storage.repositories.commitments import CommitmentRepo
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "commitments", "ok": False, "error": f"数据库不存在: {db.path}"})
+        return 1
+    items = CommitmentRepo(db).list_open()
+    _print({"action": "commitments", "ok": True, "count": len(items),
+            "commitments": [_jsonable(vars(c)) for c in items]})
+    return 0
+
+
+def cmd_threads(args) -> int:
+    from storage.repositories.threads import ThreadRepo
+    db = Database(resolve_db_path(args.db, args.config))
+    if not db.path.exists():
+        _print({"action": "threads", "ok": False, "error": f"数据库不存在: {db.path}"})
+        return 1
+    items = ThreadRepo(db).list_open()
+    _print({"action": "threads", "ok": True, "count": len(items),
+            "threads": [_jsonable(vars(t)) for t in items]})
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chiguo", description="Chiguo v2 CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -183,6 +214,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("event_id")
     p.add_argument("--db", default=None)
     p.add_argument("--config", default=None)
+
+    for name, help_text in (("commitments", "未完成承诺（open）"),
+                            ("threads", "未结束话题（open）")):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--db", default=None)
+        p.add_argument("--config", default=None)
     return parser
 
 
@@ -193,6 +230,10 @@ def main(argv=None) -> int:
         handlers = {"recent": cmd_events_recent, "show": cmd_events_show}
         handler = handlers[args.events_command]
         action = f"events_{args.events_command}"
+    elif args.command in ("commitments", "threads"):
+        handlers = {"commitments": cmd_commitments, "threads": cmd_threads}
+        handler = handlers[args.command]
+        action = args.command
     else:
         handlers = {"status": cmd_db_status, "migrate": cmd_db_migrate,
                     "integrity": cmd_db_integrity, "backup": cmd_db_backup}
