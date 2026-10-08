@@ -18,18 +18,20 @@ def check(name, cond, detail=""):
         raise AssertionError(f"{name} {detail}")
 
 
-# 1) 22 节存在（架构契约）
+# 1) 23 节存在（架构契约；v2 起新增 [storage]）
 SECTIONS = ["wechat", "memory", "character", "emotion", "sigmoid", "trigger",
             "poisson", "topic_picker", "schedule", "circadian", "netease",
             "hawkes", "cooldown", "personality", "bayesian", "composer",
-            "safety", "monitor", "logging", "host", "loop", "health"]
+            "safety", "monitor", "logging", "host", "loop", "health",
+            "storage"]
 
 
 def test_section_inventory_complete():
-    """主 toml 22 节全部存在；PR-4 起新增 [experimental] 归档节（61 键灰度归档），
-    验收时排除该节（行为恒等：decision/base._merge_experimental 合并回主段）。"""
+    """主 toml 23 节全部存在（原 22 节 + v2 [storage]）；PR-4 起新增
+    [experimental] 归档节（61 键灰度归档），验收时排除该节
+    （行为恒等：decision/base._merge_experimental 合并回主段）。"""
     cfg = tomllib.loads((ROOT / "chiguo_proactive.toml").read_text(encoding="utf-8"))
-    check("主 toml 22 节全部存在", set(SECTIONS) <= set(cfg.keys()),
+    check("主 toml 23 节全部存在", set(SECTIONS) <= set(cfg.keys()),
           f"缺: {sorted(set(SECTIONS) - set(cfg.keys()))}")
     extra = set(cfg.keys()) - set(SECTIONS) - {"experimental"}
     check("主 toml 无多余节（除 [experimental] 归档外）", not extra,

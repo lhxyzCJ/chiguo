@@ -1,5 +1,6 @@
 """state.emotion — 情绪推进/基线域（AUD-001）。"""
 
+import logging
 import math
 import random
 import re

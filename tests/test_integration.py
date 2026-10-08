@@ -214,10 +214,11 @@ def test_7b_schedule_disabled_availability(cfg, monkeypatch):
     from pathlib import Path as _P
     s = make_state(cfg)
     # 清 break 状态（on_break 用真实今天=8月暑假判定）→ 走课表层
+    # monkeypatch 对 class 目标按 __dict__ 记录旧值——break_state_path 定义在
+    # ScheduleMixin（继承），撤销时正确 delattr 恢复继承，不在 ChiguoState 上留下
+    # 影子属性（曾用手工 setattr 恢复导致 vars(ChiguoState) 永久多出该名，
+    # 触发 test_mro_contract 的全量顺序性失败）。
     import chiguo_state as _cs
-    # monkeypatch（替代手写赋值+恢复）：teardown 自动 delattr，不在 ChiguoState
-    # 留名——手写恢复会在子类 __dict__ 留下 break_state_path，导致后跑的
-    # test_mro_contract 误报覆盖冲突（单进程全量必现；xdist 分 worker 时偶发）。
     monkeypatch.setattr(_cs.ChiguoState, "break_state_path",
                         property(lambda self: _P(_tf.mkdtemp()) / "no-break.json"))
     s.semester_end = date(2099, 12, 31)  # 未来学期 → 非假期，走课表层

@@ -477,6 +477,9 @@ probe_interval_seconds = 3600           # 累计失败(fail_streak∈[1,threshol
 [health]
 fail_threshold = 3   # agent 假死判定：连续失败次数 ≥ 此值 → 告警（bridge 记账/tick 记账共用；<1 视为无效回退 3）
 
+[storage]   # v2 canonical structured state store（SQLite；见 docs/architecture-v2.md）
+db_path = "~/.chiguo/chiguo.sqlite"   # 单一数据库；相对路径锚定 config 所在目录。chiguo db migrate 初始化
+
 # ────────────────────────────────────────────────────────────
 # [experimental] 灰度/实验开关归档（默认关闭恒等，行为与删键等价）
 # 按需启用：把需要的键移回所属段即可覆盖默认；留空即恒等默认。

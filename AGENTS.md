@@ -25,6 +25,8 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 7. 架构决策看长期，别用临时凑合用的过渡方案
 8. 参考成熟产品的验证方案，别从零发明
 9. **铁律：完成任务并报告之前，必须解决 todo list 与宿主的报错**——逐项 `complete_step` 签收任务（不留 incomplete 项）；报告前处理全部宿主报错（final-answer readiness 门禁：无未签收 todo、本轮有可观测工作、mutation 后运行验证并提交 reviewed_paths、prefer 能力调用或 `use_capability` 显式 decline），带着报错收尾视为未完成
+10. 禁止写无用的测试/备份/免责声明/保持项目整体整洁有序，遵守代码规范，写完任何代码后必须校验语法是否正确
+11. 做好随时有break change的准备，不要留没有意义的降级/备选，除非用户指定
 
 ## 称谓约定（哥哥 / 用户 / 主人）
 
