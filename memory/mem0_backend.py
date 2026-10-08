@@ -38,29 +38,49 @@ from memory.base import (
 os.environ.setdefault("MEM0_TELEMETRY", "false")
 
 
-def _harden_private_paths(qdrant_path: str, history_db: str) -> None:
+def _harden_private_paths(qdrant_path: str, history_db: str,
+                          private_root: str | None = None) -> None:
     """mem0 落盘权限收紧：qdrant 目录树 0700/0600 + history.db 0600。
 
     mem0/qdrant 内部按进程 umask 建文件（默认 0644/0755），daemon 侧无法逐文件
-    控制；后端构造前已把 umask 收到 077，这里再对既有文件自愈一次。失败只记
-    warning，不影响可用性（与 _apply_client_timeouts 同款降级语义）。
+    控制；后端构造前已把 umask 收到 077，这里再对既有文件自愈一次。
+
+    范围守卫：仅在路径位于 private_root（daemon 的 base_dir）之内时动手，且跳过
+    符号链接——配置允许 mem0_qdrant_path 为任意绝对路径，不得对 base 之外的目录
+    递归 chmod（private_root 缺省 → 不硬化，保守）。失败只记 warning，不影响可用性
+    （与 _apply_client_timeouts 同款降级语义）。
     """
     import logging
 
+    root = Path(private_root).resolve() if private_root else None
+
+    def _inside(p: Path) -> bool:
+        if root is None:
+            return False
+        rp = p.resolve()
+        return rp == root or root in rp.parents
+
     try:
         q = Path(qdrant_path)
-        if q.exists():
+        if q.exists() and _inside(q):
             for p in [q, *q.rglob("*")]:
+                if p.is_symlink():
+                    continue
                 try:
                     os.chmod(p, 0o700 if p.is_dir() else 0o600)
                 except OSError:
                     continue
         h = Path(history_db)
-        if h.exists():
+        if h.exists() and _inside(h):
             try:
                 os.chmod(h, 0o600)
             except OSError:
                 pass
+            if h.parent.exists() and _inside(h.parent):
+                try:
+                    os.chmod(h.parent, 0o700)
+                except OSError:
+                    pass
     except OSError as exc:
         logging.warning("mem0 %s failed: %r", "harden_perms", exc)
 
@@ -201,11 +221,13 @@ class Mem0Backend(MemoryBackend):
                  consolidate_max_age_hours: float = None,
                  reinforce_enabled: bool = False,
                  reinforce_bonus: float = None,
+                 private_root: str = None,
                  **kwargs):
         self.user_id = str(user_id or "chiguo")
         self.collection_name = str(collection_name or "chiguo")
         self.qdrant_path = qdrant_path or _DEFAULT_QDRANT_PATH
         self.history_db = history_db or _DEFAULT_HISTORY_DB
+        self.private_root = private_root   # 权限硬化范围守卫（None → 不硬化）
         self.llm_model = llm_model or _DEFAULT_LLM_MODEL
         self.llm_base_url = llm_base_url or _DEFAULT_LLM_BASE_URL
         self.llm_api_key = llm_api_key or _pi_api_key()
@@ -288,7 +310,7 @@ class Mem0Backend(MemoryBackend):
             # 新建文件 0600 / 目录 0700（记忆库与 history.db 含对话事实）。
             os.umask(0o077)
             self._m = Memory.from_config(self._mem0_config())
-            _harden_private_paths(self.qdrant_path, self.history_db)
+            _harden_private_paths(self.qdrant_path, self.history_db, self.private_root)
             self._apply_client_timeouts()  # #402：底层 HTTP 真实超时，替代 daemon 遗留
 
     def _apply_client_timeouts(self) -> None:

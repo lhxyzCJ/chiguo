@@ -8,7 +8,6 @@
 # --loop 模式 = 仅启动时检查（loop 是调试模式，可接受）。
 # ============================================================
 
-import json
 import os
 import sys
 import tomllib

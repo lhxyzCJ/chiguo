@@ -47,6 +47,7 @@ def create_backend(config: dict | None = None, base_dir: str | Path | None = Non
         # L-4 (#229): 显式空值也回落默认（cfg.get 只处理缺键，null/空串需 or 兜底）
         qdrant_path=_resolve_path(cfg.get("mem0_qdrant_path") or "data/mem0/qdrant", base),
         history_db=_resolve_path(cfg.get("mem0_history_db") or "data/mem0/history.db", base),
+        private_root=str(base) if base else None,   # 权限硬化范围守卫（仅 base 之内的路径）
         llm_model=cfg.get("mem0_llm_model"),
         llm_base_url=cfg.get("mem0_llm_base_url"),
         llm_api_key=cfg.get("mem0_llm_api_key"),

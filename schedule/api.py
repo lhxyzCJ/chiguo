@@ -362,8 +362,10 @@ class ScheduleApi:
             return {"breaks": []}
 
         def _save(data):
+            # 0600 显式落盘：mem0 后端构造后进程 umask 已收紧为 077，显式 mode
+            # 保证「daemon 内 0600 / CLI 内 0644」不再分叉（隐私一致）。
             atomic_write(bp, json.dumps(data, ensure_ascii=False, indent=2),
-                         fsync=True)
+                         mode=0o600, fsync=True)
 
         if cmd == "on":
             self._guard()
