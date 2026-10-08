@@ -31,6 +31,48 @@ def _sleep_with_jitter(seconds: float, jitter_seconds: float = 0.0) -> None:
     time.sleep(seconds)
 
 
+# 全常驻 parity（Issue #450）：loop 形态接管 cron 三条中的 replan/alerts。
+# 节奏对齐 cron（replan 15min / alerts-push 2h），到期即跑、异常吞错永不打断主循环。
+REPLAN_INTERVAL_SEC = 15 * 60
+ALERTS_PUSH_INTERVAL_SEC = 2 * 60 * 60
+
+
+def _run_replan_tick(engine) -> None:
+    """loop 内 replan 检查（对齐 scripts/replan-tick.sh --check 语义）。"""
+    try:
+        from schedule.replan import main as replan_main
+        rc = replan_main(["--check", "--config",
+                          str(engine._base_dir / "chiguo_proactive.toml")])
+        if rc:
+            print(f"[loop] replan tick 退出码 {rc}（保留旧 plan，下轮重试）",
+                  file=sys.stderr)
+    except Exception as e:
+        print(f"[loop] replan tick 异常: {e}", file=sys.stderr)
+
+
+def _run_alerts_push_tick(engine) -> None:
+    """loop 内告警推送（对齐 scripts/alert-cron.sh --alerts-push 语义）。"""
+    try:
+        from chiguo_monitor import ChiguoMonitor, AlertManager, collect_new_alerts_to_push
+        from ops.bridge_ops import push_alerts_via_wechat
+        mon = ChiguoMonitor(
+            log_path=str(engine._base_dir / "chiguo_decisions.jsonl"),
+            state_path=str(engine._base_dir / "chiguo_state.json"),
+            break_state_path=str(engine._base_dir / "break_state.json"),
+            config_path=str(engine._base_dir / "chiguo_proactive.toml"),
+            messages_log_path=str(engine._base_dir / "chiguo_messages.jsonl"),
+            alerts_path=str(engine._base_dir / "chiguo_alerts.json"),
+            events_path=str(engine._base_dir / "chiguo_events.jsonl"),
+        )
+        am = AlertManager(state_path=str(engine._base_dir / "chiguo_alerts.json"))
+        new_alerts = collect_new_alerts_to_push(mon, am)
+        pushed = push_alerts_via_wechat(engine, new_alerts)
+        if pushed:
+            print(f"[loop] alerts-push 推送 {len(pushed)} 条", file=sys.stderr)
+    except Exception as e:
+        print(f"[loop] alerts-push 异常: {e}", file=sys.stderr)
+
+
 class LoopSenderMixin(DecisionEngineBase):
         def _dynamic_sleep_interval(self, now, decision: dict) -> float:
             """
@@ -400,6 +442,8 @@ def run_loop(engine, max_interval: int, compact: bool):
     print(f"🔄 决策引擎每 ≤{max_interval}s 动态评估一次 (v4 动态休眠)", file=sys.stderr)
 
     decision = run()
+    last_replan = time.monotonic()
+    last_alerts_push = time.monotonic()
     try:
         while True:
             now = datetime.now(CST)
@@ -408,6 +452,14 @@ def run_loop(engine, max_interval: int, compact: bool):
             sleep_sec = max(60, sleep_sec)
             _sleep_with_jitter(sleep_sec)
             decision = run()
+            # 全常驻 parity：到期跑 replan/alerts（对齐 cron 节奏；异常内部已吞错）
+            tick = time.monotonic()
+            if tick - last_replan >= REPLAN_INTERVAL_SEC:
+                last_replan = tick
+                _run_replan_tick(engine)
+            if tick - last_alerts_push >= ALERTS_PUSH_INTERVAL_SEC:
+                last_alerts_push = tick
+                _run_alerts_push_tick(engine)
     except KeyboardInterrupt:
         print("\n💤 已停止", file=sys.stderr)
         if not engine.state.save():

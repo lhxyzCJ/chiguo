@@ -17,7 +17,7 @@
 # 用法：
 #   python3 chiguo_daemon.py              # 检查并输出决策 JSON
 #   python3 chiguo_daemon.py --status     # 查看状态
-#   python3 chiguo_daemon.py --user-msg "…"  # 记录哥哥消息
+#   python3 chiguo_daemon.py --user-msg "…"  # 记录用户消息
 #   python3 chiguo_daemon.py --loop 120   # 持续运行（send 分支内聚发送侧）
 # ============================================================
 

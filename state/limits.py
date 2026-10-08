@@ -242,7 +242,7 @@ class LimitsMixin:
 
     def safety_level(self, now: datetime) -> int:
         """
-        安全阀等级：防止连续崩溃吓到主人。
+        安全阀等级：防止连续崩溃吓到用户。
         0 = 正常
         1 = 崩溃冷却 (last_crash_at 在 24h 内) → 禁止 lonely_high
         2 = 强制温和模式 (48h 内 ≥2 次崩溃) → 所有触发降级

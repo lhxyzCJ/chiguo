@@ -31,15 +31,15 @@ t('detect: 个位数月日补零', () => {
   assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '07-08', name: '我们认识那天' })
 })
 t('detect: 尾标点剥离', () => {
-  const r = detectSpecialCommand('记住11月3日主人生日！')
+  const r = detectSpecialCommand('记住11月3日哥哥生日！')
   assert.ok(!r.payload.name.includes('！'), '感叹号不应进命令')
-  assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '11-03', name: '主人生日' })
+  assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '11-03', name: '哥哥生日' })
 })
-t('detect: 哥哥/主人 前缀兼容（哥哥记住X月X日是XX）', () => {
+t('detect: 哥哥前缀兼容（哥哥记住X月X日是XX）', () => {
   const r = detectSpecialCommand('哥哥记住5月11日是迟菓生日')
   assert.strictEqual(r.action, 'anniversary_added')
   assert.deepStrictEqual(r.payload, { kind: 'anniversary_add', date: '05-11', name: '迟菓生日' })
-  assert.strictEqual(detectSpecialCommand('主人记住3月1日开学日').action, 'anniversary_added')
+  assert.strictEqual(detectSpecialCommand('记住3月1日开学日').action, 'anniversary_added')
 })
 t('detect: 尾缀「了」不算名称（记住5月11日了 → 不拦截交 agent）', () => {
   assert.strictEqual(detectSpecialCommand('记住5月11日了'), null)

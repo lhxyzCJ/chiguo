@@ -136,6 +136,20 @@ def _finite_float(value, default: float) -> float:
     return cfg_float(value, default, clamp_min=0.0)
 
 
+# _row 元字段映射表：输出键 → (meta 键, 缺省)。str(meta.get(k) or 缺省)
+# 语义收敛于此单处；importance/recall_count/emotion_tag 另有清洗语义，不进表。
+ROW_STR_FIELD_MAP = (
+    ("category", "category", ""),
+    ("scope", "scope", "global"),
+    ("memory_category", "memory_category", "?"),
+    ("l0_abstract", "l0_abstract", ""),
+    ("l2_content", "l2_content", ""),
+    ("tier", "tier", "working"),
+    ("source", "source", "mem0"),
+    ("consolidated_with", "consolidated_with", ""),
+)
+
+
 class Mem0Backend(MemoryBackend):
     """mem0 AI 记忆后端：语义检索 + LLM 事实提取写入。
 
@@ -366,30 +380,33 @@ class Mem0Backend(MemoryBackend):
             recall_count = int(rc)
         except (TypeError, ValueError):
             recall_count = 0
+        tag = meta.get("emotion_tag")
+        str_fields = {out: str(meta.get(mkey) or default)
+                      for out, mkey, default in ROW_STR_FIELD_MAP}
         return {
             "id": str(r.get("id") or ""),
             "text": text,
-            "category": str(meta.get("category") or ""),
-            "scope": str(meta.get("scope") or "global"),
+            "category": str_fields["category"],
+            "scope": str_fields["scope"],
             "importance": importance,
             # F-A21-001: 有无真实 importance 信息（False = metadata 无有效 importance，
             # _row 回退 0.5；供 consolidate_plan 对超龄无标记行放行过期）
             "importance_known": importance_known,
             "timestamp": ts,
             "datetime": created,
-            "memory_category": str(meta.get("memory_category") or "?"),
-            "l0_abstract": str(meta.get("l0_abstract") or ""),
-            "l2_content": str(meta.get("l2_content") or ""),
-            "tier": str(meta.get("tier") or "working"),
-            "source": str(meta.get("source") or "mem0"),
+            "memory_category": str_fields["memory_category"],
+            "l0_abstract": str_fields["l0_abstract"],
+            "l2_content": str_fields["l2_content"],
+            "tier": str_fields["tier"],
+            "source": str_fields["source"],
             # B2: 情绪标签（写侧 emotion_tagging 打标；读侧 _apply_forgetting 按相近加权）
-            "emotion_tag": meta.get("emotion_tag") if isinstance(meta.get("emotion_tag"), dict) else None,
+            "emotion_tag": tag if isinstance(tag, dict) else None,
             # C2: 召回次数回读（_persist_recall 写进 metadata；跨进程 cron 部署下
             # _recall_counts 每次从空开始，读行内持久化值强化才不失效——审查 #2）
             "recall_count": recall_count,
             # C1: 巩固去重标记回读（consolidate 写回 metadata.consolidated_with；
             # consolidate_plan 据此跳过二次降权——审查 #159）
-            "consolidated_with": str(meta.get("consolidated_with") or ""),
+            "consolidated_with": str_fields["consolidated_with"],
         }
 
     # ── 原语 ──────────────────────────────────────────────

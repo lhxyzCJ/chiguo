@@ -56,7 +56,7 @@ def _make_state(cfg: dict) -> ChiguoState:
 # ═══════════════════════════════════════════════════════════
 
 def test_deadlock_eligible_no_last_msg():
-    """死锁态：焦虑≥阈值 + 从未收到过主人消息 → 999h沉默 → eligible"""
+    """死锁态：焦虑≥阈值 + 从未收到过用户消息 → 999h沉默 → eligible"""
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _base_cfg(tmp)
         state = _make_state(cfg)

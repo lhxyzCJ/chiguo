@@ -260,27 +260,31 @@ cron_check_commented() {
 }
 
 # ── 阶段 6: crontab 注册 chiguo-tick ───────────────────────
-# CHIGUO_DAEMON_LOOP=1 → 决策引擎改 systemd 常驻（--loop，发送侧内聚），
-# 跳过 tick 条目（cron tick 与 loop 并存会双发消息，必须互斥）。
+# CHIGUO_DAEMON_LOOP=1 → 决策引擎改 systemd 常驻（--loop，发送侧内聚 +
+# replan/alerts-push loop 内 parity，Issue #450 全常驻），跳过全部三条 cron
+#（tick/replan/alert；loop 与 cron 并存会双发/双推，必须互斥）。
 if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
-  say "CHIGUO_DAEMON_LOOP=1 → 跳过 chiguo-tick crontab（决策引擎改由 chiguo-daemon.service 常驻）"
+  say "CHIGUO_DAEMON_LOOP=1 → 跳过全部 cron（chiguo-tick crontab/replan-tick/alert-cron 改由 loop 常驻内聚）"
   CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
-  if cron_check_commented chiguo-tick; then
-    if cron_has_active chiguo-tick; then
+  for _cron_id in chiguo-tick replan-tick alert-cron; do
+  if cron_check_commented "$_cron_id"; then
+    if cron_has_active "$_cron_id"; then
       if [ "$DRY" = 1 ]; then
         PENDING=1
-        echo "  [dry-run] 将移除旧 chiguo-tick crontab 条目（防与 loop 常驻双发）"
-      elif confirm "移除旧 chiguo-tick crontab 条目（已切换 loop 常驻）"; then
-        if printf '%s\n' "$CURRENT_CRON" | cron_filter_active chiguo-tick | crontab -; then
-          say "crontab 旧 chiguo-tick 条目已移除（被注释禁用条目保持原样）"
+        echo "  [dry-run] 将移除旧 $_cron_id crontab 条目（防与 loop 常驻双发/双推）"
+      elif confirm "移除旧 $_cron_id crontab 条目（已切换 loop 常驻）"; then
+        if printf '%s\n' "$CURRENT_CRON" | cron_filter_active "$_cron_id" | crontab -; then
+          say "crontab 旧 $_cron_id 条目已移除（被注释禁用条目保持原样）"
+          CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
         else
-          PENDING=1; warn "crontab 移除失败（请手工执行: crontab -l | awk '!/chiguo-tick/ || /^[[:space:]]*#/' | crontab -）"
+          PENDING=1; warn "crontab 移除失败（请手工执行: crontab -l | awk '!/${_cron_id}/ || /^[[:space:]]*#/' | crontab -）"
         fi
       fi
     else
-      say "crontab 无活动 chiguo-tick 条目（loop 模式预期）"
+      say "crontab 无活动 $_cron_id 条目（loop 模式预期）"
     fi
   fi
+  done
 else
 say "阶段 6: crontab 注册 chiguo-tick..."
 # loop→cron 反向切换：cron 模式检测已装的 chiguo-daemon.service 并停用（防双发）
@@ -331,6 +335,11 @@ fi
 fi
 
 # ── 阶段 6b: crontab 注册 replan-tick（幂等,与 tick 条目同款逻辑）──
+# CHIGUO_DAEMON_LOOP=1 → loop 内 parity 已接管（Issue #450 全常驻），跳过注册
+#（阶段 6 已移除旧条目）。
+if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
+  say "CHIGUO_DAEMON_LOOP=1 → 跳过 replan-tick crontab（loop 内 parity 接管）"
+else
 # CURRENT_CRON 必须重读:tick 条目刚在阶段 6 写入,旧快照会致 replan 追加时覆盖整表
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
 # cron 把命令段里的 % 当换行符 → 路径中的 % 必须转义为 \%
@@ -364,12 +373,19 @@ if cron_check_commented replan-tick; then
     fi
   fi
 fi
+fi  # 6b LOOP=1 跳过结束
 
 # ── 阶段 6d: crontab 注册 alert-cron（幂等,与 tick/replan 条目同款逻辑）──
+# CHIGUO_DAEMON_LOOP=1 → loop 内 parity 已接管（Issue #450 全常驻），跳过注册
+#（阶段 6 已移除旧条目）。cron 形态仍自动注册（告警只落盘不推送问题见 #312）。
 # 告警推送 cron（F-A6-3/F-A10-02/#312）：alert-cron.sh 此前存在但从未随安装脚本注册
 # → crontab 无条目，`--alerts-push` 从不运行，告警只落盘不推送。现随 install_agent.sh
 # 自动注册。典型频率 0 */2 * * *（见 alert-cron.sh 头注释；日志 cron-alert.log，与脚本一致）。
-# 与 chiguo-tick/replan-tick 解耦、不受 CHIGUO_DAEMON_LOOP 形态影响（告警推送两种形态都需要）。
+if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then
+  say "CHIGUO_DAEMON_LOOP=1 → 跳过 alert-cron crontab（loop 内 parity 接管）"
+else
+# 与 chiguo-tick/replan-tick 解耦：cron 形态自动注册；LOOP=1 时 loop 内 parity 接管故跳过
+#（阶段 6 已移除旧条目）。
 # CURRENT_CRON 必须重读:replan 条目刚在阶段 6b 写入,旧快照会致 append 时覆盖整表。
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
 ALERT_CRON="0 */2 * * * ${CHIGUO_REPO//%/\\%}/scripts/alert-cron.sh >> ${CHIGUO_REPO//%/\\%}/logs/cron-alert.log 2>&1"
@@ -402,6 +418,7 @@ if cron_check_commented alert-cron; then
     fi
   fi
 fi
+fi  # 6d LOOP=1 跳过结束
 
 # ── 阶段 6c: systemd chiguo-daemon.service（CHIGUO_DAEMON_LOOP=1 时安装）──
 if [ "${CHIGUO_DAEMON_LOOP:-0}" = "1" ]; then

@@ -256,7 +256,7 @@ def user_mood_note(kind: str, intensity: float) -> str:
     return tpl.format(i=intensity)
 
 
-# ── 自身情绪注解表 self_mood_note（Issue #356）──────────────────
+# ── 自身情绪注解表 self_mood_note（Issue #356；#408 表驱动化）────────
 # 迟菓自身情绪 → 中文语气注解（最主导 1-2 条，注入 _build_context guidance）。
 # 与 energy_note 互补：energy 档注解属既有 energy_note，本表专注
 # loneliness/affection/anxiety/tsundere 组合语义；主导优先级：
@@ -265,6 +265,48 @@ def user_mood_note(kind: str, intensity: float) -> str:
 # 嘴硬=短句连发+否认+反问；并始终与角色铁律协同（被夸不得直接开心 → 开心注解
 # 保留"先嘴硬、行动回应"约束）。缺键容错：缺失维度按非命中处理。纯函数，
 # 不依赖 chiguo_state dataclass（调用方传 dict，参照 apply_interaction_matrix）。
+# #408：5 优先级分支收敛为 SELF_MOOD_RULES 表（(predicate, template) 按序取首命中），
+# 首条模板含 {loneliness:.0f}/{anxiety:.0f} 占位（其余为纯文本），渲染统一 tpl.format(**vals)。
+
+def _self_mood_is_distressed(v: dict) -> bool:
+    lo, anx = v.get("loneliness"), v.get("anxiety")
+    return lo is not None and anx is not None and lo > 70 and anx > 60
+
+
+def _self_mood_is_happy(v: dict) -> bool:
+    en, lo, aff = v.get("energy"), v.get("loneliness"), v.get("affection")
+    return (en is not None and lo is not None and aff is not None
+            and en > 80 and lo < 30 and aff > 70)
+
+
+def _self_mood_is_fond(v: dict) -> bool:
+    aff = v.get("affection")
+    return aff is not None and aff > 70
+
+
+def _self_mood_is_tsundere(v: dict) -> bool:
+    ts = v.get("tsundere_index")
+    return ts is not None and ts > 80
+
+
+def _self_mood_is_lonely(v: dict) -> bool:
+    lo = v.get("loneliness")
+    return lo is not None and lo > 50
+
+
+SELF_MOOD_RULES = [
+    (_self_mood_is_distressed,
+     "（此刻有点委屈难过（孤独{loneliness:.0f}，不安{anxiety:.0f}），碎句加省略号，可以流露一点真实的脆弱，不质问不卖惨）"),
+    (_self_mood_is_happy,
+     "（当前心情偏开心，语气可活泼些，感叹号加行动证明，但被夸仍先嘴硬，行动回应不直接承认）"),
+    (_self_mood_is_fond,
+     "（对哥哥好感偏高，想亲近但口是心非，关心带上刺）"),
+    (_self_mood_is_tsundere,
+     "（此刻傲娇上头，短句连发，先否认再反问，语气嘴硬心软）"),
+    (_self_mood_is_lonely,
+     "（有点想哥哥了，试探着问两句，但绝不直说等待）"),
+]
+
 
 def self_mood_note(emotion: dict) -> str:
     """
@@ -285,37 +327,23 @@ def self_mood_note(emotion: dict) -> str:
         except (TypeError, ValueError):
             return None
 
-    loneliness = _num("loneliness")
-    affection = _num("affection")
-    anxiety = _num("anxiety")
-    energy = _num("energy")
-    tsundere = _num("tsundere_index")
+    vals = {
+        "loneliness": _num("loneliness"),
+        "affection": _num("affection"),
+        "anxiety": _num("anxiety"),
+        "energy": _num("energy"),
+        "tsundere_index": _num("tsundere_index"),
+    }
 
     notes: list[str] = []
-    # ① 委屈难过（kernel 级，最优先）
-    if loneliness is not None and anxiety is not None and loneliness > 70 and anxiety > 60:
-        notes.append(
-            f"（此刻有点委屈难过（孤独{loneliness:.0f}，不安{anxiety:.0f}），"
-            "碎句加省略号，可以流露一点真实的脆弱，不质问不卖惨）"
-        )
-    # ② 开心（铁律⑦协同：被夸仍先嘴硬，行动回应不直接承认）
-    elif (energy is not None and loneliness is not None and affection is not None
-          and energy > 80 and loneliness < 30 and affection > 70):
-        notes.append(
-            "（当前心情偏开心，语气可活泼些，感叹号加行动证明，"
-            "但被夸仍先嘴硬，行动回应不直接承认）"
-        )
-    # ③ 高好感
-    elif affection is not None and affection > 70:
-        notes.append("（对哥哥好感偏高，想亲近但口是心非，关心带上刺）")
-    # ④ 高傲娇
-    elif tsundere is not None and tsundere > 80:
-        notes.append("（此刻傲娇上头，短句连发，先否认再反问，语气嘴硬心软）")
-    # ⑤ 中孤独（以上均不命中时兜底）
-    elif loneliness is not None and loneliness > 50:
-        notes.append("（有点想哥哥了，试探着问两句，但绝不直说等待）")
+    # ①→⑤ 按 SELF_MOOD_RULES 优先级取首命中（缺键维度谓词内按非命中处理）
+    for _pred, _tpl in SELF_MOOD_RULES:
+        if _pred(vals):
+            notes.append(_tpl.format(**vals))
+            break
     # 傲娇底色叠加注脚（任意主导下共 ≤2 条）
-    if notes and tsundere is not None and tsundere > 80 and "傲娇上头" not in notes[0]:
+    _tsundere = vals.get("tsundere_index")
+    if notes and _tsundere is not None and _tsundere > 80 and "傲娇上头" not in notes[0]:
         notes.append("（嘴硬底色仍在，先推开再接受）")
     return "；".join(notes)
 

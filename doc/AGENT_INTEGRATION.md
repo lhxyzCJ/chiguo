@@ -99,13 +99,13 @@ crontab */15 * * * * scripts/chiguo-tick.sh
   回复链：bridge askAgent → AgentRpc.prompt(mode=analysis) → agent RPC（零 spawn）
   发送链：daemon --loop 内 _loop_send → POST /agent/prompt {mode:send} → bridge → AgentRpc
     → agent RPC → 回文本 → POST /send → bot.send() → record_send_text
-  cron 仅剩 replan-tick（判脏轮询，几乎零成本）
+  cron 三条全移除（tick/replan/alert 改由 loop 内 parity 接管：15min replan --check + 2h alerts-push）
   RPC 失败（任意环节）→ 自动回退 spawn（bridge askAgent 回退 agent-run；_loop_send 回退 spawn）
 ```
 
 切换命令（防双发：cron tick 与 loop 常驻**必须互斥**，install_agent.sh 阶段 6c 处理）：
 ```bash
-export CHIGUO_DAEMON_LOOP=1   # install_agent.sh 将：移除旧 tick crontab + 安装 chiguo-daemon.service
+export CHIGUO_DAEMON_LOOP=1   # install_agent.sh 将：移除三条旧 cron（tick/replan/alert） + 安装 chiguo-daemon.service
 bash scripts/install_agent.sh --yes
 # 回退 cron 形态：CHIGUO_DAEMON_LOOP=0 重跑 + systemctl disable --now chiguo-daemon.service
 ```
@@ -193,9 +193,10 @@ bash deploy.sh                         # 或随部署一起（传 --skip-agent �
 | 0b 清理 | 移除已废弃 memory-lancedb-pro 扩展残留（v1.15 mem0 唯一后端；settings.json 条目 + 文件/目录，幂等） |
 | 4 ollama | `curl localhost:11434/api/tags` 有 `qwen3-embedding:0.6b`（缺 → 提示/`ollama pull`） |
 | 5 auth.json | `[host].provider` 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文，chmod 600） |
-| 6 crontab | 注册 `*/15 * * * * scripts/chiguo-tick.sh >> logs/cron-tick.log 2>&1`（幂等，活动旧条目整行替换；被注释禁用的手动停用条目原样保留，醒目提示 + ask 确认，绝不静默删除/恢复） |
-| 6b crontab | 注册 replan-tick（判脏轮询，幂等） |
-| 6c systemd | `CHIGUO_DAEMON_LOOP=1` 时安装 `chiguo-daemon.service`（--loop 900 --compact；与 cron tick 互斥） |
+| 6 crontab | 注册 `*/15 * * * * scripts/chiguo-tick.sh >> logs/cron-tick.log 2>&1`（幂等，活动旧条目整行替换；被注释禁用的手动停用条目原样保留，醒目提示 + ask 确认，绝不静默删除/恢复；`CHIGUO_DAEMON_LOOP=1` 时跳过，三条全归 loop） |
+| 6b crontab | 注册 replan-tick（判脏轮询，幂等；loop 形态跳过，loop 内 parity 接管） |
+| 6d crontab | 注册 alert-cron（`0 */2`，幂等；loop 形态跳过，loop 内 parity 接管） |
+| 6c systemd | `CHIGUO_DAEMON_LOOP=1` 时安装 `chiguo-daemon.service`（--loop 900 --compact；与三条 cron 互斥） |
 | 7 冒烟 | `pi -p --provider <[host].provider> --model <model> ...`（仅 --yes/ask） |
 
 ## 四、agent-run 契约（scripts/agent-run.mjs）

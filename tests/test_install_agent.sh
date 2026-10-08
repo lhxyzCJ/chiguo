@@ -213,7 +213,7 @@ set +e; OUT=$(PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --
 unset OPENCODE_API_KEY AGENT_API_KEY
 pass "auth.json 合并写入（保留旧条目 + chmod 600）+ .bak 不重复"
 
-# ── 用例 15: CHIGUO_DAEMON_LOOP=1 → 跳过 tick 注册 + 移除旧 tick 条目（防双发）──
+# ── 用例 15: CHIGUO_DAEMON_LOOP=1 → 跳过全部 cron + 移除三条旧条目（Issue #450 全常驻：loop 内 parity 接管 replan/alerts）──
 setup_ready
 # M-2: loop 启用前需 bridge token（缺失则 install 拒绝启用）→ 预置 .env 含 token
 mkdir -p "$CHIGUO_REPO_OVERRIDE/wechat-bridge"
@@ -221,7 +221,8 @@ printf 'WECHAT_BRIDGE_TOKEN=test-loop-token\n' > "$CHIGUO_REPO_OVERRIDE/wechat-b
 set +e; OUT=$(CHIGUO_DAEMON_LOOP=1 PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] || fail "loop 模式期望 0 实得 $RC"
 grep -q 'chiguo-tick' "$CRON_STATE" && fail "loop 模式不应注册/保留 chiguo-tick" || true
-grep -q 'replan-tick' "$CRON_STATE" || fail "loop 模式应保留 replan-tick"
+grep -q '^[^#].*replan-tick' "$CRON_STATE" && fail "loop 模式应移除活动 replan-tick（loop 内 parity 接管）: $(cat "$CRON_STATE")" || true
+grep -q '^[^#].*alert-cron' "$CRON_STATE" && fail "loop 模式应移除活动 alert-cron（loop 内 parity 接管）: $(cat "$CRON_STATE")" || true
 echo "$OUT" | grep -q "chiguo-tick crontab" || fail "loop 模式应有移除提示"
 grep -q -- "--loop 900" "$TMP/systemd/chiguo-daemon.service" \
   || fail "loop unit 应写入 CHIGUO_SYSTEMD_DIR 且含 --loop 900: $(cat "$TMP/systemd/chiguo-daemon.service" 2>/dev/null)"
@@ -230,7 +231,7 @@ grep -q "EnvironmentFile=-" "$TMP/systemd/chiguo-daemon.service" \
   || fail "loop unit 应含 EnvironmentFile=-（R17 共享 token）: $(cat "$TMP/systemd/chiguo-daemon.service" 2>/dev/null)"
 grep -q "wechat-bridge/.env" "$TMP/systemd/chiguo-daemon.service" \
   || fail "loop unit EnvironmentFile 应指向 wechat-bridge/.env: $(cat "$TMP/systemd/chiguo-daemon.service" 2>/dev/null)"
-pass "CHIGUO_DAEMON_LOOP=1 → 移除 tick 条目、保留 replan（防双发）+ R17 EnvironmentFile"
+pass "CHIGUO_DAEMON_LOOP=1 → 移除三条 cron（tick/replan/alert 全归 loop）+ R17 EnvironmentFile"
 
 # ── 用例 16: loop 模式 dry-run → 待办含 daemon unit 提示且零写入 ──
 clean_home
@@ -309,7 +310,7 @@ printf '*/15 * * * * %s/scripts/replan-tick.sh >> %s/logs/cron-replan.log 2>&1\n
 set +e; OUT=$(CHIGUO_DAEMON_LOOP=1 PATH="$TMP/bin-ok:$TMP/bin:$PATH" bash scripts/install_agent.sh --yes 2>&1); RC=$?; set -e
 grep -q '^#' "$CRON_STATE" || fail "loop 模式不应删除被注释的 chiguo-tick 行: $(cat "$CRON_STATE")"
 [ "$(grep -c '^[^#].*chiguo-tick' "$CRON_STATE" || true)" = 0 ] || fail "loop 模式应移除活动 chiguo-tick 条目: $(cat "$CRON_STATE")"
-grep -q 'replan-tick' "$CRON_STATE" || fail "loop 模式应保留 replan-tick"
+[ "$(grep -c '^[^#].*replan-tick' "$CRON_STATE" || true)" = 0 ] || fail "loop 模式应移除活动 replan-tick 条目: $(cat "$CRON_STATE")"
 echo "$OUT" | grep -q "被注释禁用" || fail "loop 模式应醒目提示被注释禁用"
 pass "loop 模式移除活动旧条目但保留被注释禁用行"
 

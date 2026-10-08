@@ -12,7 +12,7 @@ def handle_tune(args) -> bool:
         print(json.dumps({
             "action": "tune",
             "error": f"需要至少 5 次交互数据，当前 {len(latencies)} 次",
-            "hint": "发送几条消息并等待哥哥回复，积累数据后再试",
+            "hint": "发送几条消息并等待用户回复，积累数据后再试",
         }, ensure_ascii=False))
     else:
         import statistics
@@ -22,11 +22,11 @@ def handle_tune(args) -> bool:
         if median_h < 0.3:
             suggestion = "increase"
             new_base = min(0.5, current_base * 1.3)
-            reason = f"哥哥回复很快（中位数 {median_h:.1f}h），可以更频繁"
+            reason = f"用户回复很快（中位数 {median_h:.1f}h），可以更频繁"
         elif median_h > 3.0:
             suggestion = "decrease"
             new_base = max(0.05, current_base * 0.7)
-            reason = f"哥哥回复较慢（中位数 {median_h:.1f}h），减少频率"
+            reason = f"用户回复较慢（中位数 {median_h:.1f}h），减少频率"
         else:
             suggestion = "keep"
             new_base = current_base

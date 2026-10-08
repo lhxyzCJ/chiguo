@@ -27,6 +27,13 @@ Existing instruction sources to read before editing: `CLAUDE.md` (setup + archit
 9. **铁律：完成任务并报告之前，必须解决 todo list 与宿主的报错**——逐项 `complete_step` 签收任务（不留 incomplete 项）；报告前处理全部宿主报错（final-answer readiness 门禁：无未签收 todo、本轮有可观测工作、mutation 后运行验证并提交 reviewed_paths、prefer 能力调用或 `use_capability` 显式 decline），带着报错收尾视为未完成
 10. 禁止写无用的测试/备份/免责声明/保持项目整体整洁有序，遵守代码规范，写完任何代码后必须校验语法是否正确
 11. 做好随时有break change的准备，不要留没有意义的降级/备选，除非用户指定
+
+## 称谓约定（哥哥 / 用户 / 主人）
+
+- **哥哥**：仅人设语音——最终会进 LLM 上下文或用户微信的文字（prompt 预设、`hint` 字段、澄清反问、直发文案）+ `personality/` 目录。判断标准：这段文字是迟菓在说话。
+- **用户**：一切开发侧——注释、docstring、CLI help、日志诊断、运维输出、配置注释（引用人设原文除外）、测试名/注释/非人设 fixture、系统文档。
+- **主人**：禁用，全仓零出现（含文档；历史记忆数据不追溯）。输入解析仅兼容哥哥前缀。
+
 ## 宿主收尾门禁（final-answer readiness）
 
 Reasonix 宿主在 final-answer 时检查四类验收项，报错模式固定，对策如下：
