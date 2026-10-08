@@ -31,8 +31,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 | 脚本 | 职责 |
 |------|------|
-| `deploy.sh`（仓库根） | 一键部署：uv+Python 3.14+依赖 → mem0 校验 → 全量自检 → 环境检查 → 微信桥/agent/网易云分级安装 → 迁移提示 |
-| `scripts/ci-test.sh` | 全量自检链（计数以此脚本为准），与 GitHub Actions 共用同一入口 |
+| `deploy.sh`（仓库根） | 一键部署：uv+Python 3.14+依赖 → mem0 校验 → 环境检查 → 微信桥/agent/网易云分级安装 → 迁移提示 |
 | `scripts/chiguo-tick.sh` | 主动发送链（crontab 触发：决策 → 生成 → 微信发送 → 健康记录） |
 | `scripts/replan-tick.sh` | 计划重分析（crontab 触发） |
 | `scripts/alert-cron.sh` | 告警微信推送（crontab 自动注册：调 `chiguo_daemon.py --alerts-push` 推送新增 critical/warn 告警；频率 `0 */2 * * *`，日志 `logs/cron-alert.log`） |
@@ -52,7 +51,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 低档位可事后补装：`bash scripts/install_agent.sh --yes` / `bash scripts/wechat-bridge.sh install`；T0 也完全可玩：见 README 快速开始。
 
-## 六、完整部署步骤（T2，对应 deploy.sh 六步 + 拆分小节）
+## 六、完整部署步骤（T2，对应 deploy.sh 五步 + 拆分小节）
 
 ### 1. uv + Python 3.14 + 依赖
 
@@ -62,21 +61,15 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺失即中止）。
 
-### 3. 全量自检
-
-`bash scripts/ci-test.sh`：全量测试链（py 走 pytest 收集 + mjs/sh 脚本链；计数以 `scripts/ci-test.sh` 为准、动态化），任一失败即中止。验证：看输出「ALL TESTS PASSED（pytest N py + M mjs + K sh）」。
-
-该脚本与 GitHub Actions 全链 CI（`.github/workflows/ci.yml`，每次 push/pull_request 自动跑）共用同一入口：本地任何一次 `git push` 都会在 CI 上重跑同一链条。CI 环境注意点：runner 非 root（`tests/test_service.sh` 用 fake `id` 注入 root 视角）、无 `/usr/bin/node`（node 测试用 `process.execPath`）、无 `@wechatbot/wechatbot`（`ci-test.sh` 从 **vendor 真实 SDK**（`wechat-bridge/vendor/wechatbot/`）执行 npm ci + tsc 构建，干净 checkout 即可跑；两处 package-lock.json 已跟踪入库，CI 只缓存 ~/.npm 不缓存 node_modules，npm 升到 11 防 arborist edgesOut）与 `data/xskb.xlsx`（课表 fixture 由 test_7/test_trigger 测试内自包含生成），因此本地与 CI 结果一致。
-
-### 4. 环境检查
+### 3. 环境检查
 
 `uv run python chiguo_envcheck.py`：exit 0=就绪 / 1=警告可运行 / 2=严重先修复。可 `--skip-agent` 跳过 agent 检查（agent 缺失降级为警告，不阻断）。
 
-### 5. 微信桥
+### 4. 微信桥
 
 `bash scripts/wechat-bridge.sh install` + `bash scripts/service.sh autostart` → systemd `chiguo-bridge.service`（同时注册 ollama 自启）。随后扫码登录：`bash scripts/wechat-bridge.sh login`。可 `--skip-bridge`。
 
-### 6. agent 环境与定时（crontab 或常驻二选一）
+### 5. agent 环境与定时（crontab 或常驻二选一）
 
 `bash scripts/install_agent.sh`（阶段：探测 → ollama 检查 → auth 写 key → crontab/常驻注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。
 
@@ -84,7 +77,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 **手动停用 tick**：注释 crontab 中 `chiguo-tick.sh`/`replan-tick.sh` 行（行首加 `#`）即可停用自动推送。install_agent.sh 会把被注释条目识别为手动禁用并原样保留——不会删除/恢复（醒目提示；ask 模式额外确认后才继续处理活动旧条目）。
 
-### 7. 网易云 API 服务（可选）
+### 6. 网易云 API 服务（可选）
 
 `bash scripts/netease-api.sh install` → systemd `netease-api.service`（需 root）；扫码登录 `uv run python -m netease.bridge --login`。可 `--skip-netease`。
 
@@ -146,7 +139,7 @@ uv run python chiguo_daemon.py --stats --alerts --monitor
 - 新机器：clone → 拷贝上述 → `bash deploy.sh`（自动接入；agent key 100% 迁移可用；微信/网易云跨设备自动重登兜底）
 - 微信登录态跨设备实测可复用：迁移后轮询正常，但首次**主动发送**可能被服务端拒（`[send error] prepare failed`，context_token 过期）——从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
 - **context_token 有效期**：主动发送依赖微信服务端签发的 context_token（`~/.chiguo/auth/wechat/context_tokens.json`）。微信侧无公开 TTL，实测**最后一次收到用户消息后约 35 小时失效**；每次收到用户消息自动刷新续期，正常聊天往来不会过期。过期唯一症状是主动发送报 `prepare failed`（回复链路不受影响），**从微信给机器人发一条消息即恢复**——不是网络/登录故障，不要盲目重扫码或重启。`deploy.sh` 部署时会检查并提示 token 新鲜度；`bash scripts/wechat-bridge.sh status` 随时可查。
-- 课表数据：仓库无 `data/` 目录，`chiguo_proactive.toml` 的 `xlsx_path = "data/xskb.xlsx"` 由部署者自行放入（最小课表 fixture 由 test_7/test_trigger 测试内自包含生成）。
+- 课表数据：仓库无 `data/` 目录，`chiguo_proactive.toml` 的 `xlsx_path = "data/xskb.xlsx"` 由部署者自行放入。
 
 ## 十二、从旧版本（<v1.15）升级
 

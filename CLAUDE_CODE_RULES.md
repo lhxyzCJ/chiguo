@@ -3,19 +3,21 @@
 > 定位：纯 Claude Code 开发规则（构建、测试、约定、gotchas）。版本 v1.24。
 > 架构（文件依赖树、evaluate() 决策流、5 维情绪引擎、触发系统、话题注入、消息 composer、Ship of Theseus 配置参数、决策输出 schema、运行时数据文件归属）详见 **doc/SYSTEM.md**。
 > agent 后端集成（LLM Host、send/reply 侧、SUN2.md 人格宪法、skill 文件边界）详见 **doc/AGENT_INTEGRATION.md**。
-> 测试由 pytest 驱动（Q26 迁移；py 走 pytest 收集，mjs/sh 脚本链保留）；测试清单唯一权威为 scripts/ci-test.sh（计数动态化，以 pytest 收集结果为准）。
+> 测试：本项目在大规模重构前已清空全部测试（`tests/`、`scripts/ci-test.sh`、CI workflow、pytest 依赖全删）；改动自检 = 语法检查 + 冒烟运行，见 §1。
 > **Iron law**: decision/generation separation. Daemon outputs JSON. agent backend generates messages (Phase 4).
 
 ---
 
-## 1. 构建与测试 (Build & Test)
+## 1. 构建与自检 (Build & Self-check)
 
 ```bash
-# 全量测试：scripts/ci-test.sh（py 走 pytest 收集 + mjs/sh 脚本链；任一失败退出非零；计数动态化以它为准）
-bash scripts/ci-test.sh
+# 语法自检（项目无测试套件：tests/ 与 scripts/ci-test.sh 已在大规模重构前删除）
+uv run python -m compileall -q <改动文件>   # Python
+node --check <file>                        # JS
+bash -n <file>                             # Shell
 
-# 单文件（pytest）
-uv run pytest tests/test_monitor.py -q
+# 端到端冒烟（零模型门控，stdout JSON）
+uv run python chiguo_daemon.py --compact
 
 # 决策引擎（单次 eval → JSON 到 stdout）
 python3 chiguo_daemon.py
@@ -80,15 +82,11 @@ python3 chiguo_rotation.py --force
   - runtime 持久化状态（情绪/人格演变/cooldown 字段/生物钟学习）不动
 - TOML 语法错误/读取失败 → 保留旧配置，打 stderr 告警继续运行
 
-### 测试隔离
-- `tests/test_monitor.py` 用 `tempfile.TemporaryDirectory`；其余为纯函数测试，无共享状态
-- 无测试框架：裸 `assert` + `if __name__ == "__main__"` runner
-- `sys.path.insert(0, ...)` 找兄弟模块
-- `random.seed(42)` 保证集成测试确定性
-- 固定时间用显式 `datetime(..., tzinfo=CST)`
+### 时间与确定性
+- 固定时间用显式 `datetime(..., tzinfo=CST)`，禁止裸 naive datetime
+- 需要可复现随机时用 `random.seed(42)`
 
 ### 命名约定
-- 测试函数 `test_` 前缀，成功打印 `"  OK test_name"`
 - dataclass 字段有默认值；可变默认值用 `field(default_factory=...)`
 - 私有方法 `_` 前缀
 - CLI：argparse 模式，JSON 到 stdout、诊断到 stderr
@@ -139,13 +137,12 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 1. **File already read**: Edit tool requires Read first. When Read hook blocks (claude-mem down), use Bash/python for edits.
 2. **Timezone**: Always use `CST = timezone(timedelta(hours=8))`. Naive datetimes get auto-completed via `_parse_tz()`.
 3. **TOML types**: `rate_energy_min = 5.0` must be float. Comments must match values.
-4. **mem0 惰性导入 + 60s 节流**: mem0 缺失时 `available=False` 优雅降级（记忆查询返回空；测试 mock/skip，`CHIGUO_MEM0_DISABLED=1` 确定性不可用）。故障驱动自愈：置不可用后至少间隔 `_RETRY_SECONDS=60` 才重新探测（memory/mem0_backend.py）。
+4. **mem0 惰性导入 + 60s 节流**: mem0 缺失时 `available=False` 优雅降级（记忆查询返回空）。故障驱动自愈：置不可用后至少间隔 `_RETRY_SECONDS=60` 才重新探测（memory/mem0_backend.py）。
 5. **xskb.xlsx 缺失 / schedule 解析失败**: `refresh_schedule_cache` 返回 available=False → 按空闲处理（availability=1.0，tier=unavailable）；解析失败（`openpyxl` 缺失/文件损坏）保留旧缓存、不覆盖落盘（schedule/parser.py）。
-6. **Test order**: Integration tests need `chiguo_proactive.toml` in CWD. Run from the repo root.
+6. **CWD**: 运行期依赖 `chiguo_proactive.toml` in CWD → 命令一律从项目根运行。
 7. **Ritual weight scale**: `evaluate_triggers()` multiplies all ritual weights by `ritual_weight_scale`. Set to 0.3 to balance with emotion weights.
 8. **character_rules ⑦ vs condensed**: Full rules (guidance variable) missing 喵/嘻嘻. Condensed version (context dict) has them. Both now fixed (2026-07-02).
 9. **Bayesian normalization**: `update_from_label()` normalizes cached P(obs|state) to sum=1.0. Uncached values default to 0.05 but are not in the normalization group.
-10. **time-bomb 测试不修**: 部分测试锚定真实日期/真实时钟（如 tests/test_topics.py 的 on_break 用 `datetime.now()` 与 semester_end 比较，测试固定 semester_end 为过去日期取确定分支）。这类"时间炸弹"在真实日期越过时可能失效——约定是不预先修补，等其失败时再更新锚定。
 
 ---
 
@@ -158,6 +155,6 @@ Note: privacy data (WeChat login state, conversation logs `chiguo_messages.jsonl
 ## 8. 改动后检查清单 (Post-Change Checklist)
 
 After ANY code change:
-1. Run affected test files
-2. Run full suite if touching math/state/daemon
+1. 语法自检：Python `uv run python -m compileall -q <文件>`、JS `node --check <文件>`、Shell `bash -n <文件>`
+2. 冒烟运行 `uv run python chiguo_daemon.py --compact`（触碰 math/state/daemon 时必跑）
 3. Update `doc/SYSTEM.md` if architecture/CLI/config changed

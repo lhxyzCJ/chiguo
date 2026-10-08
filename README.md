@@ -7,7 +7,6 @@
 零 LLM 数学决策引擎 · LLM 消息生成 · 微信触达
 
 [![Python](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![ci](https://github.com/lhxyzCJ/chiguo/actions/workflows/ci.yml/badge.svg)](https://github.com/lhxyzCJ/chiguo/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 [![zero-LLM](https://img.shields.io/badge/决策核心-zero--LLM%20数学引擎-2ea44f)](doc/SYSTEM.md)
 [![WeChat](https://img.shields.io/badge/WeChat-07C160?logo=wechat&logoColor=white)](wechat-bridge/)
@@ -207,11 +206,14 @@ uv run python chiguo_demo.py         # 交互式 Demo（纯模板，无 LLM）
 uv run python chiguo_daemon.py       # 单次决策 → 输出 JSON
 uv run python chiguo_daemon.py --status   # 查看当前状态
 
-# 核心测试（完整测试链：py 走 pytest、mjs/sh 脚本链保留；计数以 scripts/ci-test.sh 为准，动态化）
-bash scripts/ci-test.sh   # 本地与 GitHub Actions 同一入口；任一失败退出非零
+# 改动自检（项目当前无测试套件：语法检查 + 端到端冒烟）
+uv run python -m compileall -q <文件>      # Python 语法
+node --check <文件>                        # Node 语法
+bash -n <文件>                             # Shell 语法
+uv run python chiguo_daemon.py --compact   # 端到端冒烟（零模型门控，stdout JSON）
 ```
 
-> 注意：`uv sync` 即安装 mem0ai（记忆层为必需依赖）；`uv sync --all-extras` 再启用课表解析。集成测试需要当前目录存在 `chiguo_proactive.toml`，请始终从项目根目录运行。
+> 注意：`uv sync` 即安装 mem0ai（记忆层为必需依赖）；`uv sync --all-extras` 再启用课表解析。所有命令请从项目根目录运行（配置与运行时文件都锚定项目根）。
 
 ---
 
@@ -328,12 +330,12 @@ personality/
 
 ## 🛠 部署与运维
 
-**前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export AGENT_API_KEY=...`）；ollama 可选（记忆嵌入）。node 版本以仓库根 `.nvmrc`（=22，CI 同款）为准，本地更高版本（如 v24）也可运行但 CI/部署以 22 为基准；`nvm use` 自动套用。
+**前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export AGENT_API_KEY=...`）；ollama 可选（记忆嵌入）。node 版本以仓库根 `.nvmrc`（=22）为准，本地更高版本（如 v24）也可运行但部署以 22 为基准；`nvm use` 自动套用。
 
 **分级部署**：三档路径见 [🚀 快速开始](#-快速开始)；完整指南（六步详解/落点地图/迁移/验证）见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 
 ```bash
-bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 全量测试 → 环境检查 → agent 环境 + wechat-bridge + cron
+bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 环境检查 → agent 环境 + wechat-bridge + cron
 ```
 
 **认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态/网易云 cookie/agent key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。agent key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。微信登录态跨设备通常可直接复用：若首次**主动发送**报 `prepare failed`（context_token 过期），从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
@@ -366,12 +368,12 @@ uv run python chiguo_envcheck.py               # 环境就绪检查（0=就绪 1
 | [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | 完整部署指南（分级路径/前提条件/落点地图/迁移/验证） |
 | [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) | agent 后端集成指南（模型后端、微信桥、部署） |
 | [doc/日光雨.md](doc/日光雨.md) | 官方续作《三色绘恋S》剧本全文（17099 行，人格设定基准） |
-| [AGENTS.md](AGENTS.md) | AI 开发助手约定（含完整测试链） |
+| [AGENTS.md](AGENTS.md) | AI 开发助手约定（工程原则 / 架构速查 / 工作流） |
 
 欢迎任何形式的贡献——尤其是"她"的成长：
 
-- **测试先行（TDD）**：铁律是先写失败测试再实现（红→绿），`tests/` 下每个 Python 测试是 `def test_*` 函数（pytest 驱动）
-- **改完跑全链**：完整测试链见 `AGENTS.md`（计数以 scripts/ci-test.sh 为准），全绿再提交
+- **现状**：项目当前无测试套件（大规模重构前已清空）
+- **改动自检**：改完至少做语法检查（Python `uv run python -m compileall -q <文件>`、Node `node --check <文件>`、Shell `bash -n <文件>`）；涉及决策链时跑端到端冒烟 `uv run python chiguo_daemon.py --compact`（零模型门控，stdout JSON）
 - **文档同步**：行为变化必须同步 `doc/SYSTEM.md`
 - **Commit 风格**：`feat:` / `fix:` / `docs:` / `chore:` 前缀 + 中文描述
 - **设计文档**：大改动先在项目外 `~/chiguo-meta/specs/` 写设计文档，评审通过再动手
@@ -431,7 +433,6 @@ scripts/                 # tick/replan crontab 入口 + agent runner 抽象（ag
 wechat-bridge/           # 微信桥（bridge.mjs + command-detect.mjs + agent-rpc.mjs）
 personality/             # 人格（迟菓人格-精简版.md 运行时规范 + archive/ 原著素材 + 措辞 toml + 工具/记忆用法）
 doc/                     # 系统文档（SYSTEM.md / DEPLOYMENT.md / AGENT_INTEGRATION.md / 日光雨剧本 17099 行）
-tests/                   # 测试（py 走 pytest，mjs/sh 脚本链保留；计数以 scripts/ci-test.sh 为准）
 data/                    # 数据文件（课表/记忆库 data/mem0/ 等，不进 git）
 ```
 

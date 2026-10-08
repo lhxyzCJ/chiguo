@@ -42,7 +42,7 @@
 | `StatePersistence` 行数 | 0（内联于 ChiguoState） | 435 | 新增持久化/迁移单类，单一职责 |
 | daemon 私有直访 | 11 处 | **0 处** | 全部改走公开 API（`load`/`audit`/`sync_quiet_window`/`apply_analysis_impact`/`reset_bayesian_estimator`） |
 | cooldown 字段直读写 | 41 处 | **0 处（daemon）** | 全部改走 CooldownState 公开 getter/mutator |
-| 回归守卫测试 | 无 | **有**（`tests/test_state_private_access_guard.py`） | AST 静态断言 daemon/trigger/topics/demo 不直访私有、不做 cooldown 裸字段读写 |
+| 回归守卫测试 | 无 | 有（`tests/test_state_private_access_guard.py`，**已随测试套件在大规模重构前清空一并移除**） | 当时以 AST 静态断言 daemon/trigger/topics/demo 不直访私有、不做 cooldown 裸字段读写；现由人工审阅维持 |
 
 > 注：拆分后 `chiguo_state.py` 总行数 2347 → 2507（+160）。增量来自新增的公开 getter/mutator
 > API（`CooldownState` ~85 行）与公开委托入口（`ChiguoState` ~15 行）——这是"字段/私有直访收口"
@@ -82,7 +82,12 @@
 
 ## 五、验收自评
 
-- ① 状态 roundtrip 全绿：`test_daemon_fixes`（含 `test_bug2_tick_save_reload_roundtrip`、`test_state_monotonic_anchor_persist_roundtrip`）等通过
-- ② 私有访问收口回归守卫：新增 `tests/test_state_private_access_guard.py`，AST 断言通过
-- ③ 全链 `bash scripts/ci-test.sh` 通过
+> 注：本节为拆分当时的验收记录。全部测试套件（`tests/`、`scripts/ci-test.sh`、CI 入口）已在
+> 大规模重构前清空，凡以「测试通过」为判据的条目仅存史实，现由语法检查
+> （`uv run python -m compileall -q <文件>`）、端到端冒烟
+> （`uv run python chiguo_daemon.py --compact`）与人工审阅替代。
+
+- ① 状态 roundtrip：当时 `test_daemon_fixes`（含 `test_bug2_tick_save_reload_roundtrip`、`test_state_monotonic_anchor_persist_roundtrip`）等通过；该测试已随测试套件清空一并移除
+- ② 私有访问收口回归守卫：当时新增 `tests/test_state_private_access_guard.py`，AST 断言通过；该测试已随测试套件清空一并移除
+- ③ 全链 `bash scripts/ci-test.sh`：当时通过；该脚本与 CI 入口已随测试套件清空一并移除，本项验收不再适用
 - ④ ≤4 单类、行数/认知下降：见上表（核心类 ~2035→1672，责任集群 13→4）

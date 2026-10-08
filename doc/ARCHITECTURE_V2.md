@@ -6,7 +6,8 @@
 >
 > 审计范围：仓库根全部 Python（`chiguo_*.py`、`decision/`、`state/`、`ops/`、`runner/`、`cli/`、
 > `schedule/`、`memory/`、`netease/`、`monitor/`）、`wechat-bridge/` 全部 .mjs、
-> `scripts/`（tick/agent-run/deploy/服务脚本）、`tests/`、`personality/`、配置与文档。
+> `scripts/`（tick/agent-run/deploy/服务脚本）、`tests/`（审计时存在，现已随重构前清理移除）、
+> `personality/`、配置与文档。
 > 行号引用以审计时刻工作区为准；本文件优先引用「文件 + 函数名」，行号仅作辅助。
 
 ---
@@ -312,14 +313,19 @@ pidfile 在 `~/.pi/agent/`，`agent_settled` 为回合终点。
   `chiguo_events.jsonl`；daemon 启动与 `--rotate` 触发。
 - `scripts/agent_health.py`：agent 假死状态机（fail_streak / down / transition 告警恢复）。
 
-### 1.11 测试体系现状
+### 1.11 测试体系（审计时现状，现已清空）
 
-- pytest 驱动 109 个 py 测试文件 + 15 个 mjs/sh 脚本测试（`scripts/ci-test.sh` 为唯一入口，
-  计数动态化；本地与 GitHub Actions 同入口）。
-- `tests/conftest.py` 提供全局隔离：CWD 固定项目根、env 快照还原、random 状态还原、
+- 审计时由 pytest 驱动 py 测试 + mjs/sh 脚本测试（`scripts/ci-test.sh` 为唯一入口，
+  本地与 GitHub Actions 同入口）。
+- `tests/conftest.py` 当时提供全局隔离：CWD 固定项目根、env 快照还原、random 状态还原、
   `frozen_now` 时钟桩、状态文件污染守卫（会话结束断言项目根无新增行）。
 - 测试形态：大量单元测试 + `test_integration.py` 类集成测试（临时目录注入 `_base_dir`）；
-  少量 eval 型测试（`test_proactive_eval.py`）。scenario 级端到端（多事件因果链）目前为零。
+  少量 eval 型测试（`test_proactive_eval.py`）。scenario 级端到端（多事件因果链）为零。
+- **该测试体系已在大规模重构（v2 runtime）前整体清空**：`tests/`、
+  `wechat-bridge/test_bridge_hardening.mjs`、`.github/workflows/ci.yml`、`scripts/ci-test.sh`
+  与 pytest/pytest-xdist dev 依赖一并移除。当前验证口径 = 语法检查
+  （`uv run python -m compileall -q <文件>` / `node --check <文件>` / `bash -n <文件>`）、
+  端到端冒烟（`uv run python chiguo_daemon.py --compact`）、人工审阅。
 
 ---
 
@@ -389,7 +395,8 @@ pidfile 在 `~/.pi/agent/`，`agent_settled` 为回合终点。
     格式变化会把不确定误判为明确失败 → 退款 + 制造重发窗口）；
   - 陌生人的被拒消息也会刷新 `session-activity-last`（白名单门在 writeActivity 之后），
     会话轮换的空闲保护被绕过，chiguo-main 上下文可被持续膨胀；
-  - `runCli` 死代码；`export {spawn}` 纯 DI；`runWithAttention` 等测试专用路径；
+  - `runCli` 死代码；`export {spawn}` 纯 DI；`runWithAttention` 等测试专用路径
+    （测试套件已清空，这些路径已无调用方）；
   - 澄清链与聊天链两次 `queue.run` 间存在消息交错窗口；clarify 读取在队列外（TOCTOU）；
   - 鉴权细节：`isLocalOrigin` 缺失 Origin 返回 true、token 普通不等比较（非 timing-safe）、
     body 上限不预检 Content-Length；token 泄漏即本机任意进程可消耗 LLM 配额；
@@ -416,6 +423,8 @@ pidfile 在 `~/.pi/agent/`，`agent_settled` 为回合终点。
   - 超时预算不等式（125/110/120/3/10/30/35 秒七个数）跨四种语言手工保持。
 - **测试**：
   - 无 scenario 级测试；跨进程行为（cron↔bridge↔daemon）靠 mock 隔离，真实链路无覆盖。
+    测试套件已在大规模重构前整体清空，该缺口现由语法检查 + 端到端冒烟
+    （`uv run python chiguo_daemon.py --compact`）+ 人工审阅兜底。
 
 ---
 
@@ -484,8 +493,7 @@ chiguo/
 ├── sources/        # weather/schedule/holiday/netease/wechat —— 只 observe()
 ├── integrations/   # pi/、wechat/
 ├── personality/    # 人格静态配置（保留）
-├── cli/            # debug/runtime interface
-└── tests/          # unit/integration/scenario 三层
+└── cli/            # debug/runtime interface
 ```
 
 （不机械搬运文件；以实际依赖重组。旧模块凡被新架构完全取代即删除，不保留兼容 adapter。）
@@ -619,19 +627,20 @@ class Source(Protocol):
 
 ## 4. 迁移策略
 
-按 Phase 2-10 顺序执行（每阶段结束跑全量测试）；各阶段完成情况见 §5 实施状态。
+按 Phase 2-10 顺序执行（每阶段结束跑语法检查 + 端到端冒烟；测试套件已在重构前清空，
+不再有全量测试可跑）；各阶段完成情况见 §5 实施状态。
 
 | Phase | 内容 | 出口条件 |
 |---|---|---|
-| 2 | SQLite schema/migration/storage/event model | db 单测绿；migrate 幂等；integrity 通过 |
-| 3 | user message / send / schedule / world source 写为 events（旧逻辑照跑） | 事件双写对账一致 |
-| 4 | materialized state：affect/relationship/commitments/threads/world | 状态可从 events 重建 |
-| 5 | Opportunity/Drive/Intent/Action 最小 planner | 单测 + scenario 1-3 绿 |
-| 6 | 主动系统切到 observation→opportunity→drive→intent→action | 主动链 scenario 绿；旧 trigger 退役 |
-| 7 | Pi 接入新 runtime（extension 注入） | 端到端（bridge→pi→sqlite）绿 |
+| 2 | SQLite schema/migration/storage/event model | 语法检查（`uv run python -m compileall -q storage/`）+ 端到端冒烟（`uv run python chiguo_daemon.py --compact`）+ 人工审阅；migrate 幂等与 integrity 手工核验 |
+| 3 | user message / send / schedule / world source 写为 events（旧逻辑照跑） | 事件双写对账一致（手工核验，原对账测试已随测试套件清空） |
+| 4 | materialized state：affect/relationship/commitments/threads/world | 状态可从 events 重建（手工核验 + 人工审阅） |
+| 5 | Opportunity/Drive/Intent/Action 最小 planner | 语法检查 + 端到端冒烟 + 人工审阅（scenario 1-3 测试已随测试套件清空） |
+| 6 | 主动系统切到 observation→opportunity→drive→intent→action | 主动链端到端冒烟 + 人工审阅（scenario 测试已随测试套件清空）；旧 trigger 退役 |
+| 7 | Pi 接入新 runtime（extension 注入） | 端到端冒烟（bridge→pi→sqlite，手工核验）+ 人工审阅 |
 | 8 | 删除旧 JSON state / trigger state / 重复 scheduler/decision infra | 全库 grep 无旧状态写路径 |
-| 9 | replay / shadow | 可对历史 events 重放 |
-| 10 | 全面测试 + 文档 + dead code 清理 | pytest 全绿 + 文档同步 |
+| 9 | replay / shadow | 可对历史 events 重放（手工核验） |
+| 10 | 文档 + dead code 清理 | 语法检查 + 端到端冒烟 + 人工审阅 + 文档同步（测试套件已清空，原「pytest 全绿」不再适用） |
 
 数据迁移：提供一次性 import 工具（旧 JSON/JSONL → sqlite），新 runtime 不永久支持旧格式。
 ```
@@ -641,7 +650,7 @@ class Source(Protocol):
 
 ## 5. 实施状态（分支 `refactor/v2-runtime`，2026-10-02）
 
-### 5.1 已实现（测试全绿）
+### 5.1 已实现（当时测试全绿；测试套件已在大规模重构前清空）
 
 | 模块 | 内容 |
 |---|---|
@@ -649,7 +658,7 @@ class Source(Protocol):
 | `storage/events.py` | EventStore（uuid7 时间有序 id；append/get/recent/since/after 游标/chain 因果链/caused_by） |
 | `storage/repositories/` | messages/sessions、commitments、threads、opportunities、drives+intents、actions+deliveries、observations、memories(+links)、schedules、checkpoints、turns |
 | `storage/dualwrite.py` | 旧链事件双写（Phase 3；旧链照跑，旁路失败静默） |
-| `domain/affect` `domain/relationship` | 事件驱动纯模型（与旧引擎逐字段 1e-6 对账，37 测试） |
+| `domain/affect` `domain/relationship` | 事件驱动纯模型（与旧引擎逐字段 1e-6 对账；对账测试已随测试套件清空一并移除） |
 | `domain/planning/` | 机会发现 + 驱动力评估 + planner（Intent/Wait/Defer；score 门槛；why 可解释） |
 | `app/runtime/` | reducer（事件→物化状态；原子游标）、extractor（确定性提取 承诺）、replay（副本重放零副作用）、serve（回环 HTTP /context /turn） |
 | `app/autonomous/turn.py` | autonomous_turn 主循环（提取→归约→观测→机会→驱动→约束→planner→落库） |
@@ -657,7 +666,7 @@ class Source(Protocol):
 | `sources/` | base 协议 + schedule/holiday/netease/weather 观测源（只提供事实） |
 | `integrations/pi/` | Pi extension（before_agent_start 注入 /context；message_end 回写 /turn；fail-open） |
 | `cli/`（新 `chiguo`） | db/events/status/commitments/threads/autonomous-turn/execute/tick/serve/replay |
-| 测试 | scenario 1-6（考试承诺→follow_up、孤独单独不发送、天气仅 secondary、静默 deferred、mem0 不可用、库损坏 fail-fast）全绿 |
+| 测试 | scenario 1-6（考试承诺→follow_up、孤独单独不发送、天气仅 secondary、静默 deferred、mem0 不可用、库损坏 fail-fast）当时全绿；该测试套件已在大规模重构前清空，现由语法检查 + 端到端冒烟 + 人工审阅兜底 |
 
 ### 5.2 未完成（诚实清单）
 
@@ -683,6 +692,9 @@ class Source(Protocol):
 
 独立子代理只读审查（19 提交全量 diff）发现并已修复：
 
+> 注：本轮为修复补入的回归测试与单测已随测试套件在大规模重构前清空一并移除
+> （下表中「补 X 测试」仅存史实）；修复代码本身保留。
+
 | 级别 | 问题 | 修复 |
 |---|---|---|
 | Critical | 事件游标用 uuid 字典序 → 并发乱序提交时永久漏事件 | 游标改 rowid（提交序）：`Event.cursor`、`after()`、reducer/extractor 游标；补乱序提交回归测试 |
@@ -695,8 +707,8 @@ class Source(Protocol):
 | Medium | /turn 时间戳零校验（秒/未来值污染时间轴） | ±24h 偏差钳制为服务器时间 + 告警 + 测 |
 | Medium | serve 无 token/Host/Content-Type 校验 | `CHIGUO_RUNTIME_TOKEN` + X-Chiguo-Token；Host 回环校验；POST 强制 application/json |
 | Medium | CLI 不认 `CHIGUO_DB_PATH`（与 dualwrite 分叉） | `--db > env > toml > 默认` 统一 |
-| Medium | 测试双写开关用 setdefault（shell export=1 可穿透） | conftest 无条件置 0 |
-| Medium | tick 发送失败仍 exit 0；失败无重试 | `--execute` 失败 exit 1（executor 失败允许下轮重试）；`AGENT_RUN_SCRIPT` 可覆盖（测试/运维） |
+| Medium | 测试双写开关用 setdefault（shell export=1 可穿透） | 当时由 conftest 无条件置 0；该 conftest 已随测试套件移除 |
+| Medium | tick 发送失败仍 exit 0；失败无重试 | `--execute` 失败 exit 1（executor 失败允许下轮重试）；`AGENT_RUN_SCRIPT` 可覆盖（运维） |
 | Medium | 未迁移库裸 traceback | `main()` 捕获 sqlite3.Error → JSON error + exit 1 |
 | Medium | 机会每轮重复落库无界增长 | turn 内 (kind,payload) 去重跳过 |
 | Medium | relationship 张力分支（silent_hours）不可达 | `_on_message_sent` 注入清醒沉默时长 |
@@ -706,9 +718,11 @@ class Source(Protocol):
 
 **仍开放（Low，已记录不阻塞）**：serve `?session=` 作用域未消费（L3）；备份复制期
 `dest-journal` 权限窗口（L4）；dualwrite 进程内 sink 缓存忽略 config 差异（L6）；
-并发测试仍为顺序双连接（C1 回归测试覆盖乱序语义，真并发压测留后续）；
+并发语义当时为顺序双连接、由 C1 回归测试覆盖乱序语义（该测试已随测试套件清空移除），
+真并发压测留后续；
 `refund_send` 无 runtime 调用点（保留用于对齐旧语义/对账）。
 
 **环境备注（开发者）**：本机 WSL2 回环偶发 connect 超时（stock stdlib
-ThreadingHTTPServer 亦可复现，与项目代码无关）——serve 测试带界重试；
+ThreadingHTTPServer 亦可复现，与项目代码无关）——当时 serve 测试以带界重试规避，
+该测试已随测试套件清空移除；
 README 已注明真机部署不受影响面。

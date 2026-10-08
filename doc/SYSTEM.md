@@ -597,7 +597,7 @@ evaluate(now)
 
 **素材安全**：fault/daily/recent 话题 data 仅 `{source, reason}` / `{source, name, artist}`，不含 share_url/链接（链接由发送层按需拼接）。
 
-**上游与部署**：网易云数据来自本地自建的第三方 Node.js API 服务 **NeteaseCloudMusicApiEnhanced/api-enhanced**（原 Binaryify/NeteaseCloudMusicApi 因版权 2024-04 归档后的社区继承版，install 默认跟随上游最新 tag），由 `scripts/netease-api.sh` 安装、systemd（`netease-api.service`）托管常驻 `localhost:3000`（`NETEASE_API_BASE` 可覆盖，默认即此）；deploy.sh 第 5.6 步可选接入（`--skip-netease` 跳过）。chiguo 侧仅依赖 6 个端点路径与 `{code,data,...}` 响应包装，契约不匹配时按既有降级链处理。
+**上游与部署**：网易云数据来自本地自建的第三方 Node.js API 服务 **NeteaseCloudMusicApiEnhanced/api-enhanced**（原 Binaryify/NeteaseCloudMusicApi 因版权 2024-04 归档后的社区继承版，install 默认跟随上游最新 tag），由 `scripts/netease-api.sh` 安装、systemd（`netease-api.service`）托管常驻 `localhost:3000`（`NETEASE_API_BASE` 可覆盖，默认即此）；deploy.sh 第 4.6 步可选接入（`--skip-netease` 跳过）。chiguo 侧仅依赖 6 个端点路径与 `{code,data,...}` 响应包装，契约不匹配时按既有降级链处理。
 
 ### 2.13 用户状态推断增强（A1 转移矩阵 + A3 信息增益门控，v1.12）
 
@@ -1006,7 +1006,6 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `service.sh` | systemd 服务管理 |
 | `netease-api.sh` | 网易云 API 服务安装/托管（NeteaseCloudMusicApiEnhanced，跟随上游最新 tag） |
 | `chiguo-tick.sh` | cron 门控入口（零模型，读 daemon 输出 → send → 5s 重试 → record-send；无 composer 兜底，health 告警/暂停） |
-| `ci-test.sh` | 全量测试链（py 走 pytest 收集 + mjs/sh 脚本链，计数动态化以 `scripts/ci-test.sh` 为准；CI 构建 vendor 真实 SDK） |
 | `agent-auth.sh` | agent 认证 |
 | `replan-tick.sh` | cron 形态 replan 判脏轮询（loop 形态由 loop 内 parity 接管，见上） |
 | `chiguo-daemon.service` | systemd 单元（loop 常驻形态） |
@@ -1028,7 +1027,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 | `memory-rpc.mjs` | 常驻只读记忆边车客户端（Issue #450 2C；`WECHAT_BRIDGE_MEMORY_RPC=1` 启用，失败回退 spawn；单 pending，TurnQueue 串行） |
 | `session-rotate.mjs` | 主会话每日轮换（每小时检查 + 空闲保护 + 幂等标记 + RPC 先杀进程） |
 | `package.json` | file: 本地依赖 @wechatbot/wechatbot（`file:./vendor/wechatbot`，真实 SDK） |
-| `vendor/wechatbot/` | vendor 入库的 wechatbot 真实 SDK（实测链 lhxyzCJ → corespeed-io，MIT，含 LICENSE；CI 从这里 npm ci + tsc 构建；package-lock.json 跟踪入库，npm ci 确定性安装） |
+| `vendor/wechatbot/` | vendor 入库的 wechatbot 真实 SDK（实测链 lhxyzCJ → corespeed-io，MIT，含 LICENSE；`wechat-bridge.sh install` 缺 dist 时从 vendor 目录 `npm ci` + `npm run build` 构建，package-lock.json 跟踪入库保证安装确定性） |
 
 ### 6.7 `personality/`（人格文件）
 
@@ -1069,9 +1068,9 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 
 运行时文件统一以 **0600** 权限落盘（隐私收紧，原子写统一走共享 `chiguo_atomic.atomic_write`：tmp→os.replace；`netease/netease_cookie.txt` 与两个网易云缓存 `netease/netease_cache.json`/`netease/recent_play_cache.json` 由 helper `os.open(O_CREAT, 0o600)` 落盘即 0600，无先写后 chmod 窗口；`holidays.json`/`solar_terms.json` 等非隐私数据以默认 umask 落盘；其余如 `chiguo_state.json`/`chiguo_decisions.jsonl`/`chiguo_messages.jsonl`/`schedule_cache.json`/`netease/netease_health.json`/`agent_health.json`/`chiguo_alerts.json` 追加写路径在写后 chmod）。跨进程写一致性由共享 `chiguo_locks`（fcntl 可重入锁）保证。
 
-### 6.10 测试（`tests/`）
+### 6.10 自检（当前无测试套件）
 
-`tests/` 的 Python 测试由 **pytest** 驱动（Q26 迁移：61 个原手写 runner 已去 `__name__ == "__main__"` 脚手架，保留 `def test_*`）。全链入口唯一权威为 `scripts/ci-test.sh`：`uv run pytest tests/ -q` 跑全部 py 测试，并保留 mjs/sh 脚本链；计数不硬编码，按 pytest 收集结果与磁盘 mjs/sh 文件数动态计算。全局隔离由 `tests/conftest.py` 统一提供（CWD 固定项目根 + 每测试还原 os.environ），fixture `_loop_worker.py`、`fake-agent-rpc.mjs` 不以 `test_` 开头不入链。test_docs_sync 校验「磁盘 test_*.py 集合 == pytest 收集集合」及「磁盘 mjs/sh 集合 == ci-test.sh 脚本引用链」。详见 §十 与 AGENT_INTEGRATION.md §测试。
+当前无测试套件（大规模重构前已清空 `tests/`），改为人工冒烟/静态检查：Python `uv run python -m compileall -q <文件>`；Node `node --check <文件>`；Shell `bash -n <文件>`；端到端冒烟 `uv run python chiguo_daemon.py --compact`（零模型门控，stdout JSON）。
 
 ### 6.11 文档（`doc/`）
 
@@ -1093,7 +1092,7 @@ Combo 尺寸概率：1 层（仅 Intent）20%、2 层（Intent × Cue）50%、3 
 > 36 参数 argparse 在 `cli/parser.py`；子命令分发在 `cli/dispatch.py`；`DecisionEngine` 由
 > `decision/engine.py` 组合（base 基础infra / core 核心决策 / context 上下文构建 /
 > ops.engine_ops 记账审计 / runner.loop 发送内聚）；loop 常驻编排在 `runner/loop.py::run_loop`。
-> 对外 CLI 行为（参数/子命令/JSON/exit code）与拆分前逐字一致（`tests/test_daemon_cli_snapshot.py` 守护）。
+> 对外 CLI 行为（参数/子命令/JSON/exit code）与拆分前逐字一致。
 
 ```bash
 # 单次决策（输出 JSON 到 stdout）
@@ -1741,9 +1740,9 @@ python3 chiguo_monitor.py --health
 | `mem0_possible_degradation` | 10+次发送无 memory 触发 | info |
 | `manual_break_active` | 手动假期模式长期开启 | info |
 
-### 10.5 Fuzz 测试
+### 10.5 输入健壮性
 
-`tests/test_monitor.py` 含 fuzz 测试：随机 200 条合法条目、边界极值（None/负数/超长字符串）、空日志+100条纯idle。确保 monitor 在任意输入下不崩溃。
+monitor 对任意输入不崩溃（随机合法条目、边界极值（None/负数/超长字符串）、空日志+100 条纯 idle）由防御式解析保证（`_normalize_entry`，见 §10.6）；当前无测试套件（大规模重构前已清空），改为人工冒烟/静态检查。
 
 ### 10.6 设计原则
 
@@ -1789,7 +1788,7 @@ v5 新增完整的对话日志、归档、轮转、告警持久化和索引查�
 
 `msg_id` 格式：`msg_{YYYYMMDD}_{HHMMSS}_{random6}`。idle 条目不含 `msg_id`（未产生消息）。
 
-**Q16 决策契约键 `contract`** — 决策日志每条记录顶层统一带 `"contract": 1`（由 `decision_schema.py` 单一权威定义，与项目版本 `chiguo_version.VERSION` 分离；`DecisionEngine._log` 写前统一注入并校验）。consumer 跨语言对齐：Python 侧 `decision_schema.validate()`（daemon 写、monitor 读）集中校验；node `scripts/agent-run.mjs` 无法 import Python schema，仅对齐字段名（`DECISION_SEND_FIELDS` 与 `decision_schema.send_top_level_fields()` 契约测试互检）。历史 jsonl（无 `contract` 键）读取时按缺省 `1` 处理，向后兼容不破坏。
+**Q16 决策契约键 `contract`** — 决策日志每条记录顶层统一带 `"contract": 1`（由 `decision_schema.py` 单一权威定义，与项目版本 `chiguo_version.VERSION` 分离；`DecisionEngine._log` 写前统一注入并校验）。consumer 跨语言对齐：Python 侧 `decision_schema.validate()`（daemon 写、monitor 读）集中校验；node `scripts/agent-run.mjs` 无法 import Python schema，字段名差距需人工比对（`DECISION_SEND_FIELDS` vs `decision_schema.validate()` 覆盖的 required/optional 集合）。历史 jsonl（无 `contract` 键）读取时按缺省 `1` 处理，向后兼容不破坏。
 
 #### 10.7.2 对话归档
 
@@ -1862,7 +1861,7 @@ retention_months = 12        # 归档保留月数（0 = 永不删除）
 archive_dir = "archive"      # 归档目录（相对路径锚定项目根，绝对路径原样保留）
 ```
 
-**路径锚定**：相对 `archive_dir`（如 `"archive"`）一律锚定 `chiguo_rotation.py` 所在目录（项目根），绝对路径原样保留——从任意 cwd 运行 `force_rotate`/`rotate_if_needed`/`--rotate` 都不会把日志移出项目。轮转事件审计文件 `chiguo_events.jsonl` 同样锚定模块目录（生产 = 项目根 = CLI `base_dir`，单一写锚点）；`conftest.py` 的 `_isolate_rotation_events` fixture 通过 `chiguo_rotation._EVENTS_LOG_PATH` 注入临时隔离路径，保证测试永不污染真实事件文件（CONTRACT-016，Issue #333）。
+**路径锚定**：相对 `archive_dir`（如 `"archive"`）一律锚定 `chiguo_rotation.py` 所在目录（项目根），绝对路径原样保留——从任意 cwd 运行 `force_rotate`/`rotate_if_needed`/`--rotate` 都不会把日志移出项目。轮转事件审计文件 `chiguo_events.jsonl` 同样锚定模块目录（生产 = 项目根 = CLI `base_dir`，单一写锚点）。
 
 轮转在每次 daemon 进程启动时自动触发（`DecisionEngine.__init__` 调 `chiguo_rotation.rotate_if_needed`），每次启动检查一次月份变化即轮转；`--rotate` 可手动强制。
 
@@ -2058,9 +2057,9 @@ v1.8 起 agent 模块可任意替换：`scripts/agent-run.mjs` 抽象 agent runn
 
 - 配置源：toml `[host].whitelist_contacts = ["wxid", ...]`，或 env `WECHAT_BRIDGE_WHITELIST`（逗号分隔，经 `.env` 注入）；**缺省空 = 仅 owner 可对话（安全默认）**。
 - 目的：封死非 owner 消息的成本攻击无门槛（每条仅 4s inboundDebounce 合并，其余无速率/配额）+ 消除白名单外文本污染 owner 的 `chiguo-main` 会话。
-- 拒答固定文案可经 `WECHAT_BRIDGE_WHITELIST_REJECT` 覆盖；测试见 `tests/test_bridge_askagent.mjs`（F-SEC-03 用例）。
+- 拒答固定文案可经 `WECHAT_BRIDGE_WHITELIST_REJECT` 覆盖。
 
-agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 5.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
+agent 环境（ollama embedding 检查（qwen3-embedding）、auth.json [host].provider 条目（key 从 `AGENT_API_KEY`/`OPENCODE_API_KEY` 环境变量读，不落盘明文）、crontab 注册、冒烟）由 `scripts/install_agent.sh` 完成（deploy.sh 第 4.5 步接入，`--skip-agent` 跳过；三模式 `--dry-run/--yes/ask`，退出码 0/1/2，幂等 + 修改前备份）。
 
 ---
 

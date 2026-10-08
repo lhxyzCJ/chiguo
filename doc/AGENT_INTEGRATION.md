@@ -15,10 +15,6 @@
 | `scripts/pi_health.py` | `scripts/agent_health.py` |
 | `scripts/install_pi.sh` | `scripts/install_agent.sh` |
 | `scripts/pi-auth.sh` | `scripts/agent-auth.sh` |
-| `tests/test_agent_run.mjs` | `tests/test_agent_run.mjs`（#99 前已 agent 命名，未改名） |
-| `tests/test_pi_health.py` | `tests/test_agent_health.py` |
-| `tests/test_bridge_askagent.mjs` | `tests/test_bridge_askagent.mjs`（#99 前已命名，未改名） |
-| `tests/test_install_pi.sh` | `tests/test_install_agent.sh` |
 | `doc/PI_INTEGRATION.md` | `doc/AGENT_INTEGRATION.md`（本文件） |
 | `pi_health.json(.lock)` | `agent_health.json(.lock)`（运行时） |
 | `logs/pi-run.log` | `logs/agent-run.log`（运行时） |
@@ -30,7 +26,7 @@
 `WECHAT_BRIDGE_AGENT_RUN/RPC/HEALTH/HEALTH_PY`→`WECHAT_BRIDGE_AGENT_*`、
 `PI_FALLBACK_PROVIDER`→`AGENT_FALLBACK_PROVIDER`（wechat-bridge.sh 解析 auth.json 回退条目）、
 `PI_KEY`→`AGENT_KEY`（wechat-bridge.sh 注入 OPENCODE_API_KEY 的来源值）。
-`PI_MODE_FILE` 已随测试夹具重构移除，无对应新名。
+`PI_MODE_FILE` 已移除，无对应新名。
 
 ### 0.3 标识符映射
 
@@ -45,7 +41,7 @@
 
 `~/.pi/`、`~/.pi-agent/`、pi-agent 二进制名 `pi`（`AGENT_BIN` 默认值 `'pi'`、`check_agent(agent_bin="pi")`）、
 `pi --provider/--model/--session-id` 子命令、`pi_health` 相关历史文档引用、`pi --mode rpc`（RPC 常驻模式）。
-**误匹配排除**：`topics`/`api`/`_pi` 等普通子串（chiguo_topics.py、schedule/api.py、tests/test_topics.py 等）。
+**误匹配排除**：`topics`/`api`/`_pi` 等普通子串（chiguo_topics.py、schedule/api.py 等）。
 
 ## 一、架构总览
 
@@ -172,11 +168,11 @@ daemon CLI 共 36 个参数（`--version --loop --user-msg --analysis --recv-id 
   （长期记忆使用规范）+ `personality/工具用法.md`（可用工具与调用时机）。
   runner=agent 时由 `buildBaseAgentArgs` 拼接（print 模式与 RPC 常驻共用）；runner=command 时
   agent-run.mjs 把三段拼进 `--prompt` 前缀，**保证换后端不丢人格**。
-- `AGENTRUN_PERSONALITY/AGENTRUN_GUIDE/AGENTRUN_TOOLS` 可覆盖三段文件路径，仅测试/开发用；生产人格固定仓库内 `personality/`。
+- `AGENTRUN_PERSONALITY/AGENTRUN_GUIDE/AGENTRUN_TOOLS` 可覆盖三段文件路径，仅开发调试用；生产人格固定仓库内 `personality/`。
 
 ## 三、安装（install_agent.sh）
 
-任意机器 pull 仓库后，agent 环境由 `scripts/install_agent.sh` 一键引导（幂等，deploy.sh 第 5.5 步接入）：
+任意机器 pull 仓库后，agent 环境由 `scripts/install_agent.sh` 一键引导（幂等，deploy.sh 第 4.5 步接入）：
 
 ```bash
 bash scripts/install_agent.sh --dry-run   # 只扫描报告（只读，非 TTY 默认也是它）
@@ -230,7 +226,6 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
 - **stdout 字节上限（R19）**：Node `spawn` 忽略 `maxBuffer`，agent-run 手动按 `opts.maxBuffer ?? 16MB` 计数，
   超出即 SIGKILL 子进程并 reject（防无界输出累积拖垮 tick/bridge）；stderr 截断保留末 256KB
 - **遥测**：一行一轮追加写 `logs/agent-run.log`（gitignore；/status 与验收依赖；`AGENTRUN_TELEMETRY=0` 跳过）
-- 单测：`node tests/test_agent_run.mjs`（50 用例）
 
 ## 五、chiguo-tick（系统 crontab 入口）
 
@@ -258,12 +253,9 @@ node scripts/agent-run.mjs --prompt <决策JSON> --send-mode  # 主动发送（�
 - 环境变量：`WECHAT_BRIDGE_AGENT_RUN`（默认仓库内 agent-run.mjs）、`WECHAT_BRIDGE_DAEMON_PY`、
   `WECHAT_BRIDGE_DAEMON`、`WECHAT_BRIDGE_OWNER`、`WECHAT_BRIDGE_SEND_PORT`、`WECHAT_BRIDGE_STORAGE`、
   `WECHAT_BRIDGE_MEMORY_PY`/`WECHAT_BRIDGE_MEMORY_CLI`（斜杠命令记忆 CLI：解释器/argv；默认 `.venv/bin/python -m memory`）、
-  `WECHAT_BRIDGE_ACTIVITY_FILE`/`CHIGUO_ACTIVITY_FILE`（轮换活动时间戳覆盖，测试隔离用）
+  `WECHAT_BRIDGE_ACTIVITY_FILE`/`CHIGUO_ACTIVITY_FILE`（轮换活动时间戳覆盖）
 - 会话轮换配置在 toml `[host].session_rotate_*`：`enabled`（默认 true）、`check_minutes`（默认 60）、
   `idle_minutes`（默认 60）；send 每轮全新由 bridge `/agent/prompt` + `AGENTRUN_ROTATE_SESSION=1` 实现（§6.1 下方）
-- 测试：`tests/test_agent_rpc.mjs`、`tests/test_bridge_agent_http.mjs`、`tests/test_bridge_askagent_rpc.mjs`、
-  `tests/test_bridge_askagent.mjs`、`tests/test_bridge_cmd.mjs`、`tests/test_bridge_health.mjs`、`tests/test_bridge_rotate.mjs`、
-  `tests/test_bridge_schedule.mjs`
 
 ### 6.1 命令体系 A：斜杠命令（ai 会话命令，detectSlashCommand）
 
@@ -435,7 +427,7 @@ agent_command = ["node", "/path/to/agent.mjs"]  # 必填：可执行命令 + 固
 v1.8 起记忆模块解耦为 `memory/` 包（v1.8 的根目录兼容门面 `memory_bridge.py` 已删除；CLI 下沉为 `python -m memory`）。
 **mem0 是唯一记忆后端**（v1.15 已移除 memory-lancedb-pro 扩展，install_agent.sh 阶段 0b 幂等清理残留）——
 `[memory].backend` 仅 `mem0` / `auto`（遗留同义）合法，其他值抛 ValueError；
-`MemoryBackend` 抽象基类保留作内部测试桩/复用层：
+`MemoryBackend` 抽象基类保留作内部复用层：
 
 **MemoryBackend 四原语**（子类实现；不可用 → 查询返回空，不抛）：
 
@@ -495,8 +487,9 @@ uv run python chiguo_daemon.py --break status     # 假期状态
 # 环境检查
 uv run python chiguo_envcheck.py
 
-# 测试
-node tests/test_agent_run.mjs && node tests/test_agent_rpc.mjs && node tests/test_bridge_agent_http.mjs && node tests/test_bridge_askagent_rpc.mjs && node tests/test_bridge_askagent.mjs && node tests/test_bridge_cmd.mjs && node tests/test_bridge_health.mjs && node tests/test_bridge_schedule.mjs && \
-bash tests/test_install_agent.sh --dry-run && \
-bash tests/test_wechat_bridge.sh && uv run python tests/test_*.py   # 全量见 AGENTS.md
+# 自检（当前无测试套件：大规模重构前已清空 tests/）
+node --check scripts/agent-run.mjs
+bash -n scripts/install_agent.sh
+uv run python -m compileall -q chiguo_daemon.py
+uv run python chiguo_daemon.py --compact   # 端到端冒烟（零模型门控，stdout JSON）
 ```

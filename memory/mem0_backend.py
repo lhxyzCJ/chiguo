@@ -297,10 +297,7 @@ class Mem0Backend(MemoryBackend):
 
         探测结果（无论 True/False）只缓存 _RETRY_SECONDS 秒，超时即重探——
         长驻/定时场景下 mem0 运行期故障（qdrant 满、ollama 挂、key 失效）恢复后可自愈。
-        测试隔离：CHIGUO_MEM0_DISABLED=1 时恒不可用（确定性，不碰真实库）。
         """
-        if os.environ.get("CHIGUO_MEM0_DISABLED") == "1":
-            return False
         now = _time_module.time()
         if self._available is not None and now - self._last_probe < _RETRY_SECONDS:
             return self._available

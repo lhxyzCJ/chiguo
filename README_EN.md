@@ -7,7 +7,6 @@
 Zero-LLM math decision engine · LLM message generation · WeChat delivery
 
 [![Python](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![ci](https://github.com/lhxyzCJ/chiguo/actions/workflows/ci.yml/badge.svg)](https://github.com/lhxyzCJ/chiguo/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 [![zero-LLM](https://img.shields.io/badge/decision%20core-zero--LLM%20math-2ea44f)](doc/SYSTEM.md)
 [![WeChat](https://img.shields.io/badge/WeChat-07C160?logo=wechat&logoColor=white)](wechat-bridge/)
@@ -207,11 +206,14 @@ uv run python chiguo_demo.py         # interactive demo (templates only, no LLM)
 uv run python chiguo_daemon.py       # single decision → JSON
 uv run python chiguo_daemon.py --status   # current state
 
-# Core tests (full suite: py via pytest, mjs/sh script chain kept; counts authoritative & dynamic in scripts/ci-test.sh)
-bash scripts/ci-test.sh   # same entry point as GitHub Actions; any failure exits non-zero
+# Self-checks (the project currently has no test suite: syntax checks + end-to-end smoke)
+uv run python -m compileall -q <file>      # Python syntax
+node --check <file>                        # Node syntax
+bash -n <file>                             # Shell syntax
+uv run python chiguo_daemon.py --compact   # end-to-end smoke (zero-model gating, JSON on stdout)
 ```
 
-> Note: `uv sync` installs mem0ai (the memory layer is a required dependency); `uv sync --all-extras` additionally enables schedule parsing. Integration tests require `chiguo_proactive.toml` in the current directory — always run from the project root.
+> Note: `uv sync` installs mem0ai (the memory layer is a required dependency); `uv sync --all-extras` additionally enables schedule parsing. Always run commands from the project root (config and runtime files are anchored there).
 
 ---
 
@@ -328,12 +330,12 @@ Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (2
 
 ## 🛠 Deploy & Ops
 
-**Prerequisites**: Debian Linux (systemd) + git + Node.js/npm + a model API key (`export AGENT_API_KEY=...`); ollama optional (memory embeddings). Node version is pinned by the repo-root `.nvmrc` (=22, same as CI); newer local versions (e.g. v24) run too but CI/deploy target 22 (`nvm use` applies it).
+**Prerequisites**: Debian Linux (systemd) + git + Node.js/npm + a model API key (`export AGENT_API_KEY=...`); ollama optional (memory embeddings). Node version is pinned by the repo-root `.nvmrc` (=22); newer local versions (e.g. v24) run too but deploy targets 22 (`nvm use` applies it).
 
 **Tiered deployment**: the three tiers are in [🚀 Quick Start](#-quick-start); the full guide (six steps in detail / landing map / migration / verification) is [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
 
 ```bash
-bash deploy.sh   # install uv/Python 3.14 → create venv → full test → env check → agent env + wechat-bridge + cron
+bash deploy.sh   # install uv/Python 3.14 → create venv → env check → agent env + wechat-bridge + cron
 ```
 
 **Auth migration**: credentials live in `~/.chiguo/auth/` (WeChat login state / NetEase cookie / agent keys, mode 700, outside the repo). Moving to a new machine: copy that directory → run `deploy.sh` and everything hooks up automatically. agent keys migrate 100%; WeChat/NetEase web sessions may trigger an automatic re-login (QR scan) on a different device. In practice the migrated WeChat session is usually reusable: if the first **proactive send** fails with `prepare failed` (stale context_token), send one message from WeChat to the bot to refresh the token — no re-scan needed.
@@ -366,12 +368,12 @@ Full CLI reference: [doc/SYSTEM.md §7 CLI Reference](doc/SYSTEM.md#七cli-参�
 | [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | Full deployment guide: tiered paths / prerequisites / landing map / migration / verification |
 | [doc/AGENT_INTEGRATION.md](doc/AGENT_INTEGRATION.md) | agent backend integration guide: model backend, WeChat bridge, deployment (Chinese) |
 | [doc/日光雨.md](doc/日光雨.md) | The official sequel script, 17099 lines (persona reference) (Chinese) |
-| [AGENTS.md](AGENTS.md) | AI-assistant conventions, including the full test suite (Chinese) |
+| [AGENTS.md](AGENTS.md) | AI-assistant conventions: engineering rules, architecture map, workflow (Chinese) |
 
 Any contribution is welcome — especially ones that help *her* grow:
 
-- **Test-first (TDD)**: the repo rule is failing test → minimal implementation (red → green). Each Python test in `tests/` is a `def test_*` function (pytest-driven).
-- **Run the full suite before submitting**: see `AGENTS.md` (test counts authoritative in scripts/ci-test.sh), all green before commit.
+- **Status**: the project currently has no test suite (cleared ahead of the large-scale refactor).
+- **Self-checks**: after a change run at least syntax checks (Python `uv run python -m compileall -q <file>`, Node `node --check <file>`, Shell `bash -n <file>`); for decision-chain changes run the end-to-end smoke `uv run python chiguo_daemon.py --compact` (zero-model gating, JSON on stdout).
 - **Keep docs in sync**: any behavior change must update `doc/SYSTEM.md` (repo rule).
 - **Commit style**: `feat:` / `fix:` / `docs:` / `chore:` prefix + Chinese description.
 - **Design docs**: for major changes, write a design doc under `~/chiguo-meta/specs/` (outside the repo) and get it reviewed first.
@@ -431,7 +433,6 @@ scripts/                 # tick/replan crontab entries + agent runner abstractio
 wechat-bridge/           # WeChat bridge (bridge.mjs + command-detect.mjs + agent-rpc.mjs)
 personality/             # persona files (迟菓人格-精简版.md runtime spec + archive/ source material + toml material + tool/memory guides)
 doc/                     # system docs (SYSTEM.md / DEPLOYMENT.md / AGENT_INTEGRATION.md / 日光雨 script 17099 lines)
-tests/                   # tests (py via pytest, mjs/sh script chain kept; count via scripts/ci-test.sh)
 data/                    # data files (schedule / mem0 store / NetEase QR, never committed)
 ```
 

@@ -20,7 +20,7 @@ from trigger_types import TriggerType  # T7·Q3 (#265) 移植：触发类型枚�
 # 并在包入前剥离控制字符(换行/\r/\x00)与载荷内可能自带的定界符。
 # 注意：标记 + 定界是【纵深缓解】(内容污染面)，不是安全边界——topic 仍原样作为
 # 参考数据注入,降权已消工具执行面，但内容污染面仍在（R5）。
-# 定界与剥离只针对载荷本身；正常话题语义不回归（见 test_injection_marking.py 对照）。
+# 定界与剥离只针对载荷本身；正常话题语义不回归。
 UNTRUSTED_OPEN = "<<<UNTRUSTED>>>"
 UNTRUSTED_CLOSE = "<<</UNTRUSTED>>>"
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")

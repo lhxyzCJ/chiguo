@@ -4,8 +4,7 @@
  *
  * 背景：bun runtime 的 os.homedir() 启动时捕获/缓存 passwd home（恒返回 /root），
  * 不跟随运行期 process.env.HOME 改动；官方 node 的 os.homedir() 每次实时读 $HOME。
- * 测试注入 process.env.HOME=临时目录定位 ~/.pi 与 ~/.chiguo 时，bun 因解析差异
- * 找不到目录 → 备份/轮换断言失败（本机 node 为 Bun wrapper，GitHub Actions 官方 node 无此问题）。
+ * 本机 node 为 Bun wrapper → 运行期改写 HOME 时 bun 因解析差异读不到目标目录。
  *
  * 统一解析：process.env.HOME || os.homedir() —— 与官方 node os.homedir() 的 POSIX
  * 文档语义一致（UNIX 优先 $HOME）；生产（$HOME == passwd home）行为等价，跨 runtime 稳定。

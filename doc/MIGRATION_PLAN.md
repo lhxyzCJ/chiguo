@@ -2,12 +2,14 @@
 
 > 配套文档：`doc/ARCHITECTURE_V2.md`（现状审计 / 目标架构 / 模块边界 / **§5 实施状态**）、
 > `doc/DATABASE.md`（SQLite schema / 迁移 / 备份恢复 / CLI）、`doc/DELETION_AUDIT.md`（Phase 8 删除清单）。
-> 本文档定义 **Phase 2–10 的可执行步骤、SQLite schema 草案、数据迁移映射、删除清单与测试计划**。
+> 本文档定义 **Phase 2–10 的可执行步骤、SQLite schema 草案、数据迁移映射、删除清单与测试计划
+> （§6 已作废，仅存史实）**。
 > 总原则：**deliberate breaking change**——旧接口/旧状态文件/旧兼容层在 Phase 8 直接删除，
 > 不保留 adapter；允许提供一个一次性 import 工具，但新 runtime 不永久支持旧格式。
 >
-> 执行进度（2026-10-02）：Phase 2–7/9 核心均已实现并测试（scenario 1–6 全绿，见
-> architecture-v2 §5.1）；Phase 8 删除清单已审计、**执行被 6 项未移植功能阻塞**
+> 执行进度（2026-10-02）：Phase 2–7/9 核心均已实现，并在当时通过测试（scenario 1–6 全绿；
+> 测试套件已于大规模重构前清空，见 architecture-v2 §5.1）；Phase 8 删除清单已审计、
+> **执行被 6 项未移植功能阻塞**
 > （见 deletion-audit §C）；Phase 10 文档见 doc/ 四件套。旧生产链路（cron+bridge+daemon）
 > 未切换——切换路径见 architecture-v2 §5.3。
 
@@ -25,9 +27,10 @@
 - 旧运行链路（daemon/bridge/tick/agent-run）在 Phase 2–6 期间**保持生产可用**；
   v2 以「事件双写 + shadow 运行」方式接入（Phase 3–5），Phase 6 切换主动系统，
   Phase 8 删除旧实现。
-- v2 测试文件命名：`tests/test_v2_*.py`（扁平命名，与既有 `tests/test_*.py` 同级——
-  `test_docs_sync.py` 的「磁盘集合 == pytest 收集集合」双向断言只扫描扁平文件，
-  新测试必须落在该集合内；Phase 10 统一重排）。
+- v2 测试文件命名（**已作废**）：当时约定 `tests/test_v2_*.py`（扁平命名，与既有
+  `tests/test_*.py` 同级——`test_docs_sync.py` 的「磁盘集合 == pytest 收集集合」双向断言
+  只扫描扁平文件，新测试必须落在该集合内；Phase 10 统一重排）。测试套件与 `tests/` 已在
+  大规模重构前整体清空，该命名约定与断言一并作废，落位时不再有测试文件要求。
 
 ## 1. SQLite schema 草案（Phase 2 定稿）
 
@@ -235,7 +238,9 @@ memory.created / memory.superseded / memory.confirmed
   `opportunities.py`、`drives.py`、`intents.py`、`actions.py`、`memories.py`、`schedules.py`）；
 - `storage/events/`：`EventStore.append(type, ..., causation_id=...)` + 读取/链查询原语；
 - `chiguo db status|migrate|integrity|backup` CLI（新 `cli/` 模块）。
-出口条件：新增单测全绿（并发写、迁移幂等、外键/约束、损坏数据库 fail-fast、integrity check）；
+出口条件：语法检查（`uv run python -m compileall -q storage/`）+ 端到端冒烟
+（`uv run python chiguo_daemon.py --compact`）+ 人工审阅；并发写、迁移幂等、外键/约束、
+损坏数据库 fail-fast、integrity check 手工核验；
 `EXPLAIN QUERY PLAN` 抽查高频查询。
 不做：任何旧代码接入。
 
@@ -249,8 +254,8 @@ memory.created / memory.superseded / memory.confirmed
   - netease service 拉取成功/故障 → `music.observed` / 故障事件（source observation）；
   - bridge 收发的原始事实（可选：由 Python 侧双写已足够）。
 - `sources/` 插件接口 + `schedule`/`holiday`/`netease` 三个只读 source（包装现有数据面，仅 observe）。
-出口条件：对账测试——同一天旧 decisions/messages 与 events 行数/时间戳一致；
-旧全量测试绿（双写失败静默不影响旧链）。
+出口条件：对账（同一天旧 decisions/messages 与 events 行数/时间戳一致，手工核验）；
+双写失败静默不影响旧链（人工审阅确认）。
 
 ### Phase 4 — 物化状态（state reducer）
 交付：
@@ -270,7 +275,9 @@ reducer 幂等（重放两次结果一致）。
 - `app/autonomous/turn.py`：`autonomous_turn(reason)` 主循环（collect events → reduce →
   discover → evaluate → plan → execute/wait → persist）；
 - `chiguo autonomous-turn` CLI（默认 shadow：只落库不发送）。
-出口条件：scenario 测试 1–3 绿（见 §6）。
+出口条件：语法检查（`uv run python -m compileall -q app/ cli/`）+ 端到端冒烟
+（`uv run python chiguo_daemon.py --compact`）+ 人工审阅（scenario 测试 1–3 已随测试套件
+清空，见 §6）。
 
 ### Phase 6 — 主动系统切换
 交付：
@@ -280,7 +287,8 @@ reducer 幂等（重放两次结果一致）。
 - 发送执行：intent=send_message → Pi 生成（暂沿用 agent-run/RPC 通道，Phase 7 收口）→
   bridge `/send` → `message.sent`/`delivery_failed` 事件 → relationship/memory 更新；
 - 旧触发/话题链停用（代码暂留，Phase 8 删除）。
-出口条件：scenario 1–5 绿；影子对照记录（新 planner 决策 vs 旧 trigger 决策）产出首份对比。
+出口条件：端到端冒烟 + 人工审阅（scenario 1–5 测试已随测试套件清空）；
+影子对照记录（新 planner 决策 vs 旧 trigger 决策）产出首份对比。
 
 ### Phase 7 — Pi 接入新 runtime
 交付：
@@ -290,7 +298,7 @@ reducer 幂等（重放两次结果一致）。
 - `chiguo serve`（127.0.0.1 回环 HTTP，本地单用户）：bridge/extension 的唯一 runtime 接口，
   取代每条消息 4-5 个 CLI 子进程；bridge 瘦身为「微信传输 + 命令路由 + 鉴权」；
 - 会话管理交还 Pi（session id/轮换/备份），删 bridge 内 session-rotate/RPC 预算链自建逻辑。
-出口条件：端到端集成测试（微信入 → Pi 生成 → SQLite 落库 → 微信出）绿；
+出口条件：端到端冒烟（微信入 → Pi 生成 → SQLite 落库 → 微信出，手工核验）+ 人工审阅；
 回复侧不再拼 attention/memory/instruction 前缀（由 extension 注入）。
 
 ### Phase 8 — 删除旧系统
@@ -300,7 +308,8 @@ reducer 幂等（重放两次结果一致）。
 `chiguo_pending.py`、`chiguo_bayesian.py`（若 user_state 估计器重写）、`chiguo_circadian.py`（并入 affect/rhythm）、
 `scripts/chiguo-tick.sh`、`scripts/agent-run.mjs`（由 extension/RPC 取代）、
 bridge 的 `agent.mjs`/`agent-rpc.mjs`/`session-rotate.mjs`/`schedule.mjs`（对话上下文移交 runtime）。
-出口条件：全库 grep 无旧状态文件读写路径；旧测试迁移或删除后全绿。
+出口条件：全库 grep 无旧状态文件读写路径；测试套件已在大规模重构前清空，
+不再有「旧测试迁移或删除后全绿」一项，改为语法检查 + 端到端冒烟 + 人工审阅。
 
 ### Phase 9 — replay / shadow
 交付：`chiguo replay <range>`（重放 events → state/opportunity/drive/planner，不发送，输出
@@ -308,10 +317,12 @@ bridge 的 `agent.mjs`/`agent-rpc.mjs`/`session-rotate.mjs`/`schedule.mjs`（对
 `autonomous_turns` 审计表 + `chiguo events show <id>` 因果链展示。
 出口条件：对历史事件区间能完整重放并回答「为什么」链；shadow 记录可读。
 
-### Phase 10 — 测试 / 文档 / 清理
-交付：三层测试（unit/integration/scenario）补全；dead-code/dependency/state-file 全库审计；
+### Phase 10 — 文档 / 清理（原「测试」项已作废）
+交付：dead-code/dependency/state-file 全库审计；
 README / architecture / database / configuration / developer 文档重写；
-最终报告（§7）。
+最终报告（§7）。原定「三层测试（unit/integration/scenario）补全」已作废——测试套件
+（`tests/`、`scripts/ci-test.sh`、`.github/workflows/ci.yml` 与 pytest 依赖）已在大规模重构前
+整体清空，当前验证口径为语法检查 + 端到端冒烟 + 人工审阅（见 §6）。
 
 ## 5. Phase 8 删除清单（breaking changes）
 
@@ -339,7 +350,13 @@ README / architecture / database / configuration / developer 文档重写；
 - 决策 JSON schema → events/intents/actions 表结构；
 - bridge HTTP 契约：`/send`/`/agent/prompt` → 新的 loopback runtime API + `/send` 传输。
 
-## 6. 测试计划
+## 6. 测试计划（已作废：测试套件已在大规模重构前清空）
+
+测试套件（`tests/`、`wechat-bridge/test_bridge_hardening.mjs`）、CI（`.github/workflows/ci.yml`）
+与 `scripts/ci-test.sh`、pytest/pytest-xdist dev 依赖均已移除，下列三层计划不再执行、不再作为
+任何出口条件。当前验证口径 = 语法检查（`uv run python -m compileall -q <文件>` /
+`node --check <文件>` / `bash -n <文件>`）、端到端冒烟
+（`uv run python chiguo_daemon.py --compact`）、人工审阅。以下为原计划史实：
 
 三层：
 
@@ -357,6 +374,7 @@ README / architecture / database / configuration / developer 文档重写；
   6. SQLite 损坏 / schema 过期 → fail-fast 与恢复行为明确（备份→重建→告警，不静默）。
 
 补充测试：`replay` 确定性（同区间两次重放一致）；shadow 不产生发送副作用。
+（同上：该项已随测试套件清空作废，手工核验替代。）
 
 ## 7. 最终验收标准（用户给定）
 
@@ -366,16 +384,19 @@ README / architecture / database / configuration / developer 文档重写；
 2. 任何主动消息可从数据库反查：为什么产生/由什么事件触发/当时 relationship/affect/
    有哪些 opportunity/planner 为什么选此 intent/执行了什么 action/用户是否回复；
 3. 全仓库 dead-code/dependency/state-file 审计完成，被取代系统删除；
-4. `pytest` 全部通过；
+4. 验收 = 语法检查（`uv run python -m compileall -q <文件>` / `node --check <文件>` /
+   `bash -n <文件>`）+ 端到端冒烟（`uv run python chiguo_daemon.py --compact`）+ 人工审阅
+   （测试套件已于大规模重构前清空，原「`pytest` 全部通过」不再适用）；
 5. 最终报告（12 项：新架构/SQLite schema/Event model/Opportunity-Drive-Intent-Action/
-   Pi 集成/Mem0 职责/删除清单/breaking changes/数据迁移/测试结果/已知问题/下一阶段建议）。
+   Pi 集成/Mem0 职责/删除清单/breaking changes/数据迁移/验证结果（语法检查 + 冒烟）/
+   已知问题/下一阶段建议）。
 
 ## 8. 风险与对策
 
 | 风险 | 对策 |
 |---|---|
 | 双跑期间事件双写拖慢旧链 | 双写旁路吞异常 + 定期批量；出口条件不含旧链时延回归 |
-| reducer 与旧状态漂移 | Phase 4 对账测试（容差 + 差异报告），Phase 6 前必须收敛 |
+| reducer 与旧状态漂移 | Phase 4 对账（容差 + 差异报告，手工核验），Phase 6 前必须收敛 |
 | Pi extension 能力/版本差异 | 锁定 Pi 版本；extension 最小依赖 `before_agent_start`/`message_end`；降级路径 = bridge 注入（临时） |
 | 删除清单误删仍被引用的模块 | Phase 8 前用依赖图 + grep 全量核对；先删写入路径再删读路径 |
 | 一次性 import 工具的时区/乱码/坏行 | 导入器逐行容错 + `--dry-run` 报告 + 幂等（重跑不重复） |

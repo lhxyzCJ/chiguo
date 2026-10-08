@@ -215,18 +215,8 @@ def with_contract(decision: dict) -> dict:
     return {**decision, "contract": CONTRACT}
 
 
-def send_top_level_fields() -> list[str]:
-    """send 记录的顶层字段名清单（required ∪ optional，排序）——node 侧契约测试对齐用。
-
-    mjs（scripts/agent-run.mjs）无法 import Python schema，tests/test_agent_run.mjs
-    读取本函数结果（经子进程执行脚本），与 agent-run.mjs 的 DECISION_SEND_FIELDS
-    互检，确保跨语言字段名不漂移。
-    """
-    return sorted(set(_REQUIRED["send"]) | set(_OPTIONAL["send"]))
-
-
 if __name__ == "__main__":
-    # 独立自检（无 pytest）：svn 风格最小断言
+    # 独立自检：svn 风格最小断言
     samples = [
         {"action": "send", "version": "1.24", "msg_id": "m1",
          "trigger": "lonely_mid", "intensity": "soft",

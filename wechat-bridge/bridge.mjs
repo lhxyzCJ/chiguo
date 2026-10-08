@@ -27,7 +27,7 @@
  */
 
 // Issue #380 barrel：本文件仅保留 main 启动装配 + 全量 re-export（入口路径不变，
-// service.sh / wechat-bridge.sh / test_service.sh / 子进程直起均不受影响）。
+// service.sh / wechat-bridge.sh / 子进程直起均不受影响）。
 // 各域实现：env.mjs（env 快照）/ util.mjs（withTimeout/sanitizeError）/
 // queue.mjs（TurnQueue）/ agent.mjs（askAgent 全家 + /agent/prompt）/
 // send.mjs（HTTP 端点 + 鉴权中间件）/ schedule.mjs（澄清 + 命令链路 + 轮换）/

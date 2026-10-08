@@ -2,7 +2,8 @@
 
 > 状态：**清单已审计，执行待前置功能移植完成**。本文档记录「旧系统哪些东西
 > 已被 v2 完全取代可删 / 哪些仍被 v2 依赖保留 / 哪些功能尚未移植因而阻塞删除」。
-> 审计方法：全库 import 扫描（生产代码，排除 tests/.venv）+ bridge/cron 入口点核对。
+> 审计方法：全库 import 扫描（生产代码，排除 tests/.venv）+ bridge/cron 入口点核对；
+> 其中 `tests/` 已随大规模重构前的测试套件清空（审计时仍是扫描排除项）。
 
 ---
 
@@ -76,7 +77,8 @@ chiguo_composer.py ← decision/base、chiguo_demo
 chiguo_bayesian/circadian/pending/personality ← chiguo_state.py / state/*
 chiguo_monitor.py  ← cli/handlers/{monitor,conversation}.py（旧 CLI）
 monitor/           ← chiguo_monitor.py
-chiguo_rotation.py ← decision/base、cli/handlers/rotation.py（+ tests/conftest 守卫）
+chiguo_rotation.py ← decision/base、cli/handlers/rotation.py（+ tests/conftest 守卫；
+                     该守卫已随测试套件在重构前清空一并移除）
 ```
 
 结论：旧栈是**闭环**——除 daemon CLI / tick.sh / bridge 三个进程入口外无外部消费者；

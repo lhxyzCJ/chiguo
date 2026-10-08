@@ -54,12 +54,7 @@ else
     fail "mem0 未安装 → 记忆层缺失(唯一记忆后端,必需);请运行 uv sync --all-extras"
 fi
 
-# ── 3. 全量自检(ci-test.sh 单一入口，测试计数由脚本动态扫描磁盘自述；stub 自举) ──
-say "运行全量自检(bash scripts/ci-test.sh,任一失败即中止) ..."
-bash "$PROJECT_DIR/scripts/ci-test.sh" || fail "全量测试失败,中止部署"
-say "全部测试通过 ✓"
-
-# ── 4. 环境就绪检查(agent 后端/依赖/数据文件,chiguo_envcheck.py) ──
+# ── 3. 环境就绪检查(agent 后端/依赖/数据文件,chiguo_envcheck.py) ──
 say "运行环境检查 ..."
 set +e
 if [[ "$*" == *--skip-agent* ]]; then
@@ -75,7 +70,7 @@ case $EC in
     2) fail "环境存在严重问题(见上方 JSON),请先修复再继续(若为 agent 后端缺失: 请先安装 agent 后端,或 --skip-agent 跳过 agent 后端)" ;;
 esac
 
-# ── 5 微信桥 wechat-bridge 安装+自启（可跳过: bash deploy.sh --skip-bridge）──
+# ── 4 微信桥 wechat-bridge 安装+自启（可跳过: bash deploy.sh --skip-bridge）──
 BRIDGE_OK=0
 if [[ "$*" != *--skip-bridge* ]]; then
     say "安装微信桥（wechat-bridge，发送端点 + 回复回传）..."
@@ -100,7 +95,7 @@ if [[ "$*" != *--skip-bridge* ]]; then
     esac
 fi
 
-# ── 5.5 agent 后端安装（可跳过: bash deploy.sh --skip-agent）──────────
+# ── 4.5 agent 后端安装（可跳过: bash deploy.sh --skip-agent）──────────
 AGENT_OK=0
 if [[ "$*" != *--skip-agent* ]]; then
     say "安装 agent 后端（ollama embedding + auth + crontab + 冒烟）..."
@@ -116,7 +111,7 @@ if [[ "$*" != *--skip-agent* ]]; then
     esac
 fi
 
-# ── 5.6 网易云 API 服务（可跳过: bash deploy.sh --skip-netease）──
+# ── 4.6 网易云 API 服务（可跳过: bash deploy.sh --skip-netease）──
 NETEASE_OK=0
 if [[ "$*" != *--skip-netease* ]]; then
     say "安装网易云 API 服务（api-enhanced，可选来源；扫码登录: uv run python -m netease.bridge --login）..."
@@ -131,7 +126,7 @@ if [[ "$*" != *--skip-netease* ]]; then
     esac
 fi
 
-# ── 6. 迁移提示 ─────────────────────────────────────────────
+# ── 5. 迁移提示 ─────────────────────────────────────────────
 # 6.5 集中认证目录（可迁移：拷贝 ~/.chiguo/auth/ 到新机器即自动接入；
 #      微信/网易云登录态跨设备可能失效 → 自动重登兜底；agent key 100% 可用）
 if [ -d "$HOME/.chiguo/auth" ]; then

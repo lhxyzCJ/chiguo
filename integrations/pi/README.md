@@ -25,4 +25,4 @@ pi --extension <repo>/integrations/pi/extension/chiguo-context.mjs
 ## fail-open
 
 runtime 不可达 / 超时 / 非 JSON / HTTP 非 2xx：跳过本次注入或回写，不阻塞 Pi；
-stderr 一行 `[chiguo-context]` 告警，进程内 60s 限频。测试：`node tests/test_pi_extension.mjs`。
+stderr 一行 `[chiguo-context]` 告警，进程内 60s 限频。自检：`node --check integrations/pi/extension/chiguo-context.mjs`。

@@ -23,11 +23,11 @@
 
 from cli.dispatch import main, run, parse_args, _push_alerts_via_wechat, \
     _run_passive, startup_conflict, guard_mutual_form, cron_form_active, \
-    loop_form_active  # Q24: --alerts-push；Q28: loop/cron 互斥守卫（测试经 chiguo_daemon 消费，故保留）
+    loop_form_active  # Q24: --alerts-push；Q28: loop/cron 互斥守卫
 from decision.engine import DecisionEngine
-from cli.commands import _cmd_memory_search  # 仅测试经 chiguo_daemon 入口消费，故保留
+from cli.commands import _cmd_memory_search  # 记忆检索子命令（cli 内部同源导出）
 from chiguo_version import VERSION
-from chiguo_time import CST  # Q22 收敛：对外共享时区常量（test_infra_consistency 断言单一来源）
+from chiguo_time import CST  # Q22 收敛：对外共享时区常量（唯一来源 chiguo_time）
 
 __all__ = ["DecisionEngine", "main", "run", "parse_args", "_cmd_memory_search",
            "VERSION", "CST", "_push_alerts_via_wechat", "_run_passive",
