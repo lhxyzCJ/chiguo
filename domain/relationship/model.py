@@ -1,6 +1,6 @@
 """domain.relationship.model — 纯函数式关系域模型（v2 Phase 4，architecture-v2 §3.1/§3.9）。
 
-关系域承载「迟菓 × 主人」之间的长期状态，由事件驱动更新、按时间自然衰减。
+关系域承载「迟菓 × 用户」之间的长期状态，由事件驱动更新、按时间自然衰减。
 纯函数 + frozen dataclass：无 IO、无全局状态、不依赖 config 对象（动力学常数为
 模块常量，Phase 5/6 若需参数化再收敛到 config）。
 
