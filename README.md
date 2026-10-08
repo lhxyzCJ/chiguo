@@ -332,7 +332,7 @@ personality/
 
 **前提**：Debian Linux（systemd）+ git + Node.js/npm + 模型 API key（`export AGENT_API_KEY=...`）；ollama 可选（记忆嵌入）。node 版本以仓库根 `.nvmrc`（=22）为准，本地更高版本（如 v24）也可运行但部署以 22 为基准；`nvm use` 自动套用。
 
-**分级部署**：三档路径见 [🚀 快速开始](#-快速开始)；完整指南（六步详解/落点地图/迁移/验证）见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
+**分级部署**：三档路径见 [🚀 快速开始](#-快速开始)；完整指南（分步详解/落点地图/迁移/验证）见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 
 ```bash
 bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 环境检查 → agent 环境 + wechat-bridge + cron
