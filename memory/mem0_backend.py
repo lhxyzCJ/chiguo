@@ -20,6 +20,7 @@ import random
 import sys
 import time as _time_module
 from datetime import datetime
+from pathlib import Path
 
 from chiguo_concurrent import TIMEOUT, call_with_timeout
 from chiguo_math import cfg_float  # #406(b)：_finite_float 收敛至 chiguo_math 单源
@@ -35,6 +36,34 @@ from memory.base import (
 
 # mem0 遥测默认关闭（posthog 后台上报，对自部署无意义）
 os.environ.setdefault("MEM0_TELEMETRY", "false")
+
+
+def _harden_private_paths(qdrant_path: str, history_db: str) -> None:
+    """mem0 落盘权限收紧：qdrant 目录树 0700/0600 + history.db 0600。
+
+    mem0/qdrant 内部按进程 umask 建文件（默认 0644/0755），daemon 侧无法逐文件
+    控制；后端构造前已把 umask 收到 077，这里再对既有文件自愈一次。失败只记
+    warning，不影响可用性（与 _apply_client_timeouts 同款降级语义）。
+    """
+    import logging
+
+    try:
+        q = Path(qdrant_path)
+        if q.exists():
+            for p in [q, *q.rglob("*")]:
+                try:
+                    os.chmod(p, 0o700 if p.is_dir() else 0o600)
+                except OSError:
+                    continue
+        h = Path(history_db)
+        if h.exists():
+            try:
+                os.chmod(h, 0o600)
+            except OSError:
+                pass
+    except OSError as exc:
+        logging.warning("mem0 %s failed: %r", "harden_perms", exc)
+
 
 _RETRY_SECONDS = 60.0  # available=False 后至少间隔这么久才重新探测
 
@@ -255,7 +284,11 @@ class Mem0Backend(MemoryBackend):
         """惰性构造 mem0 Memory；失败抛异常（由 available 捕获）。"""
         if self._m is None:
             from mem0 import Memory  # 惰性导入：mem0ai 缺失时在此抛 ImportError
+            # 隐私收紧：mem0/qdrant 按进程 umask 建文件，先收 umask 保证本进程后续
+            # 新建文件 0600 / 目录 0700（记忆库与 history.db 含对话事实）。
+            os.umask(0o077)
             self._m = Memory.from_config(self._mem0_config())
+            _harden_private_paths(self.qdrant_path, self.history_db)
             self._apply_client_timeouts()  # #402：底层 HTTP 真实超时，替代 daemon 遗留
 
     def _apply_client_timeouts(self) -> None:

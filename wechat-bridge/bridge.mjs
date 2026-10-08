@@ -55,6 +55,10 @@ export * from './send.mjs'
 export * from './schedule.mjs'
 export * from './message.mjs'
 
+// 隐私收紧：bridge 常驻 RPC（agent-rpc 直 spawn pi）与 agent-run 回退产生的会话文件
+// 都继承本 umask → 会话 JSONL 0600、目录 0700（默认 umask 下为 0644）。
+process.umask(0o077)
+
 async function main() {
   // #191: 未设置共享 token 时 /send 与 /agent/prompt 零鉴权(同机任意进程可冒充 owner)→ 拒绝启动。
   // wechat-bridge.sh 已自动生成并注入 token,故此处仅命中「直接 node bridge.mjs 绕过启动脚本」的场景。

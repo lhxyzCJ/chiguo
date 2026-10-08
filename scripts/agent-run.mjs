@@ -10,6 +10,10 @@ import { readFileSync, mkdirSync, appendFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
+// 隐私收紧：本进程 spawn 的 pi-agent 子进程继承此 umask → 会话 JSONL 0600、
+// 目录 0700（~/.pi/agent/sessions 是完整对话记录，默认 umask 下为 0644）。
+process.umask(0o077)
+
 /** 仓库根推导：CHIGUO_REPO 环境变量优先，否则从脚本位置推导（文件 URL 两级、目录 URL 一级目录）。 */
 export function resolveRepo(fileURL, env = process.env) {
   if (env.CHIGUO_REPO) return env.CHIGUO_REPO

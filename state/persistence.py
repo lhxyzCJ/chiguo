@@ -414,16 +414,17 @@ class StatePersistence:
             o.circadian.weekday_confidence = migrated_conf
 
     def _audit(self, event: str, detail: str = ""):
-        """v5: 状态损坏审计日志。追加到 chiguo_state_audit.jsonl。v6: 路径锚定。"""
+        """v5: 状态损坏审计日志。追加到 chiguo_state_audit.jsonl。v6: 路径锚定。
+
+        权限：经 chiguo_atomic.append_jsonl_0600（O_CREAT 0600 无 chmod 窗口，
+        既有 0644 文件 fchmod 自愈）。"""
         try:
-            audit_path = self.anchored("chiguo_state_audit.jsonl")
-            entry = {
+            from chiguo_atomic import append_jsonl_0600
+            append_jsonl_0600(self.anchored("chiguo_state_audit.jsonl"), {
                 "event": event,
                 "time": datetime.now(CST).isoformat(),
                 "detail": detail,
-            }
-            with open(audit_path, "a") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            })
         except (ValueError, TypeError, OSError):
             pass  # audit 失败不影响主流程
 

@@ -44,16 +44,16 @@ def _events_log_path() -> Path:
 
 def log_rotation_event(kind: str, filename: str):
     """追加一条轮转事件到 chiguo_events.jsonl。
-    事件记录失败静默（不影响轮转主流程）；追加写不设锁（轮转本身低频）。"""
+    事件记录失败静默（不影响轮转主流程）；追加写不设锁（轮转本身低频）。
+    权限：经 chiguo_atomic.append_jsonl_0600（O_CREAT 0600 + 既有 0644 自愈）。"""
     try:
-        line = json.dumps({
+        from chiguo_atomic import append_jsonl_0600
+        append_jsonl_0600(_events_log_path(), {
             "event": "rotation",
             "kind": kind,                       # monthly | size | force
             "file": filename,
             "at": datetime.now(CST).isoformat(),
-        }, ensure_ascii=False) + "\n"
-        with open(_events_log_path(), "a", encoding="utf-8") as f:
-            f.write(line)
+        })
     except Exception:  # noqa: BLE001 - 事件记账失败不影响轮转
         pass
 
