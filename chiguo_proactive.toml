@@ -435,9 +435,9 @@ max_size_mb = 50             # 单文件最大 MB，达到即轮转（防止无�
 # 环境：Debian Linux, root 用户；记忆库在 data/mem0（qdrant 嵌入式 + ollama 本地 embedding）；
 #       常用工具 rsync/systemctl/nano/tar
 
-provider = "opencode-go"        # agent provider：= pi --provider 名与 auth.json 键名（缺省示例；支持 pi 全部内置 provider 与
+provider = "deepseek"           # agent provider：= pi --provider 名与 auth.json 键名（缺省示例；支持 pi 全部内置 provider 与
                                  # ~/.pi/agent/models.json 注册的自定义 OpenAI 兼容端点，见 doc/AGENT_INTEGRATION.md「接入任意模型 API」）
-model = "deepseek-v4-flash"     # 对应 provider 的模型（pi --model 支持 provider/id 前缀）
+model = "deepseek-flash"        # 对应 provider 的模型（pi --model 支持 provider/id 前缀；deepseek 端点实测支持 deepseek-flash / deepseek-v4-pro）
 thinking_level = "off"            # 思考模式：off 关闭（pi --thinking 可选 off|minimal|low|medium|high|xhigh|max）
 reply_thinking_level = "off"      # 回复侧独立档位（交互及时性:微信消息→回复的 LLM 调用用此档位;主动发送/重分析仍用 thinking_level。可设 medium/high 保响应速度,max 保质量,缺省回退 thinking_level；off=关闭思考）
 session_id = "chiguo-main"      # 回复侧会话（bridge askAgent；进程内 TurnQueue 串行）
