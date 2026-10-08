@@ -266,7 +266,9 @@ class ChiguoState(ScheduleMixin, EmotionMixin, InteractionMixin):
     def _reapply_holiday_parser(self):
         """按 base_dir 下的 holidays.json 重启 holiday_parser（可能运行时已更新）。"""
         try:
-            self.holiday_parser = HolidayParser(
+            # AUD-009 同款惰性导入：schedule.* 不在模块顶层导入（别名 _HP 与 __init__ 一致）
+            from schedule.holiday import HolidayParser as _HP
+            self.holiday_parser = _HP(
                 data_path=str(self._anchored("holidays.json"))
             )
         except Exception as exc:
