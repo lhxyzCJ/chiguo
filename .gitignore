@@ -66,6 +66,9 @@ archive/
 data/
 schedule_cache.json
 
+# 课表原始文件（隐私：个人课表数据，本地保留不进 git）
+xskb*.xlsx
+
 # schedule-center 运行时文件（含隐私：课表/生日/clarify 消息原文）
 schedule_overrides.json
 schedule_overrides.json.tmp
