@@ -6,7 +6,7 @@ message.uncertain / wake / schedule.created）。
 
 硬约束：**任何失败静默跳过，绝不阻断旧链**（进程内一次性 stderr 告警）。
 激活条件（全部满足才写）：
-- env `CHIGUO_EVENT_DUALWRITE != "0"`（默认开启，置 "0" 显式关闭）；
+- env `CHIGUO_EVENT_DUALWRITE`：仅当值为 `"1"`（缺省即 `"1"`）才启用；其他任何值（含 `"0"`）关闭双写；
 - DB 路径可解析且文件存在、可打开、schema_version >= 1（未初始化 → 跳过）。
 
 路径解析：env `CHIGUO_DB_PATH` > config `[storage].db_path`

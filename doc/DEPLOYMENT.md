@@ -51,7 +51,7 @@ wechatbot 必需，网易云可选跳过（`--skip-netease`）。
 
 低档位可事后补装：`bash scripts/install_agent.sh --yes` / `bash scripts/wechat-bridge.sh install`；T0 也完全可玩：见 README 快速开始。
 
-## 六、完整部署步骤（T2，对应 deploy.sh 五步 + 拆分小节）
+## 六、完整部署步骤（T2，小节号与 deploy.sh 步骤号一一对应；deploy.sh 第 5 步「迁移提示」见 §十一）
 
 ### 1. uv + Python 3.14 + 依赖
 
@@ -69,7 +69,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 `bash scripts/wechat-bridge.sh install` + `bash scripts/service.sh autostart` → systemd `chiguo-bridge.service`（同时注册 ollama 自启）。随后扫码登录：`bash scripts/wechat-bridge.sh login`。可 `--skip-bridge`。
 
-### 5. agent 环境与定时（crontab 或常驻二选一）
+### 4.5 agent 环境与定时（crontab 或常驻二选一）
 
 `bash scripts/install_agent.sh`（阶段：探测 → ollama 检查 → auth 写 key → crontab/常驻注册 + 冒烟）。先 `export AGENT_API_KEY=...`；可 `--skip-agent`；`bash scripts/install_agent.sh --dry-run` 只扫描不修改。
 
@@ -77,7 +77,7 @@ deploy.sh 检查 mem0 是否可导入（mem0 为当前唯一记忆后端，缺�
 
 **手动停用 tick**：注释 crontab 中 `chiguo-tick.sh`/`replan-tick.sh` 行（行首加 `#`）即可停用自动推送。install_agent.sh 会把被注释条目识别为手动禁用并原样保留——不会删除/恢复（醒目提示；ask 模式额外确认后才继续处理活动旧条目）。
 
-### 6. 网易云 API 服务（可选）
+### 4.6 网易云 API 服务（可选）
 
 `bash scripts/netease-api.sh install` → systemd `netease-api.service`（需 root）；扫码登录 `uv run python -m netease.bridge --login`。可 `--skip-netease`。
 

@@ -43,7 +43,7 @@ fail() { printf '\033[1;31m[wechat-bridge]\033[0m %s\n' "$*"; exit 2; }
 
 has_credentials() { [ -f "$WX_STORAGE/credentials.json" ]; }
 
-# 登录二维码打屏：只在交互终端生效（[ -t 1 ]），CI/后台/测试走旧提示。
+# 登录二维码打屏：只在交互终端生效（[ -t 1 ]），非交互终端（后台/管道）走旧提示。
 # 兼容两种日志格式：bridge.mjs 回调打的 "=== 微信扫码登录 ===" 块，以及 SDK
 # （callbacks 缺失/旧版本）自己打的 "Scan this QR code in WeChat: <url>" 行。
 # 轮询 $LOG_FILE 中 $1 行之后新出现的二维码 → 终端打印备用登录链接 + qrencode

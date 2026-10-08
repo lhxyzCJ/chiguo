@@ -81,7 +81,7 @@ async function main() {
   const loginCallbacks = {
     onQrUrl: (url) => {
       console.log('\n=== 微信扫码登录 ===')
-      // 二维码链接含登录凭证,默认打印;WECHAT_BRIDGE_QR_LOG=0 可关闭(日志分享/CI 场景防泄漏)
+      // 二维码链接含登录凭证,默认打印;WECHAT_BRIDGE_QR_LOG=0 可关闭(日志分享场景防泄漏)
       if (process.env.WECHAT_BRIDGE_QR_LOG === '0') console.log('[QR 隐藏] 设 WECHAT_BRIDGE_QR_LOG!=0 可打印二维码链接')
       else console.log(url)
       console.log('====================\n')

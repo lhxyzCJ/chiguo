@@ -127,7 +127,7 @@ if [[ "$*" != *--skip-netease* ]]; then
 fi
 
 # ── 5. 迁移提示 ─────────────────────────────────────────────
-# 6.5 集中认证目录（可迁移：拷贝 ~/.chiguo/auth/ 到新机器即自动接入；
+# 5.5 集中认证目录（可迁移：拷贝 ~/.chiguo/auth/ 到新机器即自动接入；
 #      微信/网易云登录态跨设备可能失效 → 自动重登兜底；agent key 100% 可用）
 if [ -d "$HOME/.chiguo/auth" ]; then
     say "检测到集中认证目录 ~/.chiguo/auth/ → 微信登录态/网易云 cookie/agent key 自动接入"
@@ -139,7 +139,7 @@ if [ ! -f chiguo_state.json ]; then
     warn "  (旧机的 chiguo_state.json/chiguo_decisions.jsonl/netease/netease_cookie.txt)"
 fi
 
-# 6.6 context_token 新鲜度检查（#224 主动发送前置条件）：
+# 5.6 context_token 新鲜度检查（#224 主动发送前置条件）：
 #     微信服务端无公开 TTL，实测最后一次收到用户消息后约 35h 失效；收到消息自动刷新。
 #     过期症状 = 主动发送报 [send error] prepare failed → 从微信给机器人发一条消息即恢复。
 CT_FILE="$HOME/.chiguo/auth/wechat/context_tokens.json"

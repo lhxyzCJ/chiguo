@@ -335,7 +335,7 @@ Want to adjust her behavior? Every parameter lives in `chiguo_proactive.toml` (2
 **Tiered deployment**: the three tiers are in [🚀 Quick Start](#-quick-start); the full guide (step-by-step walkthrough / landing map / migration / verification) is [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
 
 ```bash
-bash deploy.sh   # install uv/Python 3.14 → create venv → env check → agent env + wechat-bridge + cron
+bash deploy.sh   # install uv/Python 3.14 → create venv → env check → WeChat bridge → agent env + cron
 ```
 
 **Auth migration**: credentials live in `~/.chiguo/auth/` (WeChat login state / NetEase cookie / agent keys, mode 700, outside the repo). Moving to a new machine: copy that directory → run `deploy.sh` and everything hooks up automatically. agent keys migrate 100%; WeChat/NetEase web sessions may trigger an automatic re-login (QR scan) on a different device. In practice the migrated WeChat session is usually reusable: if the first **proactive send** fails with `prepare failed` (stale context_token), send one message from WeChat to the bot to refresh the token — no re-scan needed.

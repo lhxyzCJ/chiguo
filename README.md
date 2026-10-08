@@ -335,7 +335,7 @@ personality/
 **分级部署**：三档路径见 [🚀 快速开始](#-快速开始)；完整指南（分步详解/落点地图/迁移/验证）见 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md)。
 
 ```bash
-bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 环境检查 → agent 环境 + wechat-bridge + cron
+bash deploy.sh   # 装 uv/Python 3.14 → 建 venv → 环境检查 → 微信桥 → agent 环境 + cron
 ```
 
 **认证迁移**：认证信息集中在 `~/.chiguo/auth/`（微信登录态/网易云 cookie/agent key，权限 700，独立于仓库）。换新机器：拷贝该目录 → 跑 `deploy.sh` 自动接入。agent key 100% 迁移可用；微信/网易云登录态跨设备可能触发自动重登（扫码一次兜底）。微信登录态跨设备通常可直接复用：若首次**主动发送**报 `prepare failed`（context_token 过期），从微信给机器人发一条消息刷新 token 即恢复，无需重新扫码。
