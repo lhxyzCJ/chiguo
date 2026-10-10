@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * agent-run — chiguo 的 pi-agent 调用统一封装。
- * 用法: node agent-run.mjs --prompt <文本> [--analysis-mode]
+ * 用法: node agent-run.mjs --prompt <文本> [--analysis-mode|--send-mode]
  * 配置: 环境变量或 toml [host] 段（AGENTRUN_* 覆盖）
  * 输出: {ok:true, text, analysis?} 或 {ok:false, error}
  */
@@ -58,7 +58,7 @@ if (process.env.AGENTRUN_NEW_SESSION === '1' && !process.env.AGENTRUN_SESSION) {
   }
 }
 // AGENTRUN_ROTATE_SESSION=1:send 每轮全新（#223）——与 NEW_SESSION 同款备份逻辑,
-// 但显式 session 也生效（chiguo-tick.sh spawn 回退注入: AGENTRUN_SESSION=chiguo-send）。
+// 但显式 session 也生效（send 链调用方注入: AGENTRUN_SESSION=chiguo-send）。
 if (process.env.AGENTRUN_ROTATE_SESSION === '1') {
   try {
     const { backupSessionFile } = await import(pathToFileURL(path.join(REPO, 'wechat-bridge', 'command-detect.mjs')))
@@ -263,7 +263,7 @@ export function parseAgentOutput(stdout) {
 /** v1.8: 按 runner 构造子进程命令。agent → null（调用方走默认参数路径）；command → {bin, args}。
  *  契约：<agent_command> --prompt <完整提示词> --mode <mode>，stdout 输出
  *  {"ok":true,"text":...,"analysis"?:...,"parsed"?:...,"raw"?:...}（或 NDJSON 兼容）。
- *  mode: analysis|send|other（run）/ extract|verify|recall|replan（runSchedule）。
+ *  mode: analysis|send|other。
  *  #99：command 分支自动拼接 PERSONALITY/GUIDE/TOOLS 三段内容进 --prompt，
  *  与 agent 模式（--append-system-prompt 三段）行为一致，保证换后端不丢人格。 */
 export function runnerCommand(mode, sysPrompt) {
@@ -293,20 +293,10 @@ export function buildBaseAgentArgs({ analysisMode = false, sessionId = SESSION_I
 
 /**
  * send-mode 主动消息模板（print 与 RPC 共用）。
- *
- * Q16 契约互引：决策 JSON 字段名清单以 Python 侧 decision_schema.py 为单一权威
- * （本文件无法 import Python schema，只能对齐字段名）。send 记录稳定字段：
- *   action="send"（必）、contract（契约键=1，由 daemon 写前统一加，历史 jsonl 缺省 1）、
- *   version（项目版本号，非 contract）、msg_id、trigger、intensity(soft|medium|intense)、
- *   context（含 layer_guidance/instruction 等给 agent 的生成指引）、
- *   state、bayesian?、data_warning?。
- * 本模板仅消费 context 中的生成指引；字段增减请同步 decision_schema.py 与维护此注释。
- * keep-in-sync: decision_schema.py::_REQUIRED['send']/['idle']
+ * 决策 JSON 由 V2 executor（app/actions/executor.py）生成：action="send" +
+ * context（含 layer_guidance/instruction 等给 agent 的生成指引）等字段。
+ * 本模板仅消费上下文中的生成指引。
  */
-export const DECISION_SEND_FIELDS = [
-  'action', 'bayesian', 'contract', 'context', 'data_warning', 'intensity',
-  'msg_id', 'next_evaluation_at', 'state', 'trigger', 'version',
-]
 export function buildSendPrompt(decisionJson) {
   return `你是迟菓。以下是主动消息决策结果 JSON（action=send）。按迟菓人格与 context 中的 layer_guidance/instruction 生成 1-3 句微信消息发给哥哥，自然、不汇报、不打破第四面墙。\n\n决策：${decisionJson}`
 }
@@ -372,116 +362,11 @@ export async function run(exec, { prompt, analysisMode, sendMode }) {
   }
 }
 
-/** #99: agent 后端统一入口（bridge 只依赖本函数 + runSchedule，不 import 内部解析函数）。
- *  一次调用完成「情绪分析 JSON + 回复」（= run analysisMode 便捷封装）。
- *  exec 可注入（测试）；默认 runAgentBin。返回 {ok, text, analysis?} 或 {ok:false, error}。 */
-export async function askAgent(exec = runAgentBin, prompt) {
-  return run(exec, { prompt, analysisMode: true })
-}
-
-/** 写/回忆命令链路新模式:独立会话,知识边界(与聊天会话零共享)。提取/校验块解析,C7。 */
-export async function runSchedule(exec, { mode, prompt, extra = {} }) {
-  // 独立会话:extract/verify/recall/replan(与聊天会话零共享,知识边界)
-  const SESSIONS = { extract: 'chiguo-extract', verify: 'chiguo-verify',
-                     recall: 'chiguo-recall', replan: 'chiguo-replan' }
-  const marker = mode === 'extract' ? 'EXTRACT' : mode === 'verify' ? 'VERIFY'
-              : mode === 'recall' ? 'RECALL' : 'REPLAN'
-  let sysPrompt = prompt
-  if (mode === 'extract') {
-    sysPrompt = `你是迟菓的安排提取器。今天是${extra.today}。把哥哥的话转成写命令 item JSON。
-协议 item schema:{kind: cancel|move|add|exam_week|reminder|remove, when: 日期令牌,
-period?, to_period?, to_date?, course?, label?, match?}。
-日期令牌:显式日期 {date:"YYYY-MM-DD"} 或无年份 {date:"MM-DD"}(引擎补年份,不得自己算年份);
-相对时间 {days:n}/{weekday:1-7}/{week_offset:0|1}/{week_offset:k,weekday:d}。
-学期周次:第 ${extra.week_num} 周。
-信息不足必须返回 {ok:false, question, missing},禁止填默认值;非安排命令返回 {ok:false, not_command:true}。
-用 <<EXTRACT>>{...}<<END>> 包裹。\n\n消息：${prompt}`
-  } else if (mode === 'verify') {
-    sysPrompt = `你是迟菓的安排校验员。对照原文审查 item JSON 是否有无依据字段/自相矛盾/歧义。
-通过输出 <<VERIFY>>{"ok":true}<<END>>;不过输出 <<VERIFY>>{"ok":false,"question":"追问文案","missing":["字段"]}<<END>>。\n\n原文：${prompt}\n\nitem：${extra.item}`
-  } else if (mode === 'recall') {
-    sysPrompt = `你是迟菓。依据检索事实回答哥哥的问题。只依据事实回答,禁止编造;检索无结果时反问用户('哥哥,那是什么时候呀?我帮你记上')。\n\n检索事实：${extra.facts}\n\n消息：${prompt}`
-  }
-  const custom = runnerCommand(mode, sysPrompt)
-  const bin = custom ? custom.bin : AGENT_BIN
-  // noSkills: true（显式降权，R5 F-A19-004×F-SEC-04，#311）——schedule 四会话
-  // （extract/verify/recall/replan）为知识边界纯文本契约（C7），输入输出全为文本
-  // （extract 消息→item JSON、verify 原文+item→判定 JSON、recall 系统注入 facts→回答、
-  // replan 计划生成），无任何工具调用场景。noSkills:false 是历史宽松配置：加载
-  // read/bash/edit/write 工具 + 进程 root 运行 + 用户/检索自由文本无 untrusted 标记
-  // 直进会话 prompt → 注入成功 + LLM 工具决策失守 = 命令执行。
-  // RF7（L5-1）：降权**消除的是「注入→工具执行」面**，不是「攻击面归零」——
-  // recall 的 `检索事实：${extra.facts}` 与 bridge 回复侧 attention 块仍把 schedule
-  // 自由文本无标记拼进 prompt，**内容污染面仍在**（见 bridge.mjs buildAttentionBlock
-  // 的 UNTRUSTED 标记）。降权语义=禁工具,不替代内容净化。
-  // custom（用户自配 CLI agent）不受 noSkills 控制——其 args 由部署者负责（自定义后端）。
-  const args = custom ? custom.args
-    : ['-p', ...buildBaseAgentArgs({
-        sessionId: SESSIONS[mode] || SESSION_ID, noSkills: true }),
-      '--mode', 'json', sysPrompt]
-  try {
-    const { stdout } = await exec(bin, args, { timeout: AGENT_TIMEOUT, maxBuffer: 16 * 1024 * 1024 })
-    let text = ''
-    const agentJson = custom ? parseAgentOutput(stdout) : null
-    if (agentJson) {
-      if (agentJson.ok === false) return { ok: false, error: agentJson.error ?? 'agent error' }
-      // 契约 JSON 直接带 parsed → 免块解析（自定义 agent 的最短路径）
-      if (agentJson.parsed !== undefined) {
-        return { ok: true, parsed: agentJson.parsed, raw: agentJson.raw ?? agentJson.text ?? '' }
-      }
-      text = agentJson.raw ?? agentJson.text ?? ''
-    } else {
-      text = parseNdjson(stdout)
-    }
-    if (!text) return { ok: false, error: 'empty reply' }
-    const block = extractBlock(text, marker)
-    if (!block) {
-      // recall:<<RECALL>> 块可缺(回答即文本,§4.3 反问引导承担无匹配);extract/verify 必须出块
-      if (mode === 'recall') return { ok: true, parsed: null, raw: text }
-      return { ok: false, error: 'malformed block' }
-    }
-    try {
-      return { ok: true, parsed: JSON.parse(block), raw: text }
-    } catch {
-      return { ok: false, error: 'block not json' }
-    }
-  } catch (err) {
-    return { ok: false, error: err.message }
-  }
-}
-
 async function main() {
   const args = process.argv.slice(2)
   const promptIdx = args.indexOf('--prompt')
-  if (promptIdx < 0) { console.error('usage: agent-run.mjs --prompt <text> [--analysis-mode|--send-mode|--schedule-extract|--schedule-verify|--schedule-recall|--schedule-replan]'); process.exit(2) }
+  if (promptIdx < 0) { console.error('usage: agent-run.mjs --prompt <text> [--analysis-mode|--send-mode]'); process.exit(2) }
   const prompt = args[promptIdx + 1]
-  if (args.includes('--schedule-extract')) {
-    const attIdx = args.indexOf('--attention')
-    let attention = {}
-    try { attention = JSON.parse(attIdx >= 0 ? args[attIdx + 1] : '{}') } catch {}
-    const wnIdx = args.indexOf('--week-num')
-    const weekNum = wnIdx >= 0 ? args[wnIdx + 1] : String(attention.week_num ?? 1)
-    const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10)  // CST 日期
-    console.log(JSON.stringify(await runSchedule(runAgentBin, { mode: 'extract', prompt,
-      extra: { today, attention: JSON.stringify(attention), week_num: weekNum } })))
-    return
-  }
-  if (args.includes('--schedule-verify')) {
-    const itemIdx = args.indexOf('--item')
-    const item = itemIdx >= 0 ? args[itemIdx + 1] : '{}'
-    console.log(JSON.stringify(await runSchedule(runAgentBin, { mode: 'verify', prompt, extra: { item } })))
-    return
-  }
-  if (args.includes('--schedule-recall')) {
-    const factsIdx = args.indexOf('--facts')
-    const facts = factsIdx >= 0 ? args[factsIdx + 1] : '[]'
-    console.log(JSON.stringify(await runSchedule(runAgentBin, { mode: 'recall', prompt, extra: { facts } })))
-    return
-  }
-  if (args.includes('--schedule-replan')) {
-    console.log(JSON.stringify(await runSchedule(runAgentBin, { mode: 'replan', prompt })))
-    return
-  }
   const analysisMode = args.includes('--analysis-mode')
   const sendMode = args.includes('--send-mode')
   console.log(JSON.stringify(await run(runAgentBin, { prompt, analysisMode, sendMode })))

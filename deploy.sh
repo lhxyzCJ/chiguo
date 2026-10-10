@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================
-# 迟菓主动消息系统 — 目标机器一键部署/自检
-# 用法: 在 clone 下来的项目根目录执行  bash deploy.sh
-# 假设: 已装 git;仓库为 private(含个人记忆数据);运行时文件均为
-#       相对/~/路径解析,可在任意用户的任意目录运行。
+# 迟菓 — 目标机器一键部署/自检（V2 runtime + 微信被动桥 + pi-agent 生成）
+# 用法: 在项目根目录执行  bash deploy.sh [--skip-bridge] [--skip-agent]
+# 假设: 已装 git、node；仓库为 private；运行时文件均为相对/~/路径解析。
 # ============================================================
 set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,38 +41,88 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 uv python install 3.14 >/dev/null 2>&1 || true
 if [ ! -x .venv/bin/python ]; then
-    say "首次建 venv + 同步依赖（uv sync --all-extras：mem0 记忆 / openpyxl 课表）..."
-    uv sync --all-extras || fail "uv sync --all-extras 失败,请检查网络后重试（可先手动: uv sync --all-extras）"
+    say "首次建 venv + 同步依赖（uv sync；纯标准库，无第三方运行依赖）..."
+    uv sync || fail "uv sync 失败,请检查网络后重试（可先手动: uv sync）"
 fi
 say "Python: $(uv run python --version)($(uv run python -c 'import sys;print(sys.executable)'))"
 
-# ── 2. 必需依赖 mem0(唯一记忆后端;缺失即中止部署) ────
-if uv run python -c "import mem0" >/dev/null 2>&1; then
-    say "mem0 OK → 记忆库 data/mem0(qdrant 本地 + ollama qwen3-embedding)"
-else
-    fail "mem0 未安装 → 记忆层缺失(唯一记忆后端,必需);请运行 uv sync --all-extras"
+# ── 2. agent 认证（pi provider key → ~/.pi/agent/auth.json；可跳过: --skip-agent）──
+AGENT_OK=0
+if [[ "$*" != *--skip-agent* ]]; then
+    say "配置 agent 认证（provider 读 toml [host].provider；key 从环境变量读，不落盘明文）..."
+    if ! command -v pi >/dev/null 2>&1; then
+        warn "未检测到 pi → 消息生成端缺失；请先安装 pi-agent 本体后重跑（本脚本只配置不安装）"
+    else
+        say "pi $(pi --version 2>&1 | head -1)"
+        PROVIDER="$(sed -n 's/^provider *= *"\([^"]*\)".*/\1/p' "$PROJECT_DIR/chiguo_proactive.toml" | head -1 || true)"
+        [ -n "$PROVIDER" ] || PROVIDER=opencode-go
+        AUTH="$HOME/.pi/agent/auth.json"
+        # 集中认证迁移源：~/.chiguo/auth/agent-auth.json → ~/.pi/agent/auth.json（目标已有则不动）
+        if [ ! -f "$AUTH" ] && [ -f "$HOME/.chiguo/auth/agent-auth.json" ]; then
+            mkdir -p "$(dirname "$AUTH")"
+            cp -a "$HOME/.chiguo/auth/agent-auth.json" "$AUTH" && chmod 600 "$AUTH" \
+                && say "已从 ~/.chiguo/auth/agent-auth.json 导入认证（集中认证目录迁移）"
+        fi
+        PY="$PROJECT_DIR/.venv/bin/python"
+        # auth.json 含 provider 且有真值 key（裸 grep provider 名会把注释/残缺条目误判为已配置）
+        auth_has_key() {
+            [ -f "$AUTH" ] || return 1
+            AUTH_PROVIDER="$PROVIDER" "$PY" - "$AUTH" <<'PYC' >/dev/null 2>&1
+import json, os, sys
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+entry = cfg.get(os.environ.get("AUTH_PROVIDER", "opencode-go"))
+sys.exit(0 if isinstance(entry, dict) and entry.get("key") else 1)
+PYC
+        }
+        if auth_has_key; then
+            say "auth.json OK（已含 $PROVIDER key）"
+            AGENT_OK=1
+        else
+            # key 来源：AGENT_API_KEY（通用名）优先，OPENCODE_API_KEY 兼容回退
+            KEY_VAR=AGENT_API_KEY; KEY_VAL="${AGENT_API_KEY:-}"
+            [ -n "$KEY_VAL" ] || { KEY_VAR=OPENCODE_API_KEY; KEY_VAL="${OPENCODE_API_KEY:-}"; }
+            if [ -z "$KEY_VAL" ]; then
+                warn "auth.json 缺 $PROVIDER 且未设置 AGENT_API_KEY/OPENCODE_API_KEY → 无法写入 key；export $KEY_VAR=... 后重跑"
+            else
+                if [ -f "$AUTH" ]; then cp -a "$AUTH" "$AUTH.bak"; fi
+                # key 经环境变量传给 python（argv 会被 ps 看到，明文泄露面更大）
+                if KEY_VAL="$KEY_VAL" AUTH_PROVIDER="$PROVIDER" "$PY" - "$AUTH" <<'PYJ'; then
+import json, os, sys
+p = sys.argv[1]
+key = os.environ["KEY_VAL"]
+provider = os.environ.get("AUTH_PROVIDER", "opencode-go")
+cfg = {}
+if os.path.exists(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+os.makedirs(os.path.dirname(p), exist_ok=True)
+cfg[provider] = {"type": "api_key", "key": key}
+with open(p, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+os.chmod(p, 0o600)
+PYJ
+                    say "auth.json 已写入 $PROVIDER 条目"
+                    AGENT_OK=1
+                else
+                    warn "auth.json 写入失败（.bak 已保留，请手工处理）"
+                fi
+            fi
+        fi
+    fi
 fi
 
-# ── 3. 环境就绪检查(agent 后端/依赖/数据文件,chiguo_envcheck.py) ──
-say "运行环境检查 ..."
-set +e
-if [[ "$*" == *--skip-agent* ]]; then
-    uv run python chiguo_envcheck.py --skip-agent
-else
-    uv run python chiguo_envcheck.py
-fi
-EC=$?
-set -e
-case $EC in
-    0) say "环境就绪 ✓" ;;
-    1) warn "环境存在警告(见上方 JSON,系统可运行但部分降级)" ;;
-    2) fail "环境存在严重问题(见上方 JSON),请先修复再继续(若为 agent 后端缺失: 请先安装 agent 后端,或 --skip-agent 跳过 agent 后端)" ;;
-esac
-
-# ── 4 微信桥 wechat-bridge 安装+自启（可跳过: bash deploy.sh --skip-bridge）──
+# ── 3. 微信桥（被动消息回复 + 发送端点；可跳过: --skip-bridge）──
 BRIDGE_OK=0
 if [[ "$*" != *--skip-bridge* ]]; then
-    say "安装微信桥（wechat-bridge，发送端点 + 回复回传）..."
+    say "安装微信桥（wechat-bridge）..."
     set +e
     bash "$PROJECT_DIR/scripts/wechat-bridge.sh" install
     BI=$?
@@ -86,7 +135,6 @@ if [[ "$*" != *--skip-bridge* ]]; then
     bash "$PROJECT_DIR/scripts/service.sh" autostart
     BC=$?
     set -e
-    BRIDGE_OK=0
     [ "$BC" = 0 ] && BRIDGE_OK=1
     case $BC in
         0) say "微信桥 systemd 自启注册并启动 ✓" ;;
@@ -95,76 +143,14 @@ if [[ "$*" != *--skip-bridge* ]]; then
     esac
 fi
 
-# ── 4.5 agent 后端安装（可跳过: bash deploy.sh --skip-agent）──────────
-AGENT_OK=0
-if [[ "$*" != *--skip-agent* ]]; then
-    say "安装 agent 后端（ollama embedding + auth + crontab + 冒烟）..."
-    set +e
-    bash "$PROJECT_DIR/scripts/install_agent.sh" "$@"
-    PC=$?
-    set -e
-    [ "$PC" = 0 ] && AGENT_OK=1
-    case $PC in
-        0) say "agent 后端安装完成 ✓" ;;
-        1) warn "agent 后端有警告/残留未处理（见上方输出），消息生成可能受影响" ;;
-        2) fail "agent 后端严重问题（未安装?），请先修复后重试（或 --skip-agent 跳过）" ;;
-    esac
-fi
-
-# ── 4.6 网易云 API 服务（可跳过: bash deploy.sh --skip-netease）──
-NETEASE_OK=0
-if [[ "$*" != *--skip-netease* ]]; then
-    say "安装网易云 API 服务（api-enhanced，可选来源；扫码登录: uv run python -m netease.bridge --login）..."
-    set +e
-    bash "$PROJECT_DIR/scripts/netease-api.sh" install
-    NC=$?
-    set -e
-    case $NC in
-        0) NETEASE_OK=1; say "网易云 API 服务就绪 ✓" ;;
-        1) warn "网易云 API 服务未就绪（可选来源，降级不影响运行；bash scripts/netease-api.sh install 排查）" ;;
-        2) warn "网易云 API 服务安装失败（可选来源；--skip-netease 跳过）" ;;
-    esac
-fi
-
-# ── 5. 迁移提示 ─────────────────────────────────────────────
-# 5.5 集中认证目录（可迁移：拷贝 ~/.chiguo/auth/ 到新机器即自动接入；
-#      微信/网易云登录态跨设备可能失效 → 自动重登兜底；agent key 100% 可用）
-if [ -d "$HOME/.chiguo/auth" ]; then
-    say "检测到集中认证目录 ~/.chiguo/auth/ → 微信登录态/网易云 cookie/agent key 自动接入"
-else
-    warn "未检测到 ~/.chiguo/auth/ 集中认证目录 → 登录需手动（bash scripts/wechat-bridge.sh login / uv run python -m netease.bridge --login / install_agent.sh 阶段 5；网易云 API 服务: bash scripts/netease-api.sh install）"
-fi
-if [ ! -f chiguo_state.json ]; then
-    warn "chiguo_state.json 不存在 → 若从旧运行机迁移,请手动拷贝 state/decisions 等运行时文件(不进 git)"
-    warn "  (旧机的 chiguo_state.json/chiguo_decisions.jsonl/netease/netease_cookie.txt)"
-fi
-
-# 5.6 context_token 新鲜度检查（#224 主动发送前置条件）：
-#     微信服务端无公开 TTL，实测最后一次收到用户消息后约 35h 失效；收到消息自动刷新。
-#     过期症状 = 主动发送报 [send error] prepare failed → 从微信给机器人发一条消息即恢复。
-CT_FILE="$HOME/.chiguo/auth/wechat/context_tokens.json"
-if [ -f "$CT_FILE" ]; then
-    CT_AGE_H=$(( ($(date +%s) - $(stat -c %Y "$CT_FILE")) / 3600 ))
-    if [ "$CT_AGE_H" -ge 24 ]; then
-        warn "context_token 已 ${CT_AGE_H}h 未刷新（实测约 35h 过期）→ 主动发送将报 prepare failed；部署后从微信给机器人发一条消息即刷新恢复（无需重扫码）"
-    else
-        say "context_token 新鲜（${CT_AGE_H}h 前刷新，收到用户消息自动续期）"
-    fi
-else
-    warn "无 context_tokens.json（用户尚未发过消息）→ 首次主动发送前先从微信给机器人发一条消息（缺少 context_token 会报 prepare failed）"
-fi
-
 cat <<EOF
 
 ────────────────── 部署完成 ──────────────────
- 微信桥:        $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态本地保留不进 git; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && start 排查）")
- agent 后端:       $( [ "$AGENT_OK" = 1 ] && echo "已由本脚本自动完成（crontab + provider key，随 toml [host].provider）" || echo "未安装或未完全安装（bash scripts/install_agent.sh --dry-run 排查）")
- 网易云 API:    $( [ "$NETEASE_OK" = 1 ] && echo "已安装并常驻（api-enhanced 跟随上游最新 tag，systemd: netease-api.service；bash scripts/netease-api.sh status）" || echo "未安装/未就绪（bash scripts/netease-api.sh install 排查；--skip-netease 跳过）")
-  手动重跑/排查: bash scripts/install_agent.sh --dry-run（扫描）| --yes（自动修复）
-  端到端冒烟:   bash scripts/chiguo-tick.sh（tick 手动触发 → 微信收到）
+  微信桥:     $( [ "$BRIDGE_OK" = 1 ] && echo "已安装并启动（登录态本地保留不进 git; bash scripts/wechat-bridge.sh status）" || echo "未启动（bash scripts/wechat-bridge.sh install && bash scripts/wechat-bridge.sh start 排查）")
+  agent 后端: $( [ "$AGENT_OK" = 1 ] && echo "认证就绪（~/.pi/agent/auth.json；provider 见 toml [host].provider）" || echo "未就绪（export AGENT_API_KEY=... 后重跑；或 bash deploy.sh --skip-bridge）")
 
-手动验证:
-  $PROJECT_DIR/.venv/bin/python chiguo_daemon.py            # 单次决策 → JSON
-  $PROJECT_DIR/.venv/bin/python chiguo_daemon.py --stats --alerts --monitor
-  $PROJECT_DIR/.venv/bin/python chiguo_daemon.py --monitor
+  手动验证:
+  bash scripts/wechat-bridge.sh status          # 桥状态/登录态/context_token 新鲜度
+  tail -f /tmp/opencode/wechat-bridge.log       # 桥日志（systemd 模式: journalctl -u chiguo-bridge）
+  .venv/bin/python -m app.cli db status         # V2 runtime DB 状态（未初始化时 initialized=false 正常）
 EOF

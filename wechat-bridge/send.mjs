@@ -1,14 +1,12 @@
-/** wechat-bridge/send.mjs — HTTP 发送端点（POST /send + /agent/prompt 同 server 同鉴权）。
- * 从 bridge.mjs 纯搬运；鉴权中间件（Content-Type→Origin→Host→token→1M 上限）整体搬运，不得拆散。
- * 依赖 env + agent（handleAgentPrompt）+ util。 */
+/** wechat-bridge/send.mjs — HTTP 发送端点（POST /send）。
+ * 鉴权中间件（Content-Type→Origin→Host→token→1M 上限）整体保留，不得拆散。
+ * 依赖 env + util。 */
 import { createServer } from 'node:http'
 import { SEND_PORT, SEND_TIMEOUT_MS, BRIDGE_TOKEN, currentOwnerId, isLocalHost, isLocalOrigin } from './env.mjs'
-import { handleAgentPrompt } from './agent.mjs'
 import { withTimeout } from './util.mjs'
 
-/** 主动发送端点：POST /send {"to","text"} → bot.send()；POST /agent/prompt {"text","mode"} → AgentRpc。
- *  仅本地回环来源(#84 鉴权)+ 可选 token。 */
-export function startSendServer(bot, queue) {
+/** 主动发送端点：POST /send {"to","text"} → bot.send()。仅本地回环来源(#84 鉴权)+ 可选 token。 */
+export function startSendServer(bot) {
   const server = createServer((req, res) => {
     res.on('error', () => {})  // 客户端断开后 res 被销毁 → 吸收 error 事件，防未处理异常
     const deny = (status, error) => {
@@ -16,8 +14,8 @@ export function startSendServer(bot, queue) {
       res.writeHead(status, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ ok: false, error }))
     }
-    if (req.method !== 'POST' || (req.url !== '/send' && req.url !== '/agent/prompt')) {
-      deny(405, 'only POST /send or /agent/prompt')
+    if (req.method !== 'POST' || req.url !== '/send') {
+      deny(405, 'only POST /send')
       return
     }
     // #84 鉴权:Content-Type JSON → 本地来源(Host/Origin) → 共享 token
@@ -49,10 +47,6 @@ export function startSendServer(bot, queue) {
       // #84 参数校验:非法 JSON / 必填缺失 → 400(而非 500)
       let payload
       try { payload = JSON.parse(body || '{}') } catch { deny(400, 'invalid JSON'); return }
-      if (req.url === '/agent/prompt') {
-        await handleAgentPrompt(payload, res, queue)
-        return
-      }
       const resp = await sendMessage(payload, bot)
       if (!res.writableEnded && !res.destroyed) {
         res.writeHead(resp.status, { 'Content-Type': 'application/json' })
@@ -71,11 +65,11 @@ export function startSendServer(bot, queue) {
   })
 }
 
-/** /send 发送处理器（从 startSendServer 提取，可独立单元测试）。
+/** /send 发送处理器（从 startSendServer 提取，可独立调用）。
  * 校验 → bot.send 超时兜底 → 返回响应对象 {status, ok, error?, timeout_uncertain?}。
  * F-A17-003：bot.send 经 withTimeout 超时不代表未送达 → 超时路径返回
- * `timeout_uncertain: true`，调用方（tick/loop）必须区别处理（不退款不重发），
- * 不能当明确失败。明确失败（非超时异常）只置 ok:false + error，无该标记；
+ * `timeout_uncertain: true`，调用方必须区别处理（不重发），不能当明确失败。
+ * 明确失败（非超时异常）只置 ok:false + error，无该标记；
  * prepare failed（context_token 过期）走既有显式恢复提示，保持 ok:false 兼容。 */
 export async function sendMessage(payload, bot) {
   const { to, text } = payload ?? {}
@@ -98,7 +92,7 @@ export async function sendMessage(payload, bot) {
     } else {
       console.error(`[send error] ${reason}`)
     }
-    // F-A17-003: 超时不确定 → 带 timeout_uncertain 标记（调用方别当明确失败退款）
+    // F-A17-003: 超时不确定 → 带 timeout_uncertain 标记（调用方别当明确失败）
     if (isTimeout(reason)) {
       return { status: 500, ok: false, error: reason, timeout_uncertain: true }
     }

@@ -13,25 +13,11 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-# 观测类型 → 机会规则（kind/评分/是否仅当天；纪念日/节假日紧迫度按 days_until 衰减）
+# 观测类型 → 机会规则（kind/评分）
 OBSERVATION_RULES = {
-    "anniversary.upcoming": {"kind": "anniversary", "relevance": 0.9,
-                             "urgency": 0.6, "emotional_affordance": 0.8,
-                             "today_only": False},
-    "holiday.upcoming": {"kind": "holiday", "relevance": 0.6, "urgency": 0.3,
-                         "emotional_affordance": 0.4, "today_only": True},
     "weather.changed": {"kind": "weather", "relevance": 0.4, "urgency": 0.1,
-                        "emotional_affordance": 0.3, "today_only": False},
-    "music.observed": {"kind": "music", "relevance": 0.35, "urgency": 0.1,
-                       "emotional_affordance": 0.4, "today_only": False},
+                        "emotional_affordance": 0.3},
 }
-
-
-def _urgency_with_day_decay(base: float, days) -> float:
-    """纪念日类：越临近越紧迫（0 天=满值；7 天=0.2 底）。"""
-    if not isinstance(days, int) or days <= 0:
-        return base
-    return base * max(0.2, 1.0 - days / 7.0)
 
 DEFAULT_COMMITMENT_GRACE_HOURS = 24.0   # 到期后的宽限窗，超窗不再产机会
 DEFAULT_OPEN_THREAD_STALE_HOURS = 6.0   # 话题静默多久算「可续聊」
@@ -87,17 +73,12 @@ def discover_opportunities(*, observations, commitments, threads, now,
             continue
         rule = OBSERVATION_RULES.get(ob.type)
         if rule is None:
-            continue  # schedule.state 等只作环境事实，不单独产机会
-        payload = dict(ob.payload or {})
-        if rule["today_only"] and payload.get("days_until") != 0:
-            continue
-        urgency = rule["urgency"]
-        if rule["kind"] in ("anniversary", "holiday"):
-            urgency = _urgency_with_day_decay(urgency, payload.get("days_until"))
+            continue  # 未登记观测类型只作环境事实，不单独产机会
         drafts.append(OpportunityDraft(
             kind=rule["kind"], novelty=1.0, relevance=rule["relevance"],
-            urgency=urgency, emotional_affordance=rule["emotional_affordance"],
-            expires_at=ob.expires_at, observation_event_id=None, payload=payload))
+            urgency=rule["urgency"], emotional_affordance=rule["emotional_affordance"],
+            expires_at=ob.expires_at, observation_event_id=None,
+            payload=dict(ob.payload or {})))
 
     for c in commitments or []:
         if getattr(c, "status", None) != "open":

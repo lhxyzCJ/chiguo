@@ -16,7 +16,7 @@ class Observation:
     """一条世界观测。payload 为 JSON-safe 自由形状，按 type 约定字段。"""
 
     type: str                     # 点分类型：schedule.state / holiday.upcoming / ...
-    source: str                   # 产生者：schedule / holiday / netease / weather
+    source: str                   # 产生者：各 Source.name（如 weather）
     observed_at: datetime         # 观察时刻（CST aware）
     expires_at: datetime | None   # 过期即作废；None = 不过期
     payload: dict

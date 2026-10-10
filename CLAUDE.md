@@ -11,7 +11,7 @@
 
 ## 自检（已无测试套件）
 - 项目在大规模重构前已清空全部测试：`tests/`、`scripts/ci-test.sh`、`.github/workflows/ci.yml`、pytest 依赖全删，仓库不再有自动化测试链
-- 改动后自检：Python `uv run python -m compileall -q <改动文件>`；JS `node --check <文件>`；Shell `bash -n <文件>`；端到端冒烟 `uv run python chiguo_daemon.py --compact`（零模型门控，stdout JSON）
+- 改动后自检：Python `uv run python -m compileall -q <改动文件>`；JS `node --check <文件>`；Shell `bash -n <文件>`；端到端冒烟 `uv run python -m app.cli db status`（零模型、纯 stdlib）或 `bash scripts/wechat-bridge.sh status`
 - 回归保障以人工审阅为准；禁止凭空声称「测试通过」
 
 ## Git 工作流（代码改动）

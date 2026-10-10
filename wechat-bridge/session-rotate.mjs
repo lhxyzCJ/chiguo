@@ -2,23 +2,22 @@
 /**
  * session-rotate — 主会话（chiguo-main）每日轮换：每小时检查，空闲超阈值才轮换
  *
- * 语义（详见 doc/SYSTEM.md §11.2）：
+ * 语义：
  * - 每小时整点检查一次（每天首个检查点 = 00:00 CST，正常情况轮换落在凌晨）
- * - 距最近活动（用户消息 / cron 判定要发消息，写于 ~/.chiguo/session-activity-last）
- *   超过 session_rotate_idle_minutes（默认 60）才轮换 → 绝不切断进行中的对话；
+ * - 距最近活动（用户消息，写于 ~/.chiguo/session-activity-last）超过
+ *   session_rotate_idle_minutes（默认 60）才轮换 → 绝不切断进行中的对话；
  *   有活动则顺延到下一检查点（深夜连续对话可能推迟到清晨）
  * - 轮换 = RPC 常驻先杀进程（#192 时序）→ 备份 chiguo-main → 开新会话；
  *   幂等标记 ~/.chiguo/session-rotate-last（同日只轮换一次）
- * - send 会话（chiguo-send）不在此轮换：它每轮全新（bridge /agent/prompt send 前轮换 +
- *   agent-run.mjs AGENTRUN_ROTATE_SESSION=1 兜底），上下文恒 ≤1 轮
  *
- * 活动文件格式：epoch 秒（整数），由 bridge（onMessage 生产入口）与 chiguo-tick.sh
- * （ACTION=send 判定）写入；文件缺失视为空闲（允许轮换）。
+ * 活动文件格式：epoch 秒（整数），由 bridge（onMessage 生产入口）写入；
+ * 文件缺失视为空闲（允许轮换）。
  */
 import { homeDir } from './home-dir.mjs'
 import { dirname, join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { backupSessionFile } from './command-detect.mjs'
+import { ROTATE_CFG, BRIDGE_DIR } from './env.mjs'
 
 export const CST_OFFSET_MS = 8 * 3600 * 1000
 
@@ -107,4 +106,30 @@ export function defaultRotatePaths() {
     markerPath: join(homeDir(), '.chiguo', 'session-rotate-last'),
     activityFile: join(homeDir(), '.chiguo', 'session-activity-last'),
   }
+}
+
+/** 主会话每日轮换装配（bridge.mjs 启动时调用）：
+ *  启动即检查（bridge 重启/宕机错过 → 补轮换）；轮换经 TurnQueue 串行，不与在途 agent turn 交错。 */
+export function armSessionRotation(queue) {
+  if (!ROTATE_CFG.enabled) return
+  const { backupsDir, markerPath, activityFile } = defaultRotatePaths()
+  const activityPath = process.env.WECHAT_BRIDGE_ACTIVITY_FILE ?? activityFile
+  const tick = async () => {
+    try {
+      const done = await queue.run(() => rotateIfDue({
+        markerPath, backupsDir, cwd: BRIDGE_DIR,
+        rpc: globalThis.__agentRpc ?? null,
+        activityPath, idleMinutes: ROTATE_CFG.idleMinutes,
+      }))
+      if (done && typeof done === 'object') {
+        console.log(`[rotate] 主会话已轮换（${cstDateStr()}）: main=${done.main ?? '无'}`)
+      } else if (done === 'active') {
+        console.log(`[rotate] 顺延: 近期有活动（${ROTATE_CFG.idleMinutes}min 空闲才轮换）`)
+      }
+    } catch (err) {
+      console.error('[rotate] 失败:', err instanceof Error ? err.message : String(err))
+    }
+    setTimeout(tick, msToNextCheck(new Date(), ROTATE_CFG.checkMinutes))
+  }
+  tick()
 }

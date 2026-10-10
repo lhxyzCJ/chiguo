@@ -1,125 +1,34 @@
-# Python
+# ── Python ──
 __pycache__/
 *.pyc
 *.pyo
 .venv/
+.ruff_cache/
 
-# Windows downloads quarantine marker (can be accidentally tracked)
-# Note: git fnmatch: `*.Zone.Identifier` does NOT match (leading * cannot cross the leading-dot suffix); `*Zone.Identifier` works for any basename ending in that literal
-*Zone.Identifier
-
-# Runtime state files — 隐私数据（状态/决策/对话）+ 监控/健康日志（audit/health）全部本地保留不进 git
-chiguo_state.json*
-chiguo_loop.pid
-chiguo_state_audit.jsonl
-chiguo_events.jsonl
-chiguo_alerts.json
-agent_health.json
-*.lock
-!uv.lock
-
-# Netease music bridge — cookie is an auth token (keep ignored); caches hold privacy (song names/times)
-netease/netease_cookie.txt
-netease/netease_health.json
-netease/netease_qr.png
-netease/recent_play_cache.json
-netease/recent_play_cache.json.tmp
-netease/recent_play_cache.json.tmp.*
-netease/recent_play_cache.json.bak
-
-# Git worktrees
-.worktrees/
-
-# Installer backups (scripts/install_integration.sh, .claude/settings.json)
-.claude/settings.json.bak
-.claude/settings.json.bak.*
-
-# wechat-bridge — 依赖/本地配置忽略；登录态 credentials/ 目录仅本地保留（隐私，历史已重写清除）
-# package-lock.json 例外跟踪（npm 确定性安装防 arborist edgesOut）：node_modules 仍忽略
+# ── 微信桥（依赖/本地配置/登录态；隐私不进 git）──
 wechat-bridge/node_modules/
 wechat-bridge/.env
-!wechat-bridge/package-lock.json
+wechat-bridge/credentials/
 wechat-bridge/npm-debug.log*
-# wechat-bridge vendor SDK — 源码随仓库入库；构建产物忽略（package-lock.json 同上例外跟踪）
+# vendor SDK 源码随仓库入库；构建产物忽略（package-lock.json 跟踪：npm 确定性安装）
 wechat-bridge/vendor/wechatbot/node_modules/
 wechat-bridge/vendor/wechatbot/dist/
 wechat-bridge/vendor/wechatbot/*.tsbuildinfo
-!wechat-bridge/vendor/wechatbot/package-lock.json
 
-# tick cron 运行日志（运行时产物，不跟踪）
+# ── 运行态/隐私（本地保留，不进 git）──
 logs/
-
-# agent 假死状态机（agent_health.json 本体默认跟踪；崩溃残留 tmp 忽略）
-agent_health.json.tmp
-
-# AI 工具个人配置（开发机本地，不进仓库）
-.claude/
-
-# 个人开发运维工具（dev-sync.sh 已迁至 ~/chiguo-dev/，绑定生产机 SSH host，不进公开仓库）
-scripts/dev-sync.sh
-
-# 隐私数据（本地保留，不进 git——历史已重写清除）
-wechat-bridge/credentials/
-chiguo_decisions.jsonl
-chiguo_messages.jsonl
-archive/
 data/
-schedule_cache.json
-
-# 课表原始文件（隐私：个人课表数据，本地保留不进 git）
 xskb*.xlsx
-
-# schedule-center 运行时文件（含隐私：课表/生日/clarify 消息原文）
-schedule_overrides.json
-schedule_overrides.json.tmp
-schedule_overrides.json.tmp.*
-schedule_overrides.json.bak
-schedule_plan.json
-schedule_plan.json.tmp
-schedule_plan.json.tmp.*
-schedule_plan.json.bak
-schedule_clarify.json
-schedule_clarify.json.tmp
-schedule_clarify.json.tmp.*
-schedule_clarify.json.bak
-anniversaries.json
-anniversaries.json.tmp
-anniversaries.json.tmp.*
-anniversaries.json.bak
-break_state.json
-break_state.json.tmp
-break_state.json.tmp.*
-break_state.json.bak
-netease/netease_cache.json
-netease/netease_cache.json.tmp
-netease/netease_cache.json.tmp.*
-netease/netease_cache.json.bak
-
-# Reasonix 工具私有目录（本地会话/任务台账，不进 git）
-.reasonix/
-.worktrees/
-
-# Reasonix 工具私有配置（本地权限台账，不进 git）
-reasonix.toml
-
-# claude-mem SQLite 记忆库（运行态数据，不入库）
-.open-mem/
-
-# 通用临时/备份文件兜底（防隐私 .bak/.tmp 泄漏，AUD-019）
 *.bak
 *.tmp
+*Zone.Identifier
 
-# OMC 运行态目录（会话/任务台账，不入库）
+# ── 本地 AI 工具目录（会话/台账，不进仓库）──
 .omc/
-
-# 本地计划/笔记文档（不进 git）
-docs/
-
-# AgentTeams 团队机制目录（本地会话台账，不进 git）
-.agent-teams/
-
-# gh/claude 本地设备缓存（不进 git）
-.local/
-
-# ULW 临时任务延续台账（本地，不入库）
 .omo/
+.reasonix/
+.agent-teams/
+.local/
+.open-mem/
+.claude/
+.archify/

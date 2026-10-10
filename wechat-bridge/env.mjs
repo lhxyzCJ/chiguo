@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-/** wechat-bridge/env.mjs — 模块级 env 快照（进程启动 import 时一次读取）。
- *  测试在动态 import 前设置 WECHAT_BRIDGE_* env；本模块无内部依赖，各模块 import 时保持先 env 后其他。 */
+/** wechat-bridge/env.mjs — 模块级 env 快照（进程启动 import 时一次读取）。 */
 import { resolveRepo, RUNNER, HOST } from '../scripts/agent-run.mjs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 
 export const DEBOUNCE_MS = 4000
@@ -13,22 +12,15 @@ export const AGENT_RUN_SCRIPT = process.env.WECHAT_BRIDGE_AGENT_RUN
 // RPC 常驻(仿 OpenClaw gateway):env WECHAT_BRIDGE_AGENT_RPC=1 显式启用;失败自动回退 spawn。
 // RPC 是 agent 二进制特有协议(--mode rpc)——runner=command(自定义 agent)时强制关闭。
 export const AGENT_RPC_ENABLED = RUNNER === 'agent' && process.env.WECHAT_BRIDGE_AGENT_RPC === '1'
-// 记忆边车(Issue #450 2C):env WECHAT_BRIDGE_MEMORY_RPC=1 显式启用;失败自动回退 spawn。
-// opt-in(与 AGENT_RPC 同规约):测试 fake DAEMON_PY 下默认关闭，不污染既有套件语义。
-export const MEMORY_RPC_ENABLED = process.env.WECHAT_BRIDGE_MEMORY_RPC === '1'
 export const SEND_PORT = Number(process.env.WECHAT_BRIDGE_SEND_PORT ?? 18790)
 // F-A17-003: bot.send 底层不可取消——withTimeout 超时只代表「未在时限内确认送达」，
 export const SEND_TIMEOUT_MS = Number(process.env.WECHAT_BRIDGE_SEND_TIMEOUT_MS ?? 30_000)
-// R10 (F-A17-004): 发送侧 /agent/prompt 总超时预算（排队 + restart + 处理）对齐 tick 125s:
-// 总预算默认 110s（< 125s，留 curl 网络余量）；排队等待预算默认 30s（queue_busy 快速判败）。
-export const SEND_PROMPT_TOTAL_MS = Number(process.env.WECHAT_BRIDGE_SEND_PROMPT_TOTAL_MS ?? 110_000)
-export const SEND_PROMPT_QUEUE_WAIT_MS = Number(process.env.WECHAT_BRIDGE_SEND_PROMPT_QUEUE_WAIT_MS ?? 30_000)
-// #191: 未设置共享 token 时 /send 与 /agent/prompt 零鉴权 → main() FATAL 拒绝启动（require，而非跳过校验）。
+// #191: 未设置共享 token 时 /send 零鉴权 → main() FATAL 拒绝启动（require，而非跳过校验）。
 export const BRIDGE_TOKEN = process.env.WECHAT_BRIDGE_TOKEN
 export const OWNER_ID = process.env.WECHAT_BRIDGE_OWNER ?? 'owner@im.wechat'
 // 登录后生效的真实 owner：login 流程是“先启动（无登录态）→ 扫码后落盘 credentials.json”，
 // 启动快照 OWNER_ID 在新登录后必然过期（且 fresh 部署的 .env 里是占位符）。白名单门、/send
-// 鉴权、健康告警必须读实时值，否则用户消息会被当陌生人拒答、主动发送 403。
+// 鉴权必须读实时值，否则用户消息会被当陌生人拒答、主动发送 403。
 export function currentOwnerId() {
   try {
     const dir = process.env.WECHAT_BRIDGE_STORAGE ?? DEFAULT_STORAGE
@@ -63,14 +55,6 @@ export const ROTATE_CFG = {
 export const REPO = resolveRepo(import.meta.url)
 // bridge 运行目录（wechat-bridge.sh 启动 cwd）：不得依赖 process.cwd()。
 export const BRIDGE_DIR = join(REPO, 'wechat-bridge')
-export const DAEMON_PY = process.env.WECHAT_BRIDGE_DAEMON_PY ?? `${REPO}/.venv/bin/python`
-export const DAEMON_SCRIPT = process.env.WECHAT_BRIDGE_DAEMON ?? `${REPO}/chiguo_daemon.py`
-// schedule 运行时文件锚定 daemon 所在目录（跟随 WECHAT_BRIDGE_DAEMON 覆盖；测试隔离依赖），与 REPO 仅默认相等
-export const REPO_ROOT = dirname(DAEMON_SCRIPT)
-// agent 假死记账脚本（agent_health.py 状态机）；agent_health 解释器独立于 DAEMON_PY
-export const AGENT_HEALTH_SCRIPT = process.env.WECHAT_BRIDGE_AGENT_HEALTH
-  ?? new URL('../scripts/agent_health.py', import.meta.url).pathname
-export const AGENT_HEALTH_PY = process.env.WECHAT_BRIDGE_AGENT_HEALTH_PY ?? `${REPO}/.venv/bin/python`
 // 登录态目录：默认仓库内回退；wechat-bridge.sh 注入集中认证目录；可用 WECHAT_BRIDGE_STORAGE 覆盖
 export const DEFAULT_STORAGE = new URL('./credentials/', import.meta.url).pathname
 

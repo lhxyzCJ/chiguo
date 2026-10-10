@@ -49,24 +49,9 @@ class TurnResult:
     why: dict
 
 
-def build_sources(config: dict, base_dir: str) -> list:
+def build_sources(config: dict) -> list:
     """构造内置观测源（单源构造失败 → 跳过该源，不影响其余）。"""
     src: list = []
-    try:
-        from sources.schedule import ScheduleSource
-        src.append(ScheduleSource(base_dir, config))
-    except Exception as e:  # noqa: BLE001
-        print(f"[turn] ScheduleSource 构造失败，跳过: {e}", file=sys.stderr)
-    try:
-        from sources.holiday import HolidaySource
-        src.append(HolidaySource(base_dir))
-    except Exception as e:  # noqa: BLE001
-        print(f"[turn] HolidaySource 构造失败，跳过: {e}", file=sys.stderr)
-    try:
-        from sources.netease import NeteaseSource
-        src.append(NeteaseSource(base_dir=base_dir, config=config))
-    except Exception as e:  # noqa: BLE001
-        print(f"[turn] NeteaseSource 构造失败，跳过: {e}", file=sys.stderr)
     try:
         from sources.weather import WeatherSource
         src.append(WeatherSource(config))
@@ -97,7 +82,7 @@ def autonomous_turn(*, db: Database, config: dict, reason: str = "manual",
     reducer.catch_up(now)
 
     # ③ 世界观测（写入事件，由 reducer 投影）
-    observations = observe_all(build_sources(config, base_dir), now)
+    observations = observe_all(build_sources(config), now)
     for ob in observations:
         store.append(ob.type, source=ob.source, occurred_at=ob.observed_at,
                      payload={"observed_at": ob.observed_at.isoformat(),

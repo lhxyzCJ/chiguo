@@ -35,10 +35,7 @@ from storage.sqlite.db import Database
 STREAM = "runtime"
 
 # source 观测类事件（投影到 world_observations）
-OBSERVATION_TYPES = frozenset({
-    "schedule.state", "schedule.course_starting", "holiday.upcoming",
-    "anniversary.upcoming", "music.observed", "weather.changed",
-})
+OBSERVATION_TYPES = frozenset({"weather.changed"})
 
 _NO_USER_SILENT_HOURS = 999.0  # 从未交互（与旧 cooldown.silent_hours 语义一致）
 
@@ -382,23 +379,6 @@ class Reducer:
         tid = payload.get("thread_id")
         if tid:
             ThreadRepo(self.db).close(tid, ev.occurred_at)
-
-    # 旧链 schedule.created（Phase 3 双写）→ reminder 映射为承诺
-
-    def _on_schedule_created(self, ev):
-        payload = ev.payload or {}
-        if payload.get("kind") != "reminder":
-            return
-        item = payload.get("item") or {}
-        label = str(item.get("label") or "").strip()
-        when = item.get("when") if isinstance(item.get("when"), dict) else {}
-        due = _dt(when.get("date") if when else item.get("date"))
-        if not label:
-            return
-        if due is not None and due.hour == 0 and due.minute == 0:
-            due = due.replace(hour=9, minute=0)  # date-only → 当日 09:00
-        CommitmentRepo(self.db).add("reminder", label, due_at=due,
-                                    created_from_event=ev.event_id)
 
     # 观测投影
 

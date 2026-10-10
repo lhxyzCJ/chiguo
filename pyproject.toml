@@ -1,15 +1,6 @@
 [project]
 name = "chiguo"
 version = "1.24"
-description = "迟菓主动消息系统 — 数学驱动的角色主动消息引擎（零 LLM 决策 + LLM 消息生成）"
-readme = "README.md"
+description = "迟菓 — 微信被动对话桥 + V2 事件驱动 runtime（纯标准库）"
 requires-python = ">=3.14"
-dependencies = [
-    "mem0ai>=2.0.17",
-    "ollama>=0.6.2",
-]  # mem0 AI 记忆层（v1.9 起唯一内置后端；mem0 的 OllamaEmbedding 依赖 ollama 库）
-
-[project.optional-dependencies]
-schedule = [
-    "openpyxl",
-]   # 课表 xlsx 解析；不装 → schedule_valid=False → availability 基确 1.0（见 schedule/day_plan.py）
+dependencies = []

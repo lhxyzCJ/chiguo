@@ -112,7 +112,7 @@ wait_for_qr() {
 
 # #review: 默认生成随机共享 token（同机任意进程也能打 /agent/prompt 消耗 LLM 配额）。
 # 升级：#191 起未配置 token 直接 FATAL 拒绝启动（main() 校验），此处生成保证能启动。
-# 幂等：已配置的 token 保留（重跑 install 不覆盖）。调用方：tick.sh 读 .env、daemon _loop_send 读 env。
+# 幂等：已配置的 token 保留（重跑 install 不覆盖）。
 BRIDGE_TOKEN="$(sed -n 's/^WECHAT_BRIDGE_TOKEN=//p' "$ENV_FILE" 2>/dev/null | head -1 || true)"
 if [ -z "$BRIDGE_TOKEN" ]; then
   BRIDGE_TOKEN="$(openssl rand -hex 16 2>/dev/null || date +%s%N | md5sum | head -c 32)"
@@ -121,7 +121,7 @@ fi
 write_env() {
     mkdir -p "$BRIDGE_DIR"
     # pi 生成需要 LLM key：~/.pi/agent/auth.json——优先 opencode-go 条目
-    # 无则回退 [host].provider 条目（install_agent.sh 写入）
+    # 无则回退 [host].provider 条目（deploy.sh 写入）
     AGENT_FALLBACK_PROVIDER="$(sed -n 's/^[[:space:]]*provider *= *"\([^"]*\)".*/\1/p' "$PROJECT_DIR/chiguo_proactive.toml" | head -1 || true)"
     [ -n "$AGENT_FALLBACK_PROVIDER" ] || AGENT_FALLBACK_PROVIDER=opencode-go
     # H-1: 用仓库 venv python（do_install 已校验 .venv 存在），避免裸 python3 在
@@ -141,8 +141,6 @@ except Exception: print('')
     ( umask 077; cat > "$ENV_FILE" <<EOF
 WECHAT_BRIDGE_SEND_PORT=$SEND_PORT
 WECHAT_BRIDGE_OWNER=$OWNER_ID
-WECHAT_BRIDGE_DAEMON_PY=$PROJECT_DIR/.venv/bin/python
-WECHAT_BRIDGE_DAEMON=$PROJECT_DIR/chiguo_daemon.py
 WECHAT_BRIDGE_AGENT_RUN=$PROJECT_DIR/scripts/agent-run.mjs
 WECHAT_BRIDGE_AGENT_RPC=1
 WECHAT_BRIDGE_TOKEN=$BRIDGE_TOKEN
@@ -178,7 +176,7 @@ do_install() {
     [ -x "$PROJECT_DIR/.venv/bin/python" ] || fail "chiguo .venv 不存在，请先跑 deploy.sh"
     mkdir -p "$WX_STORAGE" && chmod 700 "$AUTH_DIR" "$WX_STORAGE" 2>/dev/null || true
     [ -f "$VENDOR_DIR/src/index.ts" ] || fail "vendor SDK 缺失（$VENDOR_DIR/src/index.ts）——不应删除仓库内 vendor 源码"
-    # SDK 是 TS 源码：dist 被忽略不入库 → 缺 dist/index.js 时先 npm ci 确定性安装 + tsc 构建（与 install_agent.sh 幂等）
+    # SDK 是 TS 源码：dist 被忽略不入库 → 缺 dist/index.js 时先 npm ci 确定性安装 + tsc 构建
     if [ ! -f "$VENDOR_DIR/dist/index.js" ]; then
         say "构建 vendor SDK（dist 缺失，npm ci + npm run build）..."
         ( cd "$VENDOR_DIR" && npm ci --no-fund --no-audit >/dev/null 2>&1 \

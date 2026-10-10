@@ -67,7 +67,7 @@ def build_generation_payload(intent, *, config: dict, now: datetime | None = Non
 
 
 def _state_summary(config: dict, now: datetime) -> dict:
-    """最小 state 摘要（课表/时间）；完整世界状态注入由 Phase 7 extension 承担。"""
+    """最小 state 摘要（时间/情绪）；完整世界状态注入由 Phase 7 extension 承担。"""
     return {"time": now.strftime("%Y-%m-%d %H:%M"),
             "character": (config.get("character", {}) or {}).get("name", "迟菓")}
 

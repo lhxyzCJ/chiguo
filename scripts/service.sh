@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# service.sh — 迟菓服务统一管理（ollama + wechat-bridge）
+# service.sh — 迟菓服务统一管理（wechat-bridge）
 # 模式: autostart（systemd 开机自启）| temp（临时启动，不注册自启）
 # 子命令: autostart|temp|status|stop|uninstall；均支持 --dry-run（只报告不改）
 # 退出码: 0=OK  1=警告/待办  2=严重
@@ -27,19 +27,15 @@ fail() { printf '\033[1;31m[chiguo-service]\033[0m %s\n' "$*"; exit 2; }
 usage() {
   cat <<'EOF'
 用法: bash scripts/service.sh <autostart|temp|status|stop|uninstall> [--dry-run]
-  autostart  注册 systemd 开机自启（ollama + wechat-bridge）
+  autostart  注册 systemd 开机自启（wechat-bridge）
   temp       临时启动 bridge（不注册自启，nohup 后台，写 pidfile）
-  status     展示 systemd / temp / ollama 三态
+  status     展示 systemd / temp 两态
   stop       停止 systemd 服务与 temp 进程
   uninstall  停止并移除 systemd unit（登录态保留）
 EOF
 }
 
 NODE="${CHIGUO_NODE-$(command -v node || true)}"
-
-ollama_health() {
-  curl -s -m 3 --noproxy '*' http://127.0.0.1:11434/api/tags 2>/dev/null | grep -q '"models"'
-}
 
 systemd_active() {
   "$SYSTEMCTL" is-active --quiet chiguo-bridge 2>/dev/null
@@ -73,7 +69,7 @@ write_unit() {
   printf '%s\n' \
     '[Unit]' \
     'Description=Chiguo WeChat Bridge' \
-    'After=network-online.target ollama.service' \
+    'After=network-online.target' \
     'Wants=network-online.target' \
     '' \
     '[Service]' \
@@ -112,28 +108,19 @@ do_autostart() {
   [ -f "$ENV_FILE" ] || { warn "缺少 .env（先运行: bash scripts/wechat-bridge.sh install）"; exit 1; }
   if [ "$DRY" = 1 ]; then
     say "dry-run 计划:"
-    say "  1) systemctl enable --now ollama"
-    say "  2) 清理残留 temp 进程（pidfile: $TEMP_PIDFILE）→ 释放 18790 端口"
+    say "  1) 清理残留 temp 进程（pidfile: $TEMP_PIDFILE）→ 释放 18790 端口"
     write_unit
-    say "  3) systemctl daemon-reload + enable --now chiguo-bridge"
+    say "  2) systemctl daemon-reload + enable --now chiguo-bridge"
     return 0
   fi
-  say "阶段 1: ollama 自启..."
-  "$SYSTEMCTL" enable --now ollama 2>/dev/null \
-    || warn "ollama enable 失败（无 ollama unit？可手动: systemctl enable --now ollama）"
-  if ollama_health; then
-    say "ollama 健康 ✓（11434 响应正常）"
-  else
-    warn "ollama 健康检查未通过（curl http://127.0.0.1:11434/api/tags 排查）"
-  fi
-  say "阶段 2: 互斥接管：清理 temp 残留（释放 18790 端口）..."
+  say "阶段 1: 互斥接管：清理 temp 残留（释放 18790 端口）..."
   if temp_running; then
     kill_temp
     say "已停止 temp 实例（互斥接管）"
   else
     say "无 temp 残留"
   fi
-  say "阶段 3: wechat-bridge unit..."
+  say "阶段 2: wechat-bridge unit..."
   write_unit
   UNIT_CHANGED=$?
   "$SYSTEMCTL" daemon-reload
@@ -143,7 +130,7 @@ do_autostart() {
     "$SYSTEMCTL" restart chiguo-bridge || warn "chiguo-bridge restart 失败"
     say "unit 已变更，重启 bridge 加载新配置"
   fi
-  say "autostart 完成 ✓（开机自启: ollama + chiguo-bridge）"
+  say "autostart 完成 ✓（开机自启: chiguo-bridge）"
 }
 
 do_temp() {
@@ -162,11 +149,6 @@ do_temp() {
   fi
   say "互斥接管：停 systemd 实例（若在运行）..."
   stop_systemd
-  if ollama_health; then
-    say "ollama 健康 ✓"
-  else
-    warn "ollama 不在线（embedding 记忆库不可用；本模式不拉起，由 systemd 管理）"
-  fi
   say "启动 temp bridge（日志: $LOG_FILE）..."
   mkdir -p "$PID_DIR" "$(dirname "$LOG_FILE")"
   (
@@ -196,12 +178,6 @@ do_status() {
   else
     warn "temp: 未运行"
   fi
-  if ollama_health; then
-    say "ollama: healthy（11434）"
-  else
-    warn "ollama: 不可用"
-    rc=1
-  fi
   return $rc
 }
 
@@ -230,7 +206,7 @@ do_stop() {
 do_uninstall() {
   require_root
   if [ "$DRY" = 1 ]; then
-    say "dry-run 计划: stop + 删除 $BRIDGE_UNIT + daemon-reload（登录态 $HOME/.chiguo/auth/wechat/ 保留；不撤销 ollama enable）"
+    say "dry-run 计划: stop + 删除 $BRIDGE_UNIT + daemon-reload（登录态 $HOME/.chiguo/auth/wechat/ 保留）"
     return 0
   fi
   stop_systemd || true
@@ -242,7 +218,7 @@ do_uninstall() {
   fi
   rm -f "$BRIDGE_UNIT"
   "$SYSTEMCTL" daemon-reload
-  say "uninstall 完成（unit 已删除；登录态保留；ollama 自启未动）"
+  say "uninstall 完成（unit 已删除；登录态保留）"
 }
 
 for arg in "$@"; do

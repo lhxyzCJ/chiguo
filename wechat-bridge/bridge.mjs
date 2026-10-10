@@ -5,66 +5,34 @@
  * 微信消息 → pi-agent（scripts/agent-run.mjs，chiguo-main 会话）→ 回复发回微信。
  * 使用 fork 的 inboundDebounce 合并连发文本（windowMs 4000）。
  *
- * v2 新增（迟菓主动链路）:
- *  - 主动发送端点: POST http://127.0.0.1:18790/send {"to","text"} → bot.send()
- *    （agent 生成消息后 curl 调用；仅允许发给 OWNER_ID）
- *  - 回复确定性回传: 收到用户消息先跑 chiguo_daemon.py --user-msg（无分析），
- *    standing order 随后由 agent 补 --analysis（daemon recv_dedup 升级语义，不重复记账）。
+ * 主动发送端点: POST http://127.0.0.1:18790/send {"to","text"} → bot.send()（仅允许发给 OWNER_ID）。
+ * 主会话每日轮换: session-rotate.mjs armSessionRotation（整点检查，空闲超阈值才轮换）。
  *
  * v3 可移植化（随 chiguo 仓库部署）:
  *  - storageDir 默认 = 本文件同目录 credentials/（仅本地保留，不进 git（隐私）；
  *    失效时 SDK 打印二维码重新扫码，即"尝试保留"）。绝不写入 wechatbot 仓库。
  *  - 所有路径/端口/用户 ID 可用 WECHAT_BRIDGE_* 环境变量覆盖（scripts/wechat-bridge.sh 生成 .env）。
- *
- * v4（Phase 4 寄主迁移）:
- *  - 回复侧由 pi-agent 完成情绪分析与回复：askAgent 调 scripts/agent-run.mjs
- *    （--prompt <原文> --analysis-mode），一次完成「情绪分析 JSON + 回复」。
- *  - 分析接线：askAgent 返回 analysis 后 → daemon --user-msg <原文> --analysis '<JSON>'
- *    （recv_dedup 升级语义——bridge 已确定性 --user-msg 过，不重复记账）。
- *  - 特殊命令（纪念日/假期）确定性接管：收到消息先 detectSpecialCommand（规则化，
- *    不依赖 agent 输出稳定性），命中 → 直接执行 daemon --anniversary/--break 并回复确认，
- *    不再经 agent（agent 为纯文本调用，无工具权限）。
  */
-
-// Issue #380 barrel：本文件仅保留 main 启动装配 + 全量 re-export（入口路径不变，
-// service.sh / wechat-bridge.sh / 子进程直起均不受影响）。
-// 各域实现：env.mjs（env 快照）/ util.mjs（withTimeout/sanitizeError）/
-// queue.mjs（TurnQueue）/ agent.mjs（askAgent 全家 + /agent/prompt）/
-// send.mjs（HTTP 端点 + 鉴权中间件）/ schedule.mjs（澄清 + 命令链路 + 轮换）/
-// message.mjs（消息管线）。
 import { mkdirSync, chmodSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { WeChatBot } from '@wechatbot/wechatbot'
-import { defaultRotatePaths, writeActivity } from './session-rotate.mjs'
-import { BRIDGE_TOKEN, AGENT_RUN_SCRIPT, DEFAULT_STORAGE, DEBOUNCE_MS, REPO_ROOT } from './env.mjs'
+import { defaultRotatePaths, writeActivity, armSessionRotation } from './session-rotate.mjs'
+import { BRIDGE_TOKEN, AGENT_RUN_SCRIPT, DEFAULT_STORAGE, DEBOUNCE_MS } from './env.mjs'
 import { TurnQueue } from './queue.mjs'
 import { checkAgentRunScript } from './agent.mjs'
 import { startSendServer } from './send.mjs'
-import { makeScheduleDeps, armSessionRotation } from './schedule.mjs'
 import { handleMessage } from './message.mjs'
-
-// 全量 re-export：测试与外部调用方从 bridge.mjs 取的全部符号（isLocalHost/isLocalOrigin/
-// askAgent 全家/TurnQueue/handleMessage/sendMessage/澄清存取/checkAgentRunScript 等）
-// 经此透出，import 源零改动。export * 无命名冲突（各模块导出集合不交）。
-export * from './env.mjs'
-export * from './util.mjs'
-export * from './queue.mjs'
-export * from './agent.mjs'
-export * from './health.mjs'
-export * from './send.mjs'
-export * from './schedule.mjs'
-export * from './message.mjs'
 
 // 隐私收紧：bridge 常驻 RPC（agent-rpc 直 spawn pi）与 agent-run 回退产生的会话文件
 // 都继承本 umask → 会话 JSONL 0600、目录 0700（默认 umask 下为 0644）。
 process.umask(0o077)
 
 async function main() {
-  // #191: 未设置共享 token 时 /send 与 /agent/prompt 零鉴权(同机任意进程可冒充 owner)→ 拒绝启动。
+  // #191: 未设置共享 token 时 /send 零鉴权(同机任意进程可冒充 owner)→ 拒绝启动。
   // wechat-bridge.sh 已自动生成并注入 token,故此处仅命中「直接 node bridge.mjs 绕过启动脚本」的场景。
   if (!BRIDGE_TOKEN) {
     console.error(
-      '[FATAL] WECHAT_BRIDGE_TOKEN 未设置:HTTP 端点(/send 与 /agent/prompt)零鉴权,拒绝启动。\n' +
+      '[FATAL] WECHAT_BRIDGE_TOKEN 未设置:HTTP 端点(/send)零鉴权,拒绝启动。\n' +
       '       请通过 wechat-bridge.sh 启动,或手动生成 token 写入 .env:\n' +
       '      echo "WECHAT_BRIDGE_TOKEN=$(openssl rand -hex 16)" >> .env\n')
     process.exit(1)
@@ -112,7 +80,7 @@ async function main() {
     if (!text?.trim()) return
     console.log(`[in] ${msg.userId}: ${text.length} chars`)  // 脱敏：不落正文（仅长度）
     try { writeActivity(activityPath) } catch {}   // 用户主动消息 = 会话活动（best-effort，写失败不阻塞消息链）
-    await handleMessage(text, msg, bot, queue, makeScheduleDeps(REPO_ROOT))
+    await handleMessage(text, msg, bot, queue)
   })
 
   bot.on('error', (err) => {
@@ -122,7 +90,7 @@ async function main() {
 
   await bot.login({ callbacks: loginCallbacks })
   // 该 fork 的 bot.start() 长轮询挂起不返回 → 主动发送端点必须先于 start 就绪
-  startSendServer(bot, queue)
+  startSendServer(bot)
   armSessionRotation(queue)
   await bot.start()
   console.log('wechat-bridge 运行中（Ctrl+C 停止）')

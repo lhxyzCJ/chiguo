@@ -38,10 +38,7 @@ def load_config(config_path: str | None = None) -> tuple[dict, Path]:
 
 
 def resolve_db_path(db_arg: str | None, config_path: str | None = None) -> Path:
-    """解析数据库路径（--db > env CHIGUO_DB_PATH > toml [storage].db_path > 默认）。
-
-    env 与 dualwrite 的同名解析保持一致——否则双写观察期两边看的是不同数据库。
-    """
+    """解析数据库路径（--db > env CHIGUO_DB_PATH > toml [storage].db_path > 默认）。"""
     if db_arg:
         return Path(db_arg).expanduser()
     env = os.environ.get("CHIGUO_DB_PATH")
@@ -367,12 +364,6 @@ def cmd_status(args) -> int:
     opps = OpportunityRepo(db).list_open(now=datetime.now(CST))
     turns = TurnRepo(db).recent(limit=1)
     last_sent = EventStore(db).recent(limit=1, type="message.sent")
-    agent_health = None  # 迁移期：旧健康文件只读展示（v2 告警子系统落地后取代）
-    try:
-        agent_health = json.loads(
-            (Path(cfg["_base_dir"]) / "agent_health.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, KeyError):
-        pass
     _print({
         "action": "status", "ok": True, "initialized": True,
         "db": {"path": str(db.path), "schema_version": db.schema_version(),
@@ -395,7 +386,6 @@ def cmd_status(args) -> int:
             for o in opps],
         "last_turn": (_jsonable(vars(turns[0])) if turns else None),
         "last_message_sent": (_event_json(last_sent[0]) if last_sent else None),
-        "agent_health": agent_health,
     })
     return 0
 

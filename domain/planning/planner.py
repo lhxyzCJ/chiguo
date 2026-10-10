@@ -4,8 +4,8 @@
 执行与硬门控由 runtime/actions 层负责（planner 不做安全拦截）。
 
 规则（最小确定性版）：
-- 只有分数 ≥ MIN_ELIGIBLE_SCORE 的机会可作 primary（天气/音乐单独不触发——
-  它们是小线索，只能作 secondary）；其余机会进 secondary 作上下文。
+- 只有分数 ≥ MIN_ELIGIBLE_SCORE 的机会可作 primary（天气单独不触发——
+  它是小线索，只能作 secondary）；其余机会进 secondary 作上下文。
 - 约束 quiet（静默窗）→ Defer(until=quiet_until, candidate=本次本会做的意图)。
 - 无合格机会 → Wait("no_eligible_opportunity")。
 """
@@ -17,11 +17,8 @@ MIN_ELIGIBLE_SCORE = 0.35
 # 机会 kind → 意图类型
 KIND_TO_INTENT = {
     "commitment_due": "follow_up",
-    "anniversary": "celebrate",
-    "holiday": "check_in",
     "open_thread": "follow_up",
     "weather": "share",
-    "music": "share",
 }
 
 DRIVE_RECORD_THRESHOLD = 0.5

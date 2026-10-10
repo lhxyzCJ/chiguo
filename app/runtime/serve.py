@@ -37,18 +37,6 @@ def _observation_line(o) -> str:
     p = o.payload or {}
     if o.type == "weather.changed":
         return f"天气：{p.get('condition', '?')}，{p.get('temperature', '?')}°C"
-    if o.type == "schedule.state":
-        if p.get("on_break"):
-            return "课表：假期中"
-        if p.get("in_class"):
-            return f"课表：正在上{p.get('current_course') or '课'}"
-        return f"课表：{p.get('class_load', '?')}（今天）"
-    if o.type == "music.observed":
-        plays = p.get("plays") or []
-        if plays:
-            return f"音乐：最近在听 {plays[0].get('name', '?')}"
-    if o.type in ("holiday.upcoming", "anniversary.upcoming"):
-        return f"{'节假日' if o.type.startswith('holiday') else '纪念日'}：{p.get('name', '?')}（{p.get('days_until', '?')} 天后）"
     return o.type
 
 

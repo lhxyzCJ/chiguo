@@ -2,5 +2,5 @@
 # sources — Chiguo v2 世界观测源（Phase 3，架构 §3.10）
 # 只提供事实：各 Source 实现 observe() 产出 Observation；
 # 绝不决定 send / 触发类型（那是 opportunity/planner 层的事）。
-# 子模块按需导入，包初始化不拉起 schedule/netease 等重依赖。
+# 子模块按需导入，包初始化不主动拉起任何来源。
 # ============================================================
