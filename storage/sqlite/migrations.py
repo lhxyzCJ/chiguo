@@ -192,7 +192,7 @@ CREATE TABLE world_observations (
 );
 CREATE INDEX idx_world_obs_source ON world_observations(source, observed_at);
 
--- 记忆（canonical；mem0 仅作语义索引，embedding 永不作为事实来源）
+-- 记忆（canonical 事实表；语义索引/检索属上层实现，不耦合具体后端）
 CREATE TABLE memories (
   id           TEXT PRIMARY KEY,
   kind         TEXT NOT NULL,
@@ -208,7 +208,6 @@ CREATE TABLE memories (
   status       TEXT NOT NULL DEFAULT 'active',
   importance   REAL,
   emotion_tag  TEXT,
-  mem0_id      TEXT,
   meta         TEXT
 );
 CREATE INDEX idx_memories_kind_status ON memories(kind, status);

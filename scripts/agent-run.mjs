@@ -71,7 +71,6 @@ if (process.env.AGENTRUN_ROTATE_SESSION === '1') {
 }
 const PERSONALITY_DIR = HOST.personality_dir ?? `${REPO}/personality`
 const PERSONALITY = process.env.AGENTRUN_PERSONALITY ?? `${PERSONALITY_DIR}/迟菓人格-精简版.md`
-const GUIDE = process.env.AGENTRUN_GUIDE ?? `${PERSONALITY_DIR}/记忆用法.md`
 const TOOLS = process.env.AGENTRUN_TOOLS ?? `${PERSONALITY_DIR}/工具用法.md`
 
 /** 剥离行内注释：仅当 # 在引号外（且前导空白，与旧逻辑一致）时才视为注释起点，
@@ -264,13 +263,13 @@ export function parseAgentOutput(stdout) {
  *  契约：<agent_command> --prompt <完整提示词> --mode <mode>，stdout 输出
  *  {"ok":true,"text":...,"analysis"?:...,"parsed"?:...,"raw"?:...}（或 NDJSON 兼容）。
  *  mode: analysis|send|other。
- *  #99：command 分支自动拼接 PERSONALITY/GUIDE/TOOLS 三段内容进 --prompt，
- *  与 agent 模式（--append-system-prompt 三段）行为一致，保证换后端不丢人格。 */
+ *  #99：command 分支自动拼接 PERSONALITY/TOOLS 两段内容进 --prompt，
+ *  与 agent 模式（--append-system-prompt 两段）行为一致，保证换后端不丢人格。 */
 export function runnerCommand(mode, sysPrompt) {
   if (RUNNER !== 'command' || !AGENT_COMMAND.length) return null
   let prompt = sysPrompt
   if (RUNNER === 'command') {
-    const parts = [PERSONALITY, GUIDE, TOOLS].map((p) => {
+    const parts = [PERSONALITY, TOOLS].map((p) => {
       try { return readFileSync(p, 'utf8') } catch { return '' }
     }).filter(Boolean)
     if (parts.length) prompt = `${parts.join('\n\n')}\n\n${sysPrompt}`
@@ -286,7 +285,6 @@ export function buildBaseAgentArgs({ analysisMode = false, sessionId = SESSION_I
   return ['--provider', PROVIDER, '--model', MODEL,
     '--session-id', sessionId, '--no-context-files', ...(noSkills ? ['--no-skills'] : []),
     '--append-system-prompt', PERSONALITY,
-    '--append-system-prompt', GUIDE,
     '--append-system-prompt', TOOLS,
     '--thinking', analysisMode ? REPLY_THINKING : THINKING]
 }

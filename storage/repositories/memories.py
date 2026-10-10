@@ -1,6 +1,6 @@
 """storage.repositories.memories — 长期记忆（canonical）与链接仓储。
 
-SQLite memories 为事实来源（mem0 仅语义索引）；同一事实更新 = 新记录 +
+SQLite memories 为事实来源；同一事实更新 = 新记录 +
 旧记录置 superseded（保留历史，不覆盖不删除），并在 memory_links 留
 relation='supersedes' 的边（from=新记忆, to=旧记忆）。
 """
@@ -29,7 +29,6 @@ class Memory:
     status: str
     importance: float | None
     emotion_tag: str | None
-    mem0_id: str | None
     meta: dict | None
 
 
@@ -44,7 +43,7 @@ class MemoryRepo:
             observed_at: datetime | None = None,
             valid_from: datetime | None = None,
             valid_to: datetime | None = None, importance: float | None = None,
-            emotion_tag: str | None = None, mem0_id: str | None = None,
+            emotion_tag: str | None = None,
             meta: dict | None = None) -> Memory:
         now = datetime.now(CST)
         m = Memory(
@@ -52,19 +51,19 @@ class MemoryRepo:
             origin=origin, confidence=confidence, observed_at=observed_at,
             created_at=now, updated_at=now, valid_from=valid_from,
             valid_to=valid_to, status="active", importance=importance,
-            emotion_tag=emotion_tag, mem0_id=mem0_id,
+            emotion_tag=emotion_tag,
             meta=dict(meta) if meta is not None else None)
         self.db.connect().execute(
             "INSERT INTO memories(id, kind, text, source, origin, confidence,"
             " observed_at, created_at, updated_at, valid_from, valid_to, status,"
-            " importance, emotion_tag, mem0_id, meta)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " importance, emotion_tag, meta)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (m.id, m.kind, m.text, m.source, m.origin, m.confidence,
              m.observed_at.isoformat() if m.observed_at is not None else None,
              m.created_at.isoformat(), m.updated_at.isoformat(),
              m.valid_from.isoformat() if m.valid_from is not None else None,
              m.valid_to.isoformat() if m.valid_to is not None else None,
-             m.status, m.importance, m.emotion_tag, m.mem0_id,
+             m.status, m.importance, m.emotion_tag,
              (json.dumps(m.meta, ensure_ascii=False)
               if m.meta is not None else None)))
         return m
@@ -125,5 +124,5 @@ class MemoryRepo:
             valid_to=(datetime.fromisoformat(row["valid_to"])
                       if row["valid_to"] is not None else None),
             status=row["status"], importance=row["importance"],
-            emotion_tag=row["emotion_tag"], mem0_id=row["mem0_id"],
+            emotion_tag=row["emotion_tag"],
             meta=(json.loads(row["meta"]) if row["meta"] is not None else None))
