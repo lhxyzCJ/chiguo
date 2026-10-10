@@ -192,33 +192,6 @@ CREATE TABLE world_observations (
 );
 CREATE INDEX idx_world_obs_source ON world_observations(source, observed_at);
 
--- 记忆（canonical 事实表；语义索引/检索属上层实现，不耦合具体后端）
-CREATE TABLE memories (
-  id           TEXT PRIMARY KEY,
-  kind         TEXT NOT NULL,
-  text         TEXT NOT NULL,
-  source       TEXT,
-  origin       TEXT,
-  confidence   REAL,
-  observed_at  TEXT,
-  created_at   TEXT NOT NULL,
-  updated_at   TEXT NOT NULL,
-  valid_from   TEXT,
-  valid_to     TEXT,
-  status       TEXT NOT NULL DEFAULT 'active',
-  importance   REAL,
-  emotion_tag  TEXT,
-  meta         TEXT
-);
-CREATE INDEX idx_memories_kind_status ON memories(kind, status);
-CREATE TABLE memory_links (
-  from_memory_id TEXT NOT NULL REFERENCES memories(id),
-  to_memory_id   TEXT NOT NULL REFERENCES memories(id),
-  relation       TEXT NOT NULL,
-  created_at     TEXT NOT NULL,
-  PRIMARY KEY (from_memory_id, to_memory_id, relation)
-);
-
 -- 调度（wake / deferred work；不含「要不要发」的决策）
 CREATE TABLE schedules (
   id            TEXT PRIMARY KEY,

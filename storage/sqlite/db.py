@@ -63,7 +63,7 @@ class Database:
                 self._conn = None
 
     def _harden_permissions(self):
-        """主库与 WAL/SHM 文件收紧 0600（对话/记忆为隐私数据）。"""
+        """主库与 WAL/SHM 文件收紧 0600（对话为隐私数据）。"""
         for suffix in ("", "-wal", "-shm"):
             p = Path(str(self.path) + suffix)
             if p.exists():

@@ -24,7 +24,7 @@ from storage.sqlite.migrations import SCHEMA_VERSION, migrate
 DEFAULT_DB_PATH = "~/.chiguo/chiguo.sqlite"
 _COUNT_TABLES = ("events", "messages", "sessions", "commitments", "threads",
                  "opportunities", "drives", "intents", "actions", "deliveries",
-                 "memories", "schedules", "world_observations", "autonomous_turns")
+                 "schedules", "world_observations", "autonomous_turns")
 
 
 def load_config(config_path: str | None = None) -> tuple[dict, Path]:

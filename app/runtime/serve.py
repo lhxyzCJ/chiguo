@@ -2,7 +2,7 @@
 
 仅监听 127.0.0.1（单用户本地）：
 - GET  /context?session=<id> → 运行时上下文块（personality/relationship/
-  agenda/memories/intent/world），供 Pi extension 在 before_agent_start 注入；
+  agenda/intent/world），供 Pi extension 在 before_agent_start 注入；
 - POST /turn {session, role, text, at} → 记录对话事实（user → message.received；
   assistant → conversation.replied，不扣能量——回复不是主动 send），随即归约；
 - GET  /health → 存活探针。
@@ -20,7 +20,6 @@ from urllib.parse import urlparse
 from chiguo_time import CST
 from storage.events import EventStore
 from storage.repositories.commitments import CommitmentRepo
-from storage.repositories.memories import MemoryRepo
 from storage.repositories.observations import ObservationRepo
 from storage.repositories.threads import ThreadRepo
 from storage.repositories.turns import TurnRepo
@@ -63,8 +62,6 @@ def build_context(db: Database, config: dict, now: datetime | None = None) -> di
     for t in ThreadRepo(db).list_open()[:8]:
         agenda.append(f"话题：{t.subject}")
 
-    memories = [m.text[:60] for m in MemoryRepo(db).list_active()[:5]]
-
     intent_line = None
     turns = TurnRepo(db).recent(limit=1)
     if turns and turns[0].outcome in ("intent", "action_pending") and turns[0].intent_id:
@@ -75,8 +72,7 @@ def build_context(db: Database, config: dict, now: datetime | None = None) -> di
 
     world = [_observation_line(o) for o in ObservationRepo(db).active(now)[:6]]
     return {"personality": personality, "relationship": relationship,
-            "agenda": agenda, "memories": memories, "intent": intent_line,
-            "world": world}
+            "agenda": agenda, "intent": intent_line, "world": world}
 
 
 def record_turn(db: Database, config: dict, payload: dict) -> EventStore | None:

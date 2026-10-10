@@ -16,12 +16,11 @@ export const DEFAULT_RUNTIME_URL = 'http://127.0.0.1:8790'
 export const DEFAULT_TIMEOUT_MS = 500
 export const WARN_INTERVAL_MS = 60_000
 
-// runtime /context 字段 → system prompt 小节（顺序即输出顺序；claude/3.11 契约见 docs/architecture-v2.md §3.11）
+// runtime /context 字段 → system prompt 小节（顺序即输出顺序）
 const CONTEXT_SECTIONS = [
   ['personality', '人格指引'],
   ['relationship', '关系摘要'],
   ['agenda', '当前议程'],
-  ['memories', '相关记忆'],
   ['intent', '当前意图'],
   ['world', '世界状态'],
 ]
