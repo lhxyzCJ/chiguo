@@ -1,7 +1,7 @@
 # 迟菓 Pi extension（v2 runtime 客户端骨架）
 
 Phase 7 预备（Issue #477）：Pi 作 Agent Runtime 时，由本扩展在回合开始注入迟菓上下文、
-在消息定稿时回写转录事实（对应 `docs/architecture-v2.md` §3.3 / §3.11）。
+在消息定稿时回写转录事实。
 
 ## 加载
 
@@ -15,8 +15,8 @@ pi --extension <repo>/integrations/pi/extension/chiguo-context.mjs
 ## 端点契约（v2 runtime，仅 127.0.0.1 回环）
 
 - `GET /context?session=<Pi session id>` → JSON，字段为任意子集：
-  `personality` / `relationship` / `agenda` / `memories` / `intent` / `world`
-  （值为 string 或 string[]；`memories` 也接受 `{text}` 项）。非空字段渲染为
+  `personality` / `relationship` / `agenda` / `intent` / `world`
+  （值为 string 或 string[]；数组项接受 `{text|summary|label|title}` 对象）。非空字段渲染为
   system prompt 的 `chiguo-context` 段落，经 `before_agent_start` 增量附加
   （修改 prompt sections，绝不替换整个 system prompt）。
 - `POST /turn`，body `{session, role, text, at}`：`role` 为 `user|assistant`，

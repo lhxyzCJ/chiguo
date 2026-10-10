@@ -14,7 +14,7 @@ name = "迟菓"
 age = 14
 # 人设元数据：供 pi-agent 读取生成消息，代码引擎不使用
 identity = "住在VPS里的赛博少女，哥哥的傲娇助手"
-# 人格: 迟菓人格-精简版.md（双版本体系,详版/archive 为参考）
+# 人格提示词: 迟菓人格-精简版.md
 
 [emotion]
 # ── 初始值 ──
@@ -151,14 +151,14 @@ reply_thinking_level = "off"      # 回复侧独立档位（交互及时性:微�
 session_id = "chiguo-main"      # 回复侧会话（bridge askAgent；进程内 TurnQueue 串行）
 send_session_id = "chiguo-send" # 发送会话（调用方经 AGENTRUN_SESSION 注入；与回复会话分离 → 消除跨进程并发 turn）
 # ── F-SEC-03 (#316): 回复侧白名单模式（仅白名单联系人可与迟菓对话）──
-# 非 owner 且不在白名单 → bridge 直接拒答固定文案、零 LLM 调用（成本攻击无门槛封闭，见 audit verify/group3 §6）。
-# 缺省（本项留空/注释）= 仅 owner 可对话（安全默认）；白名单非 owner 仍不进状态/记忆/命令（C1 门保持，仅走 askChat）。
+# 非 owner 且不在白名单 → bridge 直接拒答固定文案、零 LLM 调用（成本攻击无门槛封闭）。
+# 缺省（本项留空/注释）= 仅 owner 可对话（安全默认）；白名单非 owner 仍不进斜杠命令路径（C1 门保持，仅普通对话回复）。
 # 亦可经 env WECHAT_BRIDGE_WHITELIST 覆盖（逗号分隔），与 WECHAT_BRIDGE_OWNER 同源经 wechat-bridge/.env 注入。
 # whitelist_contacts = ["wxid_guest1", "wxid_guest2"]
-# ── 每日会话轮换（bridge 内定时器；防上下文堆积，详见 doc/SYSTEM.md §11.2）──
-# 语义：每小时整点检查（每天首个检查点 = 00:00 CST）；距最近活动（用户消息 / cron
-# 判定要发消息，记于 ~/.chiguo/session-activity-last）超过 idle_minutes 才轮换主会话
-# （备份+开新会话，记忆/情绪/课表保留）。有活动则顺延，绝不切断进行中的对话。
+# ── 每日会话轮换（bridge 内定时器；防上下文堆积）──
+# 语义：每小时整点检查（每天首个检查点 = 00:00 CST）；距最近活动（用户消息，
+# 记于 ~/.chiguo/session-activity-last）超过 idle_minutes 才轮换主会话
+# （备份+开新会话）。有活动则顺延，绝不切断进行中的对话。
 session_rotate_enabled = true      # 总开关（false 关闭）
 session_rotate_check_minutes = 60  # 检测间隔（分钟；整点对齐）
 session_rotate_idle_minutes = 60   # 空闲阈值（分钟）
@@ -179,7 +179,7 @@ runner = "agent"
 bridge_url = "http://127.0.0.1:18790"   # bridge HTTP 服务地址（/send 端点）
 bridge_token = ""                       # 空=不带头；生产由 wechat-bridge.sh 自动生成并写入 .env
 
-[storage]   # v2 canonical structured state store（SQLite；见 docs/architecture-v2.md）
+[storage]   # v2 canonical structured state store（SQLite）
 db_path = "~/.chiguo/chiguo.sqlite"   # 单一数据库；相对路径锚定 config 所在目录。chiguo db migrate 初始化
 
 # ────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ class Migration:
     sql: str
 
 
-# ── v1：初始 schema（设计见 docs/migration-plan.md §1）──────────────
+# ── v1：初始 schema ──────────────
 
 _SQL_V1 = """
 -- 注：schema_migrations 由迁移 runner 负责创建（migrate() 开头 IF NOT EXISTS），
