@@ -18,6 +18,7 @@ from pathlib import Path
 
 from chiguo_paths import PROJECT_ROOT
 from chiguo_time import CST
+from chiguo_version import VERSION
 from storage.events import EventStore
 from storage.sqlite.db import Database, StorageError
 from storage.sqlite.migrations import SCHEMA_VERSION, migrate
@@ -79,7 +80,7 @@ def cmd_db_status(args) -> int:
     db = Database(resolve_db_path(args.db, args.config))
     if not db.path.exists():
         _print({"action": "db_status", "ok": True, "initialized": False,
-                "path": str(db.path), "schema_version": 0,
+                "path": str(db.path), "version": VERSION, "schema_version": 0,
                 "code_schema_version": SCHEMA_VERSION})
         return 0
     conn = db.connect()
@@ -92,6 +93,7 @@ def cmd_db_status(args) -> int:
     _print({
         "action": "db_status", "ok": True, "initialized": version > 0,
         "path": str(db.path),
+        "version": VERSION,
         "schema_version": version,
         "code_schema_version": SCHEMA_VERSION,
         "journal_mode": conn.execute("PRAGMA journal_mode").fetchone()[0],
@@ -303,8 +305,8 @@ def cmd_serve(args) -> int:
     port = args.port if args.port is not None else DEFAULT_PORT  # --port 0 = 系统分配
     srv = RuntimeServer(db, cfg, port=port)
     srv.start()
-    print(json.dumps({"action": "serve", "ok": True, "url":
-                      f"http://127.0.0.1:{srv.port}"}, ensure_ascii=False),
+    print(json.dumps({"action": "serve", "ok": True, "version": VERSION,
+                      "url": f"http://127.0.0.1:{srv.port}"}, ensure_ascii=False),
           flush=True)
     try:
         while True:
@@ -388,6 +390,7 @@ def cmd_status(args) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chiguo", description="Chiguo v2 CLI")
+    parser.add_argument("--version", action="version", version=f"chiguo {VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     db = sub.add_parser("db", help="数据库运维")
