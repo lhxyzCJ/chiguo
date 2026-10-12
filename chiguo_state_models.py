@@ -11,7 +11,7 @@ import types
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from chiguo_math import in_quiet_window
+from chiguo_math import deep_frozendict, in_quiet_window
 from chiguo_time import CST
 
 # ── Q7 (#79/#260): reminder 去重标记（last_triggered_at）跨进程持久化。
@@ -94,11 +94,11 @@ def _coerce_dataclass_fields(fields: dict, cls) -> dict:
 
 
 # v1.11 ④: 情绪基线全局默认（= 原 tick 收敛 target：loneliness/anxiety→100、affection→0）
-BASELINE_DEFAULTS = {"loneliness": 100.0, "anxiety": 100.0, "affection": 0.0}
+BASELINE_DEFAULTS = frozendict({"loneliness": 100.0, "anxiety": 100.0, "affection": 0.0})
 
 
 # ── B1: 事件类型化情绪 delta（event_delta_enabled 默认 False → 恒等，可灰度）──
-EVENT_DELTA = {
+EVENT_DELTA = deep_frozendict({
     "praise":        {"loneliness": -3.0, "affection": 2.0},
     "criticism":     {"loneliness": 2.0, "anxiety": 3.0},
     "contradiction": {"anxiety": 4.0},
@@ -106,10 +106,10 @@ EVENT_DELTA = {
     "new_topic":     {"affection": 1.0},
     "question":      {"affection": 0.8},
     "complaint":     {"anxiety": 2.0},
-}
+})
 
 # B1: 事件类型宽松匹配别名（归一化后的原始串 → 规范事件类型）
-EVENT_TYPE_SYNONYMS = {
+EVENT_TYPE_SYNONYMS = frozendict({
     "praise": "praise", "夸": "praise", "夸奖": "praise", "表扬": "praise",
     "赞": "praise", "赞美": "praise",
     "criticism": "criticism", "批评": "criticism", "责备": "criticism",
@@ -119,7 +119,7 @@ EVENT_TYPE_SYNONYMS = {
     "new_topic": "new_topic", "newtopic": "new_topic", "换话题": "new_topic", "新话题": "new_topic",
     "question": "question", "提问": "question", "问": "question",
     "complaint": "complaint", "抱怨": "complaint", "吐槽": "complaint",
-}
+})
 
 
 def emotion_tag_snapshot(emotion) -> dict:

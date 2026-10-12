@@ -208,24 +208,30 @@ def noise_cap(step_magnitude: float, raw_noise: float) -> float:
     return max(-cap, min(cap, raw_noise))
 
 
+def deep_frozendict(mapping: dict) -> frozendict:
+    """dict → frozendict，值里的 dict 递归冻结（frozendict 不会自动冻结嵌套 dict）。"""
+    return frozendict({k: deep_frozendict(v) if isinstance(v, dict) else v
+                       for k, v in mapping.items()})
+
+
 # ── ① 用户情绪感知（user_mood） ────────────────────────────
 # 对标 thu-coai/Emotional-Support-Conversation（ACL 2021）：共情先感知
 # 求助者情绪类型+强度。LLM 只报 mood/intensity，幅度由系数表决定（决策零 LLM）。
 
 # 基础方向表（× intensity × cfg 系数；系数默认 0 = 关闭灰度）
-MOOD_DELTA = {
+MOOD_DELTA = deep_frozendict({
     "low":        {"anxiety": +2.0, "affection": +0.5},   # 心疼 → 不安略升、想靠近
     "distressed": {"anxiety": +3.0, "affection": +1.0},   # 更强烈
     "happy":      {"energy": +2.0,  "affection": +1.0},   # 被感染 → 元气回升
     "angry":      {"anxiety": +2.0, "affection": -1.0},   # 不安升、好感微降（克制）
-}
+})
 
-MOOD_NOTE = {
+MOOD_NOTE = frozendict({
     "low":        "（哥哥似乎心情低落（强度 {i:.1f}），语气比平时更温柔克制，少一点嘴硬，主动关心一句就好，不过度怜悯、不质问）",
     "distressed": "（哥哥情绪很低落（强度 {i:.1f}），放下嘴硬，认真陪他说话，语气温柔坚定，给安全感，不卖惨不质问）",
     "happy":      "（哥哥今天心情很好（强度 {i:.1f}），气氛轻松，可以更活泼一点接梗）",
     "angry":      "（哥哥在生气（强度 {i:.1f}），语气放软、不顶嘴、给台阶下，先顺毛再说话）",
-}
+})
 
 
 def user_mood_impact(mood: str, intensity: float, cfg: dict) -> dict:

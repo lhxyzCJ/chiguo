@@ -13,11 +13,13 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from chiguo_math import deep_frozendict
+
 # 观测类型 → 机会规则（kind/评分）
-OBSERVATION_RULES = {
+OBSERVATION_RULES = deep_frozendict({
     "weather.changed": {"kind": "weather", "relevance": 0.4, "urgency": 0.1,
                         "emotional_affordance": 0.3},
-}
+})
 
 DEFAULT_COMMITMENT_GRACE_HOURS = 24.0   # 到期后的宽限窗，超窗不再产机会
 DEFAULT_OPEN_THREAD_STALE_HOURS = 6.0   # 话题静默多久算「可续聊」

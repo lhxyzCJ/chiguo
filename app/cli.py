@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,19 @@ from chiguo_time import CST
 from storage.events import EventStore
 from storage.sqlite.db import Database, StorageError
 from storage.sqlite.migrations import SCHEMA_VERSION, migrate
+
+# 重型模块只被部分子命令用到 → lazy（PEP 810），首次访问才真正 import。
+lazy from app.actions.executor import build_generation_payload, execute_action
+lazy from app.autonomous.turn import autonomous_turn
+lazy from app.runtime.reducer import Reducer
+lazy from app.runtime.replay import replay
+lazy from app.runtime.serve import DEFAULT_PORT, RuntimeServer
+lazy from storage.repositories.actions import ActionRepo
+lazy from storage.repositories.commitments import CommitmentRepo
+lazy from storage.repositories.drives import IntentRepo
+lazy from storage.repositories.opportunities import OpportunityRepo
+lazy from storage.repositories.threads import ThreadRepo
+lazy from storage.repositories.turns import TurnRepo
 
 DEFAULT_DB_PATH = "~/.chiguo/chiguo.sqlite"
 _COUNT_TABLES = ("events", "messages", "sessions", "commitments", "threads",
@@ -172,7 +186,6 @@ def _jsonable(row: dict) -> dict:
 
 
 def cmd_commitments(args) -> int:
-    from storage.repositories.commitments import CommitmentRepo
     db = Database(resolve_db_path(args.db, args.config))
     if not db.path.exists():
         _print({"action": "commitments", "ok": False, "error": f"数据库不存在: {db.path}"})
@@ -184,7 +197,6 @@ def cmd_commitments(args) -> int:
 
 
 def cmd_threads(args) -> int:
-    from storage.repositories.threads import ThreadRepo
     db = Database(resolve_db_path(args.db, args.config))
     if not db.path.exists():
         _print({"action": "threads", "ok": False, "error": f"数据库不存在: {db.path}"})
@@ -198,7 +210,6 @@ def cmd_threads(args) -> int:
 # ── chiguo autonomous-turn（shadow 自主回合）────────────────────
 
 def cmd_autonomous_turn(args) -> int:
-    from app.autonomous.turn import autonomous_turn
     db = Database(resolve_db_path(args.db, args.config))
     if not db.path.exists():
         _print({"action": "autonomous_turn", "ok": False,
@@ -223,9 +234,6 @@ def cmd_autonomous_turn(args) -> int:
 # ── chiguo execute（执行 pending action）───────────────────────
 
 def cmd_execute(args) -> int:
-    from app.actions.executor import build_generation_payload, execute_action
-    from storage.repositories.actions import ActionRepo
-    from storage.repositories.drives import IntentRepo
     db = Database(resolve_db_path(args.db, args.config))
     if not db.path.exists():
         _print({"action": "execute", "ok": False, "error": f"数据库不存在: {db.path}"})
@@ -253,8 +261,6 @@ def cmd_execute(args) -> int:
 # ── chiguo tick（唤醒入口：wake → autonomous turn）───────────────
 
 def cmd_tick(args) -> int:
-    from app.actions.executor import execute_action
-    from app.autonomous.turn import autonomous_turn
     db = Database(resolve_db_path(args.db, args.config))
     if not db.path.exists():
         _print({"action": "tick", "ok": False,
@@ -287,7 +293,6 @@ def cmd_tick(args) -> int:
 # ── chiguo serve（运行时回环 HTTP；Pi extension 服务端）─────────
 
 def cmd_serve(args) -> int:
-    from app.runtime.serve import DEFAULT_PORT, RuntimeServer
     db = Database(resolve_db_path(args.db, args.config))
     if not db.path.exists():
         _print({"action": "serve", "ok": False, "error": f"数据库不存在: {db.path}"})
@@ -302,7 +307,6 @@ def cmd_serve(args) -> int:
                       f"http://127.0.0.1:{srv.port}"}, ensure_ascii=False),
           flush=True)
     try:
-        import time
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
@@ -313,7 +317,6 @@ def cmd_serve(args) -> int:
 # ── chiguo replay（历史重放，不发送不触碰生产库）────────────────
 
 def cmd_replay(args) -> int:
-    from app.runtime.replay import replay
     db = Database(resolve_db_path(args.db, args.config))
     if not db.path.exists():
         _print({"action": "replay", "ok": False, "error": f"数据库不存在: {db.path}"})
@@ -341,13 +344,6 @@ def cmd_replay(args) -> int:
 # ── chiguo status（聚合视图；只读，不消费事件）─────────────────
 
 def cmd_status(args) -> int:
-    from app.runtime.reducer import Reducer
-    from storage.events import EventStore
-    from storage.repositories.commitments import CommitmentRepo
-    from storage.repositories.opportunities import OpportunityRepo
-    from storage.repositories.threads import ThreadRepo
-    from storage.repositories.turns import TurnRepo
-
     db = Database(resolve_db_path(args.db, args.config))
     if not db.path.exists():
         _print({"action": "status", "ok": True, "initialized": False,

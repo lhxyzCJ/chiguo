@@ -15,11 +15,11 @@ from datetime import datetime
 MIN_ELIGIBLE_SCORE = 0.35
 
 # 机会 kind → 意图类型
-KIND_TO_INTENT = {
+KIND_TO_INTENT = frozendict({
     "commitment_due": "follow_up",
     "open_thread": "follow_up",
     "weather": "share",
-}
+})
 
 DRIVE_RECORD_THRESHOLD = 0.5
 
