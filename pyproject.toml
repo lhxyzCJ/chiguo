@@ -2,5 +2,5 @@
 name = "chiguo"
 version = "1.24"
 description = "迟菓 — 微信被动对话桥 + V2 事件驱动 runtime（纯标准库）"
-requires-python = ">=3.14"
+requires-python = ">=3.15"
 dependencies = []

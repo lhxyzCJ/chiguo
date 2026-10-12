@@ -121,12 +121,12 @@ fi
 write_env() {
     mkdir -p "$BRIDGE_DIR"
     # pi 生成需要 LLM key：~/.pi/agent/auth.json——优先 opencode-go 条目
-    # 无则回退 [host].provider 条目（deploy.sh 写入）
+    # 无则回退 [host].provider 条目
     AGENT_FALLBACK_PROVIDER="$(sed -n 's/^[[:space:]]*provider *= *"\([^"]*\)".*/\1/p' "$PROJECT_DIR/chiguo_proactive.toml" | head -1 || true)"
     [ -n "$AGENT_FALLBACK_PROVIDER" ] || AGENT_FALLBACK_PROVIDER=opencode-go
-    # H-1: 用仓库 venv python（do_install 已校验 .venv 存在），避免裸 python3 在
+    # H-1: 用仓库 venv python（do_install 已校验 .python/venv 存在），避免裸 python3 在
     # 精简 PATH 下缺失 → key 静默为空；AGENT_KEY 空时从现有 .env 幂等回填，不覆盖旧有效值。
-    AGENT_KEY="$(AGENT_FALLBACK_PROVIDER="$AGENT_FALLBACK_PROVIDER" "$PROJECT_DIR/.venv/bin/python" -c "
+    AGENT_KEY="$(AGENT_FALLBACK_PROVIDER="$AGENT_FALLBACK_PROVIDER" PYTHONPYCACHEPREFIX="$PROJECT_DIR/.python/pycache" "$PROJECT_DIR/.python/venv/bin/python" -c "
 import json,os
 try:
     d=json.load(open(os.path.expanduser('~/.pi/agent/auth.json')))
@@ -173,7 +173,7 @@ do_update_vendor_from_upstream() {
 
 do_install() {
     say "安装 wechat-bridge（vendor SDK 随仓库：wechat-bridge/vendor/wechatbot）..."
-    [ -x "$PROJECT_DIR/.venv/bin/python" ] || fail "chiguo .venv 不存在，请先跑 deploy.sh"
+    [ -x "$PROJECT_DIR/.python/venv/bin/python" ] || fail "chiguo .python/venv 不存在，请先重建（见 scripts/chiguo 头部注释）"
     mkdir -p "$WX_STORAGE" && chmod 700 "$AUTH_DIR" "$WX_STORAGE" 2>/dev/null || true
     [ -f "$VENDOR_DIR/src/index.ts" ] || fail "vendor SDK 缺失（$VENDOR_DIR/src/index.ts）——不应删除仓库内 vendor 源码"
     # SDK 是 TS 源码：dist 被忽略不入库 → 缺 dist/index.js 时先 npm ci 确定性安装 + tsc 构建

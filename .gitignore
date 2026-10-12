@@ -1,8 +1,8 @@
-# ── Python ──
+# ── Python（解释器 / venv / 字节码缓存 / uv 缓存统一收在 .python/，不进 git）──
+.python/
 __pycache__/
 *.pyc
 *.pyo
-.venv/
 .ruff_cache/
 
 # ── 微信桥（依赖/本地配置/登录态；隐私不进 git）──

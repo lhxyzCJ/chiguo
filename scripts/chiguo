@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
-# chiguo — v2 CLI 入口包装（等价：PYTHONPATH=<repo> .venv/bin/python -m app.cli "$@"）
+# chiguo — v2 CLI 入口包装
+# 等价：PYTHONPATH=<repo> .python/venv/bin/python -m app.cli "$@"
 # 用法：bash scripts/chiguo db status / chiguo db migrate ...
+#
+# 重建 .python/（解释器 3.15 + venv；.python/ 整体 git 忽略）：
+#   mkdir -p .python/uv-python .python/pycache
+#   UV_PYTHON_INSTALL_DIR="$PWD/.python/uv-python" uv python install 3.15
+#   .python/uv-python/cpython-3.15-linux-x86_64-gnu/bin/python3.15 -m venv .python/venv
+# 注意：uv 索引目前只到 3.15.0rc1；要正式版可装 python-build-standalone 的
+#   cpython-3.15.0+<date>-x86_64-unknown-linux-gnu-install_only.tar.gz
+#   解压到 .python/uv-python/cpython-3.15.0-linux-x86_64-gnu 并建 cpython-3.15-* 软链。
 set -euo pipefail
 REPO="${CHIGUO_REPO:-$(dirname "$(readlink -f "$0")")/..}"
-PY="$REPO/.venv/bin/python"
+PY="$REPO/.python/venv/bin/python"
 if [ ! -x "$PY" ]; then
-    echo "[chiguo] 未找到虚拟环境解释器: $PY（先跑 uv sync）" >&2
+    echo "[chiguo] 未找到虚拟环境解释器: $PY（见本脚本头部注释重建）" >&2
     exit 1
 fi
-exec env PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" "$PY" -m app.cli "$@"
+exec env PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" \
+         PYTHONPYCACHEPREFIX="$REPO/.python/pycache" \
+         "$PY" -m app.cli "$@"
