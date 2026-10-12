@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "chiguo ↔ wechatbot (iLink Bot SDK) 桥接：被动消息回复 + HTTP 发送端点",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@wechatbot/wechatbot": "file:./vendor/wechatbot"
   }
